@@ -1,0 +1,13 @@
+int pick() {
+  if (1 < 2) {
+    return 3;
+  }
+  return 4;
+}
+
+int main() {
+  if (pick() == 3) {
+    return 0;
+  }
+  return 1;
+}

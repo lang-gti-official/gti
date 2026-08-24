@@ -7,29 +7,6 @@
 
 namespace lang {
 
-struct MirEffectTraits {
-  bool readsPlace = false;
-  bool writesPlace = false;
-  bool readsUnknownMemory = false;
-  bool writesUnknownMemory = false;
-  bool allocates = false;
-  bool invokesRuntime = false;
-  bool mayTrap = false;
-  bool startsLoan = false;
-  bool endsLoan = false;
-  bool dependsOnLoan = false;
-  bool copiesValue = false;
-  bool movesValue = false;
-  bool initializesValue = false;
-  bool dropsValue = false;
-  bool invokesUserCode = false;
-  bool targetDependent = false;
-  bool maySynchronize = false;
-  bool speculatable = false;
-  bool removableWhenUnused = false;
-  bool reorderable = false;
-};
-
 inline constexpr std::size_t mirInstructionKindCount =
     static_cast<std::size_t>(MirInstructionKind::Count);
 inline constexpr std::size_t mirOperationCount =
@@ -52,5 +29,15 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 [[nodiscard]] MirEffectTraits effects(IntrinsicKind intrinsic);
 [[nodiscard]] MirEffectTraits effects(SynchronizationOperationKind kind);
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);
+// Refines an exact static call/construct/drop through independently verified
+// per-instance summaries. Dynamic and unresolved boundaries remain maximally
+// conservative.
+[[nodiscard]] MirEffectTraits effects(const MirProgram &program,
+                                      const MirInstruction &instruction);
+
+[[nodiscard]] MirProgramEffectSummaries
+deriveMirProgramEffectSummaries(const MirProgram &program);
+[[nodiscard]] MirVerificationResult
+verifyMirEffectSummaries(const MirProgram &program);
 
 } // namespace lang

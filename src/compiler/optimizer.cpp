@@ -1,8 +1,12 @@
 #include "gti/optimizer.h"
 
+#include "gti/optimization/pass.h"
+
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <unordered_set>
 #include <utility>
 
@@ -364,6 +368,7 @@ computeFoldLiteral(const MirBody &body, const MirInstruction &instruction) {
 
 struct LiteralIdentityFoldResult {
   OptimizationPassReport report;
+  std::vector<MirTransformRecord> transformations;
   MirVerificationResult verification;
 };
 
@@ -377,7 +382,8 @@ foldLiteralIdentities(MirProgram &program,
   // iterates its queue-and-apply round to a bounded fixpoint so
   // one verified transform report covers the whole cascade.
   for (std::size_t round = 0; round < 8; ++round) {
-    MirProgramEditor editor(program);
+    ++result.report.iterations;
+    MirProgramEditor editor(program, result.report.name);
     const auto bodyKeyOf = [](MirBodyAddress address) {
       return std::pair<std::size_t, HirClassInstanceId>(
           static_cast<std::size_t>(address.kind), address.owner);
@@ -420,12 +426,12 @@ foldLiteralIdentities(MirProgram &program,
 
           if (literal) {
             editor.queueLiteralReplacement(
-                {.body = bodyAddress, .block = block.id, .index = index},
-                instruction.id, MirOperation::Identity, folded);
+                {.body = bodyAddress, .instruction = instruction.id},
+                MirOperation::Identity, folded);
           } else {
             editor.queueComputeFoldReplacement(
-                {.body = bodyAddress, .block = block.id, .index = index},
-                instruction.id, instruction.operation, folded);
+                {.body = bodyAddress, .instruction = instruction.id},
+                instruction.operation, folded);
           }
           if (instruction.result) {
             if (const bool *boolean = std::get_if<bool>(&folded)) {
@@ -507,12 +513,376 @@ foldLiteralIdentities(MirProgram &program,
     result.report.invalidation.controlFlow |= edited.invalidation.controlFlow;
     result.report.invalidation.reachability |= edited.invalidation.reachability;
     result.report.invalidation.dominance |= edited.invalidation.dominance;
+    result.transformations.insert(result.transformations.end(),
+                                  edited.transformations.begin(),
+                                  edited.transformations.end());
     result.verification = edited.verification;
     if (!edited.verification.valid() || !edited.changed) {
       break;
     }
   }
   return result;
+}
+
+void mergeEditReport(OptimizationPassReport &report,
+                     const MirEditResult &edited) {
+  report.changed |= edited.changed;
+  report.appliedEdits += edited.appliedPatches;
+  report.valueUsesRebuilt |= edited.valueUsesRebuilt;
+  report.invalidation.instructionFacts |= edited.invalidation.instructionFacts;
+  report.invalidation.valueUses |= edited.invalidation.valueUses;
+  report.invalidation.controlFlow |= edited.invalidation.controlFlow;
+  report.invalidation.reachability |= edited.invalidation.reachability;
+  report.invalidation.dominance |= edited.invalidation.dominance;
+}
+
+[[nodiscard]] std::vector<MirBodyAddress>
+changedBodies(const std::vector<MirTransformRecord> &records) {
+  std::vector<MirBodyAddress> result;
+  for (const MirTransformRecord &record : records) {
+    if (std::find(result.begin(), result.end(), record.body) == result.end()) {
+      result.push_back(record.body);
+    }
+  }
+  std::sort(
+      result.begin(), result.end(),
+      [](MirBodyAddress left, MirBodyAddress right) {
+        return std::pair{static_cast<std::size_t>(left.kind), left.owner} <
+               std::pair{static_cast<std::size_t>(right.kind), right.owner};
+      });
+  return result;
+}
+
+void appendInvalidated(OptimizationPassReport &report,
+                       std::vector<std::string> invalidated) {
+  report.invalidatedAnalyses.insert(
+      report.invalidatedAnalyses.end(),
+      std::make_move_iterator(invalidated.begin()),
+      std::make_move_iterator(invalidated.end()));
+  std::sort(report.invalidatedAnalyses.begin(),
+            report.invalidatedAnalyses.end());
+  report.invalidatedAnalyses.erase(
+      std::unique(report.invalidatedAnalyses.begin(),
+                  report.invalidatedAnalyses.end()),
+      report.invalidatedAnalyses.end());
+}
+
+class ScalarPromotionPass final : public MirPass {
+public:
+  [[nodiscard]] std::string_view name() const override {
+    return "scalar-promotion";
+  }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    outcome.report.iterations = 1;
+    MirProgramEditor editor(context.program, outcome.report.name);
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(context.program)) {
+      const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
+      const MirDominanceInfo *dominance =
+          analyses.dominance(context.program, address);
+      const auto *uses = analyses.valueUses(context.program, address);
+      const auto *effectFacts = analyses.effects(context.program, address);
+      const MirScalarPromotionInputs *inputs =
+          analyses.scalarPromotionInputs(context.program, address);
+      ++outcome.report.analyzedBodies;
+      if (cfg == nullptr || dominance == nullptr || uses == nullptr ||
+          effectFacts == nullptr || inputs == nullptr) {
+        outcome.verification.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .message = "scalar promotion could not derive its required MIR "
+                        "analyses"});
+        return outcome;
+      }
+      outcome.report.candidates += inputs->candidates.size();
+      for (const MirScalarPromotionCandidate &candidate : inputs->candidates) {
+        editor.queueScalarPromotion(address, candidate.place);
+      }
+      for (const MirScalarPromotionMiss &miss : inputs->misses) {
+        // Immutable bindings, parameters, and projected storage are outside
+        // this pass's admitted candidate domain. Reporting each one would make
+        // ordinary prelude code drown out actionable near misses.
+        if (miss.reason == MirScalarPromotionMissReason::NotMutableBinding) {
+          continue;
+        }
+        ++outcome.report.candidates;
+        ++outcome.report.missed;
+        outcome.report.remarks.push_back(
+            {.kind = OptimizationRemarkKind::Missed,
+             .pass = outcome.report.name,
+             .message = "not promoted: " + std::string(lang::name(miss.reason)),
+             .body = address,
+             .place = miss.place});
+      }
+    }
+    if (editor.pendingScalarPromotionCount() == 0) {
+      outcome.preserved = MirPreservedAnalyses::all();
+      return outcome;
+    }
+    const MirEditResult edited = editor.apply();
+    mergeEditReport(outcome.report, edited);
+    outcome.transformations = edited.transformations;
+    outcome.verification = edited.verification;
+    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
+                                       : MirPreservedAnalyses::all();
+    return outcome;
+  }
+};
+
+class LiteralIdentityFoldPass final : public MirPass {
+public:
+  explicit LiteralIdentityFoldPass(const OptimizationResult &compatibility)
+      : compatibility(compatibility) {}
+
+  [[nodiscard]] std::string_view name() const override {
+    return "fold-literal-identities";
+  }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(context.program)) {
+      if (analyses.valueUses(context.program, address) == nullptr ||
+          analyses.dominance(context.program, address) == nullptr) {
+        outcome.verification.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .message = "literal folding could not derive exact uses and "
+                        "dominance"});
+        return outcome;
+      }
+      ++outcome.report.analyzedBodies;
+    }
+    LiteralIdentityFoldResult folded =
+        foldLiteralIdentities(context.program, compatibility);
+    outcome.report = std::move(folded.report);
+    outcome.report.analyzedBodies =
+        enumerateMirBodyAddresses(context.program).size();
+    outcome.transformations = std::move(folded.transformations);
+    outcome.verification = std::move(folded.verification);
+    outcome.preserved = outcome.report.changed ? MirPreservedAnalyses::none()
+                                               : MirPreservedAnalyses::all();
+    return outcome;
+  }
+
+private:
+  const OptimizationResult &compatibility;
+};
+
+class UnreachableBlockCleanupPass final : public MirPass {
+public:
+  [[nodiscard]] std::string_view name() const override {
+    return "unreachable-block-cleanup";
+  }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    outcome.report.iterations = 1;
+    MirProgramEditor editor(context.program, outcome.report.name);
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(context.program)) {
+      const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
+      const auto *uses = analyses.valueUses(context.program, address);
+      const auto *effectFacts = analyses.effects(context.program, address);
+      const MirDominanceInfo *dominance =
+          analyses.dominance(context.program, address);
+      const MirBody *body = findMirBody(context.program, address);
+      ++outcome.report.analyzedBodies;
+      if (cfg == nullptr || uses == nullptr || effectFacts == nullptr ||
+          dominance == nullptr || body == nullptr) {
+        outcome.verification.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .message = "unreachable cleanup could not derive its required "
+                        "MIR analyses"});
+        return outcome;
+      }
+      for (std::size_t index = 0; index < cfg->reachable.size(); ++index) {
+        if (cfg->reachable[index]) {
+          continue;
+        }
+        ++outcome.report.candidates;
+        MirBody replay = *body;
+        if (rewriteMirUnreachableBlock(replay, index + 1)) {
+          editor.queueUnreachableBlockRemoval(address, index + 1);
+        } else {
+          ++outcome.report.missed;
+          outcome.report.remarks.push_back(
+              {.kind = OptimizationRemarkKind::Missed,
+               .pass = outcome.report.name,
+               .message = "unreachable block retained because it carries a "
+                          "lifecycle, failure, loan, or boundary schedule",
+               .body = address,
+               .block = index + 1});
+        }
+      }
+    }
+    if (editor.pendingUnreachableBlockCount() == 0) {
+      outcome.preserved = MirPreservedAnalyses::all();
+      return outcome;
+    }
+    const MirEditResult edited = editor.apply();
+    mergeEditReport(outcome.report, edited);
+    outcome.transformations = edited.transformations;
+    outcome.verification = edited.verification;
+    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
+                                       : MirPreservedAnalyses::all();
+    return outcome;
+  }
+};
+
+class DeadUnusedComputationPass final : public MirPass {
+public:
+  [[nodiscard]] std::string_view name() const override {
+    return "dead-unused-computations";
+  }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    for (std::size_t round = 0; round < 8; ++round) {
+      ++outcome.report.iterations;
+      MirProgramEditor editor(context.program, outcome.report.name);
+      for (const MirBodyAddress address :
+           enumerateMirBodyAddresses(context.program)) {
+        const MirBody *body = findMirBody(context.program, address);
+        const auto *uses = analyses.valueUses(context.program, address);
+        const auto *effectFacts = analyses.effects(context.program, address);
+        if (body == nullptr || uses == nullptr || effectFacts == nullptr) {
+          outcome.verification.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .message = "dead computation removal could not derive exact "
+                          "uses and effects"});
+          return outcome;
+        }
+        ++outcome.report.analyzedBodies;
+        for (const MirBlock &block : body->blocks) {
+          for (const MirInstruction &instruction : block.instructions) {
+            if (instruction.tombstone ||
+                instruction.kind != MirInstructionKind::Compute ||
+                !instruction.result ||
+                !body->usesOf(*instruction.result).empty()) {
+              continue;
+            }
+            ++outcome.report.candidates;
+            const bool retainedProof = std::any_of(
+                body->blocks.begin(), body->blocks.end(),
+                [&](const MirBlock &candidateBlock) {
+                  if (candidateBlock.terminator.provenance.kind ==
+                          MirTerminatorProvenanceKind::BranchFold &&
+                      candidateBlock.terminator.provenance.foldSourceValue ==
+                          *instruction.result) {
+                    return true;
+                  }
+                  return std::any_of(
+                      candidateBlock.instructions.begin(),
+                      candidateBlock.instructions.end(),
+                      [&](const MirInstruction &candidate) {
+                        if (candidate.literalProvenance.kind ==
+                            MirLiteralProvenanceKind::None) {
+                          return false;
+                        }
+                        return candidate.literalProvenance.sourceValue ==
+                                   *instruction.result ||
+                               std::find(candidate.literalProvenance
+                                             .sourceValues.begin(),
+                                         candidate.literalProvenance
+                                             .sourceValues.end(),
+                                         *instruction.result) !=
+                                   candidate.literalProvenance.sourceValues
+                                       .end();
+                      });
+                });
+            if (retainedProof) {
+              ++outcome.report.missed;
+              outcome.report.remarks.push_back(
+                  {.kind = OptimizationRemarkKind::Missed,
+                   .pass = outcome.report.name,
+                   .message = "unused computation retained as verified MIR "
+                              "transformation evidence",
+                   .body = address,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .sourceValue = instruction.hirValue,
+                   .sourceStatement = instruction.hirStatement});
+              continue;
+            }
+            MirProgram replay = context.program;
+            if (rewriteMirDeadInstruction(replay, address, instruction.id)) {
+              editor.queueDeadInstructionRemoval(
+                  {.body = address, .instruction = instruction.id});
+            } else {
+              ++outcome.report.missed;
+              outcome.report.remarks.push_back(
+                  {.kind = OptimizationRemarkKind::Missed,
+                   .pass = outcome.report.name,
+                   .message = "unused computation retained because it may "
+                              "trap or has observable effects",
+                   .body = address,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .sourceValue = instruction.hirValue,
+                   .sourceStatement = instruction.hirStatement});
+            }
+          }
+        }
+      }
+      if (editor.pendingDeadInstructionCount() == 0) {
+        break;
+      }
+      const MirEditResult edited = editor.apply();
+      mergeEditReport(outcome.report, edited);
+      outcome.transformations.insert(outcome.transformations.end(),
+                                     edited.transformations.begin(),
+                                     edited.transformations.end());
+      outcome.verification = edited.verification;
+      if (!edited.valid() || !edited.changed) {
+        return outcome;
+      }
+      for (const MirBodyAddress address :
+           changedBodies(edited.transformations)) {
+        appendInvalidated(
+            outcome.report,
+            analyses.invalidate(address, MirPreservedAnalyses::none()));
+      }
+      outcome.analysesInvalidated = true;
+    }
+    outcome.preserved = MirPreservedAnalyses::all();
+    return outcome;
+  }
+};
+
+[[nodiscard]] std::size_t countSafetyOperations(const MirProgram &program) {
+  std::size_t count = 0;
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const MirBlock &block : body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.tombstone) {
+          continue;
+        }
+        const MirEffectTraits effect = effects(program, instruction);
+        if (effect.mayTrap || !instruction.definedFailure.empty() ||
+            !instruction.localFailureSites.empty()) {
+          ++count;
+        }
+      }
+    }
+  }
+  return count;
 }
 
 } // namespace
@@ -536,18 +906,69 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
       localCompatibility = run(request.hir, request.level, request.target);
       compatibility = &localCompatibility;
     }
-    LiteralIdentityFoldResult pass =
-        foldLiteralIdentities(result.mir, *compatibility);
-    result.report.passes.push_back(std::move(pass.report));
-    if (!pass.verification.valid()) {
-      result.report.outputVerification = std::move(pass.verification);
+    MirBodyAnalysisManager analyses;
+    MirPassContext context{
+        .hir = request.hir, .program = result.mir, .target = request.target};
+    const auto execute = [&](MirPass &pass) {
+      MirPassOutcome outcome = pass.run(context, analyses);
+      if (!outcome.verification.valid()) {
+        result.report.outputVerification = std::move(outcome.verification);
+        result.report.passes.push_back(std::move(outcome.report));
+        return false;
+      }
+      if (outcome.report.changed && !outcome.analysesInvalidated) {
+        for (const MirBodyAddress address :
+             changedBodies(outcome.transformations)) {
+          appendInvalidated(outcome.report,
+                            analyses.invalidate(address, outcome.preserved));
+        }
+      }
+      for (const MirTransformRecord &record : outcome.transformations) {
+        outcome.report.remarks.push_back(
+            {.kind = OptimizationRemarkKind::Applied,
+             .pass = outcome.report.name,
+             .message = "applied verified MIR transformation",
+             .body = record.body,
+             .block = record.block,
+             .instruction = record.instruction,
+             .place = record.place,
+             .sourceValue = record.sourceValue,
+             .sourceStatement = record.sourceStatement,
+             .proof = record.proof});
+      }
+      result.report.transformations.insert(result.report.transformations.end(),
+                                           outcome.transformations.begin(),
+                                           outcome.transformations.end());
+      result.report.passes.push_back(std::move(outcome.report));
+      return true;
+    };
+
+    ScalarPromotionPass scalarPromotion;
+    LiteralIdentityFoldPass literalFolding(*compatibility);
+    UnreachableBlockCleanupPass unreachableCleanup;
+    DeadUnusedComputationPass deadComputations;
+    if (!execute(scalarPromotion) || !execute(literalFolding) ||
+        !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }
   }
 
+  std::sort(result.report.transformations.begin(),
+            result.report.transformations.end(), mirTransformRecordLess);
+
+  result.report.safety.sourceOperations =
+      countSafetyOperations(result.sourceMir);
+  result.report.safety.emittedOperations = countSafetyOperations(result.mir);
+  result.report.safety.staticallyDischarged =
+      result.report.safety.sourceOperations >=
+              result.report.safety.emittedOperations
+          ? result.report.safety.sourceOperations -
+                result.report.safety.emittedOperations
+          : 0;
+
   if (request.options.verifyMir) {
-    result.report.outputVerification =
-        verifyMirOptimizationCoherence(result.sourceMir, result.mir);
+    result.report.outputVerification = verifyMirOptimizationCoherence(
+        result.sourceMir, result.mir, result.report.transformations);
   }
   return result;
 }

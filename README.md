@@ -201,6 +201,21 @@ gti main.gti -O2 -o main
 gti main.gti -D FEATURE -o main-with-feature
 ```
 
+Optimizer inspection is explicit and does not change ordinary output:
+
+```sh
+gti main.gti -O1 \
+  --dump-mir-before build/main.before.mir \
+  --dump-mir-after build/main.after.mir \
+  --optimization-remarks \
+  --optimization-report build/main.optimization.json \
+  -o main
+```
+
+GTI remarks and the versioned deterministic JSON report describe verified MIR
+decisions; native Clang/GCC optimization remarks remain a separate backend
+facility.
+
 GTI defaults to single-threaded execution semantics. Use
 `--execution-profile concurrent` to apply the adopted concurrent-profile
 global/static checks; this requires immutable share-capable process-wide state

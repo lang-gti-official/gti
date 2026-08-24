@@ -354,6 +354,24 @@ for `gti check`, `gti run`, and `gti test` and alongside `--keep-cpp`. The
 direct and project modes therefore emit byte-identical serializations for
 the same resolved configuration.
 
+Direct compilation also exposes opt-in optimizer observability without
+changing the selected backend:
+
+```text
+--dump-mir-before <path>
+--dump-mir-after <path>
+--optimization-remarks
+--optimization-report <path>
+```
+
+The reusable `CompilationRequest` carries only capture intent for pre-MIR,
+post-MIR, and the structured report. `CompilationResult` owns those optional
+values; the CLI owns path validation, atomic publication, human formatting,
+and JSON serialization. Output paths must be pairwise distinct and cannot
+overwrite any loaded source. When capture is not requested, ordinary driver
+callers retain no optimizer dump/report strings and compilation output is
+unchanged.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,

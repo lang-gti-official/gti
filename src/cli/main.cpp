@@ -34,6 +34,9 @@ struct Options {
   std::filesystem::path output;
   std::optional<std::string> cxx;
   std::optional<std::filesystem::path> timeTrace;
+  std::optional<std::filesystem::path> dumpMirBefore;
+  std::optional<std::filesystem::path> dumpMirAfter;
+  std::optional<std::filesystem::path> optimizationReport;
   std::vector<std::string> compilerArguments;
   lang::ConfigurationFlags configurationFlags;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
@@ -45,6 +48,7 @@ struct Options {
   bool emitMir = false;
   bool emitNativeHeader = false;
   bool keepCpp = false;
+  bool optimizationRemarks = false;
   bool verbose = false;
 };
 
@@ -146,6 +150,15 @@ void printUsage(std::ostream &stream) {
          "  -D <name>            Define a valueless configuration flag.\n"
          "      --time-trace <path>  Write a compile-time profile as Chrome "
          "Trace JSON.\n"
+         "      --dump-mir-before <path>\n"
+         "                       Write canonical MIR before GTI optimization.\n"
+         "      --dump-mir-after <path>\n"
+         "                       Write verified MIR after GTI optimization.\n"
+         "      --optimization-remarks\n"
+         "                       Print GTI MIR optimization decisions.\n"
+         "      --optimization-report <path>\n"
+         "                       Write versioned deterministic optimizer "
+         "JSON.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
@@ -228,6 +241,20 @@ parseOptimization(std::string_view value) {
     return lang::OptimizationLevel::O3;
   }
   return std::nullopt;
+}
+
+std::string_view optimizationLevelName(lang::OptimizationLevel level) {
+  switch (level) {
+  case lang::OptimizationLevel::O0:
+    return "O0";
+  case lang::OptimizationLevel::O1:
+    return "O1";
+  case lang::OptimizationLevel::O2:
+    return "O2";
+  case lang::OptimizationLevel::O3:
+    return "O3";
+  }
+  return "invalid";
 }
 
 bool parseExecutionProfileOption(std::string_view value,
@@ -361,6 +388,28 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.timeTrace = argv[index];
       continue;
     }
+    if (argument == "--dump-mir-before" || argument == "--dump-mir-after" ||
+        argument == "--optimization-report") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing path after " << argument << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      std::optional<std::filesystem::path> *destination =
+          argument == "--dump-mir-before"
+              ? &options.dumpMirBefore
+              : (argument == "--dump-mir-after" ? &options.dumpMirAfter
+                                                : &options.optimizationReport);
+      if (*destination) {
+        std::cerr << "gti: " << argument << " may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      *destination = std::filesystem::path(argv[index]);
+      continue;
+    }
+    if (argument == "--optimization-remarks") {
+      options.optimizationRemarks = true;
+      continue;
+    }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
         argument == "-O3") {
       options.optimization = *parseOptimization(argument);
@@ -437,6 +486,36 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.output = defaultNativeHeaderPath(options.input);
     } else {
       options.output = defaultExecutablePath(options.input);
+    }
+  }
+  std::vector<std::pair<std::filesystem::path, std::string_view>> outputPaths{
+      {options.output, "primary output"}};
+  if (options.dumpMirBefore) {
+    outputPaths.emplace_back(*options.dumpMirBefore, "--dump-mir-before");
+  }
+  if (options.dumpMirAfter) {
+    outputPaths.emplace_back(*options.dumpMirAfter, "--dump-mir-after");
+  }
+  if (options.optimizationReport) {
+    outputPaths.emplace_back(*options.optimizationReport,
+                             "--optimization-report");
+  }
+  for (std::size_t left = 0; left < outputPaths.size(); ++left) {
+    std::error_code leftError;
+    const std::filesystem::path leftPath =
+        std::filesystem::absolute(outputPaths[left].first, leftError)
+            .lexically_normal();
+    for (std::size_t right = left + 1; right < outputPaths.size(); ++right) {
+      std::error_code rightError;
+      const std::filesystem::path rightPath =
+          std::filesystem::absolute(outputPaths[right].first, rightError)
+              .lexically_normal();
+      if (!leftError && !rightError && leftPath == rightPath) {
+        std::cerr << "gti: " << outputPaths[left].second << " and "
+                  << outputPaths[right].second
+                  << " must use different output paths\n";
+        return ArgumentResult::ExitFailure;
+      }
     }
   }
   return ArgumentResult::Run;
@@ -978,6 +1057,77 @@ bool writeFile(const std::filesystem::path &path, std::string_view contents) {
   return false;
 }
 
+lang::driver::OptimizationOutputRequest
+optimizationOutputRequest(const Options &options) {
+  return {.capturePreMir = options.dumpMirBefore.has_value(),
+          .capturePostMir = options.dumpMirAfter.has_value(),
+          .captureReport = options.optimizationRemarks ||
+                           options.optimizationReport.has_value()};
+}
+
+int publishOptimizationOutputs(
+    const Options &options,
+    const lang::driver::CompilationResult &compilation) {
+  const auto publish = [&](const std::optional<std::filesystem::path> &path,
+                           const std::optional<std::string> &contents,
+                           std::string_view description) {
+    if (!path) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (!contents) {
+      std::cerr << "gti: internal compiler error: requested " << description
+                << " was not captured\n";
+      return exitCode(ExitStatus::Compilation);
+    }
+    if (const std::optional<std::filesystem::path> collision =
+            lang::driver::findLoadedSourceCollision(*path,
+                                                    compilation.sources)) {
+      std::cerr << "gti: refusing to overwrite loaded source '"
+                << collision->string() << "' with " << description << " '"
+                << path->string() << "'\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    return writeFile(*path, *contents) ? exitCode(ExitStatus::Success)
+                                       : exitCode(ExitStatus::Io);
+  };
+
+  int status = publish(options.dumpMirBefore, compilation.preOptimizationMir,
+                       "pre-optimization MIR");
+  if (status != exitCode(ExitStatus::Success)) {
+    return status;
+  }
+  status = publish(options.dumpMirAfter, compilation.postOptimizationMir,
+                   "post-optimization MIR");
+  if (status != exitCode(ExitStatus::Success)) {
+    return status;
+  }
+  if (options.optimizationReport) {
+    if (!compilation.optimizationReport) {
+      std::cerr << "gti: internal compiler error: requested optimization "
+                   "report was not captured\n";
+      return exitCode(ExitStatus::Compilation);
+    }
+    const std::optional<std::string> report = serializeOptimizationReportJson(
+        *compilation.optimizationReport,
+        optimizationLevelName(options.optimization));
+    status = publish(options.optimizationReport, report, "optimization report");
+    if (status != exitCode(ExitStatus::Success)) {
+      return status;
+    }
+  }
+  if (options.optimizationRemarks) {
+    if (!compilation.optimizationReport) {
+      std::cerr << "gti: internal compiler error: requested optimization "
+                   "remarks were not captured\n";
+      return exitCode(ExitStatus::Compilation);
+    }
+    std::cerr << formatOptimizationRemarks(
+        *compilation.optimizationReport,
+        optimizationLevelName(options.optimization));
+  }
+  return exitCode(ExitStatus::Success);
+}
+
 void reportCapturedOutput(std::string_view output, std::string_view heading) {
   if (output.empty()) {
     return;
@@ -1167,7 +1317,8 @@ int runDirect(const Options &options, const char *driver) {
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
     const lang::driver::CompilationRequest request(
         options.input, toolchain.standardLibrary, target, options.optimization,
-        options.standard, {}, options.configurationFlags);
+        options.standard, {}, options.configurationFlags,
+        optimizationOutputRequest(options));
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
             ? lang::driver::compileToNativeHeader(request)
@@ -1177,6 +1328,11 @@ int runDirect(const Options &options, const char *driver) {
       return reportCompilationFailure(compilation);
     }
     reportDiagnostics(compilation.diagnostics, compilation.sources);
+    const int optimizationOutputStatus =
+        publishOptimizationOutputs(options, compilation);
+    if (optimizationOutputStatus != exitCode(ExitStatus::Success)) {
+      return optimizationOutputStatus;
+    }
     const lang::BackendArtifact &artifact = *compilation.artifact;
     if (const std::optional<std::filesystem::path> collision =
             lang::driver::findLoadedSourceCollision(options.output,
@@ -1207,13 +1363,18 @@ int runDirect(const Options &options, const char *driver) {
           lang::driver::CompilationRequest(
               options.input, toolchain.standardLibrary, target,
               options.optimization, options.standard, {},
-              options.configurationFlags),
+              options.configurationFlags, optimizationOutputRequest(options)),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
           std::move(nativeInputs), options.keepCpp, false, options.verbose));
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
+  }
+  const int optimizationOutputStatus =
+      publishOptimizationOutputs(options, result.compilation);
+  if (optimizationOutputStatus != exitCode(ExitStatus::Success)) {
+    return optimizationOutputStatus;
   }
 
   std::cout << "Built " << options.output << '\n';

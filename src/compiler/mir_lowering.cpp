@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/optimization/effects.h"
 
 namespace lang {
 
@@ -6892,6 +6893,37 @@ MirLowerer::lowerProgram(const HirProgram &source,
         lowerHostedStartup(source, failureMetadata, result.program) && valid;
   }
   result.program.valid_ = valid;
+  const MirProgramEffectSummaries effectSummaries =
+      deriveMirProgramEffectSummaries(result.program);
+  const bool completeEffects =
+      effectSummaries.functions.size() == result.program.functions.size() &&
+      effectSummaries.constructors.size() ==
+          result.program.constructors.size() &&
+      effectSummaries.destructors.size() == result.program.destructors.size() &&
+      effectSummaries.lambdas.size() == result.program.lambdas.size();
+  if (completeEffects) {
+    for (std::size_t index = 0; index < result.program.functions.size();
+         ++index) {
+      result.program.functions[index].effectSummary =
+          effectSummaries.functions[index];
+    }
+    for (std::size_t index = 0; index < result.program.constructors.size();
+         ++index) {
+      result.program.constructors[index].effectSummary =
+          effectSummaries.constructors[index];
+    }
+    for (std::size_t index = 0; index < result.program.destructors.size();
+         ++index) {
+      result.program.destructors[index].effectSummary =
+          effectSummaries.destructors[index];
+    }
+    for (std::size_t index = 0; index < result.program.lambdas.size();
+         ++index) {
+      result.program.lambdas[index].effectSummary =
+          effectSummaries.lambdas[index];
+    }
+  }
+  result.program.valid_ = result.program.valid_ && completeEffects;
   return result;
 }
 

@@ -4,6 +4,7 @@
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/mir_backend.h"
+#include "gti/mir_printer.h"
 #include "gti/native_header.h"
 #include "gti/source_loader.h"
 #include "gti/support.h"
@@ -58,6 +59,18 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     return result;
   }
 
+  const OptimizationOutputRequest &optimizationOutputs =
+      request.optimizationOutputs();
+  if (optimizationOutputs.capturePreMir) {
+    result.preOptimizationMir = MirPrinter().print(optimizedProgram.sourceMir);
+  }
+  if (optimizationOutputs.capturePostMir) {
+    result.postOptimizationMir = MirPrinter().print(optimizedProgram.mir);
+  }
+  if (optimizationOutputs.captureReport) {
+    result.optimizationReport = optimizedProgram.report;
+  }
+
   std::string backendName = "unknown";
   try {
     backendName = backend.name();
@@ -88,7 +101,8 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
   LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir,
-      optimizedProgram.sourceMir, optimizedProgram.mir, request.target());
+      optimizedProgram.sourceMir, optimizedProgram.mir,
+      optimizedProgram.report.transformations, request.target());
   if (!loweredBuild.valid()) {
     const std::string detail =
         loweredBuild.issues.empty()
@@ -117,13 +131,15 @@ CompilationRequest::CompilationRequest(
     std::filesystem::path entry, StandardLibraryLayout standardLibrary,
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
     std::vector<PackageSourceRoot> packageSourceRoots,
-    ConfigurationFlags configurationFlags)
+    ConfigurationFlags configurationFlags,
+    OptimizationOutputRequest optimizationOutputs)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard),
       packageSourceRootSet(std::move(packageSourceRoots)),
-      configuredFlags(std::move(configurationFlags)) {
+      configuredFlags(std::move(configurationFlags)),
+      requestedOptimizationOutputs(optimizationOutputs) {
   normalizeConfigurationFlags(configuredFlags);
 }
 
@@ -150,6 +166,11 @@ CompilationRequest::packageSources() const {
 
 const ConfigurationFlags &CompilationRequest::configurationFlags() const {
   return configuredFlags;
+}
+
+const OptimizationOutputRequest &
+CompilationRequest::optimizationOutputs() const {
+  return requestedOptimizationOutputs;
 }
 
 CompilationInputs loadCompilationInputs(const CompilationRequest &request) {

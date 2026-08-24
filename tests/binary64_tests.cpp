@@ -214,8 +214,14 @@ void testLanguagePipeline() {
                                         .mir = result.mir,
                                         .level = lang::OptimizationLevel::O1,
                                         .compatibility = &compatibility});
-  expect(optimized.valid() && optimized.report.passes.size() == 1 &&
-             optimized.report.passes.front().shadowMismatches == 0 &&
+  const auto literalPass = std::find_if(
+      optimized.report.passes.begin(), optimized.report.passes.end(),
+      [](const lang::OptimizationPassReport &pass) {
+        return pass.name == "fold-literal-identities";
+      });
+  expect(optimized.valid() && optimized.report.passes.size() == 4 &&
+             literalPass != optimized.report.passes.end() &&
+             literalPass->shadowMismatches == 0 &&
              lang::MirPrinter()
                      .print(optimized.mir)
                      .find("f64:0x3fe0000000000000") != std::string::npos,
@@ -223,7 +229,7 @@ void testLanguagePipeline() {
          "verified MIR shadow rewriting");
 
   lang::MirProgram malformed = result.mir;
-  lang::MirProgramEditor editor(malformed);
+  lang::MirProgramEditor editor(malformed, "binary64-editor-test");
   bool queuedMalformedFloat = false;
   for (const lang::MirBodyAddress bodyAddress :
        lang::enumerateMirBodyAddresses(malformed)) {
@@ -239,8 +245,8 @@ void testLanguagePipeline() {
             !instruction.programConstantSubstitution &&
             instruction.info.type == lang::SemanticType::Float) {
           editor.queueLiteralReplacement(
-              {.body = bodyAddress, .block = block.id, .index = index},
-              instruction.id, lang::MirOperation::Literal,
+              {.body = bodyAddress, .instruction = instruction.id},
+              lang::MirOperation::Literal,
               lang::Literal{lang::BinaryFloat{
                   .bits = 0x100000000ULL,
                   .format = lang::BinaryFloatFormat::Binary32}});

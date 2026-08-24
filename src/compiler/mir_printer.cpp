@@ -253,7 +253,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v41 valid=" << program.valid() << '\n';
+    output << "mir-v43 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -438,8 +438,10 @@ public:
         output << "declaration";
         break;
       }
-      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
-             << " roots=[";
+      output << " may-raise-defined-failure="
+             << instance.mayRaiseDefinedFailure;
+      effectSummary(instance.effectSummary);
+      output << " roots=[";
       list(instance.virtualRoots);
       output << "] callables=[";
       for (std::size_t index = 0; index < instance.callableParameters.size();
@@ -494,8 +496,10 @@ public:
         output << "declaration";
         break;
       }
-      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
-             << " initializers=[";
+      output << " may-raise-defined-failure="
+             << instance.mayRaiseDefinedFailure;
+      effectSummary(instance.effectSummary);
+      output << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {
         separator(index);
@@ -520,8 +524,10 @@ public:
         output << "declaration";
         break;
       }
-      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
-             << '\n';
+      output << " may-raise-defined-failure="
+             << instance.mayRaiseDefinedFailure;
+      effectSummary(instance.effectSummary);
+      output << '\n';
       body(instance.body, instance.id);
     }
 
@@ -562,7 +568,9 @@ public:
                        : false)
                << '}';
       }
-      output << "]\n";
+      output << ']';
+      effectSummary(instance.effectSummary);
+      output << '\n';
       body(instance.body, instance.id);
     }
     if (program.hostedStartupPlan() && program.hostedStartup() != nullptr) {
@@ -573,12 +581,43 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v40\n";
+    output << "mir-body-v41\n";
     body(value, 0);
     return output.str();
   }
 
 private:
+  void effectSummary(const MirEffectSummary &summary) {
+    const MirEffectTraits &traits = summary.traits;
+    output << " effects={reads-place=" << traits.readsPlace
+           << ",writes-place=" << traits.writesPlace
+           << ",reads-memory=" << traits.readsUnknownMemory
+           << ",writes-memory=" << traits.writesUnknownMemory
+           << ",allocates=" << traits.allocates
+           << ",runtime=" << traits.invokesRuntime
+           << ",traps=" << traits.mayTrap
+           << ",starts-loan=" << traits.startsLoan
+           << ",ends-loan=" << traits.endsLoan
+           << ",depends-loan=" << traits.dependsOnLoan
+           << ",copies=" << traits.copiesValue << ",moves=" << traits.movesValue
+           << ",initializes=" << traits.initializesValue
+           << ",drops=" << traits.dropsValue
+           << ",user-code=" << traits.invokesUserCode
+           << ",target-dependent=" << traits.targetDependent
+           << ",synchronizes=" << traits.maySynchronize
+           << ",speculatable=" << traits.speculatable
+           << ",removable=" << traits.removableWhenUnused
+           << ",reorderable=" << traits.reorderable
+           << ",receiver-escapes=" << summary.receiverEscapes
+           << ",arguments-escape=[";
+    for (std::size_t index = 0; index < summary.argumentsEscape.size();
+         ++index) {
+      separator(index);
+      output << summary.argumentsEscape[index];
+    }
+    output << "]}";
+  }
+
   void programInitialization(const MirProgramInitializationPlan &plan) {
     output << "program-initialization units=" << plan.units.size()
            << " steps=" << plan.steps.size() << '\n';
@@ -1004,6 +1043,7 @@ private:
 
   void instruction(const MirInstruction &value) {
     output << "    i" << value.id << ' ' << name(value.kind)
+           << " tombstone=" << value.tombstone
            << " hosted-operation=" << value.hostedStartupOperation
            << " hir-value=" << value.hirValue
            << " hir-statement=" << value.hirStatement
@@ -1221,7 +1261,17 @@ private:
     optional(value.returnLoan);
     output << " invoke=i" << value.invokeInstruction << " failure=fail"
            << value.failureRecord << " target=bb" << value.target << " else=bb"
-           << value.elseTarget << " success-lifecycle=[";
+           << value.elseTarget << " target-arguments=[";
+    for (std::size_t index = 0; index < value.targetArguments.size(); ++index) {
+      separator(index);
+      operand(value.targetArguments[index]);
+    }
+    output << "] else-arguments=[";
+    for (std::size_t index = 0; index < value.elseArguments.size(); ++index) {
+      separator(index);
+      operand(value.elseArguments[index]);
+    }
+    output << "] success-lifecycle=[";
     for (std::size_t index = 0; index < value.successLifecycle.size();
          ++index) {
       separator(index);
@@ -1237,7 +1287,13 @@ private:
       } else {
         output << "default";
       }
-      output << "->bb" << target.target << '}';
+      output << "->bb" << target.target << " arguments=[";
+      for (std::size_t argument = 0; argument < target.arguments.size();
+           ++argument) {
+        separator(argument);
+        operand(target.arguments[argument]);
+      }
+      output << "]}";
     }
     output << "] provenance=";
     switch (value.provenance.kind) {
@@ -1258,7 +1314,16 @@ private:
     output << "  bb" << value.id << " reachable=" << value.reachable
            << " program-initialization-step=" << value.programInitializationStep
            << " failure-parameter=fail" << value.failureParameter
-           << " active-failure=fail" << value.activeFailure << '\n';
+           << " active-failure=fail" << value.activeFailure << " parameters=[";
+    for (std::size_t index = 0; index < value.parameters.size(); ++index) {
+      separator(index);
+      const MirBlockParameter &parameter = value.parameters[index];
+      output << "{%" << parameter.value << ":";
+      type(parameter.type);
+      output << ";source=v" << parameter.sourceValue
+             << ";statement=" << parameter.sourceStatement << '}';
+    }
+    output << "]\n";
     for (const MirInstruction &item : value.instructions) {
       instruction(item);
     }
@@ -1268,7 +1333,8 @@ private:
   void use(const MirValueUse &value) {
     output << "use(" << number(value.kind) << ";value=" << value.value
            << ";block=" << value.block << ";instruction=" << value.instruction
-           << ";place=" << value.place << ";operand=" << value.operandIndex
+           << ";place=" << value.place << ";edge-target=" << value.edgeTarget
+           << ";edge=" << value.edgeIndex << ";operand=" << value.operandIndex
            << ')';
   }
 

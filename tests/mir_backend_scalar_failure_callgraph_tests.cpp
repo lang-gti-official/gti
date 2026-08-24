@@ -208,11 +208,12 @@ bool exactFailureEdge(const lang::MirFunctionInstance &function,
          exactFailureCleanupDrops(function, *record, exactDrops);
 }
 
-lang::BackendArtifact emit(const lang::FrontendResult &frontend,
-                           const lang::MirProgram &mir,
-                           const lang::OptimizationResult &compatibility) {
+lang::BackendArtifact
+emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+     const lang::OptimizationResult &compatibility,
+     const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,
@@ -592,7 +593,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v41 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v43 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;
@@ -620,7 +621,9 @@ void testFailureGraph(const std::filesystem::path &fixture) {
              "optimized MIR should retain the exact hosted call graph");
       if (optimizedLeaf != nullptr && optimizedCaller != nullptr &&
           optimizedEntry != nullptr) {
-        expectSelected(emit(frontend, optimized.mir, compatibility).contents,
+        expectSelected(emit(frontend, optimized.mir, compatibility,
+                            optimized.report.transformations)
+                           .contents,
                        *optimizedLeaf, *optimizedCaller, *optimizedEntry);
       }
     }
@@ -897,8 +900,9 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 near-miss MIR should remain verified");
     if (optimized.valid()) {
-      const std::string generated =
-          emit(frontend, optimized.mir, compatibility).contents;
+      const std::string generated = emit(frontend, optimized.mir, compatibility,
+                                         optimized.report.transformations)
+                                        .contents;
       const lang::MirFunctionInstance *optimizedEntry =
           findFunction(frontend.hir, optimized.mir, "main");
       expect(optimizedEntry != nullptr &&
@@ -954,8 +958,9 @@ void testNonOwningClassMention(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 nonowning fixture MIR should remain verified");
     if (optimized.valid()) {
-      const std::string generated =
-          emit(frontend, optimized.mir, compatibility).contents;
+      const std::string generated = emit(frontend, optimized.mir, compatibility,
+                                         optimized.report.transformations)
+                                        .contents;
       const lang::MirFunctionInstance *optimizedChecked =
           findFunction(frontend.hir, optimized.mir, "checked_increment");
       const lang::MirFunctionInstance *optimizedEntry =
@@ -1041,14 +1046,9 @@ void testMutations(const std::filesystem::path &fixture) {
       call != nullptr && callerSource != nullptr) {
     call->functionTarget = callerSource->id;
   }
-  expect(lang::verifyMirProgram(retargeted).valid(),
-         "a same-signature conservative recursive retarget should remain "
-         "generic valid MIR");
-  if (lang::verifyMirProgram(retargeted).valid()) {
-    expect(emissionRejected(frontend, retargeted, compatibility),
-           "the backend must bind the selected call graph to exact HIR call "
-           "identities");
-  }
+  expect(!lang::verifyMirProgram(retargeted).valid(),
+         "a recursive retarget must invalidate the original exact effect "
+         "summary rather than retain an under-approximation");
 
   lang::MirProgram headerDrift = frontend.mir;
   if (lang::MirFunctionInstance *leaf =
