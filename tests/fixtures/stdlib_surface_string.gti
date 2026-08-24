@@ -1,0 +1,62 @@
+#include <std/string>
+
+int read_string(std::string& value) {
+  if (value.front() != 'a' || value.back() != 'e' ||
+      value.at(std::size_t(1)) != 'b' || value[int32_t(0)] != 'a') {
+    return -1;
+  }
+  mut std::size_t count = 0;
+  for (char& element : value) {
+    count++;
+  }
+  return int(count);
+}
+
+int main() {
+  mut std::string text = std::string("ab");
+  text.reserve(std::size_t(16));
+  text.push_back('c');
+  text.append("de");
+  if (text.size() != std::size_t(5) || text.capacity() < std::size_t(16) ||
+      text.empty() || read_string(text) != 5) {
+    return 1;
+  }
+  {
+    mut char& first = text.front();
+    first = 'A';
+  }
+  {
+    mut char& last = text.back();
+    last = 'E';
+  }
+  {
+    mut char& middle = text.at(int32_t(1));
+    middle = 'B';
+  }
+  text[std::size_t(2)] = 'C';
+  mut std::string cloned = text.clone();
+  if (cloned != "ABCdE" || cloned == "abcde") {
+    return 2;
+  }
+  cloned.pop_back();
+  cloned.resize(std::size_t(2));
+  cloned.shrink_to_fit();
+  if (cloned != "AB" || cloned.capacity() != cloned.size()) {
+    return 3;
+  }
+  cloned.clear();
+  if (!cloned.empty()) {
+    return 4;
+  }
+  if (std::to_string(int8_t(-8)) != "-8" ||
+      std::to_string(int16_t(-16)) != "-16" ||
+      std::to_string(int32_t(-32)) != "-32" ||
+      std::to_string(int64_t(-64)) != "-64" ||
+      std::to_string(uint8_t(8)) != "8" ||
+      std::to_string(uint16_t(16)) != "16" ||
+      std::to_string(uint32_t(32)) != "32" ||
+      std::to_string(uint64_t(64)) != "64") {
+    return 5;
+  }
+  return 0;
+}

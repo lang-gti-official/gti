@@ -1,0 +1,48 @@
+#include <std/vector>
+
+int read_vector(std::vector<int32_t>& values) {
+  mut int total = values.front() + values.back() +
+                  values.at(std::size_t(1)) + values[std::size_t(0)];
+  for (int32_t& value : values) {
+    total += value;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(2));
+  values[std::size_t(0)] = 1;
+  values[std::size_t(1)] = 2;
+  values.reserve(std::size_t(8));
+  values.push_back(4);
+  values.insert(std::size_t(2), 3);
+  [[discard]] values.emplace_back(5);
+  if (values.size() != std::size_t(5) || values.capacity() < std::size_t(8) ||
+      values.empty() || read_vector(values) != 24) {
+    return 1;
+  }
+  for (mut int32_t& value : values) {
+    value++;
+  }
+  values.erase(std::size_t(1));
+  values.pop_back();
+  values.resize(std::size_t(5), 9);
+  values.resize(std::size_t(4));
+  values.shrink_to_fit();
+  mut std::vector<int32_t> copied = values.clone();
+  if (copied.size() != std::size_t(4) || copied.capacity() != copied.size() ||
+      copied.front() != 2 || copied.back() != 9) {
+    return 2;
+  }
+  copied.clear();
+  if (!copied.empty()) {
+    return 3;
+  }
+  int32_t source[3] = {7, 8, 9};
+  std::vector<int32_t> from_array = std::vector<int32_t>(source);
+  if (from_array.size() != std::size_t(3) ||
+      from_array.at(std::size_t(1)) != 8) {
+    return 4;
+  }
+  return 0;
+}

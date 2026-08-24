@@ -43,6 +43,20 @@ inline void checkInjectedFailure(const std::uint8_t *data, std::size_t size) {
   }
 }
 
+// Property-specific injection reaches the real invariant comparison with one
+// deliberately perturbed observation. It is gated by both an environment
+// value and the same magic comment used by the generic crash check, so normal
+// fuzzing can never enter these negative-test branches.
+inline bool injectProperty(const std::uint8_t *data, std::size_t size,
+                           std::string_view property) {
+  const char *requested = std::getenv("GTI_FUZZ_INJECT_PROPERTY");
+  if (requested == nullptr || property != requested) {
+    return false;
+  }
+  const std::string_view input(reinterpret_cast<const char *>(data), size);
+  return input.substr(0, kInjectedFailureToken.size()) == kInjectedFailureToken;
+}
+
 [[noreturn]] inline void fail(const char *harness, const char *property) {
   std::fprintf(stderr, "gti-fuzz(%s): property violated: %s\n", harness,
                property);

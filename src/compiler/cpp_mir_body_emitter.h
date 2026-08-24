@@ -550,10 +550,13 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 
 // The owned-parameter initializer schedule: each `field(std::move(parameter))`
 // metadata row is tied bijectively to the exact parameter place, ownership
-// Move, optional explicit This.field publication, and lexical parameter Drop.
-// A backend may publish the field in its native member-initializer list and
-// erase only the records named by this proof. A malformed or partially
-// claimed schedule returns nullopt so constructor admission fails closed.
+// Move, optional explicit This.field publication, the exact value-to-field
+// rollback transfer for an active field, and, for a lexical value, its
+// parameter Drop. A concrete passive specialization has no lifecycle/drop
+// records; the zero identities below represent that proven absence. A backend
+// may publish the field in its native member-initializer list and erase only
+// the records named by this proof. A malformed or partially claimed schedule
+// returns nullopt so constructor admission fails closed.
 struct CppMirOwnedParameterFieldBinding {
   std::size_t initializer = 0;
   SymbolId field = 0;
@@ -562,8 +565,11 @@ struct CppMirOwnedParameterFieldBinding {
   MirValueId movedValue = 0;
   MirInstructionId moveInstruction = 0;
   MirInstructionId initializeInstruction = 0;
+  MirInstructionId fieldTransferInstruction = 0;
   MirInstructionId dropInstruction = 0;
   MirDropObligationId parameterDrop = 0;
+  MirDropObligationId valueDrop = 0;
+  MirDropObligationId fieldDrop = 0;
 };
 [[nodiscard]]
 std::optional<std::vector<CppMirOwnedParameterFieldBinding>>

@@ -1833,6 +1833,674 @@ int main() {
   }
 }
 
+void testPassiveOwnedParameterConstructorFields() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-passive-owned-parameter-constructor.gti", R"(
+struct Pair<T, U> {
+  mut T first;
+  mut U second;
+
+  Pair(T first_value, U second_value)
+      : first(std::move(first_value)), second(std::move(second_value)) {}
+};
+
+int main() {
+  mut Pair<int32_t, int64_t> value =
+      Pair<int32_t, int64_t>(int32_t(3), int64_t(4));
+  return value.first + int32_t(value.second) - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the passive owned-parameter constructor should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *constructor = nullptr;
+  for (const lang::MirConstructorInstance &candidate :
+       frontend.mir.constructorInstances()) {
+    if (candidate.parameterTypes ==
+            std::vector<lang::SemanticType>{lang::SemanticType::Int32,
+                                            lang::SemanticType::Int64} &&
+        candidate.initializers.size() == 2 &&
+        std::all_of(candidate.initializers.begin(),
+                    candidate.initializers.end(),
+                    [](const lang::MirConstructorInitializer &initializer) {
+                      return initializer.ownedParameter.has_value();
+                    })) {
+      constructor = &candidate;
+      break;
+    }
+  }
+  expect(constructor != nullptr && constructor->mayRaiseDefinedFailure,
+         "the concrete generic constructor should retain both conservative "
+         "owned-parameter initializers");
+  if (constructor == nullptr) {
+    return;
+  }
+
+  const auto bindings =
+      lang::cppMirOwnedParameterFieldBindings(frontend.mir, *constructor);
+  expect(bindings && bindings->size() == 2 &&
+             std::all_of(
+                 bindings->begin(), bindings->end(),
+                 [](const lang::CppMirOwnedParameterFieldBinding &binding) {
+                   return binding.sourcePlace != 0 && binding.movedValue != 0 &&
+                          binding.moveInstruction != 0 &&
+                          binding.initializeInstruction != 0 &&
+                          binding.dropInstruction == 0 &&
+                          binding.parameterDrop == 0;
+                 }),
+         "passive moved parameters should bind both fields while proving the "
+         "absence of lexical drop records");
+  if (!bindings || bindings->empty()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = constructor->id};
+  expect(emitter.supportsFailureBodyText(address) &&
+             emitter.analyzeProgram().ready(),
+         "the exact passive move schedule should make the constructor and "
+         "its caller ready for C++ text emission");
+
+  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+  expect(!artifact.contents.empty() &&
+             artifact.contents.find("first(std::move(__gti_mir_arg_0))") !=
+                 std::string::npos &&
+             artifact.contents.find("second(std::move(__gti_mir_arg_1))") !=
+                 std::string::npos,
+         "production emission should publish both passive fields directly "
+         "from their moved constructor parameters");
+
+  lang::MirProgram malformed = frontend.mir;
+  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      malformed.constructorInstances());
+  auto changed =
+      std::find_if(constructors.begin(), constructors.end(),
+                   [&](const lang::MirConstructorInstance &candidate) {
+                     return candidate.id == constructor->id;
+                   });
+  if (changed != constructors.end()) {
+    auto &places =
+        const_cast<std::vector<lang::MirPlace> &>(changed->body.places);
+    auto source = std::find_if(
+        places.begin(), places.end(), [&](const lang::MirPlace &place) {
+          return place.id == bindings->front().sourcePlace;
+        });
+    if (source != places.end()) {
+      source->traits.drop = lang::DropKind::Lexical;
+    }
+  }
+  const lang::MirConstructorInstance *changedConstructor =
+      malformed.findConstructorInstance(constructor->id);
+  expect(changedConstructor != nullptr &&
+             !lang::cppMirOwnedParameterFieldBindings(malformed,
+                                                      *changedConstructor),
+         "a lexical parameter with no drop schedule should still fail closed");
+}
+
+void testMoveOnlyClassResultReceiverFieldTransfer() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-move-only-result-field-transfer.gti", R"(
+class Node {
+public:
+  mut int32_t value;
+  mut std::unique_ptr<Node> next = std::unique_ptr<Node>();
+
+  Node(int32_t initial, std::unique_ptr<Node> following)
+      : value(std::move(initial)), next(std::move(following)) {}
+};
+
+class List {
+  mut std::unique_ptr<Node> head = std::unique_ptr<Node>();
+
+public:
+  List() {}
+
+  void push(int32_t value) mut {
+    this.head =
+        std::make_unique<Node>(std::move(value), std::move(this.head));
+  }
+
+  int32_t front() { return this.head->value; }
+};
+
+int main() {
+  mut List values = List();
+  values.push(1);
+  return values.front() - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the unique-owner replacement fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *nodeConstructor = nullptr;
+  for (const lang::MirConstructorInstance &candidate :
+       frontend.mir.constructorInstances()) {
+    if (candidate.parameterTypes.size() == 2 &&
+        candidate.parameterTypes.front() == lang::SemanticType::Int32 &&
+        candidate.parameterTypes.back().kind == lang::SemanticType::Class &&
+        candidate.initializers.size() == 2 &&
+        std::all_of(candidate.initializers.begin(),
+                    candidate.initializers.end(),
+                    [](const lang::MirConstructorInitializer &initializer) {
+                      return initializer.ownedParameter.has_value();
+                    })) {
+      nodeConstructor = &candidate;
+      break;
+    }
+  }
+  const auto constructorBindings =
+      nodeConstructor == nullptr
+          ? std::optional<std::vector<lang::CppMirOwnedParameterFieldBinding>>{}
+          : lang::cppMirOwnedParameterFieldBindings(frontend.mir,
+                                                    *nodeConstructor);
+  expect(nodeConstructor != nullptr && constructorBindings &&
+             constructorBindings->size() == 2 &&
+             constructorBindings->front().parameterDrop == 0 &&
+             constructorBindings->front().valueDrop == 0 &&
+             constructorBindings->front().fieldDrop == 0 &&
+             constructorBindings->front().fieldTransferInstruction == 0 &&
+             constructorBindings->back().parameterDrop != 0 &&
+             constructorBindings->back().valueDrop != 0 &&
+             constructorBindings->back().fieldDrop != 0 &&
+             constructorBindings->back().fieldTransferInstruction != 0,
+         "the mixed constructor should distinguish its passive field from "
+         "the exact active Move/Reparent/TransferOut field schedule");
+
+  const lang::MirFunctionInstance *push = nullptr;
+  const lang::MirInstruction *store = nullptr;
+  const lang::MirInstruction *resultDrop = nullptr;
+  const lang::MirPlace *resultShell = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (push != nullptr ||
+            instruction.kind != lang::MirInstructionKind::Assign ||
+            !instruction.destination || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Value ||
+            instruction.operands.front().type.kind !=
+                lang::SemanticType::Class) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            function.body.findPlace(*instruction.destination);
+        if (destination == nullptr ||
+            destination->root != lang::MirPlaceRootKind::This) {
+          continue;
+        }
+        const lang::MirValue *assigned =
+            function.body.findValue(instruction.operands.front().value);
+        const lang::MirInstruction *producer = nullptr;
+        if (assigned != nullptr) {
+          for (const lang::MirBlock &candidateBlock : function.body.blocks) {
+            for (const lang::MirInstruction &candidate :
+                 candidateBlock.instructions) {
+              if (candidate.id == assigned->definition) {
+                producer = &candidate;
+              }
+            }
+          }
+        }
+        const lang::MirFunctionInstance *factory =
+            producer != nullptr && producer->functionTarget
+                ? frontend.mir.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        const bool allocationFactory =
+            factory != nullptr &&
+            std::any_of(factory->body.blocks.begin(),
+                        factory->body.blocks.end(),
+                        [](const lang::MirBlock &candidateBlock) {
+                          return std::any_of(
+                              candidateBlock.instructions.begin(),
+                              candidateBlock.instructions.end(),
+                              [](const lang::MirInstruction &candidate) {
+                                return candidate.intrinsic ==
+                                       lang::IntrinsicKind::AllocateUniqueOwner;
+                              });
+                        });
+        if (!allocationFactory) {
+          continue;
+        }
+        const lang::MirPlace *shell = nullptr;
+        for (const lang::MirPlace &place : function.body.places) {
+          if (place.root == lang::MirPlaceRootKind::Value &&
+              place.value == instruction.operands.front().value &&
+              place.projections.empty()) {
+            shell = &place;
+          }
+        }
+        const lang::MirInstruction *drop = nullptr;
+        if (shell != nullptr) {
+          for (const lang::MirBlock &candidateBlock : function.body.blocks) {
+            for (const lang::MirInstruction &candidate :
+                 candidateBlock.instructions) {
+              if (candidate.kind == lang::MirInstructionKind::Drop &&
+                  candidate.destination == shell->id) {
+                drop = &candidate;
+              }
+            }
+          }
+        }
+        if (shell != nullptr && drop != nullptr) {
+          push = &function;
+          store = &instruction;
+          resultShell = shell;
+          resultDrop = drop;
+        }
+      }
+    }
+  }
+  expect(push != nullptr && store != nullptr && resultShell != nullptr &&
+             resultDrop != nullptr,
+         "the replacement should retain its consuming field store and the "
+         "moved-from result-shell drop");
+  if (push == nullptr || store == nullptr || resultShell == nullptr ||
+      resultDrop == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = push->id};
+  const lang::CppMirBodyEmissionAnalysis bodyAnalysis =
+      emitter.analyze(address);
+  const lang::CppMirProgramEmissionAnalysis programAnalysis =
+      emitter.analyzeProgram();
+  const bool failureBody = emitter.supportsFailureBodyText(address);
+  if (!failureBody || !bodyAnalysis.ready() || !programAnalysis.ready()) {
+    for (const lang::CppMirBodyEmissionIssue &issue : bodyAnalysis.issues) {
+      std::cerr << "move-only field body issue: " << issue.detail << '\n';
+    }
+    for (const lang::CppMirBodyEmissionIssue &issue : programAnalysis.issues) {
+      std::cerr << "move-only field program issue: " << issue.detail << '\n';
+    }
+    std::cerr << "move-only field plain=" << emitter.supportsBodyText(address)
+              << " failure=" << failureBody << '\n';
+  }
+  expect(failureBody && bodyAnalysis.ready() && programAnalysis.ready(),
+         "the verified move-only class store should admit the transformed "
+         "body");
+  if (!failureBody) {
+    return;
+  }
+
+  const std::string text =
+      emitter
+          .emitFailureBodyText(address,
+                               "move-only-result-receiver-field-transfer-v0", 1)
+          .text;
+  const std::string destinationMove =
+      "__gti_mir_p_" + std::to_string(*store->destination) +
+      " = std::move(__gti_mir_p_" + std::to_string(resultShell->id) + ".get())";
+  const std::string shellDestroy =
+      "__gti_mir_p_" + std::to_string(resultShell->id) + ".destroy();";
+  expect(text.find(destinationMove) != std::string::npos &&
+             text.find(shellDestroy) != std::string::npos,
+         "the field store should move from the placement result and destroy "
+         "only its moved-from shell");
+
+  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+  expect(!artifact.contents.empty() &&
+             artifact.contents.find(destinationMove) != std::string::npos &&
+             artifact.contents.find(shellDestroy) != std::string::npos,
+         "production emission should accept the same field publication");
+
+  lang::MirProgram malformedStore = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      malformedStore.functionInstances());
+  auto changed = std::find_if(functions.begin(), functions.end(),
+                              [&](const lang::MirFunctionInstance &candidate) {
+                                return candidate.id == push->id;
+                              });
+  bool forgedPublication = false;
+  if (changed != functions.end()) {
+    for (lang::MirBlock &block : changed->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == store->id && instruction.lifecycle.size() == 1) {
+          instruction.lifecycle.front().conditional = true;
+          forgedPublication = true;
+        }
+      }
+    }
+  }
+  expect(forgedPublication,
+         "the near-miss fixture should expose the field publication event");
+  if (forgedPublication) {
+    const lang::CppMirBodyEmitter malformedEmitter(malformedStore, map);
+    expect(!malformedEmitter.supportsFailureBodyText(address),
+           "a conditional move-only field publication should fail closed");
+  }
+
+  if (nodeConstructor != nullptr && constructorBindings &&
+      !constructorBindings->empty()) {
+    lang::MirProgram malformedConstructor = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            malformedConstructor.constructorInstances());
+    auto changedConstructor =
+        std::find_if(constructors.begin(), constructors.end(),
+                     [&](const lang::MirConstructorInstance &candidate) {
+                       return candidate.id == nodeConstructor->id;
+                     });
+    bool forgedTransfer = false;
+    if (changedConstructor != constructors.end()) {
+      for (lang::MirBlock &block : changedConstructor->body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.id ==
+                  constructorBindings->back().fieldTransferInstruction &&
+              instruction.lifecycle.size() == 1) {
+            instruction.lifecycle.front().conditional = true;
+            forgedTransfer = true;
+          }
+        }
+      }
+    }
+    const lang::MirConstructorInstance *malformedNode =
+        malformedConstructor.findConstructorInstance(nodeConstructor->id);
+    expect(forgedTransfer && malformedNode != nullptr &&
+               !lang::cppMirOwnedParameterFieldBindings(malformedConstructor,
+                                                        *malformedNode),
+           "a conditional rollback transfer should invalidate the complete "
+           "mixed-field constructor proof");
+  }
+}
+
+void testMoveOnlyReceiverFieldLifecycleSchedules() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-forward-list-field-lifecycles.gti", R"(
+#include <std/forward_list>
+
+int main() {
+  mut std::forward_list<int32_t> values = std::forward_list<int32_t>();
+  values.push_front(1);
+  values.pop_front();
+  values.clear();
+  return values.empty() ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the forward-list lifecycle fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  struct FieldTransfer {
+    const lang::MirFunctionInstance *function = nullptr;
+    const lang::MirInstruction *producer = nullptr;
+    const lang::MirInstruction *consumer = nullptr;
+    const lang::MirInstruction *destroy = nullptr;
+    const lang::MirPlace *slot = nullptr;
+    const lang::MirPlace *source = nullptr;
+    lang::MirInstructionId successEndBorrow = 0;
+  };
+  FieldTransfer movedField;
+  FieldTransfer defaultField;
+
+  const auto definitionFor = [](const lang::MirBody &body,
+                                lang::MirInstructionId id) {
+    const lang::MirInstruction *found = nullptr;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          if (found != nullptr) {
+            return static_cast<const lang::MirInstruction *>(nullptr);
+          }
+          found = &instruction;
+        }
+      }
+    }
+    return found;
+  };
+
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            !instruction.destination || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Value ||
+            instruction.operands.front().type.kind !=
+                lang::SemanticType::Class) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            function.body.findPlace(*instruction.destination);
+        const lang::MirValue *assigned =
+            function.body.findValue(instruction.operands.front().value);
+        const lang::MirInstruction *producer =
+            assigned == nullptr
+                ? nullptr
+                : definitionFor(function.body, assigned->definition);
+        if (destination == nullptr ||
+            destination->root != lang::MirPlaceRootKind::This ||
+            destination->projections.size() != 1 || producer == nullptr) {
+          continue;
+        }
+        const lang::MirPlace *slot = nullptr;
+        for (const lang::MirPlace &place : function.body.places) {
+          if (place.root == lang::MirPlaceRootKind::Value &&
+              place.value == assigned->id && place.projections.empty()) {
+            if (slot != nullptr) {
+              slot = nullptr;
+              break;
+            }
+            slot = &place;
+          }
+        }
+        const lang::MirInstruction *destroy = nullptr;
+        if (slot != nullptr) {
+          for (const lang::MirBlock &candidateBlock : function.body.blocks) {
+            for (const lang::MirInstruction &candidate :
+                 candidateBlock.instructions) {
+              if (candidate.kind == lang::MirInstructionKind::Drop &&
+                  candidate.destination == slot->id) {
+                if (destroy != nullptr) {
+                  destroy = nullptr;
+                  break;
+                }
+                destroy = &candidate;
+              }
+            }
+          }
+        }
+        if (slot == nullptr || destroy == nullptr) {
+          continue;
+        }
+        if (producer->kind == lang::MirInstructionKind::Call &&
+            !producer->functionTarget && !producer->constructorTarget &&
+            !producer->receiver && producer->operands.empty() &&
+            producer->intrinsic == lang::IntrinsicKind::None) {
+          defaultField = {.function = &function,
+                          .producer = producer,
+                          .consumer = &instruction,
+                          .destroy = destroy,
+                          .slot = slot};
+          continue;
+        }
+        const lang::MirPlace *source =
+            producer->kind == lang::MirInstructionKind::Move &&
+                    producer->operands.size() == 1
+                ? function.body.findPlace(producer->operands.front().place)
+                : nullptr;
+        if (source == nullptr || source->root != lang::MirPlaceRootKind::Loan ||
+            source->projections.size() != 1) {
+          continue;
+        }
+        lang::MirInstructionId successEndBorrow = 0;
+        for (const lang::MirBlock &candidateBlock : function.body.blocks) {
+          const auto producerPosition =
+              std::find_if(candidateBlock.instructions.begin(),
+                           candidateBlock.instructions.end(),
+                           [&](const lang::MirInstruction &candidate) {
+                             return candidate.id == producer->id;
+                           });
+          if (producerPosition == candidateBlock.instructions.end()) {
+            continue;
+          }
+          const auto consumerPosition = std::next(producerPosition);
+          if (consumerPosition == candidateBlock.instructions.end() ||
+              consumerPosition->id != instruction.id) {
+            continue;
+          }
+          const auto endBorrow = std::find_if(
+              std::next(consumerPosition), candidateBlock.instructions.end(),
+              [&](const lang::MirInstruction &candidate) {
+                return candidate.kind == lang::MirInstructionKind::EndBorrow &&
+                       candidate.loan && *candidate.loan == source->loan;
+              });
+          const auto drop =
+              std::find_if(endBorrow, candidateBlock.instructions.end(),
+                           [&](const lang::MirInstruction &candidate) {
+                             return candidate.id == destroy->id;
+                           });
+          if (endBorrow != candidateBlock.instructions.end() &&
+              drop != candidateBlock.instructions.end() && endBorrow < drop) {
+            successEndBorrow = endBorrow->id;
+          }
+        }
+        movedField = {.function = &function,
+                      .producer = producer,
+                      .consumer = &instruction,
+                      .destroy = destroy,
+                      .slot = slot,
+                      .source = source,
+                      .successEndBorrow = successEndBorrow};
+      }
+    }
+  }
+
+  expect(movedField.function != nullptr && movedField.producer != nullptr &&
+             movedField.consumer != nullptr && movedField.destroy != nullptr &&
+             movedField.slot != nullptr && movedField.source != nullptr &&
+             movedField.successEndBorrow != 0,
+         "pop_front should expose the exact borrowed-field move, replace, "
+         "end-borrow, and shell-drop schedule");
+  expect(defaultField.function != nullptr && defaultField.producer != nullptr &&
+             defaultField.consumer != nullptr &&
+             defaultField.destroy != nullptr && defaultField.slot != nullptr,
+         "clear should expose the exact default-construction, receiver-field "
+         "replace, and shell-drop schedule");
+  if (movedField.function == nullptr || movedField.consumer == nullptr ||
+      movedField.slot == nullptr || movedField.successEndBorrow == 0 ||
+      defaultField.function == nullptr || defaultField.producer == nullptr ||
+      defaultField.consumer == nullptr || defaultField.slot == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress movedAddress{.kind = lang::MirBodyKind::Function,
+                                          .owner = movedField.function->id};
+  const lang::MirBodyAddress defaultAddress{.kind = lang::MirBodyKind::Function,
+                                            .owner = defaultField.function->id};
+  expect(emitter.supportsFailureBodyText(movedAddress) &&
+             emitter.supportsFailureBodyText(defaultAddress) &&
+             emitter.analyzeProgram().ready(),
+         "the two exact receiver-field lifecycle schedules should be ready "
+         "for transformed C++ emission");
+
+  const std::string movedText =
+      emitter
+          .emitFailureBodyText(movedAddress,
+                               "move-only-borrowed-field-transfer-v0", 1)
+          .text;
+  const std::string defaultText =
+      emitter
+          .emitFailureBodyText(defaultAddress,
+                               "move-only-default-field-transfer-v0", 1)
+          .text;
+  const auto destinationMove = [](const FieldTransfer &transfer) {
+    return "__gti_mir_p_" + std::to_string(*transfer.consumer->destination) +
+           " = std::move(__gti_mir_p_" + std::to_string(transfer.slot->id) +
+           ".get())";
+  };
+  const auto shellDestroy = [](const FieldTransfer &transfer) {
+    return "__gti_mir_p_" + std::to_string(transfer.slot->id) + ".destroy();";
+  };
+  expect(movedText.find("__gti_mir_p_" + std::to_string(movedField.slot->id) +
+                        ".construct(std::move(") != std::string::npos &&
+             movedText.find(destinationMove(movedField)) != std::string::npos &&
+             movedText.find(shellDestroy(movedField)) != std::string::npos,
+         "pop_front should construct from the borrowed field, replace the "
+         "receiver field, and destroy only the moved-from shell");
+  expect(defaultText.find("__gti_mir_p_" +
+                          std::to_string(defaultField.slot->id) +
+                          ".construct();") != std::string::npos &&
+             defaultText.find(destinationMove(defaultField)) !=
+                 std::string::npos &&
+             defaultText.find(shellDestroy(defaultField)) != std::string::npos,
+         "clear should construct the empty owner in its MIR slot, replace "
+         "the receiver field, and destroy only the moved-from shell");
+
+  lang::MirProgram malformedMove = frontend.mir;
+  auto &moveFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      malformedMove.functionInstances());
+  auto changedMove =
+      std::find_if(moveFunctions.begin(), moveFunctions.end(),
+                   [&](const lang::MirFunctionInstance &candidate) {
+                     return candidate.id == movedField.function->id;
+                   });
+  bool removedEndBorrow = false;
+  if (changedMove != moveFunctions.end()) {
+    for (lang::MirBlock &block : changedMove->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == movedField.successEndBorrow) {
+          instruction.loan.reset();
+          removedEndBorrow = true;
+        }
+      }
+    }
+  }
+  expect(removedEndBorrow,
+         "the pop_front near miss should expose its success end-borrow");
+  if (removedEndBorrow) {
+    const lang::CppMirBodyEmitter malformedEmitter(malformedMove, map);
+    expect(!malformedEmitter.supportsFailureBodyText(movedAddress),
+           "a borrowed-field move without the sequenced success end-borrow "
+           "should fail closed");
+  }
+
+  lang::MirProgram malformedDefault = frontend.mir;
+  auto &defaultFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      malformedDefault.functionInstances());
+  auto changedDefault =
+      std::find_if(defaultFunctions.begin(), defaultFunctions.end(),
+                   [&](const lang::MirFunctionInstance &candidate) {
+                     return candidate.id == defaultField.function->id;
+                   });
+  bool forgedActivation = false;
+  if (changedDefault != defaultFunctions.end()) {
+    for (lang::MirBlock &block : changedDefault->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == defaultField.producer->id &&
+            instruction.lifecycle.size() == 1) {
+          instruction.lifecycle.front().conditional = true;
+          forgedActivation = true;
+        }
+      }
+    }
+  }
+  expect(forgedActivation,
+         "the clear near miss should expose its slot activation event");
+  if (forgedActivation) {
+    const lang::CppMirBodyEmitter malformedEmitter(malformedDefault, map);
+    expect(!malformedEmitter.supportsFailureBodyText(defaultAddress),
+           "a conditional default-value activation should fail closed");
+  }
+}
+
 void testNestedReceiverFieldProjection() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-body-nested-receiver-field.gti", R"(
@@ -6712,6 +7380,12 @@ constexpr NamedTest kTests[] = {
      testContainedOwningStringFieldConstructor},
     {"testBodyOrderedOwnedParameterConstructor",
      testBodyOrderedOwnedParameterConstructor},
+    {"testPassiveOwnedParameterConstructorFields",
+     testPassiveOwnedParameterConstructorFields},
+    {"testMoveOnlyClassResultReceiverFieldTransfer",
+     testMoveOnlyClassResultReceiverFieldTransfer},
+    {"testMoveOnlyReceiverFieldLifecycleSchedules",
+     testMoveOnlyReceiverFieldLifecycleSchedules},
     {"testNestedReceiverFieldProjection", testNestedReceiverFieldProjection},
     {"testContainedAbstractBaseConstructor",
      testContainedAbstractBaseConstructor},

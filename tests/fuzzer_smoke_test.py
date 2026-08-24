@@ -2,7 +2,8 @@
 
 """Bounded smoke for the Q-FUZZ-01B libFuzzer harnesses.
 
-    python3 tests/fuzzer_smoke_test.py <parser> <formatter> <pipeline> <corpus>
+    python3 tests/fuzzer_smoke_test.py <parser> <formatter> <pipeline> \
+        <source-loader> <corpus>
 
 Proves the proposal's exit gate, not language coverage: every harness executes
 its fixed seed corpus under ASan/UBSan (-runs=0, deterministic), and an
@@ -41,15 +42,16 @@ def run(argv: list[str], env: dict | None = None) -> subprocess.CompletedProcess
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         print(__doc__, file=sys.stderr)
         return 2
     harnesses = {
         "parser": Path(sys.argv[1]),
         "formatter": Path(sys.argv[2]),
         "pipeline": Path(sys.argv[3]),
+        "source_loader": Path(sys.argv[4]),
     }
-    corpus_root = Path(sys.argv[4])
+    corpus_root = Path(sys.argv[5])
 
     for name, binary in harnesses.items():
         corpus = corpus_root / name
@@ -93,6 +95,38 @@ def main() -> int:
             clean = run([str(parser), str(written[0])])
             check(clean.returncode == 0,
                   "artifact is inert without the injection gate")
+
+        # Each strengthened invariant has a property-specific perturbation
+        # that reaches its real comparison. Direct single-input mode is enough
+        # here because the generic injection above already proves artifact
+        # capture and replay for harness failures.
+        property_input = temp / "property.gti"
+        property_input.write_bytes(
+            INJECTED_TOKEN + b"\nint main() { return 0; }\n"
+        )
+        properties = [
+            ("formatter", "formatter-idempotence", "not idempotent"),
+            ("formatter", "formatter-token", "lexer token kind/text changed"),
+            ("pipeline", "pipeline-acceptance", "acceptance is not deterministic"),
+            ("pipeline", "pipeline-diagnostics", "diagnostics are not deterministic"),
+            ("pipeline", "pipeline-phase-facts", "phase facts are not deterministic"),
+            ("pipeline", "pipeline-diagnostic-range", "diagnostic range is outside"),
+            ("pipeline", "pipeline-unclassified", "no classified outcome"),
+            ("pipeline", "pipeline-empty-artifact", "empty artifact"),
+            ("pipeline", "pipeline-artifact", "artifacts are not deterministic"),
+            ("source_loader", "source-loader-snapshot", "not deterministic"),
+        ]
+        for harness, property_name, message in properties:
+            injected = run(
+                [str(harnesses[harness]), str(property_input)],
+                env={"GTI_FUZZ_INJECT_PROPERTY": property_name},
+            )
+            detail = injected.stderr or injected.stdout
+            check(
+                injected.returncode != 0 and message in detail,
+                f"{property_name}: injected negative reaches invariant",
+                detail[-1500:],
+            )
 
     if FAILURES:
         print(f"\n{len(FAILURES)} fuzzer smoke checks failed", file=sys.stderr)
