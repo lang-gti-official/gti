@@ -1,14 +1,17 @@
 # Ranges and iterators
 
-Status: current through L-RANGE-01 read-only range loans
+Status: current through L-RANGE-02 mutable iteration and invalidation
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
-L-RANGE-01 supports two compiler-verified strategies: direct indexed traversal
-of a fixed array and the exact member protocol below for a nominal class.
+The implemented range-loan layer supports two compiler-verified strategies:
+direct indexed traversal of a fixed array and the exact member protocol below
+for a nominal class. Both strategies support read-only iteration and bounded
+mutable element iteration.
 Iterators and sentinels may be self-contained values, or an imported
-standard-library iterator may use the confined one-owner contract to retain one
-read-only checked storage borrow.
+standard-library iterator may use the confined one-owner contract to retain a
+read-only checked storage borrow or the compiler-generated mutable range
+capability.
 
 ```gti
 for (T value : range) {
@@ -16,11 +19,14 @@ for (T value : range) {
 }
 ```
 
-The compiler evaluates the range expression exactly once. An addressable
-lvalue is retained by one read-only hidden owner reference; an owned prvalue is
-transferred into hidden loop storage. A second read-only range carrier borrows
-that owner. Nominal ranges then use the equivalent compiler-private core
-sequence (`auto&` is otherwise confined to a range declaration):
+The compiler evaluates the range expression exactly once. For a read-only
+loop, an addressable lvalue is retained by one read-only hidden owner
+reference. For a mutable-reference loop, an addressable lvalue must provide a
+mutable place and is retained by one exclusive hidden owner reference. An
+owned prvalue is transferred into hidden loop storage and can supply either
+access mode. A second range carrier borrows that owner. Nominal read-only
+ranges then use the equivalent compiler-private core sequence (`auto&` is
+otherwise confined to a range declaration):
 
 ```gti
 auto owner = range;            // read-only reference for an lvalue, owned value for a prvalue
@@ -32,6 +38,27 @@ for (; iterator != sentinel; ++iterator) {
   use(value);
 }
 ```
+
+A mutable-reference declaration selects a distinct mutable endpoint instead
+of overloading the read-only operation:
+
+```gti
+mut auto owner = range;        // mutable reference for an lvalue, owned value for a prvalue
+mut auto& stable_range = owner;
+mut auto iterator = stable_range.begin_mut();
+auto sentinel = stable_range.end();
+for (; iterator != sentinel; ++iterator) {
+  mut T& value = *iterator;
+  mutate(value);
+}
+```
+
+`begin_mut()` is ordinary source-level protocol, not special C++ lookup. Its
+iterator must retain the exclusive range dependency and return a mutable
+checked reference from mutable dereference. Keeping the mutable endpoint
+separate lets ordinary read-only calls such as `range.begin()` and
+`range.end()` remain usable without accidentally requesting an exclusive
+loan.
 
 The names above are explanatory. Real lowering uses reserved generated
 bindings that are absent from completion, semantic tokens, and user lookup.
@@ -46,15 +73,17 @@ perform native range lookup. `continue` targets the core increment block and
 The hidden steps follow the ordinary full-expression order in
 [Execution Section 4.2.3](execution.md#423-full-expressions-and-cleanup). The
 range expression executes once, followed by `begin()` and `end()` in that
-order for a nominal range. Each comparison completes before the body; the
-element binding and its read-only loan are live only for that iteration and
-end before increment; increment completes before the next comparison. The
-sentinel, iterator, range carrier, and owner are cleaned in reverse
-initialization order on normal completion, `break`, `return`, and every defined
-failure path. An owned temporary is destroyed exactly once after its last
-active child loan; emitted C++ lifetime extension is not language authority.
+order for a read-only nominal range, or `begin_mut()` and `end()` for a mutable
+one. Each comparison completes before the body; the
+element binding and its read-only or mutable child loan are live only for that
+iteration and end before increment; increment completes before the next
+comparison. The sentinel, iterator, range carrier, and owner are cleaned in
+reverse initialization order on normal completion, `break`, `return`, and
+every defined failure path. An owned temporary is destroyed exactly once after
+its last active child loan; emitted C++ lifetime extension is not language
+authority.
 
-## Structural protocol
+## Read-only structural protocol
 
 A range must provide accessible, exact zero-argument `begin()` and `end()`
 members. `begin()` returns an iterator value. `end()` may return the same type
@@ -78,8 +107,19 @@ range)` and `for (auto& value : range)` bind a loop-bounded, non-escaping,
 read-only non-null reference. Assigning through that reference or storing,
 capturing, or returning it beyond the iteration is ill-formed.
 
-L-RANGE-01 deliberately rejects a mutable reference declaration even when a
-nominal iterator exposes writable dereference:
+## Mutable structural protocol
+
+`for (mut T& value : range)` and `for (mut auto& value : range)` request
+mutable iteration. A fixed array needs no public members, but an lvalue array
+must itself be mutable. A nominal class must provide all of the read-only
+sentinel/comparison/increment relationships above plus:
+
+- exact zero-argument `begin_mut()` on a mutable receiver;
+- an iterator that carries the returned mutable owner dependency; and
+- mutable `operator*() mut` returning exact `mut T&`.
+
+The compiler holds one exclusive range loan for the complete traversal and
+creates one mutable child element loan per iteration:
 
 ```gti
 for (mut auto& value : mutable_range) {
@@ -87,11 +127,24 @@ for (mut auto& value : mutable_range) {
 }
 ```
 
-This reports `GTI-S2083`; mutable element loans and container invalidation are
-reserved for L-RANGE-02. Pointer ranges, dynamically sized spans/views, and
-other non-array/non-nominal forms are likewise unsupported. Moving a named
-range into owned loop storage consumes that owner, so later reuse is rejected
-by the ordinary ownership rules.
+See [`examples/65-mutable-ranges.gti`](../../examples/65-mutable-ranges.gti)
+for fixed-array and `std::vector` mutation in one runnable program.
+
+The element child ends before `continue`, increment, `break`, `return`, normal
+cleanup, or failure cleanup. It cannot be returned, stored, captured, or
+otherwise escape the iteration. The parent excludes every overlapping read,
+write, move, drop, or second traversal of the owner while the loop is active;
+the child is the sole authorized mutation path. This conservatively rejects
+container operations such as `reserve`, `push_back`, and `clear` even when a
+particular execution might not relocate storage. It also rejects moving the
+owner during iteration. Pointer ranges, dynamically sized spans/views, and
+other non-array/non-nominal forms remain unsupported. Moving a named range
+into owned loop storage consumes that owner, so later reuse is rejected by the
+ordinary ownership rules.
+
+`GTI-S2083` diagnoses an immutable owner or a nominal range without the exact
+mutable endpoint. Ordinary retained-loan diagnostics diagnose overlapping
+access and invalidation attempts.
 
 ## Generic iterator contracts
 
@@ -138,11 +191,11 @@ MIR control flow, and replaceable-backend call targets. It is enough for
 self-contained iterators and sentinels, including generic virtual operator
 contracts.
 
-Source-defined container iterators may now retain one read-only owner reference
-through GTI's confined stored-reference class contract. Constructor and method
-results carry the owner dependency through semantics, HIR, and MIR. A free
-function or static factory may now return a cursor or view derived from one
-eligible read-only parameter. The single dependency survives ordinary calls,
+Source-defined container iterators may retain one read-only or mutable owner
+reference through GTI's confined stored-reference class contract. Constructor
+and method results carry the owner dependency through semantics, HIR, and MIR.
+A free function or static factory may now return a cursor or view derived from
+one eligible read-only parameter. The single dependency survives ordinary calls,
 concrete generic carrier relays, explicit moves, returns, and drops. An
 iterator explicitly created before an ordinary source `while`, body-first
 `do`/`while`, or classic `for` stays active across backedges and ends at the
@@ -154,22 +207,26 @@ exercises this path: its
 iterator retains a trusted read-only borrow of the private checked storage
 while the compiler remains unaware of the public container and iterator names.
 The initial source-defined `std::vector<T>` uses the same iterator path. Its
-iterator carries an index plus the storage borrow; it does not expose an
-address or unchecked cursor. An active iterator therefore blocks reserve,
-push, clear, movement, and other mutable receiver operations under the
-existing retained-loan rules.
+read-only iterator carries an index plus a read-only storage borrow. Its
+`begin_mut()` endpoint returns a separate mutable iterator carrying an index
+plus the exclusive storage borrow, and mutable dereference uses checked
+storage access. Neither iterator exposes an address or unchecked cursor. An
+active mutable range therefore blocks reserve, push, clear, movement, and
+other overlapping owner operations under the retained-loan rules.
 
 Each range statement additionally has a compiler-owned semantic/HIR/MIR plan
 with exact owner, range, iterator, sentinel, element, operation, access, loan,
-loop-edge, and cleanup identities. Multiple nested read-only loops retain
-separate plans. Fixed arrays use the indexed plan directly and need no public
-`begin()` or `end()`. The MIR verifier rejects a writable or escaping loan, an
-inconsistent array strategy, a mismatched owner/drop, or a broken
-condition/body/increment/cleanup cycle before backend admission.
+parent/child, loop-edge, and cleanup identities. Multiple non-overlapping
+loops retain separate plans. Fixed arrays use the indexed plan directly and
+need no public `begin()` or `end()`. The MIR verifier rejects an access-mode
+widening, a mutable child detached from its exclusive parent, an escaping
+element loan, an inconsistent array strategy, a mismatched owner/drop, or a
+broken condition/body/increment/cleanup cycle before backend admission.
 
-Mutable/exclusive range dependencies, invalidation-aware mutation,
-multiple-origin stored views, pointer decay, and dynamically sized spans or
-string views remain later lifetime layers. Confined generic `void` operations,
+Multiple-origin stored views, pointer decay, and dynamically sized spans or
+string views remain later lifetime layers. Mutable iteration currently uses
+conservative whole-owner invalidation exclusion rather than a public
+container-specific invalidation trait. Confined generic `void` operations,
 exact `bool`
 predicates, exact context-supplied non-reference value results without tracked
 borrowed state or lambda identity, and proven forwarding through other

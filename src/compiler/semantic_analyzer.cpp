@@ -986,7 +986,10 @@ public:
       analyzingConstructorInitializer = true;
       const SemanticType fieldType =
           field == nullptr ? SemanticType::Unknown
-                           : typeOf(field->type(), owner.namespaceScope);
+                           : typeOf(field->type(),
+                                    field->isMutable() ? Mutability::Mutable
+                                                       : Mutability::Immutable,
+                                    owner.namespaceScope);
       SemanticType valueType = SemanticType::Unknown;
       if (initializer.arguments.size() != 1) {
         report(target,
@@ -1361,19 +1364,30 @@ public:
   }
 
   void visitRangeForStmt(const RangeForStmt &stmt) override {
-    if (stmt.bindingMutability() == Mutability::Mutable &&
-        stmt.bindingType().reference) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2083", DiagnosticPhase::Semantics, stmt.bindingName(),
-          "Mutable element loans are not available in read-only range "
-          "iteration.");
-      diagnostic.hints.emplace_back(
-          "Use a read-only 'T&' or 'auto&' element binding, or copy each "
-          "element into a mutable by-value binding; mutable range loans are "
-          "reserved for L-RANGE-02.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
     analyze(stmt.lowered());
+
+    const bool mutableElementRequested =
+        stmt.bindingMutability() == Mutability::Mutable &&
+        stmt.bindingType().reference.has_value();
+    bool reportedMutableRangeContract = false;
+    if (mutableElementRequested && stmt.ownerBinding() != nullptr) {
+      const ExprPtr &source = stmt.ownerBinding()->initializer();
+      const ExpressionInfo *sourceInfo =
+          source ? semanticModel.findExpression(*source) : nullptr;
+      if (sourceInfo != nullptr &&
+          sourceInfo->category == ValueCategory::Place &&
+          sourceInfo->access != AccessMode::Mutable) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2083", DiagnosticPhase::Semantics, stmt.bindingName(),
+            "Mutable range iteration requires a mutable owner or mutable "
+            "range reference.");
+        diagnostic.hints.emplace_back(
+            "Declare the range owner mutable, or use a read-only element "
+            "reference without 'mut'.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        reportedMutableRangeContract = true;
+      }
+    }
 
     const BindingInfo *owner =
         stmt.ownerBinding() == nullptr
@@ -1408,12 +1422,18 @@ public:
         rangeType.kind != SemanticType::Class) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
-          "Read-only range iteration requires a fixed array or a class "
-          "implementing the exact structural iterator protocol; found '" +
+          std::string(mutableElementRequested ? "Mutable" : "Read-only") +
+              " range iteration requires a fixed array or a class "
+              "implementing the exact structural iterator protocol; found '" +
               typeSpelling(rangeType) + "'.");
       diagnostic.hints.emplace_back(
-          "Provide exact read-only begin()/end(), comparison, dereference, "
-          "and prefix-increment operations, or iterate a fixed array.");
+          mutableElementRequested
+              ? "Provide exact begin_mut()/end(), comparison, mutable "
+                "dereference, and prefix-increment operations, or iterate a "
+                "mutable fixed array."
+              : "Provide exact read-only begin()/end(), comparison, "
+                "dereference, and prefix-increment operations, or iterate a "
+                "fixed array.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
 
@@ -1439,6 +1459,38 @@ public:
       elementType = std::move(referent);
     }
     const ForStmt *core = stmt.coreLoop();
+    const FunctionId beginFunction =
+        stmt.iteratorBinding() == nullptr
+            ? 0
+            : selectedCall(stmt.iteratorBinding()->initializer());
+    const FunctionId endFunction =
+        stmt.sentinelBinding() == nullptr
+            ? 0
+            : selectedCall(stmt.sentinelBinding()->initializer());
+    const FunctionId compareFunction =
+        core == nullptr ? 0 : selectedOperator(core->condition());
+    const FunctionId dereferenceFunction =
+        stmt.elementBinding() == nullptr
+            ? 0
+            : selectedOperator(stmt.elementBinding()->initializer());
+    const FunctionId incrementFunction =
+        core == nullptr ? 0 : selectedOperator(core->increment());
+    const bool mutableProtocolAvailable =
+        rangeType.kind == SemanticType::Array ||
+        (beginFunction != 0 && endFunction != 0 && compareFunction != 0 &&
+         dereferenceFunction != 0 && incrementFunction != 0 &&
+         elementAccess == AccessMode::Mutable);
+    if (mutableElementRequested && !mutableProtocolAvailable &&
+        !reportedMutableRangeContract) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.bindingName(),
+          "This range does not provide mutable element loans for a mutable "
+          "reference binding.");
+      diagnostic.hints.emplace_back(
+          "Provide begin_mut() and a mutable dereference path that returns "
+          "'mut T&', or use a read-only element reference.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     semanticModel.record(
         stmt,
         {.strategy = rangeType.kind == SemanticType::Array
@@ -1458,22 +1510,11 @@ public:
          .element = element == nullptr ? 0 : element->symbol,
          .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
          .elementLoan = element == nullptr ? 0 : element->retainedLoan,
-         .beginFunction =
-             stmt.iteratorBinding() == nullptr
-                 ? 0
-                 : selectedCall(stmt.iteratorBinding()->initializer()),
-         .endFunction =
-             stmt.sentinelBinding() == nullptr
-                 ? 0
-                 : selectedCall(stmt.sentinelBinding()->initializer()),
-         .compareFunction =
-             core == nullptr ? 0 : selectedOperator(core->condition()),
-         .dereferenceFunction =
-             stmt.elementBinding() == nullptr
-                 ? 0
-                 : selectedOperator(stmt.elementBinding()->initializer()),
-         .incrementFunction =
-             core == nullptr ? 0 : selectedOperator(core->increment()),
+         .beginFunction = beginFunction,
+         .endFunction = endFunction,
+         .compareFunction = compareFunction,
+         .dereferenceFunction = dereferenceFunction,
+         .incrementFunction = incrementFunction,
          .arrayLength = rangeType.kind == SemanticType::Array &&
                                 rangeType.arrayLengthParameterId == 0
                             ? rangeType.arrayLength
@@ -4323,7 +4364,8 @@ public:
     if (objectType.kind == SemanticType::Array) {
       const bool generatedRangeEndpoint =
           expr.name().generated &&
-          (expr.name().lexeme == "begin" || expr.name().lexeme == "end");
+          (expr.name().lexeme == "begin" || expr.name().lexeme == "begin_mut" ||
+           expr.name().lexeme == "end");
       if (expr.name().lexeme == "size" || generatedRangeEndpoint) {
         if (!analyzingCallCallee) {
           report(expr.name(),
@@ -8507,8 +8549,9 @@ private:
         initializerInfo->category == ValueCategory::Place &&
         initializerType != SemanticType::Unknown;
     if (rangeOwnerReference) {
-      inferredType =
-          SemanticType::referenceTo(initializerType, AccessMode::ReadOnly);
+      inferredType = SemanticType::referenceTo(
+          initializerType,
+          declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly);
     }
     if (initializerType == SemanticType::Void ||
         initializerType == SemanticType::Function ||
@@ -9850,6 +9893,19 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (unary->rangeObject()) {
+        const SemanticType *rangeType =
+            semanticModel.findType(*unary->rangeObject());
+        const std::optional<RetainedLoanSource> rangeSource =
+            retainedLoanSource(unary->rangeObject());
+        const SemanticLoanInfo *rangeLoan =
+            rangeSource ? semanticModel.findLoan(rangeSource->loan) : nullptr;
+        if ((rangeType != nullptr && rangeType->kind == SemanticType::Array) ||
+            (rangeLoan != nullptr &&
+             rangeLoan->access == AccessMode::Mutable)) {
+          return rangeSource;
+        }
+      }
       return retainedLoanSource(unary->right());
     }
     if (const ResolvedOperatorInfo *resolved =
@@ -10916,6 +10972,13 @@ private:
         semanticModel.recordBindingLoan(binding, source->loan);
         return;
       }
+      if (retainedStoredBorrow && binding.isRangeIterator() &&
+          sourceLoan->access == AccessMode::Mutable &&
+          carrierAccess == AccessMode::Mutable) {
+        attachLoanCarrier(source->loan, *carrier, carrierSymbol, false);
+        semanticModel.recordBindingLoan(binding, source->loan);
+        return;
+      }
       if (retainedStoredBorrow && (sourceLoan->access == AccessMode::Mutable ||
                                    sourceLoan->parent != 0)) {
         report(expressionToken(expression),
@@ -10941,6 +11004,16 @@ private:
       }
 
       SemanticLoanPlace childPlace = retainedLoanPlace(expression);
+      const auto *rangeElement = dynamic_cast<const Unary *>(expression.get());
+      if (carrierAccess == AccessMode::Mutable && rangeElement != nullptr &&
+          rangeElement->oper().kind == TokenKind::STAR &&
+          rangeElement->rangeObject()) {
+        // A mutable range element is a child of the exclusive range loan,
+        // even though its runtime address is produced through the iterator.
+        // Keep semantic overlap authority rooted at the protected owner; MIR
+        // separately retains the concrete dereference result address.
+        childPlace = sourceLoan->place;
+      }
       if (childPlace.root == 0 && !childPlace.receiver) {
         childPlace = sourceLoan->place;
       }
@@ -17926,7 +17999,8 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren) {
     const bool generatedBegin =
-        member.name().generated && member.name().lexeme == "begin";
+        member.name().generated && (member.name().lexeme == "begin" ||
+                                    member.name().lexeme == "begin_mut");
     const bool generatedEnd =
         member.name().generated && member.name().lexeme == "end";
     if (member.name().lexeme != "size" && !generatedBegin && !generatedEnd) {
@@ -24632,7 +24706,8 @@ private:
             StoredReferenceInfo{.field = field.declaration,
                                 .type = fieldType,
                                 .access = fieldType.referenceAccess};
-        if (field.declaration->isMutable()) {
+        if (field.declaration->isMutable() &&
+            !isDefaultLibraryStorageBorrowCarrier(owner)) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2045", DiagnosticPhase::Semantics,
               field.declaration->name(),
@@ -26889,8 +26964,15 @@ private:
         const SemanticType *rangeType =
             semanticModel.findType(*unary->rangeObject());
         if (rangeType != nullptr && rangeType->kind == SemanticType::Array) {
+          const ExpressionInfo *rangeInfo =
+              semanticModel.findExpression(*unary->rangeObject());
           return expressionInfo(std::move(type), ValueCategory::Place,
-                                AccessMode::ReadOnly);
+                                rangeInfo != nullptr &&
+                                        rangeInfo->category ==
+                                            ValueCategory::Place &&
+                                        rangeInfo->access == AccessMode::Mutable
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly);
         }
       }
       if (const ResolvedOperatorInfo *resolved =

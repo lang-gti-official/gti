@@ -906,6 +906,12 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
     )
     add_test(
+      NAME mutable_range_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_range_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
       NAME evaluation_order_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/evaluation_order_runtime_test.py"
@@ -1113,7 +1119,8 @@ if(BUILD_TESTING)
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
         defined_integer_runtime_3of4 defined_integer_runtime_4of4
         expected_wrong_state_runtime returned_class_field_runtime
-        reference_parameter_range_runtime evaluation_order_runtime
+        reference_parameter_range_runtime mutable_range_runtime
+        evaluation_order_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow
         mir_backend_first_family_runtime failure_descriptor_backend_compile

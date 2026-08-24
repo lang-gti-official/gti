@@ -62,7 +62,8 @@
     "61-global-borrow-returns.gti": 34,
     "62-native-c-boundaries.gti": 39,
     "63-random-engine.gti": 124,
-    "64-restricted-arithmetic-operators.gti": 39
+    "64-restricted-arithmetic-operators.gti": 39,
+    "65-mutable-ranges.gti": 49
   },
-  "total": 2962
+  "total": 3011
 }
