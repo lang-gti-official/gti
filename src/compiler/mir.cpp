@@ -1998,9 +1998,7 @@ successors(const MirTerminator &terminator) {
             const bool compatibleReadOnlyDependency =
                 body.loans[loan - 1].kind == MirLoanKind::CallResult &&
                 body.loans[loan - 1].access == AccessMode::ReadOnly &&
-                other.access == AccessMode::ReadOnly &&
-                (other.kind == MirLoanKind::CallResult ||
-                 (other.kind == MirLoanKind::Stored && other.parent == 0));
+                other.access == AccessMode::ReadOnly;
             if (canonicalPlacesOverlap(childPlace, otherPlace) &&
                 !compatibleReadOnlyDependency) {
               return failure(body, owner,

@@ -926,11 +926,14 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
 
   const std::size_t initializationBodyCalls =
       programInitializationBodyCallCount(program);
-  if (initializationBodyCalls != (initializationExpected ? 1U : 0U)) {
+  const bool hostedInitializationCallExpected =
+      initializationExpected && program.hostedStartupPlan() &&
+      program.hostedStartup() != nullptr;
+  if (initializationBodyCalls != (hostedInitializationCallExpected ? 1U : 0U)) {
     addIssue(
         plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
-        "hosted startup must call exact Module/0 once if and only if "
-        "the verified program-initialization plan is executable",
+        "a present hosted startup must call exact Module/0 once if and only "
+        "if the verified program-initialization plan is executable",
         program.hostedStartupPlan()
             ? std::optional<MirBodyAddress>{{.kind = MirBodyKind::HostedStartup,
                                              .owner =
