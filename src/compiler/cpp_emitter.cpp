@@ -3203,7 +3203,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const LoweredDestructorDeclaration &destructor,
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &classDeclaration) {
-    static_cast<void>(destructor);
+    if (destructor.specifier) {
+      return;
+    }
     writeIndent();
     if (classDeclaration.polymorphic) {
       output << "virtual ";

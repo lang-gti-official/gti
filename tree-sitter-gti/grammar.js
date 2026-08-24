@@ -519,7 +519,10 @@ module.exports = grammar({
         field("name", $.identifier),
         "(",
         ")",
-        field("body", $.block),
+        choice(
+          field("body", $.block),
+          field("specifier", $.special_member_specifier),
+        ),
       ),
 
     method_declaration: ($) =>

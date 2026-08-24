@@ -386,6 +386,7 @@ constructor-declaration
                        = IDENTIFIER [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block
+                       | IDENTIFIER "(" ")" default-member-specifier
                        | IDENTIFIER special-constructor-parameter-clause
                          special-member-specifier ;
 
@@ -395,6 +396,9 @@ special-constructor-parameter-clause
 special-member-specifier
                        = "=" ( "default" | "delete" ) ";" ;
 
+default-member-specifier
+                       = "=" "default" ";" ;
+
 constructor-initializer-list
                        = ":" constructor-initializer
                          { "," constructor-initializer } ;
@@ -403,7 +407,8 @@ constructor-initializer
                        = base-type "(" [ initializer-expression
                          { "," initializer-expression } ] ")" ;
 
-destructor-declaration = "~" IDENTIFIER "(" ")" block ;
+destructor-declaration = "~" IDENTIFIER "(" ")"
+                         ( block | default-member-specifier ) ;
 
 method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
                          [ "mut" ] type IDENTIFIER
@@ -498,6 +503,13 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    compiler generates `Type()` if every field has a declaration initializer,
    even when other constructor overloads exist.
 
+   The exact declaration `Type() = default;` explicitly selects that same
+   structural operation. It has no parameters, generic parameters, requires
+   clause, initializer list, or source body and is valid only when the
+   compiler-generated operation would be available. Its written access still
+   governs source construction. `= delete` is not an ordinary-constructor
+   policy in the current language.
+
    Copy/move construction and assignment are derived independently from
    lifecycle traits rather than C++ special-member suppression. A class or
    struct may make its copy and move construction policy explicit with one
@@ -509,13 +521,16 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    initialization and active-drop transitions are represented. Copy/move
    assignment remains an independently derived operation.
 
-   A class or struct may declare one public `~Type()` body. It is automatically
-   invoked, has an implicitly mutable receiver, cannot return or take
-   parameters, and runs before reverse-order field destruction. Cleanup-owning
-   values are noncopyable; compiler-generated moves transfer an active-drop
-   state so the source cleanup body runs exactly once. Manual destructor calls
-   are not syntax. Field immutability remains a GTI semantic rule and is not
-   delegated to the C++ representation.
+   A class or struct may declare one public destructor, either a `~Type()` body
+   or `~Type() = default;`. A defaulted destructor selects structural
+   reverse-order field and base destruction and does not create a source
+   cleanup body or active-drop state. A body is automatically invoked, has an
+   implicitly mutable receiver, cannot return or take parameters, and runs
+   before reverse-order field destruction. Cleanup-owning values are
+   noncopyable; compiler-generated moves transfer an active-drop state so the
+   source cleanup body runs exactly once. `= delete` is not available for
+   destructors, and manual destructor calls are not syntax. Field immutability
+   remains a GTI semantic rule and is not delegated to the C++ representation.
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. The exact

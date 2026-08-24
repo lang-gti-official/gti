@@ -437,7 +437,8 @@ their element type by identity rather than wrapper spelling.
 
 Nominal classes use a cycle-aware greatest fixed point, so an owning edge such
 as `unique_ptr<Node>` does not make `Node` fail merely because the query is
-recursive. A declared destructor suppresses both automatic facts. The
+recursive. A destructor with a source cleanup body suppresses both automatic
+facts; an explicitly defaulted destructor remains structural. The
 class-owned policies `Denied`, `Required`, and `UnsafeAsserted` represent safe
 opt-outs, interface requirements, and explicit unsafe positive assertions;
 they are retained in `ClassTypeInfo`, while each concrete expression, binding,

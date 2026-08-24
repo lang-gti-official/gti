@@ -781,6 +781,13 @@ default construction, copy/move construction, copy/move assignment, and
 destruction from field traits; adding an ordinary constructor does not suppress
 movement as it can in C++.
 
+The exact declarations `Type() = default;` and `~Type() = default;` make the
+compiler-derived default construction and destruction policy explicit. They do
+not create empty source bodies: declaration initializers, state-bearing base
+construction, reverse field/base destruction, and nested cleanup remain the
+same as when the declarations are omitted. A defaulted destructor therefore
+does not make a type noncopyable or require an active-drop flag.
+
 A class or struct may explicitly default or delete copy and move construction:
 
 ```gti
@@ -796,12 +803,12 @@ cleanup policy makes the operation unavailable. Deleting construction updates
 the type's frontend traits, including concrete generic instances and enclosing
 aggregates. Copy and move assignment remain independently derived.
 
-A class or struct may declare one public `~Type()` cleanup body. The body has an
-implicitly mutable receiver, is non-throwing, cannot return, and is invoked
-automatically before fields are destroyed in reverse declaration order. It is
-not a callable method. Declaring cleanup makes the type noncopyable because the
-compiler cannot prove that duplicating copyable field representations also
-duplicates the external cleanup obligation safely.
+A class or struct may instead declare one public `~Type()` cleanup body. The
+body has an implicitly mutable receiver, is non-throwing, cannot return, and is
+invoked automatically before fields are destroyed in reverse declaration
+order. It is not a callable method. Declaring cleanup makes the type
+noncopyable because the compiler cannot prove that duplicating copyable field
+representations also duplicates the external cleanup obligation safely.
 
 Cleanup-owning types remain movable when their fields are movable. Movement
 transfers an active-drop state: moved-from values still destroy their fields but

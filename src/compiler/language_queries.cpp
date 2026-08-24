@@ -175,9 +175,18 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
       owner.exactSpecializationPrimary == 0
           ? owner.qualifiedName
           : types.print(SemanticType::classType(owner.id));
+  const auto appendSpecifier = [&](std::string result) {
+    if (info.declaration != nullptr && info.declaration->specifier()) {
+      result += info.declaration->specifier()->kind ==
+                        SpecialMemberSpecifierKind::Defaulted
+                    ? " = default"
+                    : " = delete";
+    }
+    return result;
+  };
   if (info.kind != ConstructorKind::Ordinary) {
-    return ownerName + "(" + ownerName +
-           (info.kind == ConstructorKind::Move ? "&&)" : "&)");
+    return appendSpecifier(ownerName + "(" + ownerName +
+                           (info.kind == ConstructorKind::Move ? "&&)" : "&)"));
   }
   std::string result = ownerName;
   if (!info.genericParameters.empty()) {
@@ -195,7 +204,7 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
     appendRequirements(result, info.declaration->requiresClause(),
                        info.requirements);
   }
-  return result;
+  return appendSpecifier(std::move(result));
 }
 
 [[nodiscard]] std::string
@@ -299,7 +308,15 @@ SignaturePrinter::destructor(const DestructorInfo &info) const {
       owner->exactSpecializationPrimary == 0
           ? owner->qualifiedName
           : types.print(SemanticType::classType(owner->id));
-  return ownerName + "::~" + owner->declaration->name().lexeme + "()";
+  std::string result =
+      ownerName + "::~" + owner->declaration->name().lexeme + "()";
+  if (info.declaration != nullptr && info.declaration->specifier()) {
+    result += info.declaration->specifier()->kind ==
+                      SpecialMemberSpecifierKind::Defaulted
+                  ? " = default"
+                  : " = delete";
+  }
+  return result;
 }
 
 [[nodiscard]] std::string SignaturePrinter::path(const NamePath &name) {

@@ -1794,7 +1794,7 @@
     "fields": {
       "body": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "block",
@@ -1808,6 +1808,16 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "specifier": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "special_member_specifier",
             "named": true
           }
         ]

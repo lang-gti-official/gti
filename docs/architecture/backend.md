@@ -205,6 +205,14 @@ surfaces may be represented as C++ templates and concrete specializations;
 specialization eligibility comes from concrete-instance items, and executable
 specialization text still comes from MIR.
 
+Lowered declarations retain an explicit default-constructor or destructor
+specifier for source/coherence and tooling inventory. Because that policy has
+no source body, the emitter does not publish a separate member definition; it
+uses the class lifecycle row's `Generated` status to spell the structural
+operation. A policy declaration never becomes an empty C++ body: semantic
+analysis has already decided structural availability, and the lifecycle status
+remains the backend authority for that result.
+
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
 contained-constructor row from the lowered initializer schedule and constructor
