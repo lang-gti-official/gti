@@ -1,0 +1,10 @@
+class cell<std::default_initializable T> {
+public:
+  cell() {}
+  mut T v = T();
+};
+
+int main() {
+  mut cell<cell<int32_t>> c = cell<cell<int32_t>>();
+  return int(c.v.v);
+}
