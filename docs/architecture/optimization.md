@@ -2,7 +2,8 @@
 
 Status: implemented verified local MIR pipeline, reusable local dataflow and
 SCCP, bounded loop/range and place alias/escape analyses, proof-carrying safety
-optimization families, and optimizer observability.
+optimization families, snapshot-scoped analysis caching, and optimizer
+observability.
 
 GTI optimization has one executable-body authority: optimized MIR. The
 frontend still runs a compatibility HIR constant analysis for non-body
@@ -104,7 +105,9 @@ sparse storage. It is a client of the shared deterministic monotone
 forward-dataflow solver; its existing typed lattice, join, and bounded widening
 remain safety-analysis policy. Unknown or opaque calls, raw/unsafe memory
 effects, and other unclassified mutation invalidate mutable facts instead of
-being guessed through.
+being guessed through. Every canonical normal edge participates, including a
+switch default edge; omitted infeasible branch edges retain their terminator
+slot identity when they later become executable.
 
 The admitted operations are deliberately narrow:
 
@@ -171,11 +174,13 @@ representation without reproducing optimization decisions.
 
 `runMirForwardDataflow` owns deterministic FIFO scheduling, stable executable
 edge identities, update counts, configurable bounded widening, and a hard
-iteration limit. Each client owns its typed state, transfer, monotone join, and
-widening meaning. Malformed block identities, targets, duplicate edge
-identities, or failure to converge fail closed. The safety regression suite and
-an independent FIFO oracle preserve the pre-migration fixed point; SCCP is the
-first new client.
+iteration limit. Edge identity is the canonical source-terminator slot rather
+than the order in which a client happens to emit feasible edges. Each client
+owns its typed state, transfer, monotone join, and widening meaning. Malformed
+block identities, targets, block-argument arity, duplicate or noncanonical edge
+identities, executable-edge retraction, or failure to converge fail closed.
+The safety regression suite and an independent FIFO oracle preserve the
+pre-migration fixed point; SCCP is the first new client.
 
 `analyzeMirLoops` derives natural loops from dominance backedges, merges
 multiple latches with one header, builds a deterministic strict-containment
@@ -185,12 +190,16 @@ induction family carried by MIR block parameters. An induction requires one
 literal entry value, one positive literal add/subtract step, and may retain one
 invariant relational branch bound. These facts are cached analysis output; no
 loop transformation, symbolic recurrence solver, polyhedral model, or
-unbounded widening is implemented.
+unbounded widening is implemented. If one predecessor has repeated CFG edges
+to the header with different block arguments, the recurrence is ambiguous and
+no induction fact is produced.
 
 `analyzeMirPlaceAliasEscape` derives a body-local dense relation over stable
 MIR places. Equal places are `must-alias`; precise disjoint roots, fields, and
 constant indices are `no-alias`; indirect, dynamic-index, raw-memory, or
-otherwise unresolved relationships are `may-alias`. Escape reasons record
+otherwise unresolved relationships are `may-alias`. Distinct fields of a
+verified ordinary record are disjoint, while fields of a union overlap and
+remain `may-alias`. Escape reasons record
 address taking, returns, retained borrows, non-local stores, raw memory, and
 calls. Only closed exact static call summaries may project receiver or
 argument escape; unresolved, native, virtual, and recursive boundaries remain
@@ -204,15 +213,17 @@ client. There is no MemorySSA or load/store elimination pass.
 and `MirBodyAnalysisManager`. An outcome contains its deterministic report,
 explicit preservation claim, transformation records, and verification.
 
-The body analysis manager is keyed by stable `MirBodyAddress` plus a
-monotonically increasing revision. It caches CFG/reachability and acyclicity,
-dominance, value uses, exact instruction effects, scalar-promotion inputs,
-canonical safety facts, place alias/escape facts, loop/range facts, and sparse
-constants. A pass explicitly preserves analyses; an unknown or omitted claim
-invalidates every cached result conservatively. No MIR pointer survives
-invalidation. The safety analysis reuses the manager-owned alias snapshot.
-Memory SSA, inlining, devirtualization, and loop or memory transformations
-remain absent until a bounded measured client requires them.
+The body analysis manager binds to one `MirProgram` snapshot identity and is
+then keyed by stable `MirBodyAddress` plus a monotonically increasing revision.
+It rejects cross-snapshot queries rather than returning a same-address stale
+fact. It caches CFG/reachability and acyclicity, dominance, value uses, exact
+instruction effects, scalar-promotion inputs, canonical safety facts, place
+alias/escape facts, loop/range facts, and sparse constants. A pass explicitly
+preserves analyses; an unknown or omitted claim invalidates every cached result
+conservatively. No interior MIR pointer survives invalidation. The safety
+analysis reuses the manager-owned alias snapshot. Memory SSA, inlining,
+devirtualization, and loop or memory transformations remain absent until a
+bounded measured client requires them.
 
 ## Per-Instance Effects
 

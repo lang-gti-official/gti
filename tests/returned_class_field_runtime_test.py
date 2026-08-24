@@ -43,13 +43,21 @@ struct Factory {
   }
 };
 
+class Cell<std::default_initializable T> {
+public:
+  Cell() {}
+  mut T value = T();
+};
+
 int32_t main() {
   int32_t returned = read_packet_value();
   int32_t direct = make_packet(7).value;
   Factory factory{};
   int32_t method = factory.make(11).value;
   int32_t larger = int32_t(1) + make_packet(12).value;
-  return (returned - 5) + (direct - 7) + (method - 11) + (larger - 13);
+  mut Cell<Cell<int32_t>> nested = Cell<Cell<int32_t>>();
+  return (returned - 5) + (direct - 7) + (method - 11) + (larger - 13) +
+         nested.value.value;
 }
 """
 

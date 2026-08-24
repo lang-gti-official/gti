@@ -47,8 +47,12 @@ Result make_checked_result(int32_t value) {
 int main() {
   Result result = make_result(7);
   Result checked = make_checked_result(8);
+  auto read_captured_field = [result]() -> int32_t {
+    return result.value;
+  };
   std::println(default_constructions);
-  if (result.value == 7 && checked.value == 9) {
+  if (result.value == 7 && checked.value == 9 &&
+      read_captured_field() == 7) {
     return default_constructions;
   }
   return 1;

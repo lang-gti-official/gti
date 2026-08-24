@@ -6073,6 +6073,83 @@ int main() {
          "treat a native return as success");
 }
 
+void testDeclarationOnlyMemberCallBoundary() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-declaration-member-call.gti", R"(
+class ExternalBox<T> {
+public:
+  ExternalBox() {}
+  bool ready();
+};
+
+int main() {
+  mut ExternalBox<int32_t> box = ExternalBox<int32_t>();
+  return box.ready() ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "an ordinary declaration-only member call should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *entry = nullptr;
+  const lang::MirFunctionInstance *declaration = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.entryKind != lang::ProgramEntryKind::None) {
+      entry = &function;
+    } else if (function.owner &&
+               function.definitionKind ==
+                   lang::MirFunctionInstance::DefinitionKind::Declaration) {
+      declaration = &function;
+    }
+  }
+  expect(entry != nullptr && declaration != nullptr &&
+             declaration->mayRaiseDefinedFailure,
+         "MIR should retain the conservative bodyless-member failure "
+         "summary");
+  if (entry == nullptr || declaration == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "a bodyless member boundary should remain MIR-emittable");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionText text = emitter.emitFailureBodyText(
+      address, "member-declaration-call-test-v0", 1);
+  const auto targetRow =
+      std::find_if(map.bodies().begin(), map.bodies().end(),
+                   [&](const lang::CppMirBodyNameRepresentation &row) {
+                     return row.address.kind == lang::MirBodyKind::Function &&
+                            row.address.owner == declaration->id;
+                   });
+  const std::string target =
+      targetRow == map.bodies().end() ? std::string() : targetRow->spelling;
+  expect(!target.empty() && text.text.find(target + "(") != std::string::npos &&
+             text.text.find("__gti_mir_call_success_") == std::string::npos,
+         "the bodyless member boundary should use its plain member symbol "
+         "and treat a native return as success");
+
+  try {
+    const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+    expect(!artifact.contents.empty(),
+           "production C++ emission should accept a bodyless member call");
+  } catch (const std::logic_error &) {
+    expect(false, "production C++ emission should not reject a bodyless member "
+                  "call");
+  }
+}
+
 void testExpectedOwningPayloadPublicationAndForwarding() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-owning-payload.gti", R"(
@@ -7445,6 +7522,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedValueOrBorrowedReceiver",
      testExpectedValueOrBorrowedReceiver},
     {"testDeclarationOnlyCallBoundary", testDeclarationOnlyCallBoundary},
+    {"testDeclarationOnlyMemberCallBoundary",
+     testDeclarationOnlyMemberCallBoundary},
     {"testExpectedOwningPayloadPublicationAndForwarding",
      testExpectedOwningPayloadPublicationAndForwarding},
     {"testPassiveReturnSignedMinimumAndRepresentationSlot",

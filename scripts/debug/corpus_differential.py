@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -69,7 +68,11 @@ def build_and_run(gti: Path, cxx: str, source: Path, output: Path,
         first = (built.stderr or built.stdout).strip().split("\n")
         # Prefix the code explicitly: the first line is truncated below, and
         # a long path can push the diagnostic code past the cut.
-        code = "GTI-B0001 " if "GTI-B0001" in output_text else ""
+        code = ""
+        if "GTI-B0001" in output_text:
+            code = "GTI-B0001 "
+        elif "GTI-B0003" in output_text:
+            code = "GTI-B0003 "
         return Observation("build-failed", None, "",
                            f"{level}: {code}{first[0][:160] if first else ''}")
     try:
@@ -82,34 +85,8 @@ def build_and_run(gti: Path, cxx: str, source: Path, output: Path,
     return Observation("ran", ran.returncode, ran.stdout, "")
 
 
-def expected_internal_errors(root: Path) -> set[str]:
-    """Programs the repository already expects to raise `GTI-B0001`.
-
-    Two stdlib-surface fixtures announce a known limitation through the
-    internal-error channel, and `tests/stdlib_surface_manifest.json` pins that
-    as their expected output (see #112). Reporting them every run would be
-    noise, but hardcoding a list here would rot the moment the manifest
-    changes — so read the manifest instead and let it stay the single source
-    of truth. When #112 is fixed these entries stop matching on their own.
-    """
-    manifest = root / "tests" / "stdlib_surface_manifest.json"
-    if not manifest.is_file():
-        return set()
-    try:
-        document = json.loads(manifest.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return set()
-    expected: set[str] = set()
-    for case in document.get("cases", []):
-        fragments = (case.get("expected") or {}).get("stderr_contains") or []
-        if "GTI-B0001" in fragments and case.get("source"):
-            expected.add(Path(case["source"]).name)
-    return expected
-
-
 def compare_program(gti: Path, cxx: str, scratch: Path, source: Path,
-                    levels: list[str], timeout: int,
-                    expected_ices: set[str]) -> tuple[str, str]:
+                    levels: list[str], timeout: int) -> tuple[str, str]:
     """Return (verdict, detail) for one program across all levels."""
     stem = source.stem
     baseline = levels[0]
@@ -124,9 +101,9 @@ def compare_program(gti: Path, cxx: str, scratch: Path, source: Path,
         # how #112 nearly went unnoticed.
         if first.state == "build-failed":
             if "GTI-B0001" in first.detail:
-                if source.name in expected_ices:
-                    return "expected-ICE", first.detail
                 return "ICE", first.detail
+            if "GTI-B0003" in first.detail:
+                return "unsupported", first.detail
             return "skipped", first.detail
         return first.state, first.detail
 
@@ -175,15 +152,13 @@ def main() -> int:
         print("error: no programs found", file=sys.stderr)
         return 1
 
-    expected_ices = expected_internal_errors(REPOSITORY_ROOT)
     scratch = Path(tempfile.mkdtemp(prefix="gti-corpus-diff-"))
     tally: dict[str, int] = {}
     divergent: list[tuple[str, str]] = []
 
     def run_one(source: Path) -> tuple[Path, str, str]:
         verdict, detail = compare_program(gti, cxx, scratch, source,
-                                          arguments.levels, arguments.timeout,
-                                          expected_ices)
+                                          arguments.levels, arguments.timeout)
         return source, verdict, detail
 
     with ThreadPoolExecutor(max_workers=arguments.jobs) as pool:

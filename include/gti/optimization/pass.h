@@ -106,8 +106,10 @@ private:
   std::uint32_t mask = 0;
 };
 
-// A body-scoped cache keyed by stable MirBodyAddress and a monotonically
-// increasing revision. The manager owns no MIR pointers across invalidation.
+// A snapshot-scoped, body-local cache keyed by stable MirBodyAddress and a
+// monotonically increasing revision. The first query binds the manager to one
+// MirProgram identity; cross-snapshot queries fail closed. No interior MIR
+// pointers survive invalidation.
 class MirBodyAnalysisManager {
 public:
   [[nodiscard]] std::size_t revision(MirBodyAddress address) const;
@@ -154,7 +156,9 @@ private:
 
   [[nodiscard]] Entry &entry(MirBodyAddress address);
   [[nodiscard]] const Entry *findEntry(MirBodyAddress address) const;
+  [[nodiscard]] bool accepts(const MirProgram &program);
 
+  const MirProgram *programIdentity = nullptr;
   std::vector<Entry> entries;
 };
 

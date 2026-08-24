@@ -503,6 +503,67 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       valueParents[operand].push_back(&parent);
     }
   }
+  const auto exactDefaultArrayElement = [&](const HirValue &value) {
+    const auto parents = valueParents.find(value.id);
+    if (value.source != nullptr ||
+        value.kind != HirValueKind::DirectInitializer ||
+        parents == valueParents.end() || parents->second.size() != 1) {
+      return false;
+    }
+    const HirValue &parent = *parents->second.front();
+    const auto *initializer = exprAs<ArrayInitializer>(parent.source);
+    const ResolvedConstructionInfo *construction =
+        initializer == nullptr
+            ? nullptr
+            : semantics.findArrayElementConstruction(*initializer);
+    const HirClassInstance *owner = nullptr;
+    for (const HirClassInstance &candidate : program.classInstances()) {
+      if (construction == nullptr ||
+          candidate.type != construction->constructedType) {
+        continue;
+      }
+      if (owner != nullptr) {
+        return false;
+      }
+      owner = &candidate;
+    }
+    const HirConstructorInstance *target =
+        value.constructorTarget
+            ? program.findConstructorInstance(*value.constructorTarget)
+            : nullptr;
+    const HirClassInstance *targetOwner =
+        target == nullptr || target->owner == 0 ||
+                target->owner > program.classInstances().size()
+            ? nullptr
+            : &program.classInstances()[target->owner - 1];
+    const bool exactTarget =
+        construction != nullptr &&
+        ((construction->generatedDefault && !value.constructorTarget) ||
+         (!construction->generatedDefault && construction->constructor != 0 &&
+          target != nullptr && targetOwner == owner &&
+          target->declaration == construction->constructor));
+    return construction != nullptr && owner != nullptr && exactTarget &&
+           parent.kind == HirValueKind::ArrayInitializer &&
+           parent.info.type.kind == SemanticType::Array &&
+           parent.info.type.arguments.size() == 1 &&
+           parent.info.type.arguments.front() == owner->type &&
+           parent.info.type.arrayLengthParameterId == 0 &&
+           parent.operands.size() == parent.info.type.arrayLength &&
+           std::count(parent.operands.begin(), parent.operands.end(),
+                      value.id) == 1 &&
+           value.info == ExpressionInfo{.type = owner->type,
+                                        .category = ValueCategory::Value,
+                                        .access = AccessMode::ReadOnly,
+                                        .traits = owner->traits} &&
+           value.parameterTypes == construction->parameterTypes &&
+           value.operands.size() == value.parameterTypes.size() &&
+           value.constructorKind == construction->kind &&
+           value.definedFailure.propagation ==
+               (construction->constructor != 0 &&
+                        !construction->generatedDefault
+                    ? FailurePropagationKind::Constructor
+                    : FailurePropagationKind::None);
+  };
   const auto exactSyntheticCommon = [](const HirValue &value) {
     return value.source == nullptr &&
            value.unsafeOperation == UnsafeOperationKind::None &&
@@ -530,6 +591,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            !value.payloadIndex && !value.ownership && !value.dropObligation;
   };
   const auto exactSyntheticValue = [&](const HirValue &value) {
+    if (exactDefaultArrayElement(value)) {
+      return true;
+    }
     const auto parents = valueParents.find(value.id);
     if (!exactSyntheticCommon(value) || parents == valueParents.end() ||
         parents->second.size() != 1) {

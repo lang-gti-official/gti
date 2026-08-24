@@ -12912,6 +12912,23 @@ verifyMirProgramInitialization(const MirProgram &program) {
           }
           canonicalInitialize.operands.push_back(std::move(canonicalOperand));
         }
+        const MirDropObligation *initializerDrop = nullptr;
+        for (const MirDropObligation &drop : module.dropObligations) {
+          if (drop.kind != MirDropObligationKind::Value ||
+              drop.value != step.initializer) {
+            continue;
+          }
+          if (initializerDrop != nullptr) {
+            initializerDrop = nullptr;
+            break;
+          }
+          initializerDrop = &drop;
+        }
+        if (initializerDrop != nullptr) {
+          canonicalInitialize.lifecycle.push_back(
+              {.kind = MirLifecycleEventKind::TransferOut,
+               .source = initializerDrop->id});
+        }
       }
       MirInstruction canonicalMarker;
       if (markers.size() == 1) {
@@ -14616,6 +14633,131 @@ deriveMirScalarDefinedFailureEffects(const MirProgram &program) {
   return deriveMirDefinedFailureEffects(program).functions;
 }
 
+namespace {
+
+[[nodiscard]] const MirClassInstance *
+uniqueMirClassInstanceForType(const MirProgram &program,
+                              const SemanticType &type) {
+  const MirClassInstance *result = nullptr;
+  for (const MirClassInstance &instance : program.classInstances()) {
+    if (instance.type != type) {
+      continue;
+    }
+    if (result != nullptr) {
+      return nullptr;
+    }
+    result = &instance;
+  }
+  return result;
+}
+
+[[nodiscard]] std::optional<SemanticType>
+mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
+                       SymbolId symbol) {
+  const MirClassInstance *root =
+      uniqueMirClassInstanceForType(program, receiver);
+  if (root == nullptr || symbol == 0) {
+    return std::nullopt;
+  }
+  std::optional<SemanticType> result;
+  bool ambiguous = false;
+  std::unordered_set<HirClassInstanceId> seen;
+  const auto visit = [&](const auto &self,
+                         const MirClassInstance &instance) -> void {
+    if (ambiguous || !seen.insert(instance.id).second) {
+      return;
+    }
+    for (const MirClassFieldInfo &field : instance.declaredFields) {
+      if (field.symbol != symbol) {
+        continue;
+      }
+      if (result) {
+        ambiguous = true;
+        return;
+      }
+      result = field.type;
+    }
+    for (const HirBaseInstance &base : instance.structuralBases) {
+      const MirClassInstance *baseInstance =
+          program.findClassInstance(base.instance);
+      if (baseInstance == nullptr) {
+        ambiguous = true;
+        return;
+      }
+      self(self, *baseInstance);
+    }
+  };
+  visit(visit, *root);
+  return ambiguous ? std::nullopt : result;
+}
+
+[[nodiscard]] std::optional<SemanticType>
+projectedMirType(const MirProgram &program, SemanticType current,
+                 const std::vector<MirPlaceProjection> &projections) {
+  for (const MirPlaceProjection &projection : projections) {
+    switch (projection.kind) {
+    case MirProjectionKind::Field: {
+      std::optional<SemanticType> field =
+          mirFieldProjectionType(program, current, projection.field);
+      if (!field) {
+        return std::nullopt;
+      }
+      current = std::move(*field);
+      break;
+    }
+    case MirProjectionKind::Index:
+      if (current.kind != SemanticType::Array ||
+          current.arguments.size() != 1) {
+        return std::nullopt;
+      }
+      {
+        SemanticType element = current.arguments.front();
+        current = std::move(element);
+      }
+      break;
+    case MirProjectionKind::Dereference:
+      if ((current.kind != SemanticType::Reference &&
+           current.kind != SemanticType::UniqueOwner &&
+           current.kind != SemanticType::SharedPointer) ||
+          current.arguments.size() != 1) {
+        return std::nullopt;
+      }
+      {
+        SemanticType pointee = current.arguments.front();
+        current = std::move(pointee);
+      }
+      break;
+    case MirProjectionKind::RawIndex:
+    case MirProjectionKind::RawDereference:
+      if (current.kind != SemanticType::RawPointer ||
+          current.arguments.size() != 1) {
+        return std::nullopt;
+      }
+      {
+        SemanticType pointee = current.arguments.front();
+        current = std::move(pointee);
+      }
+      break;
+    case MirProjectionKind::PackElement:
+      if (current.kind != SemanticType::TypePack || !current.concretePack ||
+          !projection.constantIndex ||
+          *projection.constantIndex >= current.arguments.size()) {
+        return std::nullopt;
+      }
+      {
+        SemanticType element =
+            current
+                .arguments[static_cast<std::size_t>(*projection.constantIndex)];
+        current = std::move(element);
+      }
+      break;
+    }
+  }
+  return current;
+}
+
+} // namespace
+
 MirVerificationResult verifyMirProgram(const MirProgram &program) {
   MirVerificationResult result;
   if (!program.valid()) {
@@ -15837,10 +15979,16 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                 : static_cast<std::size_t>(
                       std::distance(instance.captureSymbols.begin(), capture)) +
                       1;
+        const std::optional<SemanticType> exactPlaceType =
+            exactCapture == 0
+                ? std::nullopt
+                : projectedMirType(program,
+                                   instance.captureTypes[exactCapture - 1],
+                                   place.projections);
         if (place.capture != exactCapture ||
             (exactCapture != 0 &&
-             (place.root != MirPlaceRootKind::Symbol ||
-              place.type != instance.captureTypes[exactCapture - 1] ||
+             (place.root != MirPlaceRootKind::Symbol || !exactPlaceType ||
+              place.type != *exactPlaceType ||
               place.access != AccessMode::ReadOnly))) {
           result.errors.push_back(
               {.bodyKind = MirBodyKind::Lambda,

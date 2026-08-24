@@ -2632,20 +2632,22 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   existing safety analysis uses the shared solver at every optimization level
   where safety facts are requested.
 - **Implemented:** one typed monotone forward solver owns deterministic FIFO
-  scheduling, stable executable-edge identity, update counts, bounded widening,
-  malformed-CFG rejection, and a hard convergence limit. Safety retains its
-  prior interval/storage lattice and exact proof results; an independent FIFO
-  oracle and the full safety suite cover migration equivalence. SCCP is the
-  first new client and uses `unknown -> exact typed constant -> overdefined`
-  facts over scalar non-owning SSA. Exact literal/branch edits carry stable
-  evidence and independent source-MIR replay.
+  scheduling, canonical terminator-slot executable-edge identity, update
+  counts, bounded widening, malformed-CFG and block-argument rejection,
+  monotone executable-edge growth, and a hard convergence limit. Safety
+  retains its prior interval/storage lattice and exact proof results, including
+  switch-default propagation; an independent FIFO oracle and the full safety
+  suite cover migration equivalence. SCCP is the first new client and uses
+  `unknown -> exact typed constant -> overdefined` facts over scalar non-owning
+  SSA. Exact literal/branch edits carry stable evidence and independent
+  source-MIR replay.
 - **Non-goals:** place or memory propagation, ownership/loan facts, speculative
   trapping operations, unbounded fixpoint iteration, or using native optimizer
   results as evidence. Switch and invoke edge selection remain conservative.
 - **Exit gate:** deterministic repeated results, safety-equivalent proofs,
   positive branch-merge propagation, conservative unknown/effect near misses,
-  malformed-proof rejection, report schema/provenance coverage, and O0/O1
-  identity all pass.
+  canonical else/default edge identity, malformed CFG/argument/transfer
+  rejection, report schema/provenance coverage, and O0/O1 identity all pass.
 
 ### O-MIR-06: Natural Loops And Bounded Relational Ranges
 
@@ -2657,33 +2659,38 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   side-effect-free scalar invariants and a bounded single-latch affine
   induction through MIR block parameters with one literal initial value, one
   positive literal add/subtract step, and an optional invariant relational
-  continuation bound.
+  continuation bound. A predecessor with repeated edges to the header and
+  ambiguous block arguments produces no induction fact.
 - **Non-goals:** polyhedral models, unrestricted symbolic algebra, recurrence
   solving across calls or memory, irreducible-loop transforms, LICM,
   vectorization, loop versioning, or mutation of MIR.
 - **Exit gate:** nested/merged-loop identity is deterministic; malformed or
-  unsupported recurrences produce no fact; irreducible CFGs are marked; and a
-  hand-built block-parameter loop proves the exact induction/range record.
+  unsupported or repeated-edge-ambiguous recurrences produce no fact;
+  irreducible CFGs are marked; and a hand-built block-parameter loop proves the
+  exact induction/range record.
 
 ### O-MIR-07: Place Alias And Escape Facts
 
 - **State/role:** complete body-local analysis foundation with alias-aware
   safety-state invalidation as its first client.
 - **Implemented:** stable MIR places derive `must-alias`, `no-alias`, and
-  `may-alias` for precise roots, fields, and constant projections. Address
-  taking, returns, retained borrows, non-local stores, raw memory, and calls
-  produce explicit escape reasons. Closed exact static summaries project
+  `may-alias` for precise roots, fields, and constant projections. Verified
+  ordinary-record sibling fields are disjoint; union sibling fields overlap.
+  Address taking, returns, retained borrows, non-local stores, raw memory, and
+  calls produce explicit escape reasons. Closed exact static summaries project
   receiver/argument escape; native, virtual, recursive, and unresolved calls
-  remain conservative. Loan, value-rooted, dynamic, and raw relationships do
-  not become `no-alias` without a stronger MIR identity. Duplicate
-  `must-alias` IDs share one safety fact key; writes preserve safety facts only
-  for proved `no-alias` places.
+  remain conservative. Loan, value-rooted, dynamic, raw, and unclassified
+  field relationships do not become `no-alias` without stronger MIR identity.
+  Duplicate `must-alias` IDs share one safety fact key; writes preserve safety
+  facts only for proved `no-alias` places. The analysis manager binds cached
+  facts to one MIR program snapshot and rejects cross-snapshot reuse.
 - **Non-goals:** interprocedural pointer identity, optimistic raw-pointer
   provenance, public-library-name recognition, MemorySSA, load commoning, or
   store elimination.
 - **Exit gate:** relation symmetry and projection cases, raw/dynamic
-  conservatism, exact-call escape, unknown-call escape, cache invalidation, and
-  disjoint-place safety preservation have focused evidence.
+  and union-overlap conservatism, exact-call escape, unknown-call escape,
+  cache invalidation and snapshot isolation, disjoint-place fact preservation,
+  and overlapping-place fact invalidation have focused evidence.
 
 ### O-MIR-08: Loop-Derived Safety Proof Client
 
@@ -2865,6 +2872,7 @@ owned by the rows and domain plans above.
 | MIR-backed C++ emission | **ADR 016 complete** | 2,962/2,962 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | Natural-loop/range facts | **complete bounded analysis** | `O-MIR-06`; first transform client is gated by `O-MIR-08` |
+| Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
