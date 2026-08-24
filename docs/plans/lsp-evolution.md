@@ -73,16 +73,67 @@ tables:
 
 References and rename must fail closed when identity or coverage is incomplete.
 
-### 3. Extract document/snapshot service boundaries
+### 3. Make repeated frontend analysis measurable and reusable - implemented
+
+The end-to-end `scripts/lsp_benchmark.py` workload now measures cold diagnostics,
+root-only edit diagnostics, dirty dependency/dependant analysis, semantic
+tokens, hover, completion, cancellation, and superseded generations. Its
+opt-in frontend trace records exact load, lex, parse, semantic-analysis, and
+cache-hit unit lists, phase times, and bounded-cache occupancy. Schema 2 also
+asserts that a root-only edit reuses unchanged dependencies and the prelude,
+that dirty dependency invalidation remains scoped, and that the configured
+memory limits hold.
+
+The measured implementation reuses exact-content lexical rows and immutable
+parsed statement trees through a 256-row/64-MiB LRU. Source generation and
+digest, post-directive token identity, transitive dependency generations and
+content identities, target data layout, configuration flags, and completion
+context participate in identity; dirty lexical overlays compare exact bytes.
+Semantic models, symbol IDs, HIR, and other snapshot-local records are always
+rebuilt.
+
+On the reference arm64 macOS machine and identical RelWithDebInfo/16-dependency
+configuration, the final campaign alternated baseline/current binaries for 30
+measured pairs after 5 warmup pairs. Repeated edit-to-diagnostics fell from
+5.140 ms to 3.132 ms, a 39.1% reduction. Cold open fell from 5.886 ms to
+4.478 ms, a 23.9% improvement rather than a regression.
+
+| Interaction | Baseline median | Current median | Reduction |
+| --- | ---: | ---: | ---: |
+| cold diagnostics | 5.886 ms | 4.478 ms | 23.9% |
+| repeated-edit diagnostics | 5.140 ms | 3.132 ms | 39.1% |
+| semantic tokens | 0.148 ms | 0.163 ms | -10.3% |
+| hover | 0.065 ms | 0.071 ms | -9.1% |
+| completion | 4.647 ms | 2.565 ms | 44.8% |
+| dirty-dependency diagnostics | 8.085 ms | 4.504 ms | 44.3% |
+| cancellation | 4.493 ms | 2.526 ms | 43.8% |
+| superseded diagnostics | 9.698 ms | 5.410 ms | 44.2% |
+
+Semantic tokens and hover operate on the already-published immutable snapshot;
+their measured increases were 0.015 ms and 0.006 ms respectively and both
+remain below 0.2 ms. The root-only trace lexed and parsed one root while
+reusing all 16 dependencies and the prelude. A dirty dependency loaded, lexed,
+and parsed that unit; its dependant reused every lexical row, reparsed the root,
+and did not reparse the prelude or 15 unrelated dependencies. Maximum observed
+cache occupancy was 51 rows and 4.7 MB estimated against the 256-row/64-MiB
+policy. The dominant remaining repeated-edit work is whole-program semantic
+analysis, followed by HIR; the evidence did not justify a project index,
+PCH/preamble, background shards, or per-file workers.
+
+### 4. Extract document/snapshot service boundaries - frontend seam implemented
 
 `LanguageServer` currently combines protocol, document overlays, scheduling,
-diagnostics, formatting, and feature handlers. Extract open source, versions,
-generations, dependency invalidation, immutable snapshot publication, and
-request freshness behind a testable service when new features make the current
-class difficult to evolve. Preserve the existing worker model during that
+diagnostics, formatting, and feature handlers. Exact frontend cache ownership,
+source generations, learned digests, worker capture, and stale identity
+publication now live behind the independently tested `FrontendSnapshotState`.
+This is the ownership seam required by the measured reuse work.
+
+Keep extracting open-source versions, dependency scheduling, immutable result
+publication, and request freshness only when a concrete feature or testability
+problem warrants it. Preserve the existing worker model during that
 extraction.
 
-### 4. Consume resolved project configuration
+### 5. Consume resolved project configuration
 
 Use a read-only driver-owned project/metadata model for selected target and
 source roots. Do not parse `gti.toml` semantics inside the LSP, build/fetch on
