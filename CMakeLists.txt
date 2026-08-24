@@ -253,6 +253,7 @@ add_library(
   "src/compiler/format_config.cpp"
   "src/compiler/formatter.cpp"
   "src/compiler/frontend.cpp"
+  "src/compiler/frontend_cache.cpp"
   "src/compiler/hir.cpp"
   "src/compiler/hir_model.cpp"
   "src/compiler/hir_lowering.cpp"
@@ -270,6 +271,7 @@ add_library(
   "src/compiler/optimization/pass.cpp"
   "src/compiler/optimization/report.cpp"
   "src/compiler/optimization/rewrite.cpp"
+  "src/compiler/optimization/safety.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
@@ -398,9 +400,19 @@ target_compile_definitions(
 
 if(GTI_BUILD_LSP)
   find_package(Threads REQUIRED)
+  add_library("gti_lsp_state" STATIC "src/lsp/frontend_snapshot_state.cpp")
+  target_include_directories(
+    "gti_lsp_state"
+    PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/lsp>"
+  )
+  target_link_libraries("gti_lsp_state" PUBLIC gti_compiler)
+  target_compile_features("gti_lsp_state" PUBLIC cxx_std_20)
+
   add_executable("gti_lsp" "src/lsp/main.cpp")
   target_include_directories("gti_lsp" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
-  target_link_libraries("gti_lsp" PRIVATE gti_driver Threads::Threads)
+  target_link_libraries(
+    "gti_lsp" PRIVATE gti_driver gti_lsp_state Threads::Threads
+  )
   target_compile_definitions(
     "gti_lsp"
     PRIVATE
@@ -548,6 +560,13 @@ if(BUILD_TESTING)
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
   add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
 
+  if(TARGET gti_lsp_state)
+    add_executable("gti_frontend_cache_tests"
+                   "tests/frontend_cache_tests.cpp")
+    target_link_libraries("gti_frontend_cache_tests" PRIVATE gti_lsp_state)
+    add_test(NAME frontend_cache_invalidation COMMAND gti_frontend_cache_tests)
+  endif()
+
   add_executable("gti_cpp_backend_library_smoke"
                  "tests/cpp_backend_library_smoke.cpp")
   target_link_libraries("gti_cpp_backend_library_smoke"
@@ -583,6 +602,11 @@ if(BUILD_TESTING)
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
+
+  add_executable("gti_optimizer_safety_tests"
+                 "tests/optimizer_safety_tests.cpp")
+  target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
 
   add_executable("gti_failure_metadata_tests"
                  "tests/failure_metadata_tests.cpp")
@@ -780,6 +804,20 @@ if(BUILD_TESTING)
                  "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
   )
 
+  add_executable("gti_optimizer_safety_native_evidence"
+                 "tests/optimizer_safety_native_evidence.cpp")
+  target_link_libraries("gti_optimizer_safety_native_evidence"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME optimizer_safety_native_evidence
+           COMMAND gti_optimizer_safety_native_evidence
+                   "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(
+    optimizer_safety_native_evidence
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME backend_lowered_program_boundary
@@ -948,6 +986,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_runtime_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_first_family.gti"
+    )
+    add_test(
+      NAME global_class_storage_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_class_storage_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/global_class_storage.gti"
     )
     add_test(
       NAME failure_descriptor_backend_compile
@@ -1149,7 +1194,8 @@ if(BUILD_TESTING)
         evaluation_order_runtime optimizer_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow
-        mir_backend_first_family_runtime failure_descriptor_backend_compile
+        mir_backend_first_family_runtime global_class_storage_runtime
+        failure_descriptor_backend_compile
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
@@ -1178,9 +1224,19 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
                 "$<TARGET_FILE:gti_lsp>"
       )
+      add_test(
+        NAME lsp_scalability_benchmark_smoke
+        COMMAND
+          "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/lsp_benchmark.py"
+          --lsp "$<TARGET_FILE:gti_lsp>"
+          --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+          --output "${CMAKE_CURRENT_BINARY_DIR}/lsp-benchmark-smoke"
+          --dependencies 8 --smoke
+      )
       if(GTI_RELEASE_BUILD)
         set_tests_properties(
-          lsp_protocol block_comment_lsp
+          lsp_protocol block_comment_lsp lsp_scalability_benchmark_smoke
           PROPERTIES ENVIRONMENT
             "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
         )

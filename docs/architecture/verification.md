@@ -30,6 +30,7 @@ assertions.
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `returned_class_field_runtime` | free-function and method class results can be projected directly in initializers and larger expressions at O0/O3 under C++20/C++23 |
+| `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers and run at O0/O3 under C++20/C++23 |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
@@ -62,6 +63,8 @@ assertions.
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
 | `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits |
+| `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
+| `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, cancellation/supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
@@ -93,6 +96,16 @@ mode, where build and result correctness are required but elapsed time is not
 compared with a threshold. Full local runs retain their exact commands,
 compiler identity, source and emitted-code digests, randomized sample order,
 and every raw sample for later analysis.
+
+The LSP has a separate protocol-level scalability runner,
+`scripts/lsp_benchmark.py`. Its schema-2 report retains every latency sample
+and every opt-in frontend trace, summarizes unit-level load/lex/parse/semantic
+work and cache occupancy, and can compare repeated-edit and cold-open medians
+with a baseline captured under the same local build and machine configuration.
+When both binaries are supplied, it alternates current-first and baseline-first
+pairs to limit host thermal/load bias. Its CTest smoke gate enforces the
+protocol and work/invalidation invariants but does not enforce the 30% campaign
+target on shared CI timing.
 
 The release workflow separately installs the `gti_toolchain` component into a
 clean staging prefix, configures an external consumer with `find_package(GTI

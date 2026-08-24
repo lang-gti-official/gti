@@ -551,6 +551,34 @@ public:
   virtual void visitVariableExpr(const Variable &expr) = 0;
 };
 
+enum class ExprKind : std::uint8_t {
+  Assign,
+  ArrayInitializer,
+  Binary,
+  Call,
+  ConditionalExpr,
+  Conversion,
+  DirectInitializer,
+  DereferenceSet,
+  Get,
+  Grouping,
+  Index,
+  IndexSet,
+  Lambda,
+  LayoutQuery,
+  LiteralExpr,
+  Logical,
+  PackFold,
+  PackExpansion,
+  Postfix,
+  QualifiedName,
+  This,
+  Set,
+  Unary,
+  Unexpected,
+  Variable,
+};
+
 class Expr {
 public:
   Expr() = default;
@@ -560,8 +588,31 @@ public:
   Expr &operator=(const Expr &) = delete;
   virtual ~Expr() = default;
 
+  [[nodiscard]] virtual ExprKind exprKind() const = 0;
   virtual void accept(ExprVisitor &visitor) const = 0;
 };
+
+template <ExprKind Kind> class ExprOfKind : public Expr {
+public:
+  static constexpr ExprKind exprKindValue = Kind;
+  [[nodiscard]] ExprKind exprKind() const final { return Kind; }
+};
+
+template <typename Expression>
+[[nodiscard]] const Expression *exprAs(const Expr *expression) {
+  return expression != nullptr &&
+                 expression->exprKind() == Expression::exprKindValue
+             ? static_cast<const Expression *>(expression)
+             : nullptr;
+}
+
+template <typename Expression>
+[[nodiscard]] Expression *exprAs(Expr *expression) {
+  return expression != nullptr &&
+                 expression->exprKind() == Expression::exprKindValue
+             ? static_cast<Expression *>(expression)
+             : nullptr;
+}
 
 using ExprPtr = std::unique_ptr<Expr>;
 using ExprList = std::vector<ExprPtr>;
@@ -636,6 +687,37 @@ public:
   virtual void visitWhileStmt(const WhileStmt &stmt) = 0;
 };
 
+enum class StmtKind : std::uint8_t {
+  AccessSpecifierDecl,
+  BlockStmt,
+  ClassDecl,
+  CompileErrorDirective,
+  ConceptDecl,
+  ConditionalStmt,
+  ConstructorDecl,
+  DestructorDecl,
+  DoWhileStmt,
+  EmptyStmt,
+  EnumDecl,
+  ExternCDecl,
+  ExpressionStmt,
+  ForStmt,
+  FunctionDecl,
+  IfStmt,
+  LoopControlStmt,
+  MutableFieldGroupDecl,
+  NamespaceAliasDecl,
+  NamespaceDecl,
+  RangeForStmt,
+  ReturnStmt,
+  StaticAssertDecl,
+  SwitchStmt,
+  StructuredBindingDecl,
+  TypeAliasDecl,
+  VariableDecl,
+  WhileStmt,
+};
+
 class Stmt {
 public:
   Stmt() = default;
@@ -645,6 +727,7 @@ public:
   Stmt &operator=(const Stmt &) = delete;
   virtual ~Stmt() = default;
 
+  [[nodiscard]] virtual StmtKind stmtKind() const = 0;
   virtual void accept(StmtVisitor &visitor) const = 0;
 
   // Parser-recorded full extent, from the statement's first token through its
@@ -656,11 +739,38 @@ public:
   }
   void setExtent(SourceSpan extent) { extent_ = std::move(extent); }
 
+  [[nodiscard]] const std::optional<std::string> &
+  documentationMarkdown() const {
+    return documentationMarkdown_;
+  }
+  void setDocumentationMarkdown(std::string documentation) {
+    documentationMarkdown_ = std::move(documentation);
+  }
+
 private:
   std::optional<SourceSpan> extent_;
+  std::optional<std::string> documentationMarkdown_;
 };
 
-using StmtPtr = std::unique_ptr<Stmt>;
+template <StmtKind Kind> class StmtOfKind : public Stmt {
+public:
+  static constexpr StmtKind stmtKindValue = Kind;
+  [[nodiscard]] StmtKind stmtKind() const final { return Kind; }
+};
+
+template <typename Statement>
+[[nodiscard]] const Statement *stmtAs(const Stmt *statement) {
+  return statement != nullptr &&
+                 statement->stmtKind() == Statement::stmtKindValue
+             ? static_cast<const Statement *>(statement)
+             : nullptr;
+}
+
+// Top-level parsed source units are immutable once Parser publishes them.
+// Shared ownership lets compatible frontend snapshots reuse an unchanged
+// unit's complete statement tree without retaining raw pointers into an
+// evicted parser arena. Nested expression ownership remains unique.
+using StmtPtr = std::shared_ptr<Stmt>;
 using StmtList = std::vector<StmtPtr>;
 
 struct ConditionalBranch {
@@ -668,7 +778,7 @@ struct ConditionalBranch {
   StmtList statements;
 };
 
-class Assign final : public Expr {
+class Assign final : public ExprOfKind<ExprKind::Assign> {
 public:
   Assign(Token name, Token oper, ExprPtr value)
       : Assign(NamePath(std::move(name)), std::move(oper), std::move(value)) {}
@@ -696,7 +806,7 @@ private:
   ExprPtr value_;
 };
 
-class ArrayInitializer final : public Expr {
+class ArrayInitializer final : public ExprOfKind<ExprKind::ArrayInitializer> {
 public:
   ArrayInitializer(Token brace, ExprList elements, Token closingBrace)
       : brace_(std::move(brace)), elements_(std::move(elements)),
@@ -721,7 +831,7 @@ private:
   Token closingBrace_;
 };
 
-class Binary final : public Expr {
+class Binary final : public ExprOfKind<ExprKind::Binary> {
 public:
   Binary(ExprPtr left, Token oper, ExprPtr right)
       : left_(std::move(left)), oper_(std::move(oper)),
@@ -746,7 +856,7 @@ private:
   ExprPtr right_;
 };
 
-class ConditionalExpr final : public Expr {
+class ConditionalExpr final : public ExprOfKind<ExprKind::ConditionalExpr> {
 public:
   ConditionalExpr(ExprPtr condition, Token question, ExprPtr thenExpression,
                   Token colon, ExprPtr elseExpression)
@@ -781,7 +891,7 @@ private:
   ExprPtr elseExpression_;
 };
 
-class Call final : public Expr {
+class Call final : public ExprOfKind<ExprKind::Call> {
 public:
   Call(ExprPtr callee, std::vector<TypeRef> typeArguments, Token paren,
        ExprList arguments)
@@ -827,7 +937,7 @@ private:
   std::vector<Token> argumentCommas_;
 };
 
-class Conversion final : public Expr {
+class Conversion final : public ExprOfKind<ExprKind::Conversion> {
 public:
   Conversion(TypeRef targetType, Token paren, ExprPtr value)
       : targetType_(std::move(targetType)), paren_(std::move(paren)),
@@ -852,7 +962,7 @@ private:
   ExprPtr value_;
 };
 
-class DirectInitializer final : public Expr {
+class DirectInitializer final : public ExprOfKind<ExprKind::DirectInitializer> {
 public:
   DirectInitializer(Token brace, ExprList arguments, Token closingBrace)
       : brace_(std::move(brace)), arguments_(std::move(arguments)),
@@ -877,7 +987,7 @@ private:
   Token closingBrace_;
 };
 
-class PackFold final : public Expr {
+class PackFold final : public ExprOfKind<ExprKind::PackFold> {
 public:
   PackFold(Token leftParen, ExprPtr pattern, Token comma, Token ellipsis,
            Token rightParen)
@@ -908,7 +1018,7 @@ private:
   Token rightParen_;
 };
 
-class PackExpansion final : public Expr {
+class PackExpansion final : public ExprOfKind<ExprKind::PackExpansion> {
 public:
   PackExpansion(Token name, Token ellipsis)
       : name_(std::move(name)), ellipsis_(std::move(ellipsis)) {}
@@ -930,7 +1040,7 @@ private:
   Token ellipsis_;
 };
 
-class DereferenceSet final : public Expr {
+class DereferenceSet final : public ExprOfKind<ExprKind::DereferenceSet> {
 public:
   DereferenceSet(Token dereference, ExprPtr object, Token oper, ExprPtr value)
       : dereference_(std::move(dereference)), object_(std::move(object)),
@@ -952,7 +1062,7 @@ private:
   ExprPtr value_;
 };
 
-class Get final : public Expr {
+class Get final : public ExprOfKind<ExprKind::Get> {
 public:
   Get(ExprPtr object, Token access, Token name)
       : object_(std::move(object)), access_(std::move(access)),
@@ -978,7 +1088,7 @@ private:
   Token name_;
 };
 
-class Grouping final : public Expr {
+class Grouping final : public ExprOfKind<ExprKind::Grouping> {
 public:
   explicit Grouping(ExprPtr expression) : expression_(std::move(expression)) {}
   Grouping(Grouping &&) = default;
@@ -997,7 +1107,7 @@ private:
   ExprPtr expression_;
 };
 
-class Index final : public Expr {
+class Index final : public ExprOfKind<ExprKind::Index> {
 public:
   Index(ExprPtr object, Token bracket, ExprPtr index)
       : object_(std::move(object)), bracket_(std::move(bracket)),
@@ -1024,7 +1134,7 @@ private:
   ExprPtr index_;
 };
 
-class IndexSet final : public Expr {
+class IndexSet final : public ExprOfKind<ExprKind::IndexSet> {
 public:
   IndexSet(ExprPtr object, Token bracket, ExprPtr index, Token oper,
            ExprPtr value)
@@ -1076,7 +1186,7 @@ struct LambdaCapture {
   ExprPtr initializer;
 };
 
-class Lambda final : public Expr {
+class Lambda final : public ExprOfKind<ExprKind::Lambda> {
 public:
   Lambda(Token bracket, std::vector<LambdaCapture> captures,
          std::vector<Parameter> parameters, Token arrow, TypeRef returnType,
@@ -1119,7 +1229,7 @@ enum class LayoutQueryKind {
   Alignment,
 };
 
-class LayoutQuery final : public Expr {
+class LayoutQuery final : public ExprOfKind<ExprKind::LayoutQuery> {
 public:
   LayoutQuery(Token keyword, TypeRef type)
       : keyword_(std::move(keyword)), type_(std::move(type)) {}
@@ -1140,7 +1250,7 @@ private:
   TypeRef type_;
 };
 
-class LiteralExpr final : public Expr {
+class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {
 public:
   explicit LiteralExpr(Literal value) : value_(std::move(value)) {}
   LiteralExpr(Token token, Literal value)
@@ -1163,7 +1273,7 @@ private:
   Literal value_;
 };
 
-class Logical final : public Expr {
+class Logical final : public ExprOfKind<ExprKind::Logical> {
 public:
   Logical(ExprPtr left, Token oper, ExprPtr right)
       : left_(std::move(left)), oper_(std::move(oper)),
@@ -1189,7 +1299,7 @@ private:
   ExprPtr right_;
 };
 
-class Postfix final : public Expr {
+class Postfix final : public ExprOfKind<ExprKind::Postfix> {
 public:
   Postfix(ExprPtr expression, Token oper)
       : expression_(std::move(expression)), oper_(std::move(oper)) {}
@@ -1211,7 +1321,7 @@ private:
   Token oper_;
 };
 
-class QualifiedName final : public Expr {
+class QualifiedName final : public ExprOfKind<ExprKind::QualifiedName> {
 public:
   explicit QualifiedName(NamePath name) : name_(std::move(name)) {}
 
@@ -1226,7 +1336,7 @@ private:
   NamePath name_;
 };
 
-class This final : public Expr {
+class This final : public ExprOfKind<ExprKind::This> {
 public:
   explicit This(Token keyword) : keyword_(std::move(keyword)) {}
   This(This &&) = default;
@@ -1245,7 +1355,7 @@ private:
   Token keyword_;
 };
 
-class Set final : public Expr {
+class Set final : public ExprOfKind<ExprKind::Set> {
 public:
   Set(ExprPtr object, Token access, Token name, Token oper, ExprPtr value)
       : object_(std::move(object)), access_(std::move(access)),
@@ -1275,7 +1385,7 @@ private:
   ExprPtr value_;
 };
 
-class Unary final : public Expr {
+class Unary final : public ExprOfKind<ExprKind::Unary> {
 public:
   Unary(Token oper, ExprPtr right, ExprPtr rangeObject = nullptr)
       : oper_(std::move(oper)), right_(std::move(right)),
@@ -1304,7 +1414,7 @@ private:
   ExprPtr rangeObject_;
 };
 
-class Unexpected final : public Expr {
+class Unexpected final : public ExprOfKind<ExprKind::Unexpected> {
 public:
   Unexpected(Token keyword, ExprPtr error)
       : keyword_(std::move(keyword)), error_(std::move(error)) {}
@@ -1326,7 +1436,7 @@ private:
   ExprPtr error_;
 };
 
-class Variable final : public Expr {
+class Variable final : public ExprOfKind<ExprKind::Variable> {
 public:
   explicit Variable(Token name) : name_(std::move(name)) {}
   Variable(Variable &&) = default;
@@ -1345,7 +1455,7 @@ private:
   Token name_;
 };
 
-class BlockStmt final : public Stmt {
+class BlockStmt final : public StmtOfKind<StmtKind::BlockStmt> {
 public:
   explicit BlockStmt(StmtList statements,
                      std::optional<Token> unsafeKeyword = std::nullopt)
@@ -1367,7 +1477,8 @@ private:
   std::optional<Token> unsafeKeyword_;
 };
 
-class AccessSpecifierDecl final : public Stmt {
+class AccessSpecifierDecl final
+    : public StmtOfKind<StmtKind::AccessSpecifierDecl> {
 public:
   AccessSpecifierDecl(Token keyword, AccessModifier modifier)
       : keyword_(std::move(keyword)), modifier_(modifier) {}
@@ -1384,7 +1495,8 @@ private:
   AccessModifier modifier_;
 };
 
-class MutableFieldGroupDecl final : public Stmt {
+class MutableFieldGroupDecl final
+    : public StmtOfKind<StmtKind::MutableFieldGroupDecl> {
 public:
   MutableFieldGroupDecl(Token keyword, Token leftBrace, StmtList members,
                         Token rightBrace)
@@ -1423,7 +1535,7 @@ struct SpecialMemberSpecifier {
   SpecialMemberSpecifierKind kind = SpecialMemberSpecifierKind::Defaulted;
 };
 
-class ConstructorDecl final : public Stmt {
+class ConstructorDecl final : public StmtOfKind<StmtKind::ConstructorDecl> {
 public:
   ConstructorDecl(Token name, std::vector<GenericParameter> genericParameters,
                   std::vector<Parameter> parameters,
@@ -1471,7 +1583,7 @@ private:
   std::unique_ptr<BlockStmt> body_;
 };
 
-class DestructorDecl final : public Stmt {
+class DestructorDecl final : public StmtOfKind<StmtKind::DestructorDecl> {
 public:
   DestructorDecl(Token tilde, Token name,
                  std::optional<SpecialMemberSpecifier> specifier,
@@ -1497,7 +1609,7 @@ private:
   std::unique_ptr<BlockStmt> body_;
 };
 
-class ClassDecl final : public Stmt {
+class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {
 public:
   ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
             Token name, std::optional<TypeRef> exactSpecialization,
@@ -1556,7 +1668,7 @@ struct EnumeratorDecl {
   std::vector<Parameter> payload;
 };
 
-class EnumDecl final : public Stmt {
+class EnumDecl final : public StmtOfKind<StmtKind::EnumDecl> {
 public:
   EnumDecl(Token keyword, Token classKeyword, Token name,
            std::optional<TypeRef> underlyingType,
@@ -1587,7 +1699,7 @@ private:
   std::vector<EnumeratorDecl> enumerators_;
 };
 
-class ConditionalStmt final : public Stmt {
+class ConditionalStmt final : public StmtOfKind<StmtKind::ConditionalStmt> {
 public:
   ConditionalStmt(Token directive, std::vector<ConditionalBranch> branches)
       : directive_(std::move(directive)), branches_(std::move(branches)) {}
@@ -1615,7 +1727,8 @@ private:
   std::vector<ConditionalBranch> branches_;
 };
 
-class CompileErrorDirective final : public Stmt {
+class CompileErrorDirective final
+    : public StmtOfKind<StmtKind::CompileErrorDirective> {
 public:
   CompileErrorDirective(Token directive, Token message)
       : directive_(std::move(directive)), message_(std::move(message)) {}
@@ -1639,7 +1752,7 @@ private:
   Token message_;
 };
 
-class StaticAssertDecl final : public Stmt {
+class StaticAssertDecl final : public StmtOfKind<StmtKind::StaticAssertDecl> {
 public:
   StaticAssertDecl(Token keyword, Token leftParen, Token conditionStart,
                    ExprPtr condition, std::optional<Token> comma,
@@ -1686,7 +1799,7 @@ private:
   Token semicolon_;
 };
 
-class EmptyStmt final : public Stmt {
+class EmptyStmt final : public StmtOfKind<StmtKind::EmptyStmt> {
 public:
   explicit EmptyStmt(Token semicolon) : semicolon_(std::move(semicolon)) {}
 
@@ -1700,7 +1813,7 @@ private:
   Token semicolon_;
 };
 
-class ExternCDecl final : public Stmt {
+class ExternCDecl final : public StmtOfKind<StmtKind::ExternCDecl> {
 public:
   ExternCDecl(Token keyword, Token language, StmtList declarations)
       : keyword_(std::move(keyword)), language_(std::move(language)),
@@ -1720,7 +1833,7 @@ private:
   StmtList declarations_;
 };
 
-class ExpressionStmt final : public Stmt {
+class ExpressionStmt final : public StmtOfKind<StmtKind::ExpressionStmt> {
 public:
   explicit ExpressionStmt(ExprPtr expression,
                           std::optional<Token> discardAttribute = std::nullopt)
@@ -1741,7 +1854,7 @@ private:
   std::optional<Token> discardAttribute_;
 };
 
-class ForStmt final : public Stmt {
+class ForStmt final : public StmtOfKind<StmtKind::ForStmt> {
 public:
   ForStmt(StmtPtr initializer, ExprPtr condition, ExprPtr increment,
           StmtPtr body)
@@ -1764,7 +1877,7 @@ private:
   StmtPtr body_;
 };
 
-class RangeForStmt final : public Stmt {
+class RangeForStmt final : public StmtOfKind<StmtKind::RangeForStmt> {
 public:
   RangeForStmt(Token keyword, Mutability bindingMutability, TypeRef bindingType,
                Token bindingName, Token colon, StmtPtr lowered,
@@ -1825,7 +1938,7 @@ private:
   const ForStmt *coreLoop_ = nullptr;
 };
 
-class FunctionDecl final : public Stmt {
+class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {
 public:
   FunctionDecl(
       TypeRef returnType, Token name,
@@ -1937,7 +2050,7 @@ private:
   std::optional<NativeCArrayAttribute> nativeCArray_;
 };
 
-class IfStmt final : public Stmt {
+class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {
 public:
   IfStmt(ExprPtr condition, StmtPtr thenBranch, StmtPtr elseBranch,
          std::optional<Token> constexprKeyword = std::nullopt)
@@ -1966,7 +2079,7 @@ private:
   std::optional<Token> constexprKeyword_;
 };
 
-class LoopControlStmt final : public Stmt {
+class LoopControlStmt final : public StmtOfKind<StmtKind::LoopControlStmt> {
 public:
   explicit LoopControlStmt(Token keyword) : keyword_(std::move(keyword)) {}
 
@@ -1980,7 +2093,8 @@ private:
   Token keyword_;
 };
 
-class NamespaceAliasDecl final : public Stmt {
+class NamespaceAliasDecl final
+    : public StmtOfKind<StmtKind::NamespaceAliasDecl> {
 public:
   NamespaceAliasDecl(Token name, NamePath target)
       : name_(std::move(name)), target_(std::move(target)) {}
@@ -1997,7 +2111,7 @@ private:
   NamePath target_;
 };
 
-class NamespaceDecl final : public Stmt {
+class NamespaceDecl final : public StmtOfKind<StmtKind::NamespaceDecl> {
 public:
   NamespaceDecl(Token name, StmtList declarations)
       : name_(std::move(name)), declarations_(std::move(declarations)) {}
@@ -2014,7 +2128,7 @@ private:
   StmtList declarations_;
 };
 
-class ReturnStmt final : public Stmt {
+class ReturnStmt final : public StmtOfKind<StmtKind::ReturnStmt> {
 public:
   ReturnStmt(Token keyword, ExprPtr value)
       : keyword_(std::move(keyword)), value_(std::move(value)) {}
@@ -2046,7 +2160,7 @@ struct SwitchArm {
   StmtList statements;
 };
 
-class SwitchStmt final : public Stmt {
+class SwitchStmt final : public StmtOfKind<StmtKind::SwitchStmt> {
 public:
   SwitchStmt(Token keyword, ExprPtr expression, std::vector<SwitchArm> arms)
       : keyword_(std::move(keyword)), expression_(std::move(expression)),
@@ -2066,7 +2180,7 @@ private:
   std::vector<SwitchArm> arms_;
 };
 
-class TypeAliasDecl final : public Stmt {
+class TypeAliasDecl final : public StmtOfKind<StmtKind::TypeAliasDecl> {
 public:
   TypeAliasDecl(Token keyword, Token name, TypeRef target)
       : keyword_(std::move(keyword)), name_(std::move(name)),
@@ -2086,7 +2200,7 @@ private:
   TypeRef target_;
 };
 
-class ConceptDecl final : public Stmt {
+class ConceptDecl final : public StmtOfKind<StmtKind::ConceptDecl> {
 public:
   ConceptDecl(
       Token keyword, Token name, std::vector<Token> typeParameters,
@@ -2122,7 +2236,7 @@ private:
   std::optional<CompilerConstraintBinding> compilerBinding_;
 };
 
-class VariableDecl final : public Stmt {
+class VariableDecl final : public StmtOfKind<StmtKind::VariableDecl> {
 public:
   VariableDecl(Mutability mutability, TypeRef type, Token name,
                ExprPtr initializer,
@@ -2173,7 +2287,8 @@ private:
   bool rangeIterator_ = false;
 };
 
-class StructuredBindingDecl final : public Stmt {
+class StructuredBindingDecl final
+    : public StmtOfKind<StmtKind::StructuredBindingDecl> {
 public:
   StructuredBindingDecl(Token autoKeyword, Token leftBracket,
                         std::vector<VariableDecl> bindings, Token rightBracket,
@@ -2205,7 +2320,7 @@ private:
   ExprPtr initializer_;
 };
 
-class DoWhileStmt final : public Stmt {
+class DoWhileStmt final : public StmtOfKind<StmtKind::DoWhileStmt> {
 public:
   DoWhileStmt(StmtPtr body, ExprPtr condition)
       : body_(std::move(body)), condition_(std::move(condition)) {}
@@ -2222,7 +2337,7 @@ private:
   ExprPtr condition_;
 };
 
-class WhileStmt final : public Stmt {
+class WhileStmt final : public StmtOfKind<StmtKind::WhileStmt> {
 public:
   WhileStmt(ExprPtr condition, StmtPtr body)
       : condition_(std::move(condition)), body_(std::move(body)) {}

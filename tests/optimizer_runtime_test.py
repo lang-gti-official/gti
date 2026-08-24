@@ -86,8 +86,12 @@ def main() -> int:
             run([str(executable)])
 
         assert mir_by_level["O0"] != mir_by_level["O1"]
-        assert mir_by_level["O1"] == mir_by_level["O2"]
-        assert mir_by_level["O1"] == mir_by_level["O3"]
+        assert mir_by_level["O1"] != mir_by_level["O2"]
+        assert mir_by_level["O2"] == mir_by_level["O3"]
+        assert "safety-discharges=[arithmetic-overflow:" not in mir_by_level["O0"]
+        assert "safety-discharges=[arithmetic-overflow:" not in mir_by_level["O1"]
+        assert "safety-discharges=[arithmetic-overflow:" in mir_by_level["O2"]
+        assert "safety-discharges=[arithmetic-overflow:" in mir_by_level["O3"]
         assert "parameters=[{%" not in mir_by_level["O0"]
         assert "parameters=[{%" in mir_by_level["O1"]
         assert "target-arguments=[operand(" in mir_by_level["O1"]

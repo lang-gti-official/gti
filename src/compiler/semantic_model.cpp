@@ -28,54 +28,45 @@ void collectActiveProgramStatement(const Stmt *statement,
     return;
   }
   result.push_back(statement);
-  if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+  if (const auto *block = stmtAs<BlockStmt>(statement)) {
     collectActiveProgramStatements(block->statements(), target, result);
-  } else if (const auto *owner = dynamic_cast<const ClassDecl *>(statement)) {
+  } else if (const auto *owner = stmtAs<ClassDecl>(statement)) {
     collectActiveProgramStatements(owner->members(), target, result);
-  } else if (const auto *group =
-                 dynamic_cast<const MutableFieldGroupDecl *>(statement)) {
+  } else if (const auto *group = stmtAs<MutableFieldGroupDecl>(statement)) {
     collectActiveProgramStatements(group->members(), target, result);
-  } else if (const auto *conditional =
-                 dynamic_cast<const ConditionalStmt *>(statement)) {
+  } else if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
     if (const StmtList *branch = conditional->activeBranch(target)) {
       collectActiveProgramStatements(*branch, target, result);
     }
-  } else if (const auto *constructor =
-                 dynamic_cast<const ConstructorDecl *>(statement)) {
+  } else if (const auto *constructor = stmtAs<ConstructorDecl>(statement)) {
     collectActiveProgramStatement(constructor->body().get(), target, result);
-  } else if (const auto *destructor =
-                 dynamic_cast<const DestructorDecl *>(statement)) {
+  } else if (const auto *destructor = stmtAs<DestructorDecl>(statement)) {
     collectActiveProgramStatement(destructor->body().get(), target, result);
-  } else if (const auto *loop = dynamic_cast<const DoWhileStmt *>(statement)) {
+  } else if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {
     collectActiveProgramStatement(loop->body().get(), target, result);
-  } else if (const auto *external =
-                 dynamic_cast<const ExternCDecl *>(statement)) {
+  } else if (const auto *external = stmtAs<ExternCDecl>(statement)) {
     collectActiveProgramStatements(external->declarations(), target, result);
-  } else if (const auto *loop = dynamic_cast<const ForStmt *>(statement)) {
+  } else if (const auto *loop = stmtAs<ForStmt>(statement)) {
     collectActiveProgramStatement(loop->initializer().get(), target, result);
     collectActiveProgramStatement(loop->body().get(), target, result);
-  } else if (const auto *function =
-                 dynamic_cast<const FunctionDecl *>(statement)) {
+  } else if (const auto *function = stmtAs<FunctionDecl>(statement)) {
     collectActiveProgramStatement(function->body().get(), target, result);
-  } else if (const auto *branch = dynamic_cast<const IfStmt *>(statement)) {
+  } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
     collectActiveProgramStatement(branch->thenBranch().get(), target, result);
     collectActiveProgramStatement(branch->elseBranch().get(), target, result);
-  } else if (const auto *space =
-                 dynamic_cast<const NamespaceDecl *>(statement)) {
+  } else if (const auto *space = stmtAs<NamespaceDecl>(statement)) {
     collectActiveProgramStatements(space->declarations(), target, result);
-  } else if (const auto *loop = dynamic_cast<const RangeForStmt *>(statement)) {
+  } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
     collectActiveProgramStatement(loop->lowered().get(), target, result);
-  } else if (const auto *selection =
-                 dynamic_cast<const SwitchStmt *>(statement)) {
+  } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
     for (const SwitchArm &arm : selection->arms()) {
       collectActiveProgramStatements(arm.statements, target, result);
     }
-  } else if (const auto *binding =
-                 dynamic_cast<const StructuredBindingDecl *>(statement)) {
+  } else if (const auto *binding = stmtAs<StructuredBindingDecl>(statement)) {
     for (const VariableDecl &element : binding->bindings()) {
       collectActiveProgramStatement(&element, target, result);
     }
-  } else if (const auto *loop = dynamic_cast<const WhileStmt *>(statement)) {
+  } else if (const auto *loop = stmtAs<WhileStmt>(statement)) {
     collectActiveProgramStatement(loop->body().get(), target, result);
   }
 }
@@ -303,6 +294,9 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
         existing.internalLinkage || symbol.internalLinkage;
     existing.compilerPrivate =
         existing.compilerPrivate || symbol.compilerPrivate;
+    if (!existing.documentationMarkdown && symbol.documentationMarkdown) {
+      existing.documentationMarkdown = std::move(symbol.documentationMarkdown);
+    }
     return found->second;
   }
 
@@ -321,6 +315,19 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   symbolRecords.emplace_back(std::move(symbol));
   symbolsByDeclaration.emplace(key, id);
   return id;
+}
+
+void SemanticDatabase::setSymbolDocumentation(
+    SymbolId symbol, std::string documentationMarkdown) {
+  if (symbol == 0 || symbol <= baseSymbolCount) {
+    return;
+  }
+  const SymbolId local = symbol - baseSymbolCount;
+  if (local > symbolRecords.size()) {
+    return;
+  }
+  symbolRecords[local - 1].documentationMarkdown =
+      std::move(documentationMarkdown);
 }
 
 [[nodiscard]] SymbolId
@@ -362,20 +369,25 @@ void SemanticDatabase::finalize() {
           }
           return priority(left.kind) < priority(right.kind);
         });
-    std::vector<SemanticOccurrence> compacted;
-    compacted.reserve(unitOccurrences.size());
-    for (SemanticOccurrence &occurrence : unitOccurrences) {
-      if (!compacted.empty() && occurrence.symbol != 0 &&
-          compacted.back().span.start == occurrence.span.start &&
-          compacted.back().span.end == occurrence.span.end &&
-          compacted.back().kind == occurrence.kind &&
-          compacted.back().symbol == occurrence.symbol) {
-        compacted.back().roles |= occurrence.roles;
+    std::size_t write = 0;
+    for (std::size_t read = 0; read < unitOccurrences.size(); ++read) {
+      SemanticOccurrence &occurrence = unitOccurrences[read];
+      if (write != 0 && occurrence.symbol != 0 &&
+          unitOccurrences[write - 1].span.start == occurrence.span.start &&
+          unitOccurrences[write - 1].span.end == occurrence.span.end &&
+          unitOccurrences[write - 1].kind == occurrence.kind &&
+          unitOccurrences[write - 1].symbol == occurrence.symbol) {
+        unitOccurrences[write - 1].roles |= occurrence.roles;
         continue;
       }
-      compacted.emplace_back(std::move(occurrence));
+      if (write != read) {
+        unitOccurrences[write] = std::move(occurrence);
+      }
+      ++write;
     }
-    unitOccurrences = std::move(compacted);
+    unitOccurrences.erase(unitOccurrences.begin() +
+                              static_cast<std::ptrdiff_t>(write),
+                          unitOccurrences.end());
   }
 }
 
@@ -1792,6 +1804,12 @@ void SemanticModel::recordCompilerCapabilityType(
 
 SymbolId SemanticModel::recordSymbol(SymbolRecord symbol) {
   return semanticDatabase.recordSymbol(std::move(symbol));
+}
+
+void SemanticModel::setSymbolDocumentation(SymbolId symbol,
+                                           std::string documentationMarkdown) {
+  semanticDatabase.setSymbolDocumentation(symbol,
+                                          std::move(documentationMarkdown));
 }
 
 [[nodiscard]] SymbolId

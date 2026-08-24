@@ -5,6 +5,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/optimization/effects.h"
 #include "gti/optimization/report.h"
+#include "gti/optimization/safety.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@ enum class MirAnalysisKind : std::uint8_t {
   ValueUses,
   Effects,
   ScalarPromotionInputs,
+  SafetyChecks,
   Count,
 };
 
@@ -114,6 +116,8 @@ public:
   effects(const MirProgram &program, MirBodyAddress address);
   [[nodiscard]] const MirScalarPromotionInputs *
   scalarPromotionInputs(const MirProgram &program, MirBodyAddress address);
+  [[nodiscard]] const MirSafetyAnalysis *safetyChecks(const MirProgram &program,
+                                                      MirBodyAddress address);
 
   // Increments the body's revision and drops every cached result not named by
   // the pass. An omitted/unknown preservation claim therefore invalidates all
@@ -130,6 +134,7 @@ private:
     std::optional<std::vector<std::vector<MirValueUse>>> valueUses;
     std::optional<std::vector<MirInstructionEffectFact>> effects;
     std::optional<MirScalarPromotionInputs> scalarPromotionInputs;
+    std::optional<MirSafetyAnalysis> safetyChecks;
   };
 
   [[nodiscard]] Entry &entry(MirBodyAddress address);

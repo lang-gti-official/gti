@@ -4,14 +4,88 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <iterator>
 #include <string_view>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <variant>
 
 namespace lang {
 namespace {
+
+std::uint64_t sourceDigest(std::string_view source) {
+  // Stable FNV-1a identity. Overlay cache hits also compare the exact source
+  // bytes, so a digest collision cannot silently select another overlay.
+  std::uint64_t result = 14695981039346656037ULL;
+  for (const unsigned char byte : source) {
+    result ^= byte;
+    result *= 1099511628211ULL;
+  }
+  return result;
+}
+
+void digestInteger(std::uint64_t &digest, std::uint64_t value) {
+  for (unsigned shift = 0; shift < 64; shift += 8) {
+    digest ^= static_cast<unsigned char>(value >> shift);
+    digest *= 1099511628211ULL;
+  }
+}
+
+void digestText(std::uint64_t &digest, std::string_view value) {
+  digestInteger(digest, value.size());
+  for (const unsigned char byte : value) {
+    digest ^= byte;
+    digest *= 1099511628211ULL;
+  }
+}
+
+void digestLiteral(std::uint64_t &digest, const Literal &literal) {
+  digestInteger(digest, literal.index());
+  std::visit(
+      [&](const auto &value) {
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<Value, std::uint64_t>) {
+          digestInteger(digest, value);
+        } else if constexpr (std::is_same_v<Value, BinaryFloat>) {
+          digestInteger(digest, value.bits);
+          digestInteger(digest, static_cast<std::uint64_t>(value.format));
+        } else if constexpr (std::is_same_v<Value, CharacterLiteral>) {
+          digestInteger(digest, value.value);
+        } else if constexpr (std::is_same_v<Value, std::string>) {
+          digestText(digest, value);
+        } else if constexpr (std::is_same_v<Value, bool>) {
+          digestInteger(digest, value ? 1 : 0);
+        }
+      },
+      literal);
+}
+
+std::uint64_t syntaxDigest(const std::vector<Token> &tokens) {
+  std::uint64_t result = 14695981039346656037ULL;
+  for (const Token &token : tokens) {
+    digestInteger(result, static_cast<std::uint64_t>(token.kind));
+    digestInteger(result, token.position);
+    digestInteger(result, static_cast<std::uint64_t>(token.line));
+    digestText(result, token.lexeme);
+    digestLiteral(result, token.literal);
+    digestInteger(result, token.completion ? 1 : 0);
+    digestInteger(result, token.generated ? 1 : 0);
+    digestInteger(result, token.configurationFlagReference ? 1 : 0);
+    digestInteger(result, token.configurationFlagDefined.has_value() ? 1 : 0);
+    if (token.configurationFlagDefined) {
+      digestInteger(result, *token.configurationFlagDefined ? 1 : 0);
+    }
+    if (token.leadingDocumentationMarkdown) {
+      digestInteger(result, 1);
+      digestText(result, *token.leadingDocumentationMarkdown);
+    } else {
+      digestInteger(result, 0);
+    }
+  }
+  return result;
+}
 
 class ConditionEvaluator final {
 public:
@@ -328,17 +402,7 @@ SourceLoader::packageByIdentity(std::string_view identity) const {
 
 std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
     const std::filesystem::path &path) const {
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(path, error)) {
-    return std::nullopt;
-  }
-
   for (const std::filesystem::path &root : standardLibraryRoots) {
-    error.clear();
-    if (!std::filesystem::is_directory(root, error)) {
-      continue;
-    }
-
     const std::filesystem::path relative = path.lexically_relative(root);
     if (relative.empty() || relative.is_absolute()) {
       continue;
@@ -370,6 +434,19 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
                     [](const std::string &segment) {
                       return !isImportPathSegment(segment);
                     })) {
+      continue;
+    }
+
+    // Most application units are outside every configured standard-library
+    // root. Establish lexical containment first so those common lookups do
+    // not issue filesystem status calls; retain the same existence checks for
+    // the only paths that could be trusted library units.
+    std::error_code error;
+    if (!std::filesystem::is_directory(root, error)) {
+      continue;
+    }
+    error.clear();
+    if (!std::filesystem::is_regular_file(path, error)) {
       continue;
     }
 
@@ -426,24 +503,95 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       path, isEntry, isPrelude, std::move(standardLibraryName), role,
       std::move(packageIdentity), std::move(packageRelativePath));
   states.emplace(key, FileState{.state = LoadState::Visiting, .unit = unitId});
-
-  Lexer lexer;
   std::vector<Token> fileTokens;
+  std::string sourceText;
+  std::vector<LexDiagnostic> lexDiagnostics;
+  bool lexHadError = false;
+  std::uint64_t loadedSourceDigest = 0;
+  std::optional<std::string_view> exactSource;
+  std::optional<std::size_t> unitCompletionOffset;
   if (isEntry && entrySource && !entrySourceConsumed) {
     entrySourceConsumed = true;
-    fileTokens =
-        completionOffset
-            ? lexer.scanForCompletion(*entrySource, *completionOffset, key)
-            : lexer.scan(*entrySource, key);
+    exactSource = *entrySource;
+    unitCompletionOffset = completionOffset;
   } else if (const auto override = sourceOverrides->find(key);
              override != sourceOverrides->end()) {
-    fileTokens = lexer.scan(override->second, key);
-  } else {
-    fileTokens = lexer.consume(path);
+    exactSource = override->second;
   }
-  sourceManager.set(key, lexer.sourceText());
+  std::uint64_t generation = 0;
+  if (sourceGenerations != nullptr) {
+    if (const auto found = sourceGenerations->find(key);
+        found != sourceGenerations->end()) {
+      generation = found->second;
+    }
+  }
+  if (exactSource) {
+    loadedSourceDigest = sourceDigest(*exactSource);
+  } else if (sourceDigests != nullptr) {
+    if (const auto found = sourceDigests->find(key);
+        found != sourceDigests->end()) {
+      loadedSourceDigest = found->second;
+    }
+  }
+  FrontendUnitCacheKey cacheKey{.canonicalPath = key,
+                                .sourceGeneration = generation,
+                                .sourceDigest = loadedSourceDigest,
+                                .context = cacheContext,
+                                .completionOffset = unitCompletionOffset};
+  std::optional<CachedLexedSource> cached =
+      cache ? cache->lookupLexed(cacheKey, exactSource) : std::nullopt;
+  if (cached) {
+    sourceText = std::move(cached->source);
+    fileTokens = std::move(cached->tokens);
+    lexDiagnostics = std::move(cached->diagnostics);
+    lexHadError = cached->hadError;
+    loadedSourceDigest = cached->sourceDigest;
+    if (workMetrics != nullptr) {
+      workMetrics->lexCacheHits.push_back(key);
+    }
+  } else {
+    if (workMetrics != nullptr) {
+      workMetrics->loadedUnits.push_back(key);
+      workMetrics->lexedUnits.push_back(key);
+    }
+    Lexer lexer;
+    const auto lexStart = std::chrono::steady_clock::now();
+    if (exactSource) {
+      fileTokens = unitCompletionOffset
+                       ? lexer.scanForCompletion(std::string(*exactSource),
+                                                 *unitCompletionOffset, key)
+                       : lexer.scan(std::string(*exactSource), key);
+    } else {
+      fileTokens = lexer.consume(path);
+    }
+    if (workMetrics != nullptr) {
+      workMetrics->lexMicroseconds += static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - lexStart)
+              .count());
+    }
+    sourceText = lexer.sourceText();
+    loadedSourceDigest = sourceDigest(sourceText);
+    lexDiagnostics = lexer.errors();
+    lexHadError = lexer.hadError();
+    if (cache != nullptr) {
+      cacheKey.sourceDigest = loadedSourceDigest;
+      cache->storeLexed(cacheKey, {.source = sourceText,
+                                   .sourceDigest = loadedSourceDigest,
+                                   .tokens = fileTokens,
+                                   .diagnostics = lexDiagnostics,
+                                   .hadError = lexHadError});
+    }
+  }
+  sourceManager.set(key, sourceText);
+  if (SourceUnit *unit = graph.findUnit(unitId)) {
+    unit->sourceDigest = loadedSourceDigest;
+  }
+  if (workMetrics != nullptr) {
+    workMetrics->sourceBytes += sourceText.size();
+  }
 
-  for (const LexDiagnostic &diagnostic : lexer.errors()) {
+  for (const LexDiagnostic &diagnostic : lexDiagnostics) {
     Diagnostic forwarded = diagnostic;
     if (includeToken != nullptr) {
       forwarded.related.push_back(
@@ -451,7 +599,21 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     }
     diagnostics.emplace_back(std::move(forwarded));
   }
-  if (lexer.hadError()) {
+  if (lexHadError) {
+    states[key].state = LoadState::Loaded;
+    return unitId;
+  }
+
+  const bool requiresDirectiveProcessing =
+      std::any_of(fileTokens.begin(), fileTokens.end(), [](const Token &token) {
+        return isDirectiveToken(token.kind) ||
+               (token.kind == TokenKind::IDENTIFIER &&
+                token.lexeme == "include");
+      });
+  if (!requiresDirectiveProcessing) {
+    SourceUnit *loadedUnit = graph.findUnit(unitId);
+    loadedUnit->syntaxDigest = loadedSourceDigest;
+    loadedUnit->tokens = std::move(fileTokens);
     states[key].state = LoadState::Loaded;
     return unitId;
   }
@@ -678,6 +840,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                         key);
   }
   SourceUnit *loadedUnit = graph.findUnit(unitId);
+  loadedUnit->syntaxDigest = syntaxDigest(output);
   loadedUnit->tokens = std::move(output);
   loadedUnit->inactiveSpans = std::move(inactiveSpans);
   loadedUnit->configurationTokens = std::move(configurationTokens);

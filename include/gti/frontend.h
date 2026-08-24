@@ -3,6 +3,8 @@
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/failure_metadata.h"
+#include "gti/frontend_cache.h"
+#include "gti/frontend_work.h"
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
@@ -12,6 +14,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -32,6 +35,15 @@ struct FrontendOptions {
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
+  // Optional synchronous work accounting. The caller owns this object for the
+  // complete Frontend invocation.
+  FrontendWorkMetrics *workMetrics = nullptr;
+  std::shared_ptr<FrontendCache> cache;
+  std::unordered_map<std::string, std::uint64_t> sourceGenerations;
+  // Exact digests learned from a completed snapshot for the corresponding
+  // source generation. Missing identities force SourceLoader to read and
+  // digest the file before it may populate or reuse a cache row.
+  std::unordered_map<std::string, std::uint64_t> sourceDigests;
 };
 
 struct FrontendResult {

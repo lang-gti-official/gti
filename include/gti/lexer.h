@@ -42,6 +42,7 @@ private:
   [[nodiscard]] char peekNext() const;
   void addToken(TokenKind token);
   void addToken(TokenKind kind, Literal literal);
+  void lineComment();
   void blockComment();
   void directive();
   void string();
@@ -66,6 +67,8 @@ private:
   std::size_t start = 0;
   std::size_t current = 0;
   int line = 1;
+  std::optional<std::string> pendingDocumentationMarkdown;
+  int pendingDocumentationLastLine = 0;
 };
 
 } // namespace lang

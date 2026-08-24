@@ -1600,6 +1600,51 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
          .spelling = std::move(spelling)});
   }
 
+  // A failure-capable Module/0 body (or a failure-free shape outside the
+  // passive initializer schedule) must construct class program storage at
+  // the verified MIR step. Copy that concrete representation choice into the
+  // storage row so declarations, Module/0, and later symbol-rooted accesses
+  // cannot independently disagree about whether the spelling names a value
+  // or an uninitialized lifetime slot.
+  const bool executableProgramInitialization = std::any_of(
+      mir.programInitializationPlan().steps.begin(),
+      mir.programInitializationPlan().steps.end(), [](const auto &step) {
+        return step.role == ProgramInitializationStepRole::Initializer;
+      });
+  bool runtimeModuleBody = false;
+  if (executableProgramInitialization) {
+    runtimeModuleBody = cppMirModuleMayRaiseDefinedFailure(mir);
+    if (!runtimeModuleBody) {
+      const CppMirBodyEmissionMap provisional(builder.rows);
+      runtimeModuleBody =
+          !CppMirBodyEmitter(mir, provisional)
+               .initializerSchedule({.kind = MirBodyKind::Module, .owner = 0})
+               .supported;
+    }
+  }
+  if (runtimeModuleBody) {
+    for (const MirProgramInitializationStep &step :
+         mir.programInitializationPlan().steps) {
+      const MirPlace *storage = mir.module().findPlace(step.storagePlace);
+      if (step.role != ProgramInitializationStepRole::Initializer ||
+          step.requiresActiveCleanup || storage == nullptr ||
+          storage->type.kind != SemanticType::Class) {
+        continue;
+      }
+      const auto row = std::find_if(
+          builder.rows.symbols.begin(), builder.rows.symbols.end(),
+          [&](const CppMirSymbolRepresentation &candidate) {
+            return candidate.kind == CppMirSymbolRepresentationKind::Storage &&
+                   candidate.owner == step.ownerClass &&
+                   candidate.symbol == step.symbol && candidate.ordinal == 0 &&
+                   candidate.type == storage->type;
+          });
+      if (row != builder.rows.symbols.end()) {
+        row->runtimeLifetimeSlot = true;
+      }
+    }
+  }
+
   return builder.rows;
 }
 

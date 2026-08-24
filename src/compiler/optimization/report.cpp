@@ -47,6 +47,8 @@ namespace {
     return "remove-block";
   case MirTransformKind::PromotePlace:
     return "promote-place";
+  case MirTransformKind::DischargeSafetyCheck:
+    return "discharge-safety-check";
   case MirTransformKind::Count:
     break;
   }
@@ -67,6 +69,12 @@ namespace {
     return "dead-unused-computation";
   case MirTransformProofKind::ScalarPromotion:
     return "scalar-promotion";
+  case MirTransformProofKind::BoundsRange:
+    return "bounds-range";
+  case MirTransformProofKind::StorageInitialization:
+    return "storage-initialization";
+  case MirTransformProofKind::ArithmeticRange:
+    return "arithmetic-range";
   case MirTransformProofKind::Count:
     break;
   }
@@ -176,7 +184,24 @@ void writeRequiredAnalyses(std::ostream &output,
          << ",\"reachability\":" << (analyses.reachability ? "true" : "false")
          << ",\"dominance\":" << (analyses.dominance ? "true" : "false")
          << ",\"scalarPromotion\":"
-         << (analyses.scalarPromotion ? "true" : "false") << '}';
+         << (analyses.scalarPromotion ? "true" : "false")
+         << ",\"safetyChecks\":" << (analyses.safetyChecks ? "true" : "false")
+         << '}';
+}
+
+void writeSafetyDischarge(std::ostream &output,
+                          const std::optional<MirSafetyDischarge> &discharge) {
+  if (!discharge) {
+    output << "null";
+    return;
+  }
+  output << "{\"family\":";
+  writeJsonString(output, mirSafetyCheckFamilyName(discharge->family));
+  output << ",\"origin\":" << discharge->origin << ",\"code\":";
+  writeJsonString(output, definedFailureCodeName(discharge->outcome.code));
+  output << ",\"detail\":";
+  writeJsonString(output, definedFailureDetailName(discharge->outcome.detail));
+  output << '}';
 }
 
 void writeTransform(std::ostream &output, const MirTransformRecord &record) {
@@ -195,12 +220,16 @@ void writeTransform(std::ostream &output, const MirTransformRecord &record) {
          << ",\"sourceStatement\":" << record.sourceStatement
          << ",\"replacementLiteral\":";
   writeLiteral(output, record.replacementLiteral);
+  output << ",\"safetyDischarge\":";
+  writeSafetyDischarge(output, record.safetyDischarge);
   output << ",\"relatedBlocks\":";
   writeNumberArray(output, record.relatedBlocks);
   output << ",\"relatedInstructions\":";
   writeNumberArray(output, record.relatedInstructions);
   output << ",\"relatedValues\":";
   writeNumberArray(output, record.relatedValues);
+  output << ",\"relatedPlaces\":";
+  writeNumberArray(output, record.relatedPlaces);
   output << ",\"requiredAnalyses\":";
   writeRequiredAnalyses(output, record.requiredAnalyses);
   output << '}';
@@ -239,7 +268,26 @@ void writeInvalidation(std::ostream &output,
          << ",\"reachability\":"
          << (invalidation.reachability ? "true" : "false")
          << ",\"dominance\":" << (invalidation.dominance ? "true" : "false")
-         << '}';
+         << ",\"safetyChecks\":"
+         << (invalidation.safetyChecks ? "true" : "false") << '}';
+}
+
+void writeSafetyFamilyCounts(std::ostream &output,
+                             const OptimizationSafetyCounts &counts) {
+  output << '{';
+  for (std::size_t index = 0;
+       index < static_cast<std::size_t>(MirSafetyCheckFamily::Count); ++index) {
+    if (index != 0) {
+      output << ',';
+    }
+    writeJsonString(output, mirSafetyCheckFamilyName(
+                                static_cast<MirSafetyCheckFamily>(index)));
+    output << ":{\"source\":" << counts.sourceByFamily[index]
+           << ",\"emitted\":" << counts.emittedByFamily[index]
+           << ",\"staticallyDischarged\":" << counts.dischargedByFamily[index]
+           << '}';
+  }
+  output << '}';
 }
 
 void writeStringArray(std::ostream &output,
@@ -293,6 +341,15 @@ std::string formatOptimizationRemarks(const OptimizationReport &report,
          << " emitted=" << report.safety.emittedOperations
          << " statically-discharged=" << report.safety.staticallyDischarged
          << '\n';
+  for (std::size_t index = 0;
+       index < static_cast<std::size_t>(MirSafetyCheckFamily::Count); ++index) {
+    output << "gti-opt: safety family "
+           << mirSafetyCheckFamilyName(static_cast<MirSafetyCheckFamily>(index))
+           << " source=" << report.safety.sourceByFamily[index]
+           << " emitted=" << report.safety.emittedByFamily[index]
+           << " statically-discharged="
+           << report.safety.dischargedByFamily[index] << '\n';
+  }
   return output.str();
 }
 
@@ -314,7 +371,9 @@ serializeOptimizationReportJson(const OptimizationReport &report,
          << report.safety.sourceOperations
          << ",\"emitted\":" << report.safety.emittedOperations
          << ",\"staticallyDischarged\":" << report.safety.staticallyDischarged
-         << "},\n  \"passes\":[";
+         << ",\"families\":";
+  writeSafetyFamilyCounts(output, report.safety);
+  output << "},\n  \"passes\":[";
   for (std::size_t passIndex = 0; passIndex < report.passes.size();
        ++passIndex) {
     if (passIndex != 0) {

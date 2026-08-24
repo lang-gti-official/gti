@@ -248,9 +248,10 @@ and report rules are in [Execution And Runtime Semantics](execution.md#410-defin
 
 ## 7.6 Documentation And Conformance
 
-Public library declarations should retain documentation comments from GTI
-source so the same contract can serve API documentation, hover, completion,
-signature help, and generated reference material.
+Public library declarations use retained `///` Markdown from GTI source. Hover
+already presents that contract from the compiler symbol; completion, signature
+help, and generated reference material remain consumers to be connected to the
+same value.
 
 Before 1.0, every standardized component requires tests covering primitive,
 copyable aggregate, move-only, polymorphic, empty, error, and boundary cases as

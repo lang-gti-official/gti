@@ -1,7 +1,7 @@
 # Optimization
 
-Status: implemented verified local MIR pipeline and optimizer observability
-foundation.
+Status: implemented verified local MIR pipeline, first proof-carrying safety
+optimization families, and optimizer observability foundation.
 
 GTI optimization has one executable-body authority: optimized MIR. The
 frontend still runs a compatibility HIR constant analysis for non-body
@@ -48,9 +48,16 @@ following deterministic local pipeline:
 3. `unreachable-block-cleanup`; and
 4. `dead-unused-computations`.
 
-`-O2` and `-O3` intentionally run the same GTI pass set until measured
-dataflow and interprocedural clients justify distinct middle-end pipelines.
-They still select their corresponding native optimization levels.
+`-O2` and `-O3` add the following deterministic safety passes between literal
+folding and cleanup:
+
+1. `discharge-bounds-checks`;
+2. `discharge-storage-state-checks`; and
+3. `discharge-arithmetic-overflow-checks`.
+
+Both levels currently derive the same GTI proofs. They still select their
+corresponding native optimization levels. `-O0` and `-O1` do not attach safety
+discharges.
 
 The fold pass replaces admitted identity chains and exact non-trapping literal
 computations, then replaces branches whose dominating condition is a proved
@@ -76,13 +83,47 @@ complete refined effects prove them removable, non-trapping, and neutral for
 memory, ownership, loans, cleanup, runtime behavior, user code, and
 synchronization.
 
+## Proof-Carrying Safety Checks
+
+`analyzeMirSafetyChecks` is the canonical body-local abstract interpreter for
+the first check-elimination slice. It propagates checked fixed-width integer
+intervals through CFG edges, refines those intervals from branch predicates,
+tracks fixed-array extents, and tracks exact initialized slots in private
+sparse storage. A bounded deterministic worklist and widening keep loops
+finite. Unknown or opaque calls, raw/unsafe memory effects, and other
+unclassified mutation invalidate mutable facts instead of being guessed
+through.
+
+The admitted operations are deliberately narrow:
+
+- fixed-array scalar reads whose complete index interval is within the known
+  extent;
+- private sparse-storage reads and mutable reads whose exact index is both in
+  capacity and definitely initialized by a successful construct not invalidated
+  by a destroy or mutation barrier; and
+- checked integer add, subtract, multiply, and unary negate whose complete
+  operand intervals prove the result remains in the declared GTI domain.
+
+Array writes and borrows, prefix-storage operations, division, remainder,
+shifts, conversions, cross-call facts, aliases, and unproved dynamic indices
+remain checked. This is not a public-library-name optimization and does not
+infer container invariants.
+
+Each proof identifies one exact local defined-failure outcome by family,
+origin, code, and detail. The optimizer attaches a `MirSafetyDischarge` to the
+instruction but retains the source instruction and failure CFG. This keeps the
+proof inspectable and lets each backend select an unchecked representation
+only after `LoweredProgramBuilder` has independently replayed and sealed the
+transformation.
+
 ## Rewrite And Proof Authority
 
 Durable destructive-edit identity is
 `{MirBodyAddress, MirInstructionId}`; `MirBlockId` identifies a block.
 Vector indexes are implementation details and never appear in optimizer
 evidence. `MirProgramEditor` exposes only current client-backed literal,
-terminator, place-promotion, dead-instruction, and unreachable-block edits.
+terminator, place-promotion, safety-discharge, dead-instruction, and
+unreachable-block edits.
 Each edit batch validates every guarded target before mutation, rewrites a
 copy, repairs derived facts, verifies the complete candidate, and commits
 atomically. Destructive instruction removal leaves a canonical inert
@@ -95,10 +136,13 @@ provenance, exact related identities, replacement payload where applicable,
 and required analysis facts. These records are untrusted claims.
 `verifyMirOptimizationCoherence` starts from canonical source MIR and
 independently replays scalar promotion, literal/compute folds, branch
-selection, unreachable cleanup, and dead-computation removal. It then
-exact-compares complete MIR structures, including initialization and failure
-schedules. Missing, duplicate, unsorted, stale, malformed, or unauthorized
-records fail closed.
+selection, exact safety proofs, unreachable cleanup, and dead-computation
+removal. Canonical source MIR containing a pre-attached safety discharge is
+rejected. Replay reruns the canonical safety analysis and exact-compares the
+proof's outcome and related MIR blocks, instructions, values, and places before
+attaching it. It then exact-compares complete MIR structures, including
+initialization and failure schedules. Missing, duplicate, unsorted, stale,
+malformed, or unauthorized records fail closed.
 
 `LoweredProgramBuilder` consumes canonical source MIR, optimized MIR, and the
 coherence evidence before sealing a `LoweredProgram`. Source MIR and
@@ -115,10 +159,11 @@ explicit preservation claim, transformation records, and verification.
 The body analysis manager is keyed by stable `MirBodyAddress` plus a
 monotonically increasing revision. It caches only facts consumed by current
 passes: CFG/reachability and acyclicity, dominance, value uses, exact
-instruction effects, and scalar-promotion inputs. A pass explicitly preserves
-analyses; an unknown or omitted claim invalidates every cached result
-conservatively. No MIR pointer survives invalidation. Loop information, range
-and predicate analysis, alias analysis, memory SSA, inlining, and
+instruction effects, scalar-promotion inputs, and canonical safety facts. A
+pass explicitly preserves analyses; an unknown or omitted claim invalidates
+every cached result conservatively. No MIR pointer survives invalidation. The
+safety client owns only its bounded body-local intervals and predicates; a
+general loop framework, alias analysis, memory SSA, inlining, and
 devirtualization remain absent until a concrete pass needs them.
 
 ## Per-Instance Effects
@@ -154,13 +199,14 @@ Optimization output is opt-in:
 --optimization-report <path> deterministic versioned JSON report
 ```
 
-The JSON schema is `gti-optimization-report`, version 1. It includes the
+The JSON schema is `gti-optimization-report`, version 2. It includes the
 selected level, pass statistics, actionable remarks, invalidated analyses,
 stable MIR/source identities, proof kinds, transformation records,
-verification, and exact source/emitted/statically-discharged safety-operation
-counts supported by current MIR identities. It contains no timing or pointer
-data, so identical inputs produce identical output. GTI proof remarks are
-labelled separately from native Clang/GCC optimization remarks.
+verification, exact safety outcomes and related places, and exact
+source/emitted/statically-discharged counts per safety family. Counts represent
+local defined-failure outcomes rather than whole instructions. It contains no
+timing or pointer data, so identical inputs produce identical output. GTI proof
+remarks are labelled separately from native Clang/GCC optimization remarks.
 
 Ordinary compilation captures none of these outputs and remains unchanged when
 the options are absent. The reusable driver provides equivalent opt-in pre-MIR,
@@ -180,10 +226,11 @@ presentation.
 - Native C++/LLVM optimization remains responsible for target instruction
   selection and machine-level work.
 
-The next planned clients are sparse propagation, predicate/range facts, and
-proof-carrying check elimination. They can extend the current pass, analysis,
-rewrite, report, and `LoweredProgram` contracts without changing optimizer
-ownership or backend inputs.
+The next clients can widen the measured operation families or add sparse
+propagation without changing optimizer ownership or backend inputs. Every new
+family must extend the canonical analysis, typed proof, independent replay,
+backend consumption, per-family report, near-miss coverage, and differential
+runtime evidence together.
 See [`docs/plans/optimization.md`](../plans/optimization.md) and
 [`docs/plans/performance-tooling.md`](../plans/performance-tooling.md) for the
 supporting transform and observability designs.

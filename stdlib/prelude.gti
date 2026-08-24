@@ -143,12 +143,15 @@ namespace std {
   concept unsigned_integral<T> = gti_internal::unsigned_integral_capability<T> && std::integral<T>;
   concept floating_point<T> = gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
 
+  /// A counted, read-only view over character storage.
   using string_view = gti_internal::text_view;
   using size_t = uint64_t;
   using ptrdiff_t = int64_t;
 
+  /// Transfers `value` into an owned result and leaves the source moved from.
   T move<T>(T& value);
 
+  /// Exclusive ownership of one dynamically allocated `T`.
   class unique_ptr<T> {
     mut gti_internal::unique_owner<T> owner = nullptr;
 
@@ -200,6 +203,7 @@ namespace std {
     }
   };
 
+  /// Allocates a `T` from `args` and returns its exclusive owner.
   unique_ptr<T> make_unique<T, Args...>(Args... args) {
     return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
   }
@@ -208,19 +212,23 @@ namespace std {
     return owner.upcast<Base>();
   }
 
+  /// Writes `value` to standard output without adding a newline.
   void print(string_view value) {
     gti_internal::runtime::write_stdout(value);
   }
 
+  /// Writes one character to standard output without adding a newline.
   void print(char value) {
     [[discard]] gti_internal::runtime::write_stdout_byte(uint8_t(value));
   }
 
+  /// Writes `value` to standard output followed by a newline.
   void println(string_view value) {
     print(value);
     print("\n");
   }
 
+  /// Writes one character to standard output followed by a newline.
   void println(char value) {
     print(value);
     print("\n");
@@ -297,10 +305,12 @@ namespace gti_internal {
 }
 
 namespace std {
+  /// Writes an integral value in decimal without adding a newline.
   void print<std::integral T>(T value) {
     gti_internal::print_integral(value);
   }
 
+  /// Writes an integral value in decimal followed by a newline.
   void println<std::integral T>(T value) {
     print(value);
     print("\n");

@@ -709,24 +709,15 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--keep-failures",
         action="store_true",
-        help="preserve a generated mismatch and a GTI debug bundle",
+        help="preserve failure evidence instead of deleting it with the "
+        "temporary directory: the audit working tree, plus a generated "
+        "mismatch and its GTI debug bundle",
     )
     parser.add_argument(
         "--artifacts-dir",
-        help="failure destination (implies --keep-failures)",
+        help="directory to preserve failures under (implies --keep-failures)",
     )
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument(
-        "--keep-failures",
-        action="store_true",
-        help="preserve the audit working tree when a check fails, instead of "
-        "deleting the evidence with the temporary directory",
-    )
-    parser.add_argument(
-        "--artifacts-dir",
-        help="directory to preserve failing working trees under "
-        "(implies --keep-failures)",
-    )
     return parser.parse_args()
 
 
