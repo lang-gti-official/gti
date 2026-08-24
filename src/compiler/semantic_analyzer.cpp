@@ -16981,8 +16981,11 @@ private:
                  ? isAssignable(parameter, argument, expression.get())
                  : parameter == argument;
     }
-    if (parameter.arguments.size() != 1 || parameter.arguments[0] != argument ||
-        !expression) {
+    if (parameter.arguments.size() != 1 || !expression) {
+      return false;
+    }
+    const SemanticType &referent = parameter.arguments[0];
+    if (referent != argument && !isPublicBaseConversion(argument, referent)) {
       return false;
     }
     const ExpressionInfo *info = semanticModel.findExpression(*expression);

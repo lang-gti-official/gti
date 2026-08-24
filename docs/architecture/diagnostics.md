@@ -286,6 +286,12 @@ diagnostics or letting a backend message choose either identity.
   verification failure. Anchor it at byte zero of the selected entry unit,
   include the first failed invariant, and do not attach a source fix-it: valid
   GTI source cannot repair inconsistent compiler-owned metadata.
+- `GTI-B0003` owns a verified, valid GTI program that reaches a specifically
+  classified capability the selected backend does not implement yet. Anchor it
+  at byte zero of the selected entry unit and name the missing MIR/backend
+  prerequisite. Do not suggest filing a compiler bug. A generic text-vocabulary
+  rejection or unclassified backend exception remains `GTI-B0001`; only an
+  explicit bounded backend classification may use `GTI-B0003`.
 
 `GTI-S2046` owns the confined-callable boundary. It points at the callable
 use, forwarding argument, or enclosing return type that lacks a proven exact

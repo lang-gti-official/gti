@@ -11,9 +11,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `issue-113-virtual-through-base-reference.gti` | [#113](https://github.com/LukeHHA/gti/issues/113) | a virtual call through a reference to a plain base *class* → `GTI-B0001`; the same shape through an `interface` works |
+There are currently no quarantined compiler reproducers.
 
 ## Memory-safety reproducers
 
@@ -38,16 +36,12 @@ There are currently no quarantined memory-safety reproducers.
 no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 (it sees an ordinary non-zero exit). Compile one and read the diagnostic.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `rejected/issue-114-interface-argument.gti` | [#114](https://github.com/LukeHHA/gti/issues/114) | passing a concrete type where an interface reference is required → `GTI-S2003`, though binding it to a reference one line earlier is accepted |
+There are currently no quarantined wrongly rejected programs.
 
 ## Confirmed root causes
 
-Each was located by instrumenting the rejecting gate with
+Previous root causes were located by instrumenting the rejecting gate with
 `scripts/debug/explain_rejection.py`, not inferred from reading the source.
-They share the `GTI-B0001` code but are four independent defects in two
-subsystems.
 
 Anchors are symbol names and diagnostic strings because **line numbers drift**
 — grep the anchor, or re-run the tool, rather than trusting the parenthesised
@@ -58,8 +52,8 @@ tests below rather than duplicated here.
 
 ## Finding the gate for a new GTI-B0001
 
-`scripts/debug/explain_rejection.py` automates what located every root cause
-in the table above: it temporarily instruments the rejecting subsystem,
+`scripts/debug/explain_rejection.py` automates what located the graduated root
+causes below: it temporarily instruments the rejecting subsystem,
 rebuilds, runs the reproducer, names the gates that fired with their guarding
 comment, and always restores the source.
 
@@ -187,17 +181,12 @@ is reported as `nondet` and excluded, so nondeterminism is not blamed on the
 optimizer.
 
 A program that fails to build is `skipped` — some want a package or a target,
-and some fixtures are negative tests — **except** when the failure is a
-`GTI-B0001`, which is reported as `ICE`. Folding that into a skip count is how
-[#112](https://github.com/LukeHHA/gti/issues/112) nearly went unnoticed: two
-repository fixtures raise an internal error that the suite expects, and a bare
-"5 skipped" said nothing about it.
-
-Those two would then be reported on every run, so the tool reads
-`tests/stdlib_surface_manifest.json` and classifies a case whose expected
-stderr already contains `GTI-B0001` as `expected-ICE`. The manifest stays the
-single source of truth rather than a list hardcoded here, and when #112 is
-fixed those entries stop matching on their own.
+and some fixtures are negative tests — except that `GTI-B0001` is reported as
+`ICE` and `GTI-B0003` as `unsupported`. Folding internal errors into a skip
+count is how [#112](https://github.com/LukeHHA/gti/issues/112) nearly went
+unnoticed. A specifically classified, bounded backend capability gap may use
+`GTI-B0003`; an unclassified rejection remains a compiler defect and therefore
+stays visible as `ICE`.
 
 ## Probing the language server
 
@@ -254,6 +243,9 @@ reproducers were removed from this directory.
 | [#109](https://github.com/LukeHHA/gti/issues/109) payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
 | [#110](https://github.com/LukeHHA/gti/issues/110) self-nested generic identity | `v0.306.1` | `tests/returned_class_field_runtime_test.py` |
 | [#111](https://github.com/LukeHHA/gti/issues/111) grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
+| [#113](https://github.com/LukeHHA/gti/issues/113) virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| [#114](https://github.com/LukeHHA/gti/issues/114) concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| [#115](https://github.com/LukeHHA/gti/issues/115) global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

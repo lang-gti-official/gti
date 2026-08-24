@@ -24,6 +24,8 @@ A cell is one of:
     ok      compiled
     ICE     GTI-B0001 — a bug, since MIR verified the body and the backend
             then could not represent it
+    unsupported
+            GTI-B0003 — a bounded, explicitly classified backend limitation
     error   an ordinary diagnostic — a language rule, not a defect
     n/a     the combination is not expressible (e.g. indexing a non-array)
 
@@ -501,6 +503,8 @@ def classify(compiler: Path, source: Path) -> tuple[str, str]:
     codes = DIAGNOSTIC.findall(output)
     if "GTI-B0001" in codes:
         return "ICE", "GTI-B0001"
+    if "GTI-B0003" in codes:
+        return "unsupported", "GTI-B0003"
     if codes:
         return "error", codes[0]
     if run.returncode != 0:

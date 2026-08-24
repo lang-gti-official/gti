@@ -5,8 +5,9 @@
 // Acceptance, complete diagnostics, cross-phase facts, optimization state,
 // structured rejection, and MIR/C++ artifacts must be deterministic. Every
 // diagnostic range is checked against the SourceManager that owns it. An
-// accepted input must either produce coherent nonempty MIR and C++ artifacts
-// or carry an explicit lowered-program rejection with at least one issue.
+// accepted input must produce coherent nonempty MIR and C++ artifacts, carry
+// an explicit lowered-program rejection, or carry a classified bounded backend
+// limitation. Unclassified backend exceptions remain fuzz failures.
 // Native compilation and execution remain out of process.
 
 #include "fuzz_support.h"
@@ -253,17 +254,19 @@ Observation observe(std::string_view source, lang::OptimizationLevel level,
     return result;
   }
 
-  // A backend reports an internal error by throwing, and the driver turns
-  // that into GTI-B0001. Letting it escape here would abort the process with
-  // no diagnostic, so every ICE would look like a memory-safety crash and
-  // the first one would end the run. Catch it, print what the user would
-  // have seen, and then fail deliberately — an ICE is still a bug.
+  // A classified capability gap is a deterministic, inspectable outcome.
+  // Every other backend exception maps to GTI-B0001 at the driver boundary
+  // and remains a fuzz failure.
   result.disposition = "emitted";
   try {
     result.mirArtifact = lang::MirBackend().generate(*lowered.program).contents;
     result.cppArtifact = lang::CppBackend(lang::CppStandard::Cpp23)
                              .generate(*lowered.program)
                              .contents;
+  } catch (const lang::BackendUnsupportedError &exception) {
+    result.disposition = "backend-unsupported";
+    result.rejection = exception.what();
+    return result;
   } catch (const std::exception &exception) {
     std::fprintf(stderr, "gti-fuzz(pipeline): backend internal error: %s\n",
                  exception.what());
@@ -284,6 +287,14 @@ void requireClassified(const Observation &observation) {
   if (observation.disposition == "lowered-rejected") {
     if (observation.rejection.empty()) {
       gti_fuzz::fail("pipeline", "lowered rejection has no stable evidence");
+    }
+    return;
+  }
+  if (observation.disposition == "backend-unsupported") {
+    if (observation.rejection.empty() || observation.mirArtifact.empty() ||
+        !observation.cppArtifact.empty()) {
+      gti_fuzz::fail("pipeline",
+                     "backend limitation has incomplete classification");
     }
     return;
   }

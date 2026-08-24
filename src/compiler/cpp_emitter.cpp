@@ -4,6 +4,7 @@
 #include "cpp_mir_program_plan.h"
 #include "cpp_mir_representation_snapshot.h"
 #include "cpp_representation.h"
+#include "gti/backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir.h"
 
@@ -39,9 +40,19 @@ public:
     CppMirRepresentationSnapshotBuild snapshot =
         buildCppMirRepresentationSnapshot(loweredProgram, standard);
     if (!snapshot.valid()) {
-      const std::string detail = snapshot.issues.empty()
+      const auto internal =
+          std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
+                       [](const CppMirRepresentationSnapshotIssue &issue) {
+                         return issue.kind !=
+                                CppMirRepresentationSnapshotIssueKind::
+                                    KnownBackendLimitation;
+                       });
+      if (internal == snapshot.issues.end() && !snapshot.issues.empty()) {
+        throw BackendUnsupportedError(snapshot.issues.front().detail);
+      }
+      const std::string detail = internal == snapshot.issues.end()
                                      ? "unknown snapshot-builder failure"
-                                     : snapshot.issues.front().detail;
+                                     : internal->detail;
       throw std::logic_error(
           "C++ emitter requires a coherent representation snapshot: " + detail);
     }

@@ -67,13 +67,13 @@
       }
     },
     {
-      "id": "filesystem-constructor-unsupported",
+      "id": "filesystem-constructor-backend-limitation",
       "mode": "diagnostic",
       "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
       "optimization": "O0",
       "expected": {
         "exit_code": 65,
-        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
+        "stderr_contains": ["GTI-B0003", "does not yet support", "construction-rollback obligation"]
       }
     },
     {
@@ -167,14 +167,11 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "unique-ptr-upcast-unsupported",
-      "mode": "diagnostic",
+      "id": "unique-ptr-upcast",
+      "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
-      "optimization": "O0",
-      "expected": {
-        "exit_code": 65,
-        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
-      }
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "utility-make-pair",
@@ -367,8 +364,8 @@
       "source": "stdlib/std/filesystem.gti",
       "status": "unsupported",
       "operations": ["std::filesystem::path::path(string_view)"],
-      "case_ids": ["filesystem-constructor-unsupported"],
-      "reason": "The declared converting constructor currently reaches an unsupported verified-MIR C++ text shape; callers use path() followed by assign().",
+      "case_ids": ["filesystem-constructor-backend-limitation"],
+      "reason": "The declared converting constructor requires partial-construction rollback authority that MIR does not yet provide; callers use path() followed by assign(). The C++ backend reports this bounded gap as GTI-B0003.",
       "evidence": ["tests/fixtures/stdlib_surface_filesystem_constructor.gti", "stdlib/README.md"],
       "required_instantiations": []
     },
@@ -543,12 +540,11 @@
       "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/prelude.gti"]
     },
     {
-      "id": "prelude.unsupported-unique-ptr-upcast",
+      "id": "prelude.unique-ptr-upcast",
       "source": "stdlib/prelude.gti",
-      "status": "unsupported",
+      "status": "executable",
       "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
-      "case_ids": ["unique-ptr-upcast-unsupported"],
-      "reason": "The source-defined upcast currently reaches an unsupported verified-MIR C++ text shape in the caller.",
+      "case_ids": ["unique-ptr-upcast"],
       "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/prelude.gti"],
       "required_instantiations": ["Base/Derived"]
     },
