@@ -190,6 +190,7 @@ public:
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
     registerClassSpecializations(program.declarations(), {});
+    recordClassTypeIdentities();
     resolveEnumPayloads();
     resolveClassInheritance();
     registerFunctionGenericParameters(program.declarations(), {}, false);
@@ -3016,9 +3017,9 @@ public:
     if (qualified) {
       recordQualifiedPathUses(expr.path());
     }
-    const Symbol *symbol =
+    const Symbol *resolvedSymbol =
         qualified ? resolveQualified(expr.path()) : resolve(expr.name());
-    if (symbol == nullptr) {
+    if (resolvedSymbol == nullptr) {
       if (!qualified && resolveValueParameter(expr.name())) {
         analyze(expr.value());
         report(expr.name(),
@@ -3042,35 +3043,36 @@ public:
       currentType = analyze(expr.value());
       return;
     }
+    const Symbol symbol = *resolvedSymbol;
     if (qualified && !isCompilerTrustedRequester(expr.name()) &&
-        symbol->compilerPrivate) {
+        symbol.compilerPrivate) {
       reportCompilerPrivateAccess(expr.name(), pathSpelling(expr.path()));
       currentType = analyze(expr.value());
       return;
     }
-    if (qualified && symbol->ownerClass != 0 &&
-        symbol->access == AccessModifier::Private &&
-        currentClass != symbol->ownerClass) {
+    if (qualified && symbol.ownerClass != 0 &&
+        symbol.access == AccessModifier::Private &&
+        currentClass != symbol.ownerClass) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
           "Static member '" + expr.name().lexeme + "' of '" +
-              classInfo(symbol->ownerClass).name.lexeme + "' is private.");
+              classInfo(symbol.ownerClass).name.lexeme + "' is private.");
       diagnostic.related.push_back(
-          {tokenSpan(symbol->declaration), "Static member declared here."});
+          {tokenSpan(symbol.declaration), "Static member declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
     }
     const SemanticType targetType =
-        symbol->type.kind == SemanticType::Reference &&
-                symbol->type.arguments.size() == 1
-            ? symbol->type.arguments[0]
-            : symbol->type;
+        symbol.type.kind == SemanticType::Reference &&
+                symbol.type.arguments.size() == 1
+            ? symbol.type.arguments[0]
+            : symbol.type;
     Symbol *placeTarget = qualified ? resolveQualifiedPlaceSymbol(expr.path())
                                     : resolvePlaceSymbol(expr.name());
     SemanticPlace targetPlace =
         placeTarget == nullptr ? SemanticPlace{} : placeForSymbol(*placeTarget);
     if (expr.oper().kind != TokenKind::EQUAL &&
-        symbol->valueState != ValueState::Available) {
-      reportUnavailableValue(expr.name(), *symbol);
+        symbol.valueState != ValueState::Available) {
+      reportUnavailableValue(expr.name(), symbol);
     }
     const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     bool targetStateValid = true;
@@ -3145,28 +3147,27 @@ public:
     if (directSelfMove || directSelfPlace) {
       report(expr.name(), "Cannot move a binding into itself.", "GTI-S2018");
     }
-    if (!symbol->assignable) {
-      Diagnostic diagnostic =
-          makeDiagnostic("GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
-                         symbol->lambdaCapture
-                             ? "Cannot assign to immutable lambda capture '" +
-                                   expr.name().lexeme + "'."
-                             : "Cannot assign to immutable binding '" +
-                                   expr.name().lexeme + "'.");
-      if (!symbol->declaration.lexeme.empty()) {
+    if (!symbol.assignable) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
+          symbol.lambdaCapture ? "Cannot assign to immutable lambda capture '" +
+                                     expr.name().lexeme + "'."
+                               : "Cannot assign to immutable binding '" +
+                                     expr.name().lexeme + "'.");
+      if (!symbol.declaration.lexeme.empty()) {
         diagnostic.related.push_back(
-            {tokenSpan(symbol->declaration), "Binding declared here."});
+            {tokenSpan(symbol.declaration), "Binding declared here."});
       }
       diagnostic.hints.emplace_back(
-          symbol->lambdaCapture
+          symbol.lambdaCapture
               ? "Lambda captures are value snapshots and remain immutable."
               : "Bindings are immutable by default; add 'mut' to the "
                 "declaration if mutation is required.");
       diagnostics.emplace_back(std::move(diagnostic));
-    } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
+    } else if (symbol.ownerClass != 0 && !symbol.staticMember &&
                !receiverAllowsMutation(currentReceiverMutability)) {
       const std::optional<ResolvedFieldUse> root =
-          receiverRestrictedField(expr.name(), *symbol);
+          receiverRestrictedField(expr.name(), symbol);
       if (!root || !reportReceiverRestrictedMutation(expr.name(), *root)) {
         report(expr.name(), "Cannot mutate through a read-only receiver.");
       }
@@ -3199,14 +3200,14 @@ public:
           isInteger(valueType) && targetType.arguments.size() == 1 &&
           targetType.arguments.front() != SemanticType::Void &&
           !isCOpaqueHandleType(targetType.arguments.front()) &&
-          symbol->assignable) {
+          symbol.assignable) {
         requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
                       "Raw pointer arithmetic");
       }
       validateCompoundAssignment(expr.oper(), targetType, valueType,
                                  expr.value().get());
     }
-    if (simpleAssignment && symbol->assignable && valueAssignable &&
+    if (simpleAssignment && symbol.assignable && valueAssignable &&
         !directSelfMove && !directSelfPlace && targetStateValid) {
       if (!qualified) {
         if (Symbol *target = resolveMutable(expr.name())) {
@@ -3270,6 +3271,21 @@ public:
              "Empty initialization of '" + typeSpelling(arrayType) +
                  "' requires a default-initializable element type.",
              "GTI-S2015");
+    } else if (expr.elements().empty() &&
+               arrayType.arrayLengthParameterId == 0 &&
+               arrayType.arrayLength != 0 &&
+               elementType.kind == SemanticType::Class) {
+      if (std::optional<ResolvedConstructionInfo> construction =
+              resolveArrayElementDefaultConstruction(elementType)) {
+        recordDefaultArgumentDependencies(construction->defaultArguments);
+        semanticModel.recordArrayElementConstruction(expr,
+                                                     std::move(*construction));
+      } else {
+        report(expr.brace(),
+               "Empty initialization of '" + typeSpelling(arrayType) +
+                   "' has no exact accessible default element constructor.",
+               "GTI-S2015");
+      }
     }
 
     for (const ExprPtr &element : expr.elements()) {
@@ -4876,7 +4892,8 @@ public:
       const Symbol *source = resolve(sourceName);
       if (source == nullptr ||
           (source->bindingKind != SemanticBindingKind::LocalVariable &&
-           source->bindingKind != SemanticBindingKind::Parameter) ||
+           source->bindingKind != SemanticBindingKind::Parameter &&
+           source->bindingKind != SemanticBindingKind::LambdaCapture) ||
           source->type == SemanticType::Function ||
           source->type.kind == SemanticType::TypeName ||
           source->ownerClass != 0) {
@@ -8719,9 +8736,9 @@ private:
   }
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
-    std::unordered_set<ClassId> visiting;
+    std::vector<SemanticType> visiting;
     SemanticTypeTraits traits = typeTraits(type, visiting);
-    std::unordered_set<ClassId> capabilityVisiting;
+    std::vector<SemanticType> capabilityVisiting;
     const ConcurrencyCapabilities capabilities =
         typeCapabilities(type, capabilityVisiting);
     traits.transferCapable = capabilities.transferCapable;
@@ -8952,7 +8969,7 @@ private:
 
   [[nodiscard]] ConcurrencyCapabilities
   typeCapabilities(const SemanticType &type,
-                   std::unordered_set<ClassId> &visiting) const {
+                   std::vector<SemanticType> &visiting) const {
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -9054,12 +9071,23 @@ private:
     if (type.classId == 0 || type.classId > classes.size()) {
       return {};
     }
-    if (!visiting.insert(type.classId).second) {
+    const auto recursiveNominal = std::find_if(
+        visiting.rbegin(), visiting.rend(), [&](const SemanticType &active) {
+          return active.kind == SemanticType::Class &&
+                 active.classId == type.classId;
+        });
+    if (recursiveNominal != visiting.rend() &&
+        (type == *recursiveNominal ||
+         semanticTypeComplexity(type) >=
+             semanticTypeComplexity(*recursiveNominal))) {
       // Recursive nominal state is evaluated as a greatest fixed point. A
       // back-edge contributes no new denial; fields and lifecycle on the
-      // enclosing path still decide the final result.
+      // enclosing path still decide the final result. Concrete generic nests
+      // that become structurally smaller are not back-edges and must inspect
+      // the nested instance's fields.
       return {.transferCapable = true, .shareCapable = true};
     }
+    visiting.push_back(type);
 
     const ClassInfo &owner = classInfo(type.classId);
     if (owner.kind == ClassKind::Interface) {
@@ -9078,7 +9106,7 @@ private:
             result.transferCapable || inherited.transferCapable;
         result.shareCapable = result.shareCapable || inherited.shareCapable;
       }
-      visiting.erase(type.classId);
+      visiting.pop_back();
       return result;
     }
 
@@ -9119,13 +9147,13 @@ private:
                ConcurrencyCapabilityPolicy::UnsafeAsserted) {
       result.shareCapable = true;
     }
-    visiting.erase(type.classId);
+    visiting.pop_back();
     return result;
   }
 
   [[nodiscard]] SemanticTypeTraits
   typeTraits(const SemanticType &type,
-             std::unordered_set<ClassId> &visiting) const {
+             std::vector<SemanticType> &visiting) const {
     if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
       SemanticTypeTraits traits;
       const SemanticTypeTraits element =
@@ -9207,13 +9235,22 @@ private:
 
     SemanticTypeTraits traits;
     traits.drop = DropKind::Lexical;
-    if (!visiting.insert(type.classId).second) {
+    const auto recursiveNominal = std::find_if(
+        visiting.rbegin(), visiting.rend(), [&](const SemanticType &active) {
+          return active.kind == SemanticType::Class &&
+                 active.classId == type.classId;
+        });
+    if (recursiveNominal != visiting.rend() &&
+        (type == *recursiveNominal ||
+         semanticTypeComplexity(type) >=
+             semanticTypeComplexity(*recursiveNominal))) {
       traits.copyable = false;
       traits.movable = false;
       traits.copyAssignable = false;
       traits.moveAssignable = false;
       return traits;
     }
+    visiting.push_back(type);
 
     const ClassInfo &owner = classInfo(type.classId);
     if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
@@ -9282,7 +9319,7 @@ private:
         traits.movable = false;
       }
     }
-    visiting.erase(type.classId);
+    visiting.pop_back();
     return traits;
   }
 
@@ -18160,6 +18197,71 @@ private:
     }
   }
 
+  [[nodiscard]] std::optional<ResolvedConstructionInfo>
+  resolveArrayElementDefaultConstruction(const SemanticType &type) const {
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr || owner->abstract) {
+      return std::nullopt;
+    }
+
+    const ConstructorInfo *constructor = defaultConstructor(*owner);
+    if (constructor == nullptr) {
+      if (!classCanGenerateDefaultConstructor(*owner)) {
+        return std::nullopt;
+      }
+      return ResolvedConstructionInfo{.constructedType = type,
+                                      .generatedDefault = true};
+    }
+    if (!constructor->genericParameters.empty() ||
+        (constructor->access == AccessModifier::Private &&
+         currentClass != owner->id)) {
+      return std::nullopt;
+    }
+
+    const GenericSubstitution substitution = classSubstitution(type);
+    std::vector<AppliedConceptRequirement> requirements =
+        constructor->requirements;
+    for (AppliedConceptRequirement &requirement : requirements) {
+      for (SemanticType &argument : requirement.arguments) {
+        argument = substituteType(argument, substitution);
+      }
+    }
+    if (firstRequirementFailure(requirements)) {
+      return std::nullopt;
+    }
+
+    std::vector<SemanticType> parameterTypes;
+    parameterTypes.reserve(constructor->parameterTypes.size());
+    for (const SemanticType &parameter : constructor->parameterTypes) {
+      parameterTypes.push_back(substituteType(parameter, substitution));
+    }
+    std::vector<const Expr *> defaultArguments =
+        constructor->declaration == nullptr
+            ? std::vector<const Expr *>{}
+            : omittedDefaultArguments(constructor->declaration->parameters(),
+                                      0);
+    if (!parameterTypes.empty() &&
+        defaultArguments.size() != parameterTypes.size()) {
+      return std::nullopt;
+    }
+
+    return ResolvedConstructionInfo{
+        .constructor = constructor->id,
+        .declaration = constructor->declaration,
+        .constructedType = type,
+        .requirements = std::move(requirements),
+        .parameterTypes = std::move(parameterTypes),
+        .defaultArguments = std::move(defaultArguments),
+        .borrowOrigin = constructor->borrowParameter
+                            ? BorrowOriginKind::Argument
+                            : BorrowOriginKind::None,
+        .borrowArgument =
+            constructor->borrowParameter ? *constructor->borrowParameter : 0,
+        .borrowAccess = constructor->borrowAccess,
+        .generatedDefault = requestsStructuralDefaultConstruction(*constructor),
+        .kind = ConstructorKind::Ordinary};
+  }
+
   [[nodiscard]] static std::size_t genericTypeParameterCount(
       const std::vector<GenericParameterInfo> &parameters) {
     return static_cast<std::size_t>(
@@ -25760,6 +25862,30 @@ private:
     }
   }
 
+  void recordClassTypeIdentities() {
+    for (const ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr) {
+        continue;
+      }
+      semanticModel.recordClassType(
+          *owner.declaration,
+          ClassTypeInfo{
+              .id = owner.id,
+              .sourceUnit = owner.sourceUnit,
+              .declaration = owner.declaration,
+              .qualifiedName =
+                  qualifiedName(owner.namespaceScope, owner.name.lexeme),
+              .namespaceScope = owner.namespaceScope,
+              .exactSpecializationPrimary = owner.exactSpecializationPrimary,
+              .exactTypeArguments = owner.exactTypeArguments,
+              .exactValueArguments = owner.exactValueArguments,
+              .genericParameters = owner.genericParameters,
+              .kind = owner.kind,
+              .compilerPrivate = owner.compilerPrivate,
+              .compilerCapability = owner.compilerCapability});
+    }
+  }
+
   void recordClassTypes() {
     for (const ClassInfo &owner : classes) {
       if (owner.declaration == nullptr) {
@@ -26247,6 +26373,26 @@ private:
           return;
         }
         const SourceSpan span = tokenSpan(expressionToken(expression));
+        if (construction->generatedDefault || construction->constructor == 0) {
+          recordProgramDefaultConstructionEffects(construction->constructedType,
+                                                  span);
+        } else {
+          addProgramEffectEdge(
+              {.kind = ProgramEffectOwnerKind::FieldInitializers,
+               .id = construction->constructedType.classId},
+              span);
+          recordProgramSelectedConstructorEffect(
+              programConstructor(construction->constructor),
+              construction->constructedType, span);
+        }
+      }
+    }
+    if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
+      if (const ResolvedConstructionInfo *construction =
+              semanticModel.findArrayElementConstruction(*initializer)) {
+        const SourceSpan span = tokenSpan(initializer->brace());
+        recordProgramConstructorDefaultArgumentEffects(
+            programConstructor(construction->constructor), 0, span);
         if (construction->generatedDefault || construction->constructor == 0) {
           recordProgramDefaultConstructionEffects(construction->constructedType,
                                                   span);

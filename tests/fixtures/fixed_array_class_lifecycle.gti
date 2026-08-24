@@ -1,0 +1,67 @@
+mut bool constructed_first = false;
+mut bool constructed_second = false;
+mut bool constructed_third = false;
+mut bool destroyed_first = false;
+mut bool destroyed_second = false;
+mut bool destroyed_third = false;
+
+class leaf {
+public:
+  leaf() {}
+  mut int32_t value = 7;
+};
+
+class implicit_leaf {
+public:
+  mut int32_t value = 11;
+};
+
+class empty {
+public:
+  empty() {}
+};
+
+class item {
+public:
+  item() {
+    if (!constructed_first) {
+      constructed_first = true;
+    } else if (!constructed_second) {
+      constructed_second = true;
+    } else {
+      constructed_third = true;
+    }
+  }
+
+  ~item() {
+    if (!destroyed_first) {
+      destroyed_first = true;
+    } else if (!destroyed_second) {
+      destroyed_second = true;
+    } else {
+      destroyed_third = true;
+    }
+  }
+};
+
+mut leaf global_leaves[2] = {};
+
+int main() {
+  mut leaf local_leaves[2] = {};
+  mut implicit_leaf local_implicit_leaves[2] = {};
+  mut empty local_empty[2] = {};
+  if (global_leaves[std::size_t(0)].value != 7 ||
+      local_leaves[std::size_t(1)].value != 7 ||
+      local_implicit_leaves[std::size_t(0)].value != 11) {
+    return 3;
+  }
+
+  {
+    mut item items[3] = {};
+    if (!constructed_first || !constructed_second || !constructed_third ||
+        destroyed_first || destroyed_second || destroyed_third) {
+      return 1;
+    }
+  }
+  return destroyed_first && destroyed_second && destroyed_third ? 0 : 2;
+}

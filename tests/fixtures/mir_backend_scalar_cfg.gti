@@ -73,6 +73,25 @@ int32_t cfg_fold(bool first) {
   return ((42));
 }
 
+int32_t cfg_grouped_local() {
+  mut int32_t value = 3;
+  return (value);
+}
+
+int32_t cfg_comma_local() {
+  mut int32_t discarded = 8;
+  mut int32_t value = 3;
+  return (discarded, value);
+}
+
+bool cfg_grouped_condition() {
+  mut bool selected = true;
+  if ((selected)) {
+    return true;
+  }
+  return false;
+}
+
 int32_t compatibility_checked(bool add, int32_t value) {
   if (add) {
     return value + 1;
@@ -132,6 +151,10 @@ int main() {
       compatibility_call(true, 6) != 7 or
       compatibility_reference(true, observed) != 77) {
     return 10;
+  }
+  if (cfg_grouped_local() != 3 or cfg_comma_local() != 3 or
+      !cfg_grouped_condition()) {
+    return 11;
   }
   return 0;
 }

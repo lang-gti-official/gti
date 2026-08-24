@@ -374,8 +374,11 @@ continues to use the shared unsafe-operation diagnostic `GTI-S2055`.
 patterns, duplicate coverage, and exhaustiveness. It points at the payload
 field, argument, case pattern, duplicate label, or switch keyword as
 appropriate, relates duplicates to their first declaration/arm, and names
-missing alternatives. No fix-it is offered when choosing a payload type,
-binding, or missing-arm behavior requires program intent.
+missing alternatives. A rejected class payload uses the class identity already
+registered by semantic analysis, including its qualified name and exact generic
+arguments; diagnostics must not substitute `unknown class` merely because
+complete member metadata is recorded later. No fix-it is offered when choosing
+a payload type, binding, or missing-arm behavior requires program intent.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and

@@ -5,6 +5,7 @@ public:
 };
 
 mut thing g = thing();
+mut int32_t table[4] = {};
 
 int32_t read_global() {
   return g.value;
@@ -19,5 +20,9 @@ int main() {
     return 1;
   }
   write_global(int32_t(37));
-  return read_global() == 37 ? 0 : 2;
+  if (read_global() != 37) {
+    return 2;
+  }
+  table[std::size_t(1)] = 11;
+  return table[std::size_t(1)] == 11 ? 0 : 3;
 }

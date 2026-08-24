@@ -19,6 +19,9 @@ SELECTED = (
     "cfg_short",
     "cfg_loop",
     "cfg_fold",
+    "cfg_grouped_local",
+    "cfg_comma_local",
+    "cfg_grouped_condition",
 )
 # Standard-library scalar bodies selected per body once compiler-private
 # declarations were admitted; the fixture links them through the prelude.

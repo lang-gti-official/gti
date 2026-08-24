@@ -2606,8 +2606,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return found == generalEmissionMap->symbols().end() ? nullptr : &*found;
   }
 
-  [[nodiscard]] bool loweredRuntimeClassLifetimeSlot(
-      const LoweredStorageDeclaration &storage) const {
+  [[nodiscard]] bool
+  loweredRuntimeLifetimeSlot(const LoweredStorageDeclaration &storage) const {
     const CppMirSymbolRepresentation *row =
         loweredStorageRepresentation(storage);
     return row != nullptr && row->runtimeLifetimeSlot;
@@ -2615,7 +2615,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void emitLoweredStorageRepresentationType(
       const LoweredStorageDeclaration &storage) {
-    if (loweredRuntimeClassLifetimeSlot(storage)) {
+    if (loweredRuntimeLifetimeSlot(storage)) {
       output << "::gti_internal::backend::mir_lifetime_slot<";
       emitSemanticType(storage.type);
       output << ", true>";
