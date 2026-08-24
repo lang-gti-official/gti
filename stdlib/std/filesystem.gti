@@ -16,547 +16,600 @@
 //      tracked in docs/plans/iterators-and-ranges.md.
 //
 // Member type aliases (`value_type`, `string_type`) are not declared: GTI
-// currently limits `using` to namespace scope. `operator+=` and `operator/=`
-// have not yet been added to this class, so the named C++ members concat() and
-// append() currently carry that behaviour alone.
+// currently limits `using` to namespace scope. `operator+=` has not yet been
+// added to this class, so concat() alone carries that behaviour. Directory
+// joining is available through append()/append_path() and operator/()/operator/=().
 
 #include <std/string>
 
 namespace std {
-namespace filesystem {
+  namespace filesystem {
 
-class path {
-public:
-  path() {}
+    class path {
+    public:
+      path() {}
 
-  // Copying is explicit through clone(), as elsewhere in the GTI standard
-  // library; C++'s implicit copy constructor has no GTI equivalent.
-  path(path& other) = delete;
-  path(path&& other) = default;
+      // Copying is explicit through clone(), as elsewhere in the GTI standard
+      // library; C++'s implicit copy constructor has no GTI equivalent.
+      path(path& other) = delete;
+      path(path&& other) = default;
 
-  // Construction from text. Callers on a compiler predating the class-value
-  // constructor emission fix should use `path()` followed by `assign()`,
-  // which is equivalent and is itself part of the C++ surface.
-  path(std::string_view source) { this.text.append(source); }
-
-  path clone() {
-    mut path result = path();
-    path::copy_text(result.text, this.text);
-    return std::move(result);
-  }
-
-  // --- Assignment -----------------------------------------------------
-
-  void assign(std::string_view source) mut {
-    this.text.clear();
-    this.text.append(source);
-  }
-
-  void assign_path(path& source) mut {
-    this.text.clear();
-    path::copy_text(this.text, source.text);
-  }
-
-  // --- Concatenation --------------------------------------------------
-
-  // Joins without introducing a separator; C++ spells this operator+= too.
-  void concat(std::string_view source) mut { this.text.append(source); }
-
-  // Joins as directories, inserting a separator when one is needed; C++
-  // spells this operator/= too. An absolute argument replaces the path
-  // outright, matching C++.
-  void append(std::string_view source) mut {
-    mut path other = path();
-    other.text.append(source);
-    this.append_path(other);
-  }
-
-  void append_path(path& other) mut {
-    if (other.is_absolute()) {
-      this.text.clear();
-      path::copy_text(this.text, other.text);
-      return;
-    }
-    if (other.text.empty()) {
-      // C++ appends a separator for an empty argument when the receiver has
-      // a filename, so "foo" / "" is "foo/".
-      if (this.has_filename()) {
-        this.text.push_back(preferred_separator);
-      }
-      return;
-    }
-    if (!this.text.empty() && !path::is_separator(this.text[this.text.size() - 1])) {
-      this.text.push_back(preferred_separator);
-    }
-    path::copy_text(this.text, other.text);
-  }
-
-  // --- Modifiers ------------------------------------------------------
-
-  void clear() mut { this.text.clear(); }
-
-  // On POSIX '/' is already preferred, so this only has an effect on
-  // targets whose preferred separator differs.
-  void make_preferred() mut {
-    for (mut std::size_t index = 0; index < this.text.size(); index++) {
-      if (path::is_separator(this.text[index])) {
-        this.text[index] = preferred_separator;
-      }
-    }
-  }
-
-  // Removes the filename, keeping the trailing separator: "/a/b" -> "/a/".
-  void remove_filename() mut {
-    this.text.resize(this.filename_start());
-  }
-
-  void replace_filename(std::string_view replacement) mut {
-    this.remove_filename();
-    this.append(replacement);
-  }
-
-  // An empty replacement removes the extension. A replacement that does not
-  // begin with a period gets one, so replace_extension("gz") and
-  // replace_extension(".gz") agree.
-  void replace_extension(std::string_view replacement) mut {
-    this.text.resize(this.extension_start());
-    if (replacement.size() == 0) {
-      return;
-    }
-    if (replacement[0] != '.') {
-      this.text.push_back('.');
-    }
-    this.text.append(replacement);
-  }
-
-  // std::string::swap is currently declared without a definition, so the
-  // exchange goes through a temporary instead of delegating to it.
-  void swap(mut path& other) mut {
-    mut std::string carried = std::string("");
-    path::copy_text(carried, this.text);
-    this.text.clear();
-    path::copy_text(this.text, other.text);
-    other.text.clear();
-    path::copy_text(other.text, carried);
-  }
-
-  // --- Format observers -----------------------------------------------
-
-  std::string string() {
-    mut std::string result = std::string("");
-    path::copy_text(result, this.text);
-    return std::move(result);
-  }
-
-  std::size_t size() { return this.text.size(); }
-
-  bool empty() { return this.text.empty(); }
-
-  // --- Decomposition --------------------------------------------------
-
-  // POSIX has no root name; a Windows drive prefix such as "C:" is one.
-  path root_name() { return this.slice(std::size_t(0), this.root_name_length()); }
-
-  path root_directory() {
-    std::size_t start = this.root_name_length();
-    return this.slice(start, start + this.root_directory_length());
-  }
-
-  path root_path() { return this.slice(std::size_t(0), this.root_path_length()); }
-
-  path relative_path() {
-    return this.slice(this.root_path_length(), this.text.size());
-  }
-
-  // The path with its filename removed and trailing separators trimmed back
-  // to the root: "/a/b.txt" -> "/a", "/a/" -> "/a", "/" -> "/".
-  path parent_path() {
-    if (!this.has_relative_path()) {
-      return this.clone();
-    }
-    mut std::size_t end = this.filename_start();
-    std::size_t floor = this.root_path_length();
-    while (end > floor && path::is_separator(this.text[end - 1])) {
-      end = end - 1;
-    }
-    return this.slice(std::size_t(0), end);
-  }
-
-  // Everything after the last separator; empty when the path ends in one.
-  path filename() {
-    return this.slice(this.filename_start(), this.text.size());
-  }
-
-  // The filename without its extension.
-  path stem() {
-    return this.slice(this.filename_start(), this.extension_start());
-  }
-
-  // The extension including its leading period. A filename that is "." or
-  // ".." has none, and a leading period does not begin an extension, so
-  // ".profile" has no extension while ".profile.bak" has ".bak".
-  path extension() {
-    return this.slice(this.extension_start(), this.text.size());
-  }
-
-  // --- Queries ---------------------------------------------------------
-
-  bool has_root_name() { return this.root_name_length() > 0; }
-
-  bool has_root_directory() { return this.root_directory_length() > 0; }
-
-  bool has_root_path() { return this.root_path_length() > 0; }
-
-  bool has_relative_path() {
-    return this.root_path_length() < this.text.size();
-  }
-
-  bool has_filename() { return this.filename_start() < this.text.size(); }
-
-  bool has_stem() { return this.filename_start() < this.extension_start(); }
-
-  bool has_extension() { return this.extension_start() < this.text.size(); }
-
-  bool has_parent_path() {
-    mut path parent = this.parent_path();
-    return !parent.text.empty();
-  }
-
-  bool is_absolute() {
-#if target.os == "windows"
-    return this.has_root_name() && this.has_root_directory();
-#else
-    return this.has_root_directory();
-#endif
-  }
-
-  bool is_relative() { return !this.is_absolute(); }
-
-  // --- Comparison -------------------------------------------------------
-
-  // Orders by root name, then by the presence of a root directory, then by
-  // the relative path element by element, as C++ specifies. Element-wise
-  // ordering is what makes "/a/b" and "/a//b" compare equal.
-  int32_t compare(path& other) {
-    mut path leftRoot = this.root_name();
-    mut path rightRoot = other.root_name();
-    int32_t rootOrder = path::compare_text(leftRoot.text, rightRoot.text);
-    if (rootOrder != 0) {
-      return rootOrder;
-    }
-    bool leftRootDirectory = this.has_root_directory();
-    bool rightRootDirectory = other.has_root_directory();
-    if (!leftRootDirectory && rightRootDirectory) {
-      return -1;
-    }
-    if (leftRootDirectory && !rightRootDirectory) {
-      return 1;
-    }
-
-    // Element iteration, matching C++: separators are skipped, but a
-    // trailing separator still yields one final empty element. That is what
-    // makes "/a/b" and "/a//b" equal while "/a/b/" differs from both.
-    mut std::size_t leftIndex = this.root_path_length();
-    mut std::size_t rightIndex = other.root_path_length();
-    for (;;) {
-      bool leftDone = leftIndex >= this.text.size();
-      bool rightDone = rightIndex >= other.text.size();
-      if (leftDone && rightDone) {
-        return 0;
-      }
-      if (leftDone) {
-        return -1;
-      }
-      if (rightDone) {
-        return 1;
+      // Construction from text. Callers on a compiler predating the class-value
+      // constructor emission fix should use `path()` followed by `assign()`,
+      // which is equivalent and is itself part of the C++ surface.
+      path(std::string_view source) {
+        this.text.append(source);
       }
 
-      mut std::size_t leftStart = this.skip_separators(leftIndex);
-      mut std::size_t leftEnd = leftStart;
-      if (leftStart >= this.text.size()) {
-        // Only separators remain: the empty trailing element.
-        leftIndex = this.text.size();
-      } else {
-        leftEnd = this.element_end(leftStart);
-        leftIndex = leftEnd;
+      path clone() {
+        mut path result = path();
+        path::copy_text(result.text, this.text);
+        return std::move(result);
       }
 
-      mut std::size_t rightStart = other.skip_separators(rightIndex);
-      mut std::size_t rightEnd = rightStart;
-      if (rightStart >= other.text.size()) {
-        rightIndex = other.text.size();
-      } else {
-        rightEnd = other.element_end(rightStart);
-        rightIndex = rightEnd;
+      // --- Assignment -----------------------------------------------------
+
+      void assign(std::string_view source) mut {
+        this.text.clear();
+        this.text.append(source);
       }
 
-      mut std::size_t leftCursor = leftStart;
-      mut std::size_t rightCursor = rightStart;
-      while (leftCursor < leftEnd && rightCursor < rightEnd) {
-        uint8_t leftValue = uint8_t(this.text[leftCursor]);
-        uint8_t rightValue = uint8_t(other.text[rightCursor]);
-        if (leftValue != rightValue) {
-          return leftValue < rightValue ? -1 : 1;
+      void assign_path(path& source) mut {
+        this.text.clear();
+        path::copy_text(this.text, source.text);
+      }
+
+      // --- Concatenation --------------------------------------------------
+
+      // Joins without introducing a separator; C++ spells this operator+= too.
+      void concat(std::string_view source) mut {
+        this.text.append(source);
+      }
+
+      // Joins as directories, inserting a separator when one is needed; C++
+      // spells this operator/= too. An absolute argument replaces the path
+      // outright, matching C++.
+      void append(std::string_view source) mut {
+        mut path other = path();
+        other.text.append(source);
+        this.append_path(other);
+      }
+
+      void append_path(path& other) mut {
+        if (other.is_absolute()) {
+          this.text.clear();
+          path::copy_text(this.text, other.text);
+          return;
         }
-        leftCursor = leftCursor + std::size_t(1);
-        rightCursor = rightCursor + std::size_t(1);
-      }
-      std::size_t leftLength = leftEnd - leftStart;
-      std::size_t rightLength = rightEnd - rightStart;
-      if (leftLength != rightLength) {
-        return leftLength < rightLength ? -1 : 1;
-      }
-    }
-  }
-
-  bool operator==(path& other) { return this.compare(other) == 0; }
-
-  bool operator!=(path& other) { return this.compare(other) != 0; }
-
-  bool operator<(path& other) { return this.compare(other) < 0; }
-
-  bool operator<=(path& other) { return this.compare(other) <= 0; }
-
-  bool operator>(path& other) { return this.compare(other) > 0; }
-
-  bool operator>=(path& other) { return this.compare(other) >= 0; }
-
-  bool operator==(std::string_view other) { return this.text == other; }
-
-  bool operator!=(std::string_view other) { return this.text != other; }
-
-  // --- Generation -------------------------------------------------------
-
-  // The normal form: dot elements dropped, dot-dot elements resolved against
-  // the preceding element, duplicate separators collapsed, and an empty
-  // result spelled ".".
-  path lexically_normal() {
-    mut path result = path();
-    if (this.text.empty()) {
-      return std::move(result);
-    }
-
-    std::size_t rootLength = this.root_path_length();
-    for (mut std::size_t index = 0; index < rootLength; index++) {
-      char value = this.text[index];
-      if (path::is_separator(value)) {
-        result.text.push_back(preferred_separator);
-      } else {
-        result.text.push_back(value);
-      }
-    }
-    bool rooted = this.has_root_directory();
-
-    // Tracks whether the source ended on a separator or on a resolved
-    // dot-dot, both of which leave a trailing separator in the normal form.
-    mut bool trailing = false;
-    mut std::size_t cursor = rootLength;
-    while (cursor < this.text.size()) {
-      mut std::size_t start = this.skip_separators(cursor);
-      if (start >= this.text.size()) {
-        trailing = true;
-        break;
-      }
-      std::size_t end = this.element_end(start);
-      cursor = end;
-
-      if (this.matches(start, end, ".")) {
-        trailing = true;
-        continue;
-      }
-      if (this.matches(start, end, "..")) {
-        if (result.pop_element(rootLength)) {
-          trailing = true;
-          continue;
+        if (other.text.empty()) {
+          // C++ appends a separator for an empty argument when the receiver has
+          // a filename, so "foo" / "" is "foo/".
+          if (this.has_filename()) {
+            this.text.push_back(preferred_separator);
+          }
+          return;
         }
-        if (rooted) {
-          // Dot-dot above a root has nowhere to go and is dropped.
-          trailing = true;
-          continue;
+        if (!this.text.empty() && !path::is_separator(this.text[this.text.size() - 1])) {
+          this.text.push_back(preferred_separator);
+        }
+        path::copy_text(this.text, other.text);
+      }
+
+      // --- Modifiers ------------------------------------------------------
+
+      void clear() mut {
+        this.text.clear();
+      }
+
+      // On POSIX '/' is already preferred, so this only has an effect on
+      // targets whose preferred separator differs.
+      void make_preferred() mut {
+        for (mut std::size_t index = 0; index < this.text.size(); index++) {
+          if (path::is_separator(this.text[index])) {
+            this.text[index] = preferred_separator;
+          }
         }
       }
 
-      if (result.text.size() > rootLength) {
-        result.text.push_back(preferred_separator);
+      // Removes the filename, keeping the trailing separator: "/a/b" -> "/a/".
+      void remove_filename() mut {
+        this.text.resize(this.filename_start());
       }
-      for (mut std::size_t index = start; index < end; index++) {
-        result.text.push_back(this.text[index]);
+
+      void replace_filename(std::string_view replacement) mut {
+        this.remove_filename();
+        this.append(replacement);
       }
-      trailing = false;
-    }
 
-    if (result.text.empty()) {
-      result.text.push_back('.');
-      return std::move(result);
-    }
-    if (trailing && result.text.size() > rootLength) {
-      result.text.push_back(preferred_separator);
-    }
-    return std::move(result);
-  }
+      // An empty replacement removes the extension. A replacement that does not
+      // begin with a period gets one, so replace_extension("gz") and
+      // replace_extension(".gz") agree.
+      void replace_extension(std::string_view replacement) mut {
+        this.text.resize(this.extension_start());
+        if (replacement.size() == 0) {
+          return;
+        }
+        if (replacement[0] != '.') {
+          this.text.push_back('.');
+        }
+        this.text.append(replacement);
+      }
 
-  static bool is_separator(char value) {
+      // std::string::swap is currently declared without a definition, so the
+      // exchange goes through a temporary instead of delegating to it.
+      void swap(mut path& other) mut {
+        mut std::string carried = std::string("");
+        path::copy_text(carried, this.text);
+        this.text.clear();
+        path::copy_text(this.text, other.text);
+        other.text.clear();
+        path::copy_text(other.text, carried);
+      }
+
+      // --- Format observers -----------------------------------------------
+
+      std::string string() {
+        mut std::string result = std::string("");
+        path::copy_text(result, this.text);
+        return std::move(result);
+      }
+
+      std::size_t size() {
+        return this.text.size();
+      }
+
+      bool empty() {
+        return this.text.empty();
+      }
+
+      // --- Decomposition --------------------------------------------------
+
+      // POSIX has no root name; a Windows drive prefix such as "C:" is one.
+      path root_name() {
+        return this.slice(std::size_t(0), this.root_name_length());
+      }
+
+      path root_directory() {
+        std::size_t start = this.root_name_length();
+        return this.slice(start, start + this.root_directory_length());
+      }
+
+      path root_path() {
+        return this.slice(std::size_t(0), this.root_path_length());
+      }
+
+      path relative_path() {
+        return this.slice(this.root_path_length(), this.text.size());
+      }
+
+      // The path with its filename removed and trailing separators trimmed back
+      // to the root: "/a/b.txt" -> "/a", "/a/" -> "/a", "/" -> "/".
+      path parent_path() {
+        if (!this.has_relative_path()) {
+          return this.clone();
+        }
+        mut std::size_t end = this.filename_start();
+        std::size_t floor = this.root_path_length();
+        while (end > floor && path::is_separator(this.text[end - 1])) {
+          end = end - 1;
+        }
+        return this.slice(std::size_t(0), end);
+      }
+
+      // Everything after the last separator; empty when the path ends in one.
+      path filename() {
+        return this.slice(this.filename_start(), this.text.size());
+      }
+
+      // The filename without its extension.
+      path stem() {
+        return this.slice(this.filename_start(), this.extension_start());
+      }
+
+      // The extension including its leading period. A filename that is "." or
+      // ".." has none, and a leading period does not begin an extension, so
+      // ".profile" has no extension while ".profile.bak" has ".bak".
+      path extension() {
+        return this.slice(this.extension_start(), this.text.size());
+      }
+
+      // --- Queries ---------------------------------------------------------
+
+      bool has_root_name() {
+        return this.root_name_length() > 0;
+      }
+
+      bool has_root_directory() {
+        return this.root_directory_length() > 0;
+      }
+
+      bool has_root_path() {
+        return this.root_path_length() > 0;
+      }
+
+      bool has_relative_path() {
+        return this.root_path_length() < this.text.size();
+      }
+
+      bool has_filename() {
+        return this.filename_start() < this.text.size();
+      }
+
+      bool has_stem() {
+        return this.filename_start() < this.extension_start();
+      }
+
+      bool has_extension() {
+        return this.extension_start() < this.text.size();
+      }
+
+      bool has_parent_path() {
+        mut path parent = this.parent_path();
+        return !parent.text.empty();
+      }
+
+      bool is_absolute() {
 #if target.os == "windows"
-    return value == '/' || value == '\\';
+        return this.has_root_name() && this.has_root_directory();
 #else
-    return value == '/';
+        return this.has_root_directory();
 #endif
-  }
+      }
 
+      bool is_relative() {
+        return !this.is_absolute();
+      }
+
+      // --- Comparison -------------------------------------------------------
+
+      // Orders by root name, then by the presence of a root directory, then by
+      // the relative path element by element, as C++ specifies. Element-wise
+      // ordering is what makes "/a/b" and "/a//b" compare equal.
+      int32_t compare(path& other) {
+        mut path leftRoot = this.root_name();
+        mut path rightRoot = other.root_name();
+        int32_t rootOrder = path::compare_text(leftRoot.text, rightRoot.text);
+        if (rootOrder != 0) {
+          return rootOrder;
+        }
+        bool leftRootDirectory = this.has_root_directory();
+        bool rightRootDirectory = other.has_root_directory();
+        if (!leftRootDirectory && rightRootDirectory) {
+          return -1;
+        }
+        if (leftRootDirectory && !rightRootDirectory) {
+          return 1;
+        }
+
+        // Element iteration, matching C++: separators are skipped, but a
+        // trailing separator still yields one final empty element. That is what
+        // makes "/a/b" and "/a//b" equal while "/a/b/" differs from both.
+        mut std::size_t leftIndex = this.root_path_length();
+        mut std::size_t rightIndex = other.root_path_length();
+        for (;;) {
+          bool leftDone = leftIndex >= this.text.size();
+          bool rightDone = rightIndex >= other.text.size();
+          if (leftDone && rightDone) {
+            return 0;
+          }
+          if (leftDone) {
+            return -1;
+          }
+          if (rightDone) {
+            return 1;
+          }
+
+          mut std::size_t leftStart = this.skip_separators(leftIndex);
+          mut std::size_t leftEnd = leftStart;
+          if (leftStart >= this.text.size()) {
+            // Only separators remain: the empty trailing element.
+            leftIndex = this.text.size();
+          } else {
+            leftEnd = this.element_end(leftStart);
+            leftIndex = leftEnd;
+          }
+
+          mut std::size_t rightStart = other.skip_separators(rightIndex);
+          mut std::size_t rightEnd = rightStart;
+          if (rightStart >= other.text.size()) {
+            rightIndex = other.text.size();
+          } else {
+            rightEnd = other.element_end(rightStart);
+            rightIndex = rightEnd;
+          }
+
+          mut std::size_t leftCursor = leftStart;
+          mut std::size_t rightCursor = rightStart;
+          while (leftCursor < leftEnd && rightCursor < rightEnd) {
+            uint8_t leftValue = uint8_t(this.text[leftCursor]);
+            uint8_t rightValue = uint8_t(other.text[rightCursor]);
+            if (leftValue != rightValue) {
+              return leftValue < rightValue ? -1 : 1;
+            }
+            leftCursor = leftCursor + std::size_t(1);
+            rightCursor = rightCursor + std::size_t(1);
+          }
+          std::size_t leftLength = leftEnd - leftStart;
+          std::size_t rightLength = rightEnd - rightStart;
+          if (leftLength != rightLength) {
+            return leftLength < rightLength ? -1 : 1;
+          }
+        }
+      }
+
+      bool operator==(path& other) {
+        return this.compare(other) == 0;
+      }
+
+      bool operator!=(path& other) {
+        return this.compare(other) != 0;
+      }
+
+      bool operator<(path& other) {
+        return this.compare(other) < 0;
+      }
+
+      bool operator<=(path& other) {
+        return this.compare(other) <= 0;
+      }
+
+      bool operator>(path& other) {
+        return this.compare(other) > 0;
+      }
+
+      bool operator>=(path& other) {
+        return this.compare(other) >= 0;
+      }
+
+      bool operator==(std::string_view other) {
+        return this.text == other;
+      }
+
+      bool operator!=(std::string_view other) {
+        return this.text != other;
+      }
+
+      std::filesystem::path operator/(path& other) {
+        mut path result = this.clone();
+        result.append_path(other);
+        return std::move(result);
+      }
+
+      void operator/=(path& other) mut {
+        this.append_path(other);
+      }
+
+      // --- Generation -------------------------------------------------------
+
+      // The normal form: dot elements dropped, dot-dot elements resolved against
+      // the preceding element, duplicate separators collapsed, and an empty
+      // result spelled ".".
+      path lexically_normal() {
+        mut path result = path();
+        if (this.text.empty()) {
+          return std::move(result);
+        }
+
+        std::size_t rootLength = this.root_path_length();
+        for (mut std::size_t index = 0; index < rootLength; index++) {
+          char value = this.text[index];
+          if (path::is_separator(value)) {
+            result.text.push_back(preferred_separator);
+          } else {
+            result.text.push_back(value);
+          }
+        }
+        bool rooted = this.has_root_directory();
+
+        // Tracks whether the source ended on a separator or on a resolved
+        // dot-dot, both of which leave a trailing separator in the normal form.
+        mut bool trailing = false;
+        mut std::size_t cursor = rootLength;
+        while (cursor < this.text.size()) {
+          mut std::size_t start = this.skip_separators(cursor);
+          if (start >= this.text.size()) {
+            trailing = true;
+            break;
+          }
+          std::size_t end = this.element_end(start);
+          cursor = end;
+
+          if (this.matches(start, end, ".")) {
+            trailing = true;
+            continue;
+          }
+          if (this.matches(start, end, "..")) {
+            if (result.pop_element(rootLength)) {
+              trailing = true;
+              continue;
+            }
+            if (rooted) {
+              // Dot-dot above a root has nowhere to go and is dropped.
+              trailing = true;
+              continue;
+            }
+          }
+
+          if (result.text.size() > rootLength) {
+            result.text.push_back(preferred_separator);
+          }
+          for (mut std::size_t index = start; index < end; index++) {
+            result.text.push_back(this.text[index]);
+          }
+          trailing = false;
+        }
+
+        if (result.text.empty()) {
+          result.text.push_back('.');
+          return std::move(result);
+        }
+        if (trailing && result.text.size() > rootLength) {
+          result.text.push_back(preferred_separator);
+        }
+        return std::move(result);
+      }
+
+      static bool is_separator(char value) {
 #if target.os == "windows"
-  static constexpr char preferred_separator = '\\';
+        return value == '/' || value == '\\';
 #else
-  static constexpr char preferred_separator = '/';
+        return value == '/';
 #endif
-
-private:
-  // Byte-lexicographic ordering, used for the root-name comparison.
-  static int32_t compare_text(std::string& left, std::string& right) {
-    mut std::size_t index = std::size_t(0);
-    while (index < left.size() && index < right.size()) {
-      uint8_t leftValue = uint8_t(left[index]);
-      uint8_t rightValue = uint8_t(right[index]);
-      if (leftValue != rightValue) {
-        return leftValue < rightValue ? -1 : 1;
       }
-      index = index + std::size_t(1);
-    }
-    if (left.size() == right.size()) {
-      return 0;
-    }
-    return left.size() < right.size() ? -1 : 1;
-  }
 
-  static void copy_text(mut std::string& destination, std::string& source) {
-    for (mut std::size_t index = 0; index < source.size(); index++) {
-      destination.push_back(source[index]);
-    }
-  }
-
-  // Copies [begin, end) into a fresh path.
-  path slice(std::size_t begin, std::size_t end) {
-    mut path result = path();
-    for (mut std::size_t index = begin; index < end; index++) {
-      result.text.push_back(this.text[index]);
-    }
-    return std::move(result);
-  }
-
-  // Removes the last element and the separator before it, never cutting into
-  // the root. Reports whether an element was actually removed, which is how
-  // lexically_normal() decides a dot-dot has been resolved.
-  bool pop_element(std::size_t floor) mut {
-    if (this.text.size() <= floor) {
-      return false;
-    }
-    // A trailing ".." cannot absorb another one.
-    mut std::size_t start = this.text.size();
-    while (start > floor && !path::is_separator(this.text[start - 1])) {
-      start = start - 1;
-    }
-    if (this.matches(start, this.text.size(), "..")) {
-      return false;
-    }
-    mut std::size_t end = start;
-    while (end > floor && path::is_separator(this.text[end - 1])) {
-      end = end - 1;
-    }
-    this.text.resize(end);
-    return true;
-  }
-
-  // True when [begin, end) equals the given literal.
-  bool matches(std::size_t begin, std::size_t end, std::string_view literal) {
-    if (end - begin != literal.size()) {
-      return false;
-    }
-    for (mut std::size_t index = 0; index < literal.size(); index++) {
-      if (this.text[begin + index] != literal[index]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  std::size_t skip_separators(std::size_t index) {
-    mut std::size_t cursor = index;
-    while (cursor < this.text.size() && path::is_separator(this.text[cursor])) {
-      cursor = cursor + 1;
-    }
-    return cursor;
-  }
-
-  std::size_t element_end(std::size_t start) {
-    mut std::size_t cursor = start;
-    while (cursor < this.text.size() && !path::is_separator(this.text[cursor])) {
-      cursor = cursor + 1;
-    }
-    return cursor;
-  }
-
-  std::size_t root_name_length() {
 #if target.os == "windows"
-    if (this.text.size() >= 2 && this.text[1] == ':') {
-      char drive = this.text[0];
-      if ((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')) {
-        return std::size_t(2);
-      }
-    }
+      static constexpr char preferred_separator = '\\';
+#else
+      static constexpr char preferred_separator = '/';
 #endif
-    return std::size_t(0);
-  }
 
-  std::size_t root_directory_length() {
-    std::size_t start = this.root_name_length();
-    if (start < this.text.size() && path::is_separator(this.text[start])) {
-      return std::size_t(1);
-    }
-    return std::size_t(0);
-  }
+    private:
+      // Byte-lexicographic ordering, used for the root-name comparison.
+      static int32_t compare_text(std::string& left, std::string& right) {
+        mut std::size_t index = std::size_t(0);
+        while (index < left.size() && index < right.size()) {
+          uint8_t leftValue = uint8_t(left[index]);
+          uint8_t rightValue = uint8_t(right[index]);
+          if (leftValue != rightValue) {
+            return leftValue < rightValue ? -1 : 1;
+          }
+          index = index + std::size_t(1);
+        }
+        if (left.size() == right.size()) {
+          return 0;
+        }
+        return left.size() < right.size() ? -1 : 1;
+      }
 
-  std::size_t root_path_length() {
-    return this.root_name_length() + this.root_directory_length();
-  }
+      static void copy_text(mut std::string& destination, std::string& source) {
+        for (mut std::size_t index = 0; index < source.size(); index++) {
+          destination.push_back(source[index]);
+        }
+      }
 
-  // The index at which the filename begins: just past the last separator,
-  // never before the root name.
-  std::size_t filename_start() {
-    mut std::size_t start = this.text.size();
-    std::size_t floor = this.root_name_length();
-    while (start > floor && !path::is_separator(this.text[start - 1])) {
-      start = start - 1;
-    }
-    return start;
-  }
+      // Copies [begin, end) into a fresh path.
+      path slice(std::size_t begin, std::size_t end) {
+        mut path result = path();
+        for (mut std::size_t index = begin; index < end; index++) {
+          result.text.push_back(this.text[index]);
+        }
+        return std::move(result);
+      }
 
-  // The index at which the extension begins, or the end of the path when
-  // there is none.
-  std::size_t extension_start() {
-    std::size_t start = this.filename_start();
-    std::size_t end = this.text.size();
-    if (start >= end) {
-      return end;
-    }
-    if (this.matches(start, end, ".") || this.matches(start, end, "..")) {
-      return end;
-    }
-    mut std::size_t cursor = end;
-    while (cursor > start) {
-      if (this.text[cursor - 1] == '.') {
-        // A period that opens the filename is part of the name, not an
-        // extension marker.
-        if (cursor - 1 == start) {
+      // Removes the last element and the separator before it, never cutting into
+      // the root. Reports whether an element was actually removed, which is how
+      // lexically_normal() decides a dot-dot has been resolved.
+      bool pop_element(std::size_t floor) mut {
+        if (this.text.size() <= floor) {
+          return false;
+        } // A trailing ".." cannot absorb another one.
+        mut std::size_t start = this.text.size();
+        while (start > floor && !path::is_separator(this.text[start - 1])) {
+          start = start - 1;
+        }
+        if (this.matches(start, this.text.size(), "..")) {
+          return false;
+        }
+        mut std::size_t end = start;
+        while (end > floor && path::is_separator(this.text[end - 1])) {
+          end = end - 1;
+        }
+        this.text.resize(end);
+        return true;
+      }
+
+      // True when [begin, end) equals the given literal.
+      bool matches(std::size_t begin, std::size_t end, std::string_view literal) {
+        if (end - begin != literal.size()) {
+          return false;
+        }
+        for (mut std::size_t index = 0; index < literal.size(); index++) {
+          if (this.text[begin + index] != literal[index]) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      std::size_t skip_separators(std::size_t index) {
+        mut std::size_t cursor = index;
+        while (cursor < this.text.size() && path::is_separator(this.text[cursor])) {
+          cursor = cursor + 1;
+        }
+        return cursor;
+      }
+
+      std::size_t element_end(std::size_t start) {
+        mut std::size_t cursor = start;
+        while (cursor < this.text.size() && !path::is_separator(this.text[cursor])) {
+          cursor = cursor + 1;
+        }
+        return cursor;
+      }
+
+      std::size_t root_name_length() {
+#if target.os == "windows"
+        if (this.text.size() >= 2 && this.text[1] == ':') {
+          char drive = this.text[0];
+          if ((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')) {
+            return std::size_t(2);
+          }
+        }
+#endif
+        return std::size_t(0);
+      }
+
+      std::size_t root_directory_length() {
+        std::size_t start = this.root_name_length();
+        if (start < this.text.size() && path::is_separator(this.text[start])) {
+          return std::size_t(1);
+        }
+        return std::size_t(0);
+      }
+
+      std::size_t root_path_length() {
+        return this.root_name_length() + this.root_directory_length();
+      }
+
+      // The index at which the filename begins: just past the last separator,
+      // never before the root name.
+      std::size_t filename_start() {
+        mut std::size_t start = this.text.size();
+        std::size_t floor = this.root_name_length();
+        while (start > floor && !path::is_separator(this.text[start - 1])) {
+          start = start - 1;
+        }
+        return start;
+      }
+
+      // The index at which the extension begins, or the end of the path when
+      // there is none.
+      std::size_t extension_start() {
+        std::size_t start = this.filename_start();
+        std::size_t end = this.text.size();
+        if (start >= end) {
           return end;
         }
-        return cursor - 1;
+        if (this.matches(start, end, ".") || this.matches(start, end, "..")) {
+          return end;
+        }
+        mut std::size_t cursor = end;
+        while (cursor > start) {
+          if (this.text[cursor - 1] == '.') {
+            // A period that opens the filename is part of the name, not an
+            // extension marker.
+            if (cursor - 1 == start) {
+              return end;
+            }
+            return cursor - 1;
+          }
+          cursor = cursor - 1;
+        }
+        return end;
       }
-      cursor = cursor - 1;
-    }
-    return end;
+
+      mut std::string text = std::string("");
+    };
+
   }
-
-  mut std::string text = std::string("");
-};
-
-}
 }
