@@ -134,6 +134,7 @@ at the top of the file.
 | --- | --- | --- |
 | `wrong-code/issue-111-parenthesised-return.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `return (local);` returns 0 — the parenthesised form allocates a second MIR place and reads it unwritten |
 | `wrong-code/issue-111-parenthesised-condition.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `if ((flag))` reads the same unwritten place, so **the wrong branch runs** |
+| `wrong-code/issue-111-comma-operand.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `(y, x)` — the comma's last operand takes the same clone path |
 
 `wrong-code/check.py` builds and runs each one, comparing its exit status
 against the `// expected exit status: N` header on its first line:
