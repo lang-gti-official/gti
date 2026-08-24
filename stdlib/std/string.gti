@@ -1,3 +1,5 @@
+#include <std/iterator>
+
 // The storage-backed value, capacity, and indexed operations are implemented.
 // A dynamic string_view remains unavailable until views can retain an
 // owner-tied lifetime.
@@ -78,6 +80,17 @@ namespace std {
       while (this.count < N) {
         gti_internal::prefix_storage_append(this.data, values[this.count]);
         this.count++;
+      }
+    }
+
+    string<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+      requires std::input_iterator<Iterator> &&
+               std::sentinel_for<Sentinel, Iterator> &&
+               std::dereferences_to<Iterator, char>
+        : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {
+      while (first != last) {
+        this.push_back(*first);
+        ++first;
       }
     }
 

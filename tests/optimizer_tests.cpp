@@ -471,14 +471,14 @@ int main() {
     }
   }
   std::sort(generatedRangeSymbols.begin(), generatedRangeSymbols.end());
-  expect(rangeHir != nullptr && generatedRangeSymbols.size() == 3 &&
+  expect(rangeHir != nullptr && generatedRangeSymbols.size() == 4 &&
              generatedRangeSymbols.front() != 0 &&
              std::adjacent_find(generatedRangeSymbols.begin(),
                                 generatedRangeSymbols.end()) ==
                  generatedRangeSymbols.end(),
          "range-for lowering should assign distinct semantic symbols to its "
-         "generated range, iterator, and sentinel bindings even though their "
-         "tokens share one source anchor");
+         "generated owner, range, iterator, and sentinel bindings even though "
+         "their tokens share one source anchor");
 
   const lang::HirFunctionInstance *relayHir =
       findHirFunction(frontend, "relay");
@@ -3408,7 +3408,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v39\n") &&
+  expect(dump.starts_with("mir-body-v40\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&

@@ -352,7 +352,7 @@ struct CompilerConstraintBinding {
 
 struct ConceptApplication {
   NamePath name;
-  std::vector<Token> arguments;
+  std::vector<TypeRef> arguments;
 };
 
 struct RequiresClause {
@@ -1277,8 +1277,9 @@ private:
 
 class Unary final : public Expr {
 public:
-  Unary(Token oper, ExprPtr right)
-      : oper_(std::move(oper)), right_(std::move(right)) {}
+  Unary(Token oper, ExprPtr right, ExprPtr rangeObject = nullptr)
+      : oper_(std::move(oper)), right_(std::move(right)),
+        rangeObject_(std::move(rangeObject)) {}
   Unary(Unary &&) = default;
   Unary(const Unary &) = delete;
   Unary &operator=(Unary &&) = default;
@@ -1291,11 +1292,16 @@ public:
 
   [[nodiscard]] const Token &oper() const { return oper_; }
   [[nodiscard]] const ExprPtr &right() const { return right_; }
+  // Parser-generated range element access retains its stable range object so
+  // semantic/HIR lowering can select the built-in fixed-array index strategy
+  // without reconstructing ownership from a generated iterator spelling.
+  [[nodiscard]] const ExprPtr &rangeObject() const { return rangeObject_; }
   [[nodiscard]] ExprPtr takeRight() { return std::move(right_); }
 
 private:
   Token oper_;
   ExprPtr right_;
+  ExprPtr rangeObject_;
 };
 
 class Unexpected final : public Expr {
@@ -1421,12 +1427,14 @@ class ConstructorDecl final : public Stmt {
 public:
   ConstructorDecl(Token name, std::vector<GenericParameter> genericParameters,
                   std::vector<Parameter> parameters,
+                  std::optional<RequiresClause> requiresClause,
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body)
       : name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
+        requiresClause_(std::move(requiresClause)),
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)) {}
 
@@ -1441,6 +1449,9 @@ public:
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
   }
+  [[nodiscard]] const std::optional<RequiresClause> &requiresClause() const {
+    return requiresClause_;
+  }
   [[nodiscard]] const std::vector<ConstructorInitializer> &
   initializers() const {
     return initializers_;
@@ -1454,6 +1465,7 @@ private:
   Token name_;
   std::vector<GenericParameter> genericParameters_;
   std::vector<Parameter> parameters_;
+  std::optional<RequiresClause> requiresClause_;
   std::vector<ConstructorInitializer> initializers_;
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
@@ -1749,11 +1761,19 @@ private:
 class RangeForStmt final : public Stmt {
 public:
   RangeForStmt(Token keyword, Mutability bindingMutability, TypeRef bindingType,
-               Token bindingName, Token colon, StmtPtr lowered)
+               Token bindingName, Token colon, StmtPtr lowered,
+               const VariableDecl *ownerBinding,
+               const VariableDecl *rangeBinding,
+               const VariableDecl *iteratorBinding,
+               const VariableDecl *sentinelBinding,
+               const VariableDecl *elementBinding, const ForStmt *coreLoop)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
-        lowered_(std::move(lowered)) {}
+        lowered_(std::move(lowered)), ownerBinding_(ownerBinding),
+        rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
+        sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
+        coreLoop_(coreLoop) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -1767,6 +1787,22 @@ public:
   [[nodiscard]] const Token &bindingName() const { return bindingName_; }
   [[nodiscard]] const Token &colon() const { return colon_; }
   [[nodiscard]] const StmtPtr &lowered() const { return lowered_; }
+  [[nodiscard]] const VariableDecl *ownerBinding() const {
+    return ownerBinding_;
+  }
+  [[nodiscard]] const VariableDecl *rangeBinding() const {
+    return rangeBinding_;
+  }
+  [[nodiscard]] const VariableDecl *iteratorBinding() const {
+    return iteratorBinding_;
+  }
+  [[nodiscard]] const VariableDecl *sentinelBinding() const {
+    return sentinelBinding_;
+  }
+  [[nodiscard]] const VariableDecl *elementBinding() const {
+    return elementBinding_;
+  }
+  [[nodiscard]] const ForStmt *coreLoop() const { return coreLoop_; }
 
 private:
   Token keyword_;
@@ -1775,6 +1811,12 @@ private:
   Token bindingName_;
   Token colon_;
   StmtPtr lowered_;
+  const VariableDecl *ownerBinding_ = nullptr;
+  const VariableDecl *rangeBinding_ = nullptr;
+  const VariableDecl *iteratorBinding_ = nullptr;
+  const VariableDecl *sentinelBinding_ = nullptr;
+  const VariableDecl *elementBinding_ = nullptr;
+  const ForStmt *coreLoop_ = nullptr;
 };
 
 class FunctionDecl final : public Stmt {
@@ -2080,11 +2122,13 @@ public:
                ExprPtr initializer,
                std::optional<Token> staticKeyword = std::nullopt,
                bool rangeBinding = false,
-               std::optional<Token> constexprKeyword = std::nullopt)
+               std::optional<Token> constexprKeyword = std::nullopt,
+               bool rangeOwner = false)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
-        constexprKeyword_(std::move(constexprKeyword)) {}
+        constexprKeyword_(std::move(constexprKeyword)),
+        rangeOwner_(rangeOwner) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2102,6 +2146,7 @@ public:
     return staticKeyword_;
   }
   [[nodiscard]] bool isRangeBinding() const { return rangeBinding_; }
+  [[nodiscard]] bool isRangeOwner() const { return rangeOwner_; }
   [[nodiscard]] bool isConstexpr() const {
     return constexprKeyword_.has_value();
   }
@@ -2117,6 +2162,7 @@ private:
   std::optional<Token> staticKeyword_;
   bool rangeBinding_ = false;
   std::optional<Token> constexprKeyword_;
+  bool rangeOwner_ = false;
 };
 
 class StructuredBindingDecl final : public Stmt {

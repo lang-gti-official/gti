@@ -58,6 +58,9 @@ private:
                                        const ConceptApplication &application);
   void appendRequirements(std::string &result, const FunctionInfo &info,
                           const ResolvedCallInfo *selected) const;
+  void appendRequirements(
+      std::string &result, const std::optional<RequiresClause> &requiresClause,
+      const std::vector<AppliedConceptRequirement> &requirements) const;
 
   const SemanticModel &semantics;
   SemanticTypePrinter types;

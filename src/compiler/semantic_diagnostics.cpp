@@ -106,7 +106,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         if (index != 0) {
           arguments += ", ";
         }
-        arguments += failure.application->arguments[index].lexeme;
+        arguments += semantic_spelling::typeRefSpelling(
+            failure.application->arguments[index]);
       }
     }
     Diagnostic diagnostic = makeDiagnostic(
@@ -128,10 +129,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The iterator must provide public read-only bool operator!=(S&) "
           "for the exact sentinel type.");
       break;
-    case StructuralConstraintKind::AccumulatesInto:
+    case StructuralConstraintKind::DereferencesTo:
       diagnostic.hints.emplace_back(
           "The iterator's read-only dereference must return a checked "
-          "reference whose referent is exactly the accumulator type.");
+          "reference whose referent is exactly the required type.");
       break;
     case StructuralConstraintKind::None:
       break;

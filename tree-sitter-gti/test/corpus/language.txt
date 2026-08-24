@@ -1276,6 +1276,124 @@ std::unique_ptr<Widget> create() {
               (primary_expression
                 (identifier)))))))))
 
+=====================================================
+Constructor-local generics and trailing requirements
+=====================================================
+
+class Text {
+public:
+  Text<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+    requires std::input_iterator<Iterator> &&
+             std::sentinel_for<Sentinel, Iterator> &&
+             std::dereferences_to<Iterator, char>
+      : count(0) {}
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier))
+          (generic_parameter
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (requires_clause
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type
+              (user_type
+                (identifier))))
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type
+              (user_type
+                (identifier)))
+            (type
+              (user_type
+                (identifier))))
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type
+              (user_type
+                (identifier)))
+            (type
+              (primitive_type))))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (literal
+                  (integer_literal))))))
+        (block)))))
+
+========================================================
+Incomplete constructor-local requirement and initializer
+========================================================
+
+class Text {
+public:
+  Text<Iterator>(Iterator first)
+    requires std::input_iterator<
+      : count(0) {
+};
+
+---
+
+(source_file
+  (ERROR
+    (identifier)
+    (access_specifier)
+    (constructor_declaration
+      (identifier)
+      (generic_parameter_clause
+        (generic_parameter
+          (identifier)))
+      (parameter_clause
+        (parameter
+          (type
+            (user_type
+              (identifier)))
+          (identifier)))
+      (ERROR
+        (scoped_identifier
+          (identifier)
+          (identifier)))
+      (constructor_initializer_list
+        (constructor_initializer
+          (user_type
+            (identifier))
+          (constructor_initializer_argument_list
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (block))
+    (empty_declaration)))
+
 ==================
 Static assertions in declaration and block scopes
 ==================
@@ -1505,8 +1623,12 @@ public:
             (scoped_identifier
               (identifier)
               (identifier))
-            (identifier)
-            (identifier))))
+            (type
+              (user_type
+                (identifier)))
+            (type
+              (user_type
+                (identifier))))))
       (operator_declaration
         (parameter_clause)
         (requires_clause
@@ -1514,7 +1636,9 @@ public:
             (scoped_identifier
               (identifier)
               (identifier))
-            (identifier)))))))
+            (type
+              (user_type
+                (identifier)))))))))
 
 =====================================================
 Multi-parameter concepts and trailing requires clauses
@@ -1551,8 +1675,12 @@ public:
       (scoped_identifier
         (identifier)
         (identifier))
-      (identifier)
-      (identifier)))
+      (type
+        (user_type
+          (identifier)))
+      (type
+        (user_type
+          (identifier)))))
   (function_declaration
     (type
       (user_type
@@ -1589,19 +1717,29 @@ public:
         (scoped_identifier
           (identifier)
           (identifier))
-        (identifier))
+        (type
+          (user_type
+            (identifier))))
       (concept_application
         (scoped_identifier
           (identifier)
           (identifier))
-        (identifier)
-        (identifier))
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (user_type
+            (identifier))))
       (concept_application
         (scoped_identifier
           (identifier)
           (identifier))
-        (identifier)
-        (identifier)))
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (user_type
+            (identifier)))))
     (block
       (return_statement
         (initializer_expression
@@ -1647,13 +1785,19 @@ public:
             (scoped_identifier
               (identifier)
               (identifier))
-            (identifier))
+            (type
+              (user_type
+                (identifier))))
           (concept_application
             (scoped_identifier
               (identifier)
               (identifier))
-            (identifier)
-            (identifier)))))))
+            (type
+              (user_type
+                (identifier)))
+            (type
+              (user_type
+                (identifier)))))))))
 
 ==================
 Constexpr declarations
@@ -2157,12 +2301,16 @@ T choose<sortable T>(T value) { return value; }
       (scoped_identifier
         (identifier)
         (identifier))
-      (identifier))
+      (type
+        (user_type
+          (identifier))))
     (concept_application
       (scoped_identifier
         (identifier)
         (identifier))
-      (identifier)))
+      (type
+        (user_type
+          (identifier)))))
   (concept_declaration
     (compiler_constraint_binding
       (string_literal))

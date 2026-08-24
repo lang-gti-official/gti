@@ -6,6 +6,8 @@ namespace std {
 concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
 concept sentinel_for<Sentinel, Iterator> =
     gti_internal::sentinel_for_capability<Sentinel, Iterator>;
+concept dereferences_to<Iterator, T> =
+    gti_internal::dereferences_to_capability<Iterator, T>;
 
 struct input_iterator_tag {};
 struct output_iterator_tag {};

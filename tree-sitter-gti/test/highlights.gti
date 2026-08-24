@@ -262,3 +262,10 @@ public:
   void operator+=(int value) mut {}
   void operator--() mut {}
 };
+
+class HighlightText {
+public:
+  HighlightText<Iterator>(Iterator first)
+    requires std::input_iterator<Iterator> &&
+             std::dereferences_to<Iterator, char> {}
+};

@@ -719,6 +719,15 @@ SemanticModel::loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
   return base == nullptr ? nullptr : base->findStructuredBinding(declaration);
 }
 
+[[nodiscard]] const ResolvedRangeIterationInfo *
+SemanticModel::findRangeIteration(const RangeForStmt &statement) const {
+  const auto found = rangeIterations.find(&statement);
+  if (found != rangeIterations.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findRangeIteration(statement);
+}
+
 [[nodiscard]] const FunctionInfo *
 SemanticModel::findFunction(const FunctionDecl &declaration) const {
   const auto found = functions.find(&declaration);
@@ -1170,6 +1179,7 @@ void SemanticModel::clear() {
   staticAssertResults.clear();
   switchArmLoanEnds.clear();
   structuredBindings.clear();
+  rangeIterations.clear();
   functions.clear();
   functionsById.clear();
   lambdas.clear();
@@ -1533,6 +1543,11 @@ void SemanticModel::clearLoans() {
 void SemanticModel::record(const StructuredBindingDecl &declaration,
                            StructuredBindingInfo info) {
   structuredBindings.insert_or_assign(&declaration, std::move(info));
+}
+
+void SemanticModel::record(const RangeForStmt &statement,
+                           ResolvedRangeIterationInfo info) {
+  rangeIterations.insert_or_assign(&statement, std::move(info));
 }
 
 void SemanticModel::recordExplicitMove(const VariableDecl &declaration) {

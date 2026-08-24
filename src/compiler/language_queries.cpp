@@ -1,6 +1,7 @@
 #include "gti/language_queries.h"
 
 #include "gti/lexer.h"
+#include "semantic_spelling.h"
 
 #include <algorithm>
 #include <cctype>
@@ -160,6 +161,10 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
                                       : &selected.declaration->parameters();
   appendParameters(result, selected.parameterTypes, parameters, false);
   result += ')';
+  if (selected.declaration != nullptr) {
+    appendRequirements(result, selected.declaration->requiresClause(),
+                       selected.requirements);
+  }
   return result;
 }
 
@@ -186,6 +191,10 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
       info.declaration == nullptr ? nullptr : &info.declaration->parameters(),
       true);
   result += ')';
+  if (info.declaration != nullptr) {
+    appendRequirements(result, info.declaration->requiresClause(),
+                       info.requirements);
+  }
   return result;
 }
 
@@ -428,7 +437,7 @@ void SignaturePrinter::appendConceptApplication(
     if (index != 0) {
       result += ", ";
     }
-    result += application.arguments[index].lexeme;
+    result += semantic_spelling::typeRefSpelling(application.arguments[index]);
   }
   result += '>';
 }
@@ -439,12 +448,20 @@ void SignaturePrinter::appendRequirements(
   if (info.declaration == nullptr || !info.declaration->requiresClause()) {
     return;
   }
-  const std::vector<ConceptApplication> &syntax =
-      info.declaration->requiresClause()->requirements;
+  appendRequirements(result, info.declaration->requiresClause(),
+                     selected == nullptr ? info.requirements
+                                         : selected->requirements);
+}
+
+void SignaturePrinter::appendRequirements(
+    std::string &result, const std::optional<RequiresClause> &requiresClause,
+    const std::vector<AppliedConceptRequirement> &requirements) const {
+  if (!requiresClause) {
+    return;
+  }
+  const std::vector<ConceptApplication> &syntax = requiresClause->requirements;
   for (std::size_t index = 0; index < syntax.size(); ++index) {
     const AppliedConceptRequirement *resolvedRequirement = nullptr;
-    const std::vector<AppliedConceptRequirement> &requirements =
-        selected == nullptr ? info.requirements : selected->requirements;
     for (const AppliedConceptRequirement &requirement : requirements) {
       if (requirement.syntax == &syntax[index]) {
         resolvedRequirement = &requirement;
@@ -464,10 +481,12 @@ void SignaturePrinter::appendRequirements(
         const std::string printed =
             types.print(resolvedRequirement->arguments[argumentIndex]);
         result += printed == "unknown"
-                      ? syntax[index].arguments[argumentIndex].lexeme
+                      ? semantic_spelling::typeRefSpelling(
+                            syntax[index].arguments[argumentIndex])
                       : printed;
       } else {
-        result += syntax[index].arguments[argumentIndex].lexeme;
+        result += semantic_spelling::typeRefSpelling(
+            syntax[index].arguments[argumentIndex]);
       }
     }
     result += '>';

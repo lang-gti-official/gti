@@ -1,16 +1,14 @@
 # Ranges and iterators
 
-Status: implemented groundwork subset
+Status: current through L-RANGE-01 read-only range loans
 
 GTI range iteration is structural. The compiler does not recognize
-`std::range`, `std::array`, `std::vector`, or any other public library type.
-The current subset accepts an ordinary class when its exact member operations
-satisfy the protocol. Iterators and sentinels may be self-contained values, or
-an imported standard-library iterator may use the confined one-owner contract
-to retain one read-only checked storage borrow. Fixed-array iteration, owned
-temporary ranges, mutable owner-tied iterators, and dedicated iteration loans
-remain governed by the staged
-[`docs/plans/iterators-and-ranges.md`](../plans/iterators-and-ranges.md).
+`std::range`, `std::array`, `std::vector`, or any other public library name.
+L-RANGE-01 supports two compiler-verified strategies: direct indexed traversal
+of a fixed array and the exact member protocol below for a nominal class.
+Iterators and sentinels may be self-contained values, or an imported
+standard-library iterator may use the confined one-owner contract to retain one
+read-only checked storage borrow.
 
 ```gti
 for (T value : range) {
@@ -18,11 +16,15 @@ for (T value : range) {
 }
 ```
 
-The compiler resolves this source as the equivalent compiler-private core
-operation sequence (`auto&` is otherwise confined to a range declaration):
+The compiler evaluates the range expression exactly once. An addressable
+lvalue is retained by one read-only hidden owner reference; an owned prvalue is
+transferred into hidden loop storage. A second read-only range carrier borrows
+that owner. Nominal ranges then use the equivalent compiler-private core
+sequence (`auto&` is otherwise confined to a range declaration):
 
 ```gti
-auto& stable_range = range;
+auto owner = range;            // read-only reference for an lvalue, owned value for a prvalue
+auto& stable_range = owner;
 mut auto iterator = stable_range.begin();
 auto sentinel = stable_range.end();
 for (; iterator != sentinel; ++iterator) {
@@ -35,16 +37,22 @@ The names above are explanatory. Real lowering uses reserved generated
 bindings that are absent from completion, semantic tokens, and user lookup.
 Diagnostics produced by those operations map to the source `:` rather than a
 synthetic identifier span.
-`continue` targets the core `for` increment block, so it always invokes the
-selected prefix increment before testing the sentinel again.
+For a fixed `T[N]`, the same plan uses an exact `uint64_t` index from zero to
+`N` and checked array element selection. It does not synthesize pointers,
+require public `begin`/`end` members, decay the array, or ask the C++ backend to
+perform native range lookup. `continue` targets the core increment block and
+`break` targets the range cleanup block.
 
 The hidden steps follow the ordinary full-expression order in
 [Execution Section 4.2.3](execution.md#423-full-expressions-and-cleanup). The
 range expression executes once, followed by `begin()` and `end()` in that
-order. Each comparison completes before the body; the element binding is live
-only for its iteration and is cleaned before increment; increment completes
-before the next comparison. Iterator, sentinel, and any future hidden owning
-range value are cleaned in reverse initialization order on every loop exit.
+order for a nominal range. Each comparison completes before the body; the
+element binding and its read-only loan are live only for that iteration and
+end before increment; increment completes before the next comparison. The
+sentinel, iterator, range carrier, and owner are cleaned in reverse
+initialization order on normal completion, `break`, `return`, and every defined
+failure path. An owned temporary is destroyed exactly once after its last
+active child loan; emitted C++ lifetime extension is not language authority.
 
 ## Structural protocol
 
@@ -65,10 +73,13 @@ borrow checks all run through the normal frontend. C++ argument-dependent
 lookup and native range-for semantics are never consulted.
 
 A by-value loop declaration such as `for (T value : range)` copies the
-dereferenced element and therefore rejects a move-only lvalue. `for (T& value :
-range)` and `for (auto& value : range)` bind a read-only non-null reference.
-Leading `mut` requests writable access and succeeds only when `operator*`
-returns a writable reference:
+selected element and therefore rejects a move-only lvalue. `for (T& value :
+range)` and `for (auto& value : range)` bind a loop-bounded, non-escaping,
+read-only non-null reference. Assigning through that reference or storing,
+capturing, or returning it beyond the iteration is ill-formed.
+
+L-RANGE-01 deliberately rejects a mutable reference declaration even when a
+nominal iterator exposes writable dereference:
 
 ```gti
 for (mut auto& value : mutable_range) {
@@ -76,11 +87,11 @@ for (mut auto& value : mutable_range) {
 }
 ```
 
-The range expression must currently be a stable addressable value. The language
-execution contract defines how a future permitted temporary is transferred to
-a hidden owner lasting for the complete range statement, but the current
-frontend rejects that form until its lifecycle and ordered MIR lowering are
-implemented; it never relies on backend-specific lifetime extension.
+This reports `GTI-S2083`; mutable element loans and container invalidation are
+reserved for L-RANGE-02. Pointer ranges, dynamically sized spans/views, and
+other non-array/non-nominal forms are likewise unsupported. Moving a named
+range into owned loop storage consumes that owner, so later reuse is rejected
+by the ordinary ownership rules.
 
 ## Generic iterator contracts
 
@@ -142,27 +153,32 @@ compiler-owned cursor or raw pointer. The source-defined `std::string`
 exercises this path: its
 iterator retains a trusted read-only borrow of the private checked storage
 while the compiler remains unaware of the public container and iterator names.
-The initial source-defined `std::vector<T>` uses the same path for read-only
-iteration over a stable vector lvalue. Its iterator carries an index plus the
-storage borrow; it does not expose an address or unchecked cursor. An active
-iterator therefore blocks reserve, push, clear, movement, and other mutable
-receiver operations under the existing retained-loan rules.
-This is ordinary retained-carrier flow, not a dedicated range-level or
-per-element loan. Multiple read-only aliases share one loan and one aggregate
-path-aware endpoint plan. Bounded local exclusive reborrows are available for
-stable root, named-field, and checked-dereference places, but mutable/exclusive
-owner dependencies, multiple or nested owner dependencies,
-global/captured/storage escape, dependency-changing assignment, and
-iteration-specific loans remain later lifetime layers. Fixed arrays also do
-not yet expose
-`begin()` and `end()`; the structural protocol and range-for syntax do not need
-to change when they do. Confined generic `void` operations, exact `bool`
+The initial source-defined `std::vector<T>` uses the same iterator path. Its
+iterator carries an index plus the storage borrow; it does not expose an
+address or unchecked cursor. An active iterator therefore blocks reserve,
+push, clear, movement, and other mutable receiver operations under the
+existing retained-loan rules.
+
+Each range statement additionally has a compiler-owned semantic/HIR/MIR plan
+with exact owner, range, iterator, sentinel, element, operation, access, loan,
+loop-edge, and cleanup identities. Multiple nested read-only loops retain
+separate plans. Fixed arrays use the indexed plan directly and need no public
+`begin()` or `end()`. The MIR verifier rejects a writable or escaping loan, an
+inconsistent array strategy, a mismatched owner/drop, or a broken
+condition/body/increment/cleanup cycle before backend admission.
+
+Mutable/exclusive range dependencies, invalidation-aware mutation,
+multiple-origin stored views, pointer decay, and dynamically sized spans or
+string views remain later lifetime layers. Confined generic `void` operations,
+exact `bool`
 predicates, exact context-supplied non-reference value results without tracked
 borrowed state or lambda identity, and proven forwarding through other
 confined callable parameters are available for algorithm callbacks. Result
 inference through `auto`, borrowed results, and owned escape remain
 unavailable. The bounded input-iterator, sentinel, and exact
-accumulation capabilities are implemented, but complete-range,
+`dereferences_to` capability are implemented. `std::string(first, last)` uses
+them in an ordinary constructor-local generic declaration and copies the
+selected character range without retaining either iterator. Complete-range,
 readable/writable element, sized, and multi-pass capabilities are still
 missing. A public `std::for_each` over arbitrary structural ranges should wait
 for those capabilities instead of teaching the compiler a public container or

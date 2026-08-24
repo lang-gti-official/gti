@@ -118,6 +118,24 @@ public:
         }
       }
     }
+    // Constructor-local iterator/sentinel inference can select an exact
+    // move-only iterator value returned by begin(). Such a value retains a
+    // stored loan of its range owner, but is still transferred exactly once
+    // into the selected constructor parameter. Record only the producers
+    // named by that explicit HIR call-input plan so their failure-capable
+    // result is armed on the success edge before the later CallInput moves it.
+    for (const HirValue &consumer : source.values) {
+      if (!consumer.constructorTarget ||
+          consumer.constructorKind != ConstructorKind::Ordinary ||
+          !consumer.callPlan) {
+        continue;
+      }
+      for (const HirCallArgument &argument : consumer.callPlan->arguments) {
+        if (argument.kind == HirCallInputKind::MoveBorrowedTemporary) {
+          borrowedTemporaryTransfers.insert(argument.value);
+        }
+      }
+    }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
     }
@@ -423,6 +441,15 @@ private:
   struct ContinueContext {
     MirBlockId target = 0;
     std::size_t keepScopes = 0;
+  };
+
+  struct LoweredLoopShape {
+    MirBlockId conditionEntry = 0;
+    MirBlockId condition = 0;
+    MirBlockId body = 0;
+    MirBlockId increment = 0;
+    MirBlockId cleanup = 0;
+    MirBlockId exit = 0;
   };
 
   [[nodiscard]] const HirValue *findValue(HirValueId id) const {
@@ -3056,7 +3083,8 @@ private:
     const std::optional<MirDropType> dropType =
         stageOwningParameter ? preparedParameterDropType(type) : std::nullopt;
     if (dropType && (inputKind == HirCallInputKind::CopyValue ||
-                     inputKind == HirCallInputKind::MoveValue)) {
+                     inputKind == HirCallInputKind::MoveValue ||
+                     inputKind == HirCallInputKind::MoveBorrowedTemporary)) {
       parameterDrop = appendPreparedParameterDrop(callSite, sourceValue, result,
                                                   info, *dropType);
       const MirDropObligation *prepared =
@@ -3081,7 +3109,8 @@ private:
           }
         }
       }
-    } else if (inputKind == HirCallInputKind::MoveValue) {
+    } else if (inputKind == HirCallInputKind::MoveValue ||
+               inputKind == HirCallInputKind::MoveBorrowedTemporary) {
       transferTemporaryOut(input, sourceValue);
     }
     (void)appendInstruction(std::move(input));
@@ -3578,10 +3607,11 @@ private:
     // nested input to another call. Arm its value obligation on the Invoke
     // success edge; the normal successor then owns the temporary until a
     // later CallInput reparents it or full-expression cleanup drops it.
-    const bool successEdgeResult = resultDrop != 0 && routeFailureEdgesHere() &&
-                                   !call.definedFailure.empty() &&
-                                   !call.destination && !call.loan &&
-                                   !value.ownership;
+    const bool successEdgeResult =
+        resultDrop != 0 && routeFailureEdgesHere() &&
+        !call.definedFailure.empty() && !call.destination &&
+        (!call.loan || borrowedTemporaryTransfers.contains(value.id)) &&
+        !value.ownership;
     if (successEdgeResult) {
       call.successResultDrop = resultDrop;
     } else if (!detachedBorrowResult) {
@@ -4972,7 +5002,29 @@ private:
         }
       }
 
-      const MirPlaceId sourcePlace = placeForLoan(*desired, value);
+      // Prefer the expression's concrete MIR place when it carries the exact
+      // semantic loan identity. In particular, a dynamic fixed-array element
+      // records its index as a MIR value while the semantic PlaceKey records
+      // only the stable selection identity. Reconstructing the place solely
+      // from the semantic loan would lose that runtime index before backend
+      // emission.
+      MirPlaceId sourcePlace = placeForValue(valueId);
+      const MirPlace *concreteSource = output.findPlace(sourcePlace);
+      const bool exactRangeElement = std::any_of(
+          source.statements.begin(), source.statements.end(),
+          [&](const HirStatement &statement) {
+            return statement.rangeIteration &&
+                   statement.rangeIteration->elementLoan ==
+                       desired->semanticLoan &&
+                   statement.rangeIteration->elementAccessValue == valueId;
+          });
+      if (concreteSource == nullptr ||
+          ((!concreteSource->key || *concreteSource->key != desired->place) &&
+           !exactRangeElement)) {
+        sourcePlace = placeForLoan(*desired, value);
+      } else {
+        semanticLoanPlaces.insert_or_assign(desired->semanticLoan, sourcePlace);
+      }
       if (sourcePlace == 0) {
         return {};
       }
@@ -5469,7 +5521,7 @@ private:
       lowerFor(*statement);
       return;
     case HirStatementKind::RangeFor:
-      lowerNestedStatement(statement->body);
+      lowerRangeFor(*statement);
       return;
     case HirStatementKind::Switch:
       lowerSwitch(*statement);
@@ -5952,6 +6004,8 @@ private:
     const MirBlockId naturalExitBlock =
         statement.condition && !statement.endedLoans.empty() ? appendBlock()
                                                              : cleanupBlock;
+    MirBlockId comparisonBlock = conditionBlock;
+    MirBlockId advanceBlock = incrementBlock;
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
@@ -5962,6 +6016,7 @@ private:
       endFullExpressionLoans(conditionScopes);
       emitTemporaryDrops(conditionTemporaryDrops, *statement.condition,
                          statement.id);
+      comparisonBlock = current;
       terminate({.kind = MirTerminatorKind::Branch,
                  .hirStatement = statement.id,
                  .value = condition,
@@ -6018,6 +6073,7 @@ private:
       emitTemporaryDrops(incrementTemporaryDrops, *statement.increment,
                          statement.id);
     }
+    advanceBlock = current;
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
     }
@@ -6033,6 +6089,80 @@ private:
     scopes.pop_back();
     current = exitBlock;
     temporaryDrops = loopTemporaryDrops;
+    loweredLoops.insert_or_assign(
+        statement.id, LoweredLoopShape{.conditionEntry = conditionBlock,
+                                       .condition = comparisonBlock,
+                                       .body = bodyBlock,
+                                       .increment = advanceBlock,
+                                       .cleanup = cleanupBlock,
+                                       .exit = exitBlock});
+  }
+
+  void lowerRangeFor(const HirStatement &statement) {
+    lowerNestedStatement(statement.body);
+    if (!statement.rangeIteration) {
+      valid = false;
+      return;
+    }
+    const HirRangeIteration &sourceRange = *statement.rangeIteration;
+    const auto loop = loweredLoops.find(sourceRange.coreLoop);
+    if (loop == loweredLoops.end()) {
+      valid = false;
+      return;
+    }
+    const auto loanFor = [&](SemanticLoanId semanticLoan,
+                             bool required) -> MirLoanId {
+      if (semanticLoan == 0) {
+        if (required) {
+          valid = false;
+        }
+        return 0;
+      }
+      const auto found = semanticLoans.find(semanticLoan);
+      if (found == semanticLoans.end() || found->second == 0 ||
+          found->second > output.loans.size()) {
+        valid = false;
+        return 0;
+      }
+      return found->second;
+    };
+    MirDropObligationId ownerDrop = 0;
+    const HirBinding *ownerBinding = findBinding(sourceRange.owner);
+    if (ownerBinding != nullptr && ownerBinding->dropObligation) {
+      const auto found = dropObligations.find(*ownerBinding->dropObligation);
+      if (found == dropObligations.end()) {
+        valid = false;
+      } else {
+        ownerDrop = found->second;
+      }
+    }
+    output.rangeIterations.push_back(
+        {.id = output.rangeIterations.size() + 1,
+         .hirStatement = statement.id,
+         .coreLoop = sourceRange.coreLoop,
+         .strategy = sourceRange.strategy,
+         .rangeType = sourceRange.rangeType,
+         .iteratorType = sourceRange.iteratorType,
+         .sentinelType = sourceRange.sentinelType,
+         .elementType = sourceRange.elementType,
+         .elementAccess = sourceRange.elementAccess,
+         .owner = placeForBinding(sourceRange.owner),
+         .rangeCarrier = placeForBinding(sourceRange.rangeCarrier),
+         .iterator = placeForBinding(sourceRange.iterator),
+         .sentinel = placeForBinding(sourceRange.sentinel),
+         .element = placeForBinding(sourceRange.element),
+         .rangeLoan = loanFor(sourceRange.rangeLoan, true),
+         .elementLoan =
+             loanFor(sourceRange.elementLoan, sourceRange.elementLoan != 0),
+         .ownerDrop = ownerDrop,
+         .conditionEntryBlock = loop->second.conditionEntry,
+         .conditionBlock = loop->second.condition,
+         .bodyBlock = loop->second.body,
+         .incrementBlock = loop->second.increment,
+         .cleanupBlock = loop->second.cleanup,
+         .exitBlock = loop->second.exit,
+         .arrayLength = sourceRange.arrayLength,
+         .ownsRangeTemporary = sourceRange.ownsRangeTemporary});
   }
 
   void lowerSwitch(const HirStatement &statement) {
@@ -6307,6 +6437,7 @@ private:
   const HirProgram &program;
   const FailureMetadata &failureMetadata;
   const HirBody &source;
+  std::unordered_set<HirValueId> borrowedTemporaryTransfers;
   const MirDefinedFailureEffects &definedFailureEffects;
   bool implicitZeroReturn = false;
   const HirFunctionInstance *function = nullptr;
@@ -6342,6 +6473,7 @@ private:
   std::optional<PreparedCallArgumentFailure> preparedCallArgumentFailure;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;
+  std::unordered_map<HirStatementId, LoweredLoopShape> loweredLoops;
 };
 
 MirLoweringResult
@@ -6620,6 +6752,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.constructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
+         .typeArguments = instance.typeArguments,
+         .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
          .parameterBindings = instance.parameterBindings,
          .borrowOrigin = instance.borrowOrigin,

@@ -448,6 +448,9 @@ public:
     }
 
     prepareInstanceAnalysis();
+    instanceAnalysisActive = true;
+    instanceBaseModel = &scope.baseModel;
+    seedExternalLambdaTypes(constructorTypeArguments, scope.baseModel);
     if (!prepareClassInstanceContext(constructor->owner, classTypeArguments,
                                      classValueArguments)) {
       return scope.finish();
@@ -773,8 +776,10 @@ public:
     ClassInfo &owner = classInfo(*currentClass);
     const ConstructorInfo *constructorInfo =
         semanticModel.findConstructor(stmt);
+    bool requirementsValid = true;
     if (constructorInfo != nullptr) {
       beginTypeParameterScope(constructorInfo->genericParameters);
+      requirementsValid = beginRequirementScope(constructorInfo);
     }
     const SemanticType ownerType = SemanticType::classType(owner.id);
     const SymbolId symbol = recordToolingSymbol(
@@ -845,8 +850,10 @@ public:
         hasPack, !instanceClassContextActive);
 
     if (constructorInfo == nullptr ||
-        constructorInfo->kind != ConstructorKind::Ordinary || !stmt.body()) {
+        constructorInfo->kind != ConstructorKind::Ordinary || !stmt.body() ||
+        !requirementsValid) {
       if (constructorInfo != nullptr) {
+        endRequirementScope();
         endTypeParameterScope();
       }
       return;
@@ -1127,6 +1134,7 @@ public:
     valueControlFlow = std::move(enclosingValueControlFlow);
     currentReturnType = enclosingReturnType;
     currentProgramEffectOwner = enclosingEffectOwner;
+    endRequirementScope();
     endTypeParameterScope();
   }
 
@@ -1353,7 +1361,125 @@ public:
   }
 
   void visitRangeForStmt(const RangeForStmt &stmt) override {
+    if (stmt.bindingMutability() == Mutability::Mutable &&
+        stmt.bindingType().reference) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.bindingName(),
+          "Mutable element loans are not available in read-only range "
+          "iteration.");
+      diagnostic.hints.emplace_back(
+          "Use a read-only 'T&' or 'auto&' element binding, or copy each "
+          "element into a mutable by-value binding; mutable range loans are "
+          "reserved for L-RANGE-02.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     analyze(stmt.lowered());
+
+    const BindingInfo *owner =
+        stmt.ownerBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.ownerBinding());
+    const BindingInfo *range =
+        stmt.rangeBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.rangeBinding());
+    const BindingInfo *iterator =
+        stmt.iteratorBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.iteratorBinding());
+    const BindingInfo *sentinel =
+        stmt.sentinelBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.sentinelBinding());
+    const BindingInfo *element =
+        stmt.elementBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.elementBinding());
+
+    SemanticType rangeType =
+        range == nullptr ? SemanticType::Unknown : range->type;
+    if (rangeType.kind == SemanticType::Reference &&
+        rangeType.arguments.size() == 1) {
+      SemanticType referent = rangeType.arguments.front();
+      rangeType = std::move(referent);
+    }
+    if (rangeType != SemanticType::Unknown &&
+        rangeType.kind != SemanticType::Array &&
+        rangeType.kind != SemanticType::Class) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
+          "Read-only range iteration requires a fixed array or a class "
+          "implementing the exact structural iterator protocol; found '" +
+              typeSpelling(rangeType) + "'.");
+      diagnostic.hints.emplace_back(
+          "Provide exact read-only begin()/end(), comparison, dereference, "
+          "and prefix-increment operations, or iterate a fixed array.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    const auto selectedCall = [&](const ExprPtr &expression) -> FunctionId {
+      const auto *call = dynamic_cast<const Call *>(expression.get());
+      const ResolvedCallInfo *resolved =
+          call == nullptr ? nullptr : semanticModel.findCall(*call);
+      return resolved == nullptr ? 0 : resolved->function;
+    };
+    const auto selectedOperator = [&](const ExprPtr &expression) -> FunctionId {
+      const ResolvedOperatorInfo *resolved =
+          expression ? semanticModel.findOperator(*expression) : nullptr;
+      return resolved == nullptr ? 0 : resolved->function;
+    };
+
+    SemanticType elementType =
+        element == nullptr ? SemanticType::Unknown : element->type;
+    AccessMode elementAccess = AccessMode::ReadOnly;
+    if (elementType.kind == SemanticType::Reference &&
+        elementType.arguments.size() == 1) {
+      elementAccess = elementType.referenceAccess;
+      SemanticType referent = elementType.arguments.front();
+      elementType = std::move(referent);
+    }
+    const ForStmt *core = stmt.coreLoop();
+    semanticModel.record(
+        stmt,
+        {.strategy = rangeType.kind == SemanticType::Array
+                         ? RangeIterationStrategy::FixedArray
+                         : RangeIterationStrategy::Structural,
+         .rangeType = rangeType,
+         .iteratorType =
+             iterator == nullptr ? SemanticType::Unknown : iterator->type,
+         .sentinelType =
+             sentinel == nullptr ? SemanticType::Unknown : sentinel->type,
+         .elementType = elementType,
+         .elementAccess = elementAccess,
+         .owner = owner == nullptr ? 0 : owner->symbol,
+         .rangeCarrier = range == nullptr ? 0 : range->symbol,
+         .iterator = iterator == nullptr ? 0 : iterator->symbol,
+         .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
+         .element = element == nullptr ? 0 : element->symbol,
+         .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
+         .elementLoan = element == nullptr ? 0 : element->retainedLoan,
+         .beginFunction =
+             stmt.iteratorBinding() == nullptr
+                 ? 0
+                 : selectedCall(stmt.iteratorBinding()->initializer()),
+         .endFunction =
+             stmt.sentinelBinding() == nullptr
+                 ? 0
+                 : selectedCall(stmt.sentinelBinding()->initializer()),
+         .compareFunction =
+             core == nullptr ? 0 : selectedOperator(core->condition()),
+         .dereferenceFunction =
+             stmt.elementBinding() == nullptr
+                 ? 0
+                 : selectedOperator(stmt.elementBinding()->initializer()),
+         .incrementFunction =
+             core == nullptr ? 0 : selectedOperator(core->increment()),
+         .arrayLength = rangeType.kind == SemanticType::Array &&
+                                rangeType.arrayLengthParameterId == 0
+                            ? rangeType.arrayLength
+                            : 0,
+         .ownsRangeTemporary =
+             owner != nullptr && owner->type.kind != SemanticType::Reference});
   }
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
@@ -4195,7 +4321,10 @@ public:
       return;
     }
     if (objectType.kind == SemanticType::Array) {
-      if (expr.name().lexeme == "size") {
+      const bool generatedRangeEndpoint =
+          expr.name().generated &&
+          (expr.name().lexeme == "begin" || expr.name().lexeme == "end");
+      if (expr.name().lexeme == "size" || generatedRangeEndpoint) {
         if (!analyzingCallCallee) {
           report(expr.name(),
                  "Function names must be called; function values are not "
@@ -5800,6 +5929,27 @@ public:
         }
       }
     }
+    if (expr.oper().kind == TokenKind::STAR && expr.rangeObject()) {
+      const auto *rangeVariable =
+          dynamic_cast<const Variable *>(expr.rangeObject().get());
+      const Symbol *rangeSymbol =
+          rangeVariable == nullptr ? nullptr : resolve(rangeVariable->name());
+      SemanticType rangeType =
+          rangeSymbol == nullptr ? SemanticType::Unknown : rangeSymbol->type;
+      if (rangeType.kind == SemanticType::Reference &&
+          rangeType.arguments.size() == 1) {
+        SemanticType referent = rangeType.arguments.front();
+        rangeType = std::move(referent);
+      }
+      if (rangeType.kind == SemanticType::Array) {
+        (void)analyzeProjectionBase(expr.rangeObject());
+        const SemanticType indexType = analyze(expr.right());
+        semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
+        currentType = analyzeArrayIndexAfterOperands(rangeType, expr.right(),
+                                                     indexType, expr.oper());
+        return;
+      }
+    }
     const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
                           expr.oper().kind == TokenKind::MINUS_MINUS;
     if (expr.oper().kind == TokenKind::AMPERSAND) {
@@ -6927,8 +7077,12 @@ private:
     GenericConstraintSet constraints = 0;
     std::vector<GenericConstraintSet> parameterConstraints;
     struct StructuralPattern {
+      struct Argument {
+        std::optional<std::size_t> parameter;
+        SemanticType concrete = SemanticType::Unknown;
+      };
       StructuralConstraintKind kind = StructuralConstraintKind::None;
-      std::vector<std::size_t> arguments;
+      std::vector<Argument> arguments;
     };
     std::vector<StructuralPattern> structuralConstraints;
     ConceptResolution resolution = ConceptResolution::Unresolved;
@@ -8344,6 +8498,18 @@ private:
                                             SemanticType::Unknown)
             : SemanticType::Unknown;
     SemanticType inferredType = initializerType;
+    const ExpressionInfo *initializerInfo =
+        declaration.initializer()
+            ? semanticModel.findExpression(*declaration.initializer())
+            : nullptr;
+    const bool rangeOwnerReference =
+        declaration.isRangeOwner() && initializerInfo != nullptr &&
+        initializerInfo->category == ValueCategory::Place &&
+        initializerType != SemanticType::Unknown;
+    if (rangeOwnerReference) {
+      inferredType =
+          SemanticType::referenceTo(initializerType, AccessMode::ReadOnly);
+    }
     if (initializerType == SemanticType::Void ||
         initializerType == SemanticType::Function ||
         initializerType.kind == SemanticType::TypeName ||
@@ -8353,7 +8519,8 @@ private:
              "GTI-S2028");
       inferredType = SemanticType::Unknown;
     }
-    if (!type.reference && inferredType.kind == SemanticType::Reference) {
+    if (!type.reference && !declaration.isRangeOwner() &&
+        inferredType.kind == SemanticType::Reference) {
       report(declaration.name(),
              "'auto' does not infer references; declare the reference type "
              "explicitly.",
@@ -8369,6 +8536,10 @@ private:
                                  declaration.initializer());
       }
     }
+    if (rangeOwnerReference && declaration.initializer()) {
+      validateReferenceBinding(inferredType, initializerType,
+                               declaration.initializer());
+    }
     if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
       report(declaration.name(),
              "Lambda bindings are immutable; captured snapshots cannot be "
@@ -8376,7 +8547,7 @@ private:
              "GTI-S2027");
     }
     const bool initializerAssignable =
-        type.reference || !declaration.initializer() ||
+        type.reference || rangeOwnerReference || !declaration.initializer() ||
         inferredType == SemanticType::Unknown ||
         initializerType == SemanticType::Unknown ||
         isOwnershipAssignable(inferredType, initializerType,
@@ -8391,7 +8562,7 @@ private:
           "Move-only owners cannot be copied; transfer ownership explicitly "
           "with std::move(owner).");
     }
-    if (!type.reference && declaration.initializer() &&
+    if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
         typeTraits(inferredType).containsBorrowedState) {
       validateStoredBorrowInitialization(inferredType,
                                          declaration.initializer());
@@ -8435,10 +8606,11 @@ private:
                                &declaration, constant);
       }
     }
-    const bool retainedReference =
-        type.reference && !isDirectOwnerType(initializerType);
+    const bool retainedReference = (type.reference || rangeOwnerReference) &&
+                                   !isDirectOwnerType(initializerType);
     const bool retainedStoredValue =
-        !type.reference && typeTraits(inferredType).containsBorrowedState;
+        !type.reference && !rangeOwnerReference &&
+        typeTraits(inferredType).containsBorrowedState;
     if (local && declaration.initializer() &&
         (retainedReference || retainedStoredValue)) {
       recordRetainedBorrow(declaration, declaration.initializer());
@@ -13500,12 +13672,18 @@ private:
         ExpandedStructuralRequirement expanded{
             .kind = pattern.kind, .application = requirement.syntax};
         bool valid = true;
-        for (const std::size_t parameter : pattern.arguments) {
-          if (parameter >= requirement.arguments.size()) {
+        for (const RegisteredConcept::StructuralPattern::Argument &argument :
+             pattern.arguments) {
+          if (!argument.parameter) {
+            expanded.arguments.emplace_back(argument.concrete);
+            continue;
+          }
+          if (*argument.parameter >= requirement.arguments.size()) {
             valid = false;
             break;
           }
-          expanded.arguments.emplace_back(requirement.arguments[parameter]);
+          expanded.arguments.emplace_back(
+              requirement.arguments[*argument.parameter]);
         }
         if (valid) {
           result.emplace_back(std::move(expanded));
@@ -13586,7 +13764,7 @@ private:
                     requirement.arguments[index],
                     conceptInfo.parameterConstraints[index])) {
           return ConstraintFailure{
-              .parameter = requirement.syntax->arguments[index],
+              .parameter = requirement.syntax->arguments[index].name.last(),
               .argument = requirement.arguments[index],
               .constraints = conceptInfo.parameterConstraints[index],
               .failed = *failed,
@@ -13600,9 +13778,10 @@ private:
         if (!structuralConstraintSatisfied(structural.kind,
                                            structural.arguments)) {
           return ConstraintFailure{
-              .parameter = requirement.syntax->arguments.empty()
-                               ? requirement.syntax->name.last()
-                               : requirement.syntax->arguments.front(),
+              .parameter =
+                  requirement.syntax->arguments.empty()
+                      ? requirement.syntax->name.last()
+                      : requirement.syntax->arguments.front().name.last(),
               .argument = structural.arguments.empty()
                               ? SemanticType::Unknown
                               : structural.arguments.front(),
@@ -13947,11 +14126,14 @@ private:
   [[nodiscard]] static bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
       const std::vector<GenericParameterInfo> &parameters,
-      GenericSubstitution &substitution, const ExprPtr *expression = nullptr) {
+      GenericSubstitution &substitution, const ExprPtr *expression = nullptr,
+      GenericParameterId *conflictingParameter = nullptr,
+      bool *conflictingValueParameter = nullptr) {
     if (pattern.kind == SemanticType::Reference &&
         pattern.arguments.size() == 1) {
-      return tryInferTypeArguments(pattern.arguments[0], argument, parameters,
-                                   substitution, expression);
+      return tryInferTypeArguments(
+          pattern.arguments[0], argument, parameters, substitution, expression,
+          conflictingParameter, conflictingValueParameter);
     }
     const GenericParameterInfo *typeParameter =
         pattern.kind == SemanticType::TypeParameter
@@ -13966,7 +14148,16 @@ private:
         substitution.types.emplace(pattern.genericParameterId, argument);
         return true;
       }
-      return found->second == argument;
+      if (found->second != argument) {
+        if (conflictingParameter != nullptr) {
+          *conflictingParameter = pattern.genericParameterId;
+        }
+        if (conflictingValueParameter != nullptr) {
+          *conflictingValueParameter = false;
+        }
+        return false;
+      }
+      return true;
     }
 
     if (pattern.kind == SemanticType::Array) {
@@ -13995,15 +14186,22 @@ private:
           if (found == substitution.values.end()) {
             substitution.values.emplace(pattern.arrayLengthParameterId, value);
           } else if (found->second != value) {
+            if (conflictingParameter != nullptr) {
+              *conflictingParameter = pattern.arrayLengthParameterId;
+            }
+            if (conflictingValueParameter != nullptr) {
+              *conflictingValueParameter = true;
+            }
             return false;
           }
         }
       }
       if (argument.kind == SemanticType::Array &&
           pattern.arguments.size() == 1 && argument.arguments.size() == 1) {
-        return tryInferTypeArguments(pattern.arguments.front(),
-                                     argument.arguments.front(), parameters,
-                                     substitution, nullptr);
+        return tryInferTypeArguments(
+            pattern.arguments.front(), argument.arguments.front(), parameters,
+            substitution, nullptr, conflictingParameter,
+            conflictingValueParameter);
       }
       return true;
     }
@@ -14018,7 +14216,8 @@ private:
     for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
       if (!tryInferTypeArguments(pattern.arguments[index],
                                  argument.arguments[index], parameters,
-                                 substitution, nullptr)) {
+                                 substitution, nullptr, conflictingParameter,
+                                 conflictingValueParameter)) {
         return false;
       }
     }
@@ -15441,7 +15640,7 @@ private:
       return comparison && comparison->returnType == SemanticType::Bool &&
              comparison->receiverMutability == ReceiverMutability::ReadOnly;
     }
-    case StructuralConstraintKind::AccumulatesInto:
+    case StructuralConstraintKind::DereferencesTo:
       return arguments.size() == 2 &&
              hasDereference(arguments[0], &arguments[1]);
     case StructuralConstraintKind::None:
@@ -15489,7 +15688,7 @@ private:
           matches = true;
         }
         break;
-      case StructuralConstraintKind::AccumulatesInto:
+      case StructuralConstraintKind::DereferencesTo:
         if (kind == OverloadedOperator::Dereference &&
             requirement.arguments.size() == 2 &&
             requirement.arguments[0] == receiverType && argumentTypes.empty()) {
@@ -17088,15 +17287,24 @@ private:
       std::vector<CompileTimeValue> valueArguments;
       bool generatedDefault = false;
       ConstructorKind kind = ConstructorKind::Ordinary;
+      std::vector<AppliedConceptRequirement> requirements;
     };
     struct RejectedConstructorArgument {
       const ConstructorInfo *constructor = nullptr;
       std::vector<SemanticType> parameterTypes;
       std::size_t argumentIndex = 0;
     };
+    struct RejectedConstructorInference {
+      const ConstructorInfo *constructor = nullptr;
+      const GenericParameterInfo *parameter = nullptr;
+      Token site;
+      bool conflicting = false;
+    };
     std::vector<ViableConstructor> viable;
     std::vector<const ConstructorInfo *> privateViable;
     std::vector<RejectedConstructorArgument> rejectedArguments;
+    std::vector<RejectedConstructorInference> rejectedInferences;
+    std::optional<ConstraintFailure> rejectedConstraint;
     for (const ConstructorInfo &constructor : owner.constructors) {
       if (arguments.size() < constructor.requiredParameterCount ||
           arguments.size() > constructor.parameterTypes.size()) {
@@ -17104,23 +17312,39 @@ private:
       }
       GenericSubstitution constructorSubstitution = substitution;
       bool inferred = true;
+      GenericParameterId conflictingParameter = 0;
+      bool conflictingValueParameter = false;
+      Token conflictingSite = paren;
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType pattern =
             substituteType(constructor.parameterTypes[index], substitution);
-        inferred = tryInferTypeArguments(pattern, arguments[index].type,
-                                         constructor.genericParameters,
-                                         constructorSubstitution,
-                                         arguments[index].expression) &&
-                   inferred;
+        GenericParameterId currentConflict = 0;
+        bool currentValueConflict = false;
+        const bool currentInferred = tryInferTypeArguments(
+            pattern, arguments[index].type, constructor.genericParameters,
+            constructorSubstitution, arguments[index].expression,
+            &currentConflict, &currentValueConflict);
+        if (!currentInferred && conflictingParameter == 0) {
+          conflictingParameter = currentConflict;
+          conflictingValueParameter = currentValueConflict;
+          if (arguments[index].expression != nullptr) {
+            conflictingSite = expressionToken(*arguments[index].expression);
+          }
+        }
+        inferred = currentInferred && inferred;
       }
       std::vector<SemanticType> constructorTypeArguments;
       std::vector<CompileTimeValue> constructorValueArguments;
+      const GenericParameterInfo *missingParameter = nullptr;
       for (const GenericParameterInfo &parameter :
            constructor.genericParameters) {
         if (parameter.value) {
           const auto found = constructorSubstitution.values.find(parameter.id);
           if (found == constructorSubstitution.values.end()) {
             inferred = false;
+            if (missingParameter == nullptr) {
+              missingParameter = &parameter;
+            }
           } else {
             constructorValueArguments.emplace_back(found->second);
           }
@@ -17128,12 +17352,56 @@ private:
           const auto found = constructorSubstitution.types.find(parameter.id);
           if (found == constructorSubstitution.types.end()) {
             inferred = false;
+            if (missingParameter == nullptr) {
+              missingParameter = &parameter;
+            }
           } else {
             constructorTypeArguments.emplace_back(found->second);
           }
         }
       }
       if (!inferred) {
+        const GenericParameterInfo *conflicting =
+            conflictingParameter == 0
+                ? nullptr
+                : findGenericParameter(constructor.genericParameters,
+                                       conflictingParameter);
+        const GenericParameterInfo *failed =
+            conflicting != nullptr ? conflicting : missingParameter;
+        if (failed != nullptr &&
+            (isCompilerTrustedRequester(paren) ||
+             !constructor.compilerPrivate) &&
+            (constructor.access != AccessModifier::Private ||
+             currentClass == classId)) {
+          rejectedInferences.push_back(
+              {.constructor = &constructor,
+               .parameter = failed,
+               .site = conflicting != nullptr ? conflictingSite : paren,
+               .conflicting = conflicting != nullptr});
+        }
+        static_cast<void>(conflictingValueParameter);
+        continue;
+      }
+      if (const std::optional<ConstraintFailure> failure =
+              firstConstraintFailure(constructor.genericParameters,
+                                     constructorTypeArguments)) {
+        if (!rejectedConstraint) {
+          rejectedConstraint = *failure;
+        }
+        continue;
+      }
+      std::vector<AppliedConceptRequirement> requirements =
+          constructor.requirements;
+      for (AppliedConceptRequirement &requirement : requirements) {
+        for (SemanticType &argument : requirement.arguments) {
+          argument = substituteType(argument, constructorSubstitution);
+        }
+      }
+      if (const std::optional<ConstraintFailure> failure =
+              firstRequirementFailure(requirements)) {
+        if (!rejectedConstraint) {
+          rejectedConstraint = *failure;
+        }
         continue;
       }
       std::vector<SemanticType> parameterTypes;
@@ -17182,7 +17450,7 @@ private:
         viable.push_back({&constructor, std::move(parameterTypes),
                           std::move(constructorTypeArguments),
                           std::move(constructorValueArguments), false,
-                          ConstructorKind::Ordinary});
+                          ConstructorKind::Ordinary, std::move(requirements)});
       } else if (rejectedArgument &&
                  (isCompilerTrustedRequester(paren) ||
                   !constructor.compilerPrivate) &&
@@ -17294,6 +17562,38 @@ private:
     }
     if (viable.size() != 1) {
       if (!hasUnknownArgument || hasDeferredArgument) {
+        if (viable.empty() && rejectedInferences.size() == 1) {
+          const RejectedConstructorInference &rejected =
+              rejectedInferences.front();
+          const bool value = rejected.parameter->value;
+          Diagnostic diagnostic = makeDiagnostic(
+              value ? "GTI-S2026" : "GTI-S2023", DiagnosticPhase::Semantics,
+              rejected.site,
+              rejected.conflicting
+                  ? "Conflicting " + std::string(value ? "values" : "types") +
+                        " were inferred for constructor-local " +
+                        std::string(value ? "value" : "type") + " parameter '" +
+                        rejected.parameter->name.lexeme + "'."
+                  : "Cannot infer constructor-local " +
+                        std::string(value ? "value" : "type") + " parameter '" +
+                        rejected.parameter->name.lexeme +
+                        "' from the supplied constructor arguments.");
+          diagnostic.related.push_back(
+              {tokenSpan(rejected.parameter->name),
+               "Constructor-local generic parameter declared here."});
+          diagnostic.hints.emplace_back(
+              "Constructor-local generic arguments are inference-only; the "
+              "parameter must occur in an exactly matching constructor "
+              "parameter type.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          currentType = constructedType;
+          return;
+        }
+        if (viable.empty() && rejectedConstraint) {
+          reportConstraintFailure(paren, *rejectedConstraint);
+          currentType = constructedType;
+          return;
+        }
         if (viable.empty() && attemptedSpecial) {
           const bool moving = *attemptedSpecial == ConstructorKind::Move;
           const std::optional<ConstructorInfo> &declared =
@@ -17497,6 +17797,7 @@ private:
             .constructedType = constructedType,
             .typeArguments = selected.typeArguments,
             .valueArguments = selected.valueArguments,
+            .requirements = selected.requirements,
             .parameterTypes = selected.parameterTypes,
             .defaultArguments = std::move(defaultArguments),
             .borrowOrigin =
@@ -17624,19 +17925,27 @@ private:
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren) {
-    if (member.name().lexeme != "size") {
+    const bool generatedBegin =
+        member.name().generated && member.name().lexeme == "begin";
+    const bool generatedEnd =
+        member.name().generated && member.name().lexeme == "end";
+    if (member.name().lexeme != "size" && !generatedBegin && !generatedEnd) {
       currentType = SemanticType::Unknown;
       return;
     }
     if (!argumentTypes.empty()) {
-      report(paren, "Fixed array 'size' expects no arguments.", "GTI-S2016");
+      report(paren,
+             "Fixed array '" + member.name().lexeme + "' expects no arguments.",
+             "GTI-S2016");
     }
     currentType = SemanticType::UInt64;
     // The builtin member carries its identity to MIR as an intrinsic: the
     // call names no declaration, so without the record the lowered Call
     // would be target-less and unnameable by a backend.
     ResolvedCallInfo resolved{.returnType = currentType,
-                              .intrinsic = IntrinsicKind::ArraySize};
+                              .intrinsic = generatedBegin
+                                               ? IntrinsicKind::ArrayRangeBegin
+                                               : IntrinsicKind::ArraySize};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
   }
@@ -19134,6 +19443,36 @@ private:
     return true;
   }
 
+  bool beginRequirementScope(const ConstructorInfo *constructor) {
+    if (constructor == nullptr) {
+      requirementScopes.emplace_back();
+      return true;
+    }
+    std::vector<AppliedConceptRequirement> requirements =
+        constructor->requirements;
+    for (AppliedConceptRequirement &requirement : requirements) {
+      for (SemanticType &argument : requirement.arguments) {
+        argument = substituteType(argument, instanceTypeSubstitution);
+      }
+    }
+    if (instanceAnalysisActive) {
+      if (const std::optional<ConstraintFailure> failure =
+              firstRequirementFailure(requirements)) {
+        requirementScopes.emplace_back();
+        if (constructor->declaration != nullptr) {
+          const Token &site =
+              constructor->declaration->requiresClause()
+                  ? constructor->declaration->requiresClause()->keyword
+                  : constructor->declaration->name();
+          reportConstraintFailure(site, *failure);
+        }
+        return false;
+      }
+    }
+    requirementScopes.emplace_back(std::move(requirements));
+    return true;
+  }
+
   void endRequirementScope() { requirementScopes.pop_back(); }
 
   [[nodiscard]] std::optional<SemanticType>
@@ -19272,18 +19611,45 @@ private:
         id, std::move(arguments), std::move(valueArguments)));
   }
 
+  [[nodiscard]] static bool
+  containsOpenTypeParameter(const SemanticType &type) {
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       containsOpenTypeParameter);
+  }
+
+  [[nodiscard]] static bool
+  containsGenericParameter(const SemanticType &type,
+                           GenericParameterId parameter, bool value) {
+    if (!value && type.kind == SemanticType::TypeParameter &&
+        type.genericParameterId == parameter) {
+      return true;
+    }
+    if (value && type.kind == SemanticType::Array &&
+        type.arrayLengthParameterId == parameter) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return containsGenericParameter(argument, parameter,
+                                                         value);
+                       });
+  }
+
   std::vector<AppliedConceptRequirement>
-  resolveFunctionRequirements(const FunctionDecl &function,
-                              const std::vector<std::string> &scope) {
+  resolveRequirements(const RequiresClause *clause,
+                      const std::vector<std::string> &scope) {
     std::vector<AppliedConceptRequirement> result;
-    if (!function.requiresClause()) {
+    if (clause == nullptr) {
       return result;
     }
 
     const std::vector<std::string> enclosingNamespace = currentNamespace;
     currentNamespace = scope;
-    for (const ConceptApplication &application :
-         function.requiresClause()->requirements) {
+    for (const ConceptApplication &application : clause->requirements) {
       if (reportCompilerPrivatePath(application.name)) {
         continue;
       }
@@ -19335,22 +19701,41 @@ private:
       AppliedConceptRequirement requirement{.conceptId = *resolved,
                                             .syntax = &application};
       bool valid = true;
-      for (const Token &argument : application.arguments) {
-        const std::optional<SemanticType> type =
-            resolveTypeParameter(NamePath(argument));
-        if (!type || type->kind != SemanticType::TypeParameter ||
-            isActiveTypePack(TypeRef(argument))) {
-          report(argument,
-                 "Requires-clause arguments must name generic type "
-                 "parameters visible on this declaration; type packs are "
-                 "not supported.",
+      for (const TypeRef &argument : application.arguments) {
+        const std::optional<SemanticType> parameter =
+            resolveTypeParameter(argument.name);
+        const bool plainParameter =
+            parameter && argument.arguments.empty() && !argument.pointer &&
+            !argument.outerPointer && !argument.reference &&
+            argument.arrayExtents.empty();
+        if (plainParameter && isActiveTypePack(argument)) {
+          report(argument.name.last(),
+                 "Requires-clause arguments cannot use an unexpanded type "
+                 "pack.",
                  "GTI-S2049");
           requirement.arguments.emplace_back(SemanticType::Unknown);
           valid = false;
           continue;
         }
-        requirement.arguments.emplace_back(*type);
-        recordTypeUse(TypeRef(argument));
+        validateType(argument);
+        const SemanticType type = typeOf(argument, scope);
+        if (type == SemanticType::Unknown) {
+          requirement.arguments.emplace_back(type);
+          valid = false;
+          continue;
+        }
+        if (!plainParameter && containsOpenTypeParameter(type)) {
+          report(argument.name.last(),
+                 "Requires-clause arguments may be a visible generic type "
+                 "parameter or a closed exact type; dependent compound "
+                 "types are not supported.",
+                 "GTI-S2049");
+          requirement.arguments.emplace_back(SemanticType::Unknown);
+          valid = false;
+          continue;
+        }
+        requirement.arguments.emplace_back(type);
+        recordTypeUse(argument);
       }
       if (valid) {
         result.emplace_back(std::move(requirement));
@@ -19629,7 +20014,9 @@ private:
             typeOf(function.returnType(), function.returnMutability(), scope),
         .requiredParameterCount = requiredParameterCount(function.parameters()),
         .genericParameters = genericParameters,
-        .requirements = resolveFunctionRequirements(function, scope),
+        .requirements = resolveRequirements(
+            function.requiresClause() ? &*function.requiresClause() : nullptr,
+            scope),
         .parameterPack = !function.parameters().empty() &&
                          function.parameters().back().pack.has_value(),
         .receiverMutability = function.receiverMutability()};
@@ -21112,7 +21499,7 @@ private:
           RegisteredConcept::StructuralPattern pattern;
           pattern.kind = structural->kind;
           for (std::size_t index = 0; index < structural->arity; ++index) {
-            pattern.arguments.push_back(index);
+            pattern.arguments.push_back({.parameter = index});
           }
           structuralConstraints.emplace_back(std::move(pattern));
         }
@@ -21124,38 +21511,54 @@ private:
       }
     } else {
       for (const ConceptApplication &requirement : declaration.requirements()) {
-        std::vector<std::size_t> argumentMap;
+        std::vector<RegisteredConcept::StructuralPattern::Argument> argumentMap;
         argumentMap.reserve(requirement.arguments.size());
-        for (const Token &argument : requirement.arguments) {
+        for (const TypeRef &argument : requirement.arguments) {
+          const Token &argumentToken = argument.name.last();
           const auto parameter = std::find_if(
               declaration.typeParameters().begin(),
               declaration.typeParameters().end(), [&](const Token &candidate) {
-                return candidate.lexeme == argument.lexeme;
+                return argument.arguments.empty() && !argument.pointer &&
+                       !argument.outerPointer && !argument.reference &&
+                       argument.arrayExtents.empty() &&
+                       candidate.lexeme == argumentToken.lexeme;
               });
           if (parameter == declaration.typeParameters().end()) {
-            report(argument,
-                   declaration.typeParameters().size() == 1
-                       ? "Concept requirements must apply to the declaration's "
-                         "type parameter '" +
-                             declaration.typeParameters().front().lexeme + "'."
-                       : "Concept requirements must apply to one of the "
-                         "declaration's type parameters.",
-                   "GTI-S2049");
-            argumentMap.push_back(0);
-            valid = false;
+            validateType(argument);
+            const SemanticType concrete = typeOf(argument);
+            if (concrete == SemanticType::Unknown ||
+                containsOpenTypeParameter(concrete)) {
+              report(argumentToken,
+                     declaration.typeParameters().size() == 1
+                         ? "Concept requirements must apply to the "
+                           "declaration's type parameter '" +
+                               declaration.typeParameters().front().lexeme +
+                               "' or a closed exact type; dependent compound "
+                               "types are not supported."
+                         : "Concept requirements must apply to one of the "
+                           "declaration's type parameters or a closed exact "
+                           "type; dependent compound types are not "
+                           "supported.",
+                     "GTI-S2049");
+              argumentMap.push_back({});
+              valid = false;
+              continue;
+            }
+            argumentMap.push_back({.concrete = concrete});
+            recordTypeUse(argument);
             continue;
           }
           const std::size_t index = static_cast<std::size_t>(
               std::distance(declaration.typeParameters().begin(), parameter));
-          argumentMap.push_back(index);
+          argumentMap.push_back({.parameter = index});
           if (index < conceptInfo.parameterSymbols.size()) {
             semanticModel.recordOccurrence(
                 {.sourceUnit = currentSourceUnit,
-                 .span = tokenSpan(argument),
+                 .span = tokenSpan(argumentToken),
                  .kind = SemanticOccurrenceKind::Symbol,
                  .symbol = conceptInfo.parameterSymbols[index],
                  .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
-                 .name = argument.lexeme});
+                 .name = argumentToken.lexeme});
           }
         }
         if (reportCompilerPrivatePath(requirement.name)) {
@@ -21223,19 +21626,41 @@ private:
         }
         for (std::size_t index = 0;
              index < required.parameterConstraints.size(); ++index) {
-          parameterConstraints[argumentMap[index]] |=
-              required.parameterConstraints[index];
+          const auto &mappedArgument = argumentMap[index];
+          if (mappedArgument.parameter) {
+            parameterConstraints[*mappedArgument.parameter] |=
+                required.parameterConstraints[index];
+          } else if (const std::optional<GenericConstraintKind> failed =
+                         firstUnsatisfiedConstraint(
+                             mappedArgument.concrete,
+                             required.parameterConstraints[index])) {
+            reportConstraintFailure(
+                requirement.arguments[index].name.last(),
+                ConstraintFailure{
+                    .parameter = requirement.arguments[index].name.last(),
+                    .argument = mappedArgument.concrete,
+                    .constraints = required.parameterConstraints[index],
+                    .failed = *failed,
+                    .constraintName = requirement.name,
+                    .application = &requirement});
+            valid = false;
+          }
         }
         for (const RegisteredConcept::StructuralPattern &pattern :
              required.structuralConstraints) {
           RegisteredConcept::StructuralPattern mapped;
           mapped.kind = pattern.kind;
-          for (const std::size_t parameter : pattern.arguments) {
-            if (parameter >= argumentMap.size()) {
+          for (const RegisteredConcept::StructuralPattern::Argument &argument :
+               pattern.arguments) {
+            if (!argument.parameter) {
+              mapped.arguments.emplace_back(argument);
+              continue;
+            }
+            if (*argument.parameter >= argumentMap.size()) {
               valid = false;
               continue;
             }
-            mapped.arguments.push_back(argumentMap[parameter]);
+            mapped.arguments.push_back(argumentMap[*argument.parameter]);
           }
           if (mapped.arguments.size() == pattern.arguments.size()) {
             structuralConstraints.emplace_back(std::move(mapped));
@@ -24660,8 +25085,8 @@ private:
             if (constructorParameter.name.lexeme ==
                 classParameter.name.lexeme) {
               report(constructorParameter.name,
-                     "Constructor value parameters cannot shadow class or "
-                     "struct generic parameters.",
+                     "Constructor-local generic parameters cannot shadow "
+                     "class or struct generic parameters.",
                      "GTI-S2026");
             }
           }
@@ -24674,19 +25099,18 @@ private:
         for (std::size_t index = 0; index < info.genericParameters.size();
              ++index) {
           const GenericParameterInfo &parameter = info.genericParameters[index];
-          if (!parameter.value) {
-            report(parameter.name,
-                   "Constructor-local generics are currently limited to "
-                   "inferred uint64_t fixed-array extents.",
-                   "GTI-S2026");
-          }
           if (parameter.pack) {
             report(*constructor->genericParameters()[index].pack,
-                   "Constructor value generics cannot be parameter packs.",
+                   "Constructor-local generic parameter packs are not "
+                   "supported.",
                    "GTI-S2026");
           }
         }
         beginTypeParameterScope(info.genericParameters);
+        info.requirements = resolveRequirements(
+            constructor->requiresClause() ? &*constructor->requiresClause()
+                                          : nullptr,
+            owner.namespaceScope);
         info.parameterTypes.reserve(constructor->parameters().size());
         for (const Parameter &parameter : constructor->parameters()) {
           info.parameterTypes.emplace_back(
@@ -24694,20 +25118,19 @@ private:
         }
         endTypeParameterScope();
         for (const GenericParameterInfo &parameter : info.genericParameters) {
-          if (!parameter.value) {
-            continue;
-          }
           const bool inferable = std::any_of(
               info.parameterTypes.begin(), info.parameterTypes.end(),
               [&](const SemanticType &type) {
-                return type.kind == SemanticType::Array &&
-                       type.arrayLengthParameterId == parameter.id;
+                return containsGenericParameter(type, parameter.id,
+                                                parameter.value);
               });
           if (!inferable) {
             report(parameter.name,
-                   "Constructor value parameter '" + parameter.name.lexeme +
-                       "' must be the extent of a by-value fixed-array "
-                       "parameter so calls can infer it exactly.",
+                   "Constructor-local " +
+                       std::string(parameter.value ? "value" : "type") +
+                       " parameter '" + parameter.name.lexeme +
+                       "' must occur in a constructor parameter type so calls "
+                       "can infer it exactly.",
                    "GTI-S2026");
           }
         }
@@ -26462,6 +26885,14 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(&expr);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (unary->rangeObject()) {
+        const SemanticType *rangeType =
+            semanticModel.findType(*unary->rangeObject());
+        if (rangeType != nullptr && rangeType->kind == SemanticType::Array) {
+          return expressionInfo(std::move(type), ValueCategory::Place,
+                                AccessMode::ReadOnly);
+        }
+      }
       if (const ResolvedOperatorInfo *resolved =
               semanticModel.findOperator(expr);
           resolved != nullptr &&
@@ -26900,6 +27331,7 @@ private:
           case IntrinsicKind::ExpectedValue:
           case IntrinsicKind::ExpectedError:
           case IntrinsicKind::ExpectedValueOr:
+          case IntrinsicKind::ArrayRangeBegin:
           case IntrinsicKind::ArraySize:
           case IntrinsicKind::ExpectedHasValue:
             break;
@@ -30141,6 +30573,20 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (unary->rangeObject()) {
+        SemanticPlace place = semanticPlace(unary->rangeObject().get());
+        const SemanticType *objectType =
+            semanticModel.findType(*unary->rangeObject());
+        if (place.root != nullptr && objectType != nullptr &&
+            objectType->kind == SemanticType::Array) {
+          if (const std::optional<PlaceProjection> projection =
+                  fixedArrayIndexProjection(*objectType, unary->right(),
+                                            *unary)) {
+            place.projections.push_back(*projection);
+          }
+          return place;
+        }
+      }
       SemanticPlace place = semanticPlace(unary->right().get());
       if (place.root != nullptr) {
         place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
