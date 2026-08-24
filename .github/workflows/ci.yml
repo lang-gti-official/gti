@@ -15,6 +15,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  change-scope:
+    name: Change scope
+    runs-on: ubuntu-24.04
+    outputs:
+      compiler: ${{ steps.scope.outputs.compiler }}
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: scope
+        shell: bash
+        # Fail-open: any uncertainty about the diff, and any file outside the
+        # known-inert prefixes, runs the full compiler matrix. Skipping is
+        # only allowed when every changed file provably cannot affect the
+        # compiler, so no breadth is lost by construction.
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}"; range="triple" ;;
+            push)         base="${{ github.event.before }}"; range="double" ;;
+            *)            base="" ;;
+          esac
+          if [[ -z "${base}" || "${base}" == 0000000000000000000000000000000000000000 ]] \
+             || ! git cat-file -e "${base}" 2>/dev/null; then
+            echo "no reliable diff base; running the full matrix"
+            echo "compiler=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ "${range}" == "triple" ]]; then
+            changed="$(git diff --name-only "${base}...${GITHUB_SHA}")"
+          else
+            changed="$(git diff --name-only "${base}" "${GITHUB_SHA}")"
+          fi
+          printf 'changed files:\n%s\n' "${changed}"
+          compiler=false
+          while IFS= read -r file; do
+            [[ -z "${file}" ]] && continue
+            case "${file}" in
+              docs/*|reference/*|lua/*|plugin/*|.gitea/*|.claude/*|.codex/*|*.md) ;;
+              *) compiler=true ;;
+            esac
+          done <<< "${changed}"
+          echo "compiler=${compiler}" >> "${GITHUB_OUTPUT}"
+
   formatting:
     name: Formatting
     runs-on: ubuntu-24.04
@@ -76,6 +123,8 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.platform }}
+    needs: change-scope
+    if: needs.change-scope.outputs.compiler == 'true'
     runs-on: ${{ matrix.runner }}
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -147,6 +196,8 @@ jobs:
 
   compiler-sanitizers:
     name: Compiler sanitizers
+    needs: change-scope
+    if: needs.change-scope.outputs.compiler == 'true'
     runs-on: ubuntu-24.04
     env:
       SCCACHE_GHA_ENABLED: "true"
