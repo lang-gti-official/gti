@@ -185,7 +185,11 @@ int selected() { return 41; }
 #else
 int selected() { return 82; }
 #endif
-int main() { return selected() - 41; }
+int main() {
+  bool folded = 1 < 2;
+  if (!folded) { return 1; }
+  return selected() - 41;
+}
 )"),
          "the driver test source should be writable");
 
@@ -199,13 +203,17 @@ int main() { return selected() - 41; }
          "compilation requests should retain resolved source and stdlib paths");
   expect(request.target().os == "linux" &&
              request.optimization() == lang::OptimizationLevel::O1 &&
-             request.cppStandard() == lang::CppStandard::Cpp23,
+             request.cppStandard() == lang::CppStandard::Cpp23 &&
+             !request.optimizationOutputs().requested(),
          "compilation requests should retain target and backend policy");
 
   const lang::driver::CompilationResult result =
       lang::driver::compileToCpp(request);
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
+  expect(!result.preOptimizationMir && !result.postOptimizationMir &&
+             !result.optimizationReport,
+         "ordinary driver compilation should not capture optimizer output");
   if (result.artifact) {
     expect(
         result.artifact->contents.find(
@@ -217,6 +225,19 @@ int main() { return selected() - 41; }
         "one resolved target must reach frontend conditionals and backend "
         "emission");
   }
+
+  const lang::driver::CompilationRequest observedRequest(
+      source, lang::standardLibraryLayout(temporary.root()), target,
+      lang::OptimizationLevel::O1, lang::CppStandard::Cpp23, {}, {},
+      {.capturePreMir = true, .capturePostMir = true, .captureReport = true});
+  const lang::driver::CompilationResult observed =
+      lang::driver::compileToCpp(observedRequest);
+  expect(observed.succeeded() && observed.preOptimizationMir &&
+             observed.postOptimizationMir && observed.optimizationReport &&
+             *observed.preOptimizationMir != *observed.postOptimizationMir &&
+             observed.optimizationReport->passes.size() == 4,
+         "the reusable driver should expose opt-in pre/post MIR and the "
+         "verified optimizer report");
 
   const lang::driver::CheckResult checked =
       lang::driver::checkCompilation(request);

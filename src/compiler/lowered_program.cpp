@@ -1881,7 +1881,9 @@ const LoweredGeneratedItem *LoweredProgram::findGeneratedItem(
 LoweredProgramBuild LoweredProgramBuilder::build(
     const Program &program, const SemanticModel &semantics,
     const HirProgram &hir, const MirProgram &sourceMir,
-    const MirProgram &optimizedMir, const TargetInfo &target) const {
+    const MirProgram &optimizedMir,
+    const std::vector<MirTransformRecord> &transformations,
+    const TargetInfo &target) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1924,7 +1926,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
                  : failureVerification.errors.front());
   }
   const MirVerificationResult optimization =
-      verifyMirOptimizationCoherence(sourceMir, optimizedMir);
+      verifyMirOptimizationCoherence(sourceMir, optimizedMir, transformations);
   if (!optimization.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidOptimization,
              optimization.errors.empty()

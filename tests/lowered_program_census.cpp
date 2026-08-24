@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     }
     lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-        optimized.mir, target);
+        optimized.mir, optimized.report.transformations, target);
     if (!lowered.valid()) {
       std::cerr << name << ": lowering rejected corpus source\n";
       for (const lang::LoweredProgramIssue &issue : lowered.issues) {

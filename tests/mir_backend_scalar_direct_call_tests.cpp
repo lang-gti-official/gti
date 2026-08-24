@@ -162,11 +162,12 @@ lang::MirInstruction *definitionFor(lang::MirFunctionInstance *function,
   return found == block->instructions.end() ? nullptr : &*found;
 }
 
-lang::BackendArtifact emit(const lang::FrontendResult &frontend,
-                           const lang::MirProgram &mir,
-                           const lang::OptimizationResult &compatibility) {
+lang::BackendArtifact
+emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+     const lang::OptimizationResult &compatibility,
+     const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,
@@ -345,10 +346,10 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
          "assignment arguments should become ordered CallInputs before the "
          "direct Call");
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v41 ") &&
+  expect(dump.starts_with("mir-v43 ") &&
              dump.find("definition=source may-raise-defined-failure=0") !=
                  std::string::npos,
-         "mir-v41 should serialize declaration kind and failure effects");
+         "mir-v43 should serialize declaration kind and effect summaries");
 
   const lang::OptimizationPipeline pipeline;
   for (const lang::OptimizationLevel level :
@@ -364,8 +365,9 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 direct-call MIR should remain verified");
     if (optimized.valid()) {
-      expectSelectedDefinitions(
-          emit(frontend, optimized.mir, compatibility).contents);
+      expectSelectedDefinitions(emit(frontend, optimized.mir, compatibility,
+                                     optimized.report.transformations)
+                                    .contents);
     }
   }
 }
@@ -401,7 +403,7 @@ int main() { return 0; }
                  .print(frontend.mir)
                  .find("definition=runtime may-raise-defined-failure=1") !=
              std::string::npos,
-         "mir-v41 should serialize the runtime declaration category");
+         "mir-v43 should serialize the runtime declaration category");
 }
 
 void testMutations(const std::filesystem::path &fixture) {

@@ -273,7 +273,7 @@ void testExactLoweringAndPrinting(const lang::FrontendResult &frontend) {
              frontend.failureMetadataValid && frontend.mirValid &&
              verification.valid() && exactSteps && sawImplicit && sawConstant &&
              sawDynamic && sawStatic && exactTags && checkedFailure &&
-             substitution && dump.starts_with("mir-v41 valid=") &&
+             substitution && dump.starts_with("mir-v43 valid=") &&
              dump.find("program-initialization units=1") != std::string::npos &&
              dump.find("data-kind=implicit-zero") != std::string::npos &&
              dump.find("program-initialization-step=") != std::string::npos,
@@ -335,17 +335,17 @@ void testPlanAndStorageMutations(const lang::FrontendResult &frontend) {
          "an exact real source-unit row may contribute no program storage");
   lang::MirProgram missingEmptyUnit = withEmptyUnit;
   plan(missingEmptyUnit).units.pop_back();
-  expect(
-      lang::verifyMirProgram(missingEmptyUnit).valid() &&
-          !lang::verifyMirOptimizationCoherence(withEmptyUnit, missingEmptyUnit)
-               .valid(),
-      "optimizer coherence must reject a removed empty source-unit row");
+  expect(lang::verifyMirProgram(missingEmptyUnit).valid() &&
+             !lang::verifyMirOptimizationCoherence(withEmptyUnit,
+                                                   missingEmptyUnit, {})
+                  .valid(),
+         "optimizer coherence must reject a removed empty source-unit row");
   lang::MirProgram reorderedEmptyUnit = withEmptyUnit;
   std::swap(plan(reorderedEmptyUnit).units.front(),
             plan(reorderedEmptyUnit).units.back());
   expect(lang::verifyMirProgram(reorderedEmptyUnit).valid() &&
              !lang::verifyMirOptimizationCoherence(withEmptyUnit,
-                                                   reorderedEmptyUnit)
+                                                   reorderedEmptyUnit, {})
                   .valid(),
          "optimizer coherence must reject a reordered empty source-unit row");
   expectRejected(source, "a step source-unit drift must be rejected",
@@ -1134,8 +1134,9 @@ void testOptimizationCoherence(const lang::FrontendResult &frontend) {
   expect(optimized.valid() && moduleIdentityFold && exactTags &&
              optimized.mir.programInitializationPlan() ==
                  optimized.sourceMir.programInitializationPlan() &&
-             lang::verifyMirOptimizationCoherence(optimized.sourceMir,
-                                                  optimized.mir)
+             lang::verifyMirOptimizationCoherence(
+                 optimized.sourceMir, optimized.mir,
+                 optimized.report.transformations)
                  .valid(),
          "O1 should admit an instruction-only Module identity fold while "
          "freezing the plan and every block tag");
@@ -1152,11 +1153,11 @@ void testOptimizationCoherence(const lang::FrontendResult &frontend) {
           std::get_if<lang::ConstantInteger>(&*constant->dataConstant)) {
     ++integer->magnitude;
   }
-  expect(
-      lang::verifyMirProgram(changedConstant).valid() &&
-          !lang::verifyMirOptimizationCoherence(frontend.mir, changedConstant)
-               .valid(),
-      "optimizer coherence should freeze a valid plan-constant mutation");
+  expect(lang::verifyMirProgram(changedConstant).valid() &&
+             !lang::verifyMirOptimizationCoherence(frontend.mir,
+                                                   changedConstant, {})
+                  .valid(),
+         "optimizer coherence should freeze a valid plan-constant mutation");
 
   lang::MirProgram changedOwner = frontend.mir;
   const std::optional<lang::HirClassInstanceId> plain =
@@ -1167,17 +1168,18 @@ void testOptimizationCoherence(const lang::FrontendResult &frontend) {
         return step.storageKind == lang::ProgramStorageKind::StaticField;
       });
   staticStep->ownerClass = plain.value_or(0);
-  expect(plain && lang::verifyMirProgram(changedOwner).valid() &&
-             !lang::verifyMirOptimizationCoherence(frontend.mir, changedOwner)
-                  .valid(),
-         "optimizer coherence should freeze a generically valid plan-owner "
-         "authority mutation");
+  expect(
+      plain && lang::verifyMirProgram(changedOwner).valid() &&
+          !lang::verifyMirOptimizationCoherence(frontend.mir, changedOwner, {})
+               .valid(),
+      "optimizer coherence should freeze a generically valid plan-owner "
+      "authority mutation");
 
   lang::MirProgram changedTag = frontend.mir;
   module(changedTag)->blocks.front().programInitializationStep = 0;
-  expect(
-      !lang::verifyMirOptimizationCoherence(frontend.mir, changedTag).valid(),
-      "optimizer coherence should reject a changed block-step tag");
+  expect(!lang::verifyMirOptimizationCoherence(frontend.mir, changedTag, {})
+              .valid(),
+         "optimizer coherence should reject a changed block-step tag");
 }
 
 } // namespace

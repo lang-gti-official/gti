@@ -25,7 +25,9 @@ public:
   [[nodiscard]] LoweredProgramBuild
   build(const Program &program, const SemanticModel &semantics,
         const HirProgram &hir, const MirProgram &sourceMir,
-        const MirProgram &optimizedMir, const TargetInfo &target) const;
+        const MirProgram &optimizedMir,
+        const std::vector<MirTransformRecord> &transformations,
+        const TargetInfo &target) const;
 };
 
 } // namespace lang

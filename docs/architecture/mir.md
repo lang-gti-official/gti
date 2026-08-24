@@ -1,8 +1,8 @@
 # MIR
 
-Status: implemented structural CFG, ownership/effect, synchronization,
-lifecycle, defined-failure control flow, and sole production executable-body
-authority.
+Status: implemented structural CFG, scalar block parameters, verified
+per-instance effects, ownership, synchronization, lifecycle, defined-failure
+control flow, and sole production executable-body authority.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. Verified optimized MIR is
@@ -78,19 +78,18 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v41`/`mir-body-v40`.
-Program/body v41/v40 added the verified range-iteration inventory. Its existing
-access and loan fields now carry both read-only L-RANGE-01 plans and mutable
-L-RANGE-02 parent/child plans without a schema change;
-program v40 added ordered constructor-local type/value arguments to concrete
-MIR constructor identities while body v39 was unchanged. Program/body v39 added
-verified call-scoped loans for fresh read-only temporary arguments;
-v38 added caller-expanded default-argument provenance to ordered call inputs
-and explicit-argument counts to constructor initializers; v31 added the
-prefix-initialized storage type kind and its intrinsic
-family alongside the logical-size bounds check; v32 added the
-`ComputeFold` literal provenance; v33 added the `BranchFold` terminator
-provenance; v34 added lambda parameter bindings).
+The deterministic serialization is currently `mir-v43`/`mir-body-v41`.
+Program v42 adds complete verified effect summaries for functions,
+constructors, destructors, and lambdas. Program v43/body v41 add scalar block
+parameters, edge arguments, optimizer instruction tombstones, and edge-value
+use provenance. Program/body v41/v40 added the verified range-iteration
+inventory; its access and loan fields carry both read-only L-RANGE-01 plans and
+mutable L-RANGE-02 parent/child plans without a further schema change. Program
+v40 added ordered constructor-local type/value arguments to concrete MIR
+constructor identities while body v39 was unchanged. Program/body v39 added
+verified call-scoped loans for fresh read-only temporary arguments; v38 added
+caller-expanded default-argument provenance to ordered call inputs and
+explicit-argument counts to constructor initializers.
 
 Every optimizer rewrite carries replayable proof in the rewritten node
 itself, so a backend consumes optimized MIR without recovering
@@ -113,6 +112,36 @@ transform report. Branch folds are currently scoped to function bodies
 without loans, drop obligations, cleanup boundaries, failure records, or
 frozen program-initialization steps; widening into those schedules is
 recorded work, not an implied capability.
+
+Every destructive rewrite also emits a sorted typed `MirTransformRecord`.
+The stable instruction address is `{MirBodyAddress, MirInstructionId}`, not a
+block-vector index. Records retain the pass, affected identities, source
+provenance, proof kind, and required analysis facts. They remain untrusted:
+`verifyMirOptimizationCoherence` independently replays every record from
+canonical source MIR and exact-compares the result before
+`LoweredProgramBuilder` can seal it. Instruction removal preserves its
+identity as a canonical inert tombstone, while unreachable-block removal
+retains the stable identities named by its record.
+
+Block parameters provide the first explicit normal-edge value merging
+vocabulary. Each parameter owns a new typed MIR value with source provenance;
+`Goto`, `Branch`, `Invoke`, and every `Switch` edge carry ordered
+arguments. Verification enforces scalar non-owning parameter types, exact
+arity/type, predecessor-edge coverage, definition/use indexing, and dominance.
+Class, owner, reference, array, closure, and storage parameters are rejected.
+The current scalar-promotion client is deliberately acyclic and excludes
+failure, ownership, loan, raw-memory, synchronization, cleanup, and lifecycle
+state.
+
+Each concrete callable instance also stores one `MirEffectSummary`. The
+summary spans memory/place access, allocation, runtime and user-code calls,
+traps, moves, drops, loans, synchronization, and receiver/argument escape.
+`deriveMirProgramEffectSummaries` uses a deterministic call-graph fixed point.
+Exact acyclic static calls may consume proved target summaries; recursive
+components, virtual dispatch, declarations, native boundaries, and unresolved
+calls remain conservative. Verification independently derives the least
+summary, rejects under-approximation, and accepts conservative
+over-approximation.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -647,25 +676,24 @@ lifecycle-verifier authority.
 
 `optimization/rewrite.h` exposes a deliberately narrow `MirProgramEditor`.
 Core MIR identifies bodies by `MirBodyAddress`, a GTI body kind plus owning
-instance ID; editor instructions add a block ID and zero-based instruction
-index with an expected instruction-ID and operation guard. The editor never
-exposes mutable program vectors or retains instruction pointers across an
-edit.
+instance ID; instructions use stable `MirInstructionId`, and blocks use
+`MirBlockId`. The editor never exposes mutable program vectors or retains
+instruction pointers across an edit.
 
-The first supported edit replaces a verified computation with a literal while
-preserving instruction/result IDs, type information, unsafe classification,
-and HIR/source provenance. All queued patches are checked before mutation and
-applied to a copy in deterministic body/block/index order. Touched bodies have
-their value-use indexes rebuilt, then the complete candidate program is
-verified before the copy is committed. Invalid, stale, duplicate, or malformed
-patch sets therefore leave the input byte-identical.
+Current client-backed edits replace a computation with a literal, replace a
+branch terminator, promote one scalar place, tombstone one dead computation,
+or remove one unreachable block. All queued claims are checked before
+mutation and applied to a copy in deterministic identity order. Touched bodies
+have required value-use/CFG facts repaired, then the complete candidate is
+verified before commit. Invalid, stale, duplicate, or malformed batches leave
+the input byte-identical.
 
-This replacement cannot change CFG, reachability, place/loan topology, or
-dominance. Its edit result records those facts as preserved while marking
-instruction facts and value uses invalidated and the latter repaired. There is
-no general pass manager, analysis cache, incremental dominance update,
-insertion/erasure API, or ID compaction yet; each is added only with a concrete
-transform that needs it.
+`MirPass` and the body-scoped `MirBodyAnalysisManager` provide the current
+small pass framework. The manager revisions bodies and caches only
+CFG/reachability, dominance, value uses, effects, and scalar-promotion inputs.
+Explicit preservation retains an analysis; unknown preservation invalidates
+conservatively. There is no arbitrary insertion API, ID compaction,
+incremental dominance update, loop framework, alias analysis, or memory SSA.
 
 Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use
@@ -929,7 +957,9 @@ those earlier stages. The verifier derives this relationship from the operation
 result, exact indexed `CallInput`, dominance, failure identity, and prepared
 obligations rather than trusting new serialized metadata. Nested calls with
 their own owning parameter or result state, borrowed results, constructors,
-assignments, and general normal-result block parameters remain separate work.
+assignments, and class-valued normal-result merging remain separate work. The
+implemented scalar block-parameter vocabulary does not change owning result
+publication.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the hosted-program boundary. The future

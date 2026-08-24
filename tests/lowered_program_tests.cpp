@@ -207,7 +207,8 @@ int main() {
   }
   lang::LoweredProgramBuild build = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   if (!build.valid()) {
     for (const lang::LoweredProgramIssue &issue : build.issues) {
       std::cerr << "lowered-program issue: " << issue.detail << '\n';
@@ -477,6 +478,47 @@ void testDetachedDeterministicProgram() {
              exactMarker->exactValueArguments.empty(),
          "the lowered declaration inventory should retain an exact class "
          "specialization's primary and canonical key");
+}
+
+void testBuilderRejectsForgedOptimizationEvidence() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("lowered-forged-optimization.gti", R"(
+int main() {
+  mut int value = 1;
+  if (true) {
+    value = 2;
+  } else {
+    value = 3;
+  }
+  return value;
+}
+)");
+  const lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1,
+                                        .target = lang::TargetInfo::host()});
+  expect(frontend.canGenerateCode() && optimized.valid() &&
+             !optimized.report.transformations.empty(),
+         "the forged-evidence fixture should produce verified transformations");
+  if (!frontend.canGenerateCode() || !optimized.valid() ||
+      optimized.report.transformations.empty()) {
+    return;
+  }
+
+  std::vector<lang::MirTransformRecord> forged =
+      optimized.report.transformations;
+  forged.front().requiredAnalyses.dominance =
+      !forged.front().requiredAnalyses.dominance;
+  const lang::LoweredProgramBuild rejected =
+      lang::LoweredProgramBuilder().build(
+          frontend.program, frontend.semantics, frontend.hir,
+          optimized.sourceMir, optimized.mir, forged, lang::TargetInfo::host());
+  expect(!rejected.valid() &&
+             hasIssue(rejected.issues,
+                      lang::LoweredProgramIssueKind::InvalidOptimization),
+         "LoweredProgramBuilder should independently reject forged optimizer "
+         "evidence before sealing backend input");
 }
 
 void testMutationRejection() {
@@ -764,6 +806,7 @@ void testMutationRejection() {
 
 int main() {
   testDetachedDeterministicProgram();
+  testBuilderRejectsForgedOptimizationEvidence();
   testMutationRejection();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
