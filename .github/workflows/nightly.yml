@@ -147,7 +147,10 @@ jobs:
           # commit that first created it.
           git push --force origin "HEAD:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly dist/* --clobber
+            # Upload first so a transient pruning failure never removes a
+            # current artifact. Then delete anything outside this build's
+            # exact asset set, including archives for retired platforms.
+            python3 scripts/sync_nightly_assets.py nightly dist
             gh release edit nightly \
               --prerelease \
               --title "GTI nightly" \
