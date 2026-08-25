@@ -34,6 +34,7 @@ int main(int argc, char **argv) {
     lang::TargetInfo target = lang::TargetInfo::host();
     if (name == "66-managed-threads.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
+      target.runtimeCapabilities.threads = true;
     }
     lang::FrontendOptions options;
     options.target = target;

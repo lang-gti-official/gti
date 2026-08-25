@@ -140,13 +140,19 @@ publication, and request freshness only when a concrete feature or testability
 problem warrants it. Preserve the existing worker model during that
 extraction.
 
-### 5. Consume resolved project configuration - default profile bounded slice implemented
+### 5. Consume resolved project configuration - profile/runtime bounded slices implemented
 
 Nearest-manifest analysis now uses the driver's canonical parser for
 `[build].defines` and the default `dev` profile's execution model. The managed-
 thread tooling gate proves that a concurrent `dev` project receives valid
 diagnostics, hover, definition, completion, and semantic tokens without
 exposing its private capability surface.
+
+Standalone analysis now accepts the same explicit execution-profile selection
+as direct compilation. Both standalone and manifest paths consume the
+driver-owned immutable analysis configuration, whose safe runtime default has
+no capabilities and whose installed hosted profile derives `threads` only for
+a supported target. The protocol adapter does not duplicate that derivation.
 
 The complete row still requires a read-only driver-owned project/metadata
 model for selected package/profile, target, dependency source roots, and

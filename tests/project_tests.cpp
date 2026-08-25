@@ -235,6 +235,17 @@ void testDiscoveryParsingAndResolution() {
            "metadata plans should retain each manifest profile's execution "
            "semantics");
   }
+
+  const lang::driver::ProjectResolutionResult hostedRelease =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          nested, std::nullopt, "release", lang::TargetInfo::host(), {},
+          std::nullopt, {}, lang::driver::RuntimeProfile::Hosted));
+  expect(hostedRelease.succeeded() && hostedRelease.plan &&
+             hostedRelease.plan->target().executionProfile ==
+                 lang::ExecutionProfile::Concurrent &&
+             hostedRelease.plan->target().runtimeCapabilities.threads,
+         "a concurrent manifest profile should retain hosted thread support "
+         "through the shared project analysis configuration");
   expect(!std::filesystem::exists(temporary.root() / "build"),
          "metadata resolution should not create project output directories");
 }

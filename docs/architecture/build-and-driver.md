@@ -57,6 +57,16 @@ classify a spelling, then maps it into the GTI representation. The parser uses
 the same `os`/`vendor`/`arch` property vocabulary rather than maintaining a
 second spelling table.
 
+`gti_driver` owns the immutable `AnalysisConfiguration` that combines one
+selected target, execution profile, runtime profile, and normalized
+configuration flags before source loading. A raw `TargetInfo` advertises no
+runtime capabilities. `RuntimeProfile::Hosted` derives `threads` only for a
+supported target; the safe `None` profile leaves it false. Direct/project CLI
+adapters and the LSP select the hosted profile because they describe the
+installed hosted toolchain. Frontend, HIR, MIR, optimizer, and backend phases
+only consume the resulting `TargetInfo`; none infers support from the target
+OS, execution profile, public library spelling, or native arguments.
+
 The current supported set is arm64 or x86_64, little-endian, 64-bit, on macOS,
 Linux, or Windows. `parseTargetTripleResult` distinguishes malformed triples
 from unsupported architecture, endianness, and operating-system cases, while
@@ -125,7 +135,10 @@ before frontend entry and passed unchanged through semantics, optimization,
 and backend generation. `--execution-profile single-threaded|concurrent`
 selects its execution-profile fact; omission remains single-threaded. The
 option changes frontend global/static policy and never infers runtime support
-from native arguments.
+from native arguments. The direct CLI resolves that selection together with
+the installed hosted runtime profile, so a concurrent standalone compilation
+receives the same supported-target `threads` capability as project mode and
+editor analysis.
 
 The direct CLI currently selects `TargetInfo::host()`; it does not expose a
 general cross-compilation option. Compiler-library clients can request another
@@ -503,12 +516,13 @@ a shell. The display contract does not claim compatibility with Windows
 
 Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
-resolved into the plan's `TargetInfo`, and the command-line option is an
-explicit project override. Metadata schema 9 publishes the declared value for
-every profile plus the selected workspace and sorted package/dependency graph.
-This build profile field selects static language policy only;
-the target/runtime `threads` capability remains independent. Public managed
-thread operations require both the concurrent profile and that capability.
+resolved through the shared analysis configuration into the plan's
+`TargetInfo`, and the command-line option is an explicit project override.
+Metadata schema 9 publishes the declared value for every profile plus the
+selected workspace and sorted package/dependency graph. This build profile
+field selects static language policy only; the independently selected runtime
+profile derives the target/runtime `threads` capability. Public managed-thread
+operations require both the concurrent execution profile and that capability.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses

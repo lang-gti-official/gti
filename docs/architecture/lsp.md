@@ -332,16 +332,20 @@ symbolic semantics made valid editor snapshots omit diagnostics that
 does not build failure metadata or MIR; retaining the HIR result is the current
 cost of publishing the compiler's complete source-level semantic diagnostic
 set. Code generation remains disabled. Before analysis, the LSP uses the
-driver's canonical nearest-manifest discovery and parser to seed
-`FrontendOptions::configurationFlags` from `[build].defines` and the execution
-profile from the canonical default `dev` profile; it does not reimplement TOML
-or manifest validation. This keeps concurrent-project diagnostics and the
-public `<std/thread>` surface aligned with the default project check/run
-workflow. Analysis work additionally runs
-inside `lang::runGuarded`, and that boundary is deliberately narrow. Only
-compiler work runs under the guard: `runIsolatedAnalysis` builds an isolated
-`DocumentAnalysis` and its immutable frontend snapshot, and `publishAnalysis`
-writes to shared LSP state afterwards, on the normal path.
+driver's canonical nearest-manifest discovery and parser plus the immutable
+driver-owned `AnalysisConfiguration`. It seeds configuration flags from
+`[build].defines`, selects the default `dev` execution profile, and derives
+runtime capabilities from the installed hosted runtime profile; it does not
+reimplement TOML, target, or capability policy. A startup
+`--execution-profile single-threaded|concurrent` option overrides the manifest
+profile and also configures standalone documents. Omission selects the
+manifest `dev` profile when present and otherwise remains single-threaded.
+This keeps standalone and concurrent-project diagnostics and the public
+`<std/thread>` surface aligned with compiler-driver workflows. Analysis work
+additionally runs inside `lang::runGuarded`, and that boundary is deliberately
+narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
+an isolated `DocumentAnalysis` and its immutable frontend snapshot, and
+`publishAnalysis` writes to shared LSP state afterwards, on the normal path.
 
 Two properties make the boundary sound:
 
@@ -436,13 +440,15 @@ meaning from punctuation.
   durable symbol identity is implemented.
 - `Frontend`/`LanguageQueries` can consume the same explicit
   `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
-  manifest's configuration flags and default `dev` execution profile, but does
-  not yet resolve its workspace graph, selected package, a non-default profile,
-  or command-line overrides. Consequently, package angle includes are not
-  resolved in editor snapshots yet. A project whose `dev` profile selects
-  `concurrent` receives the same managed-thread and concurrent-global semantic
-  checks in editor analysis; another build-profile selection still awaits the
-  shared project-facts model.
+  manifest's configuration flags and default `dev` execution profile, with an
+  explicit standalone execution-profile startup override, but does not yet
+  resolve its workspace graph, selected package, or a named non-default
+  manifest profile. Consequently, package angle includes are not resolved in
+  editor snapshots yet. A project whose `dev` profile selects `concurrent`, or
+  a standalone server launched with `--execution-profile concurrent`, receives
+  the same managed-thread and concurrent-global semantic checks as the matching
+  compiler-driver workflow; richer project selection still awaits the shared
+  project-facts model.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.

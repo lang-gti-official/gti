@@ -94,9 +94,9 @@ def discover_standard_library_root(executable):
 
 
 class LspSession:
-    def __init__(self, executable):
+    def __init__(self, executable, arguments=None):
         self.process = subprocess.Popen(
-            [executable],
+            [executable, *(arguments or [])],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -3396,6 +3396,69 @@ def test_managed_thread_tooling(executable, root):
         assert private_completion["items"] == []
     finally:
         session.close()
+
+
+def test_standalone_managed_thread_profile(executable, root):
+    path = root / "standalone-managed-thread.gti"
+    source = (
+        "#include <std/thread>\n"
+        "int main() {\n"
+        "  auto started = std::jthread::start([]() -> void {});\n"
+        "  if (!started.has_value()) { return 1; }\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    def analyze(arguments):
+        session = LspSession(executable, arguments)
+        try:
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "rootUri": root.resolve().as_uri(),
+                        "capabilities": {},
+                    },
+                }
+            )
+            session.receive_until(lambda message: message.get("id") == 1)
+            session.send(
+                {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+            )
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": source,
+                        }
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == 1
+            )["params"]["diagnostics"]
+        finally:
+            session.close()
+
+    default_diagnostics = analyze([])
+    assert any(
+        diagnostic.get("code") == "GTI-S2084"
+        and "concurrent execution profile" in diagnostic["message"]
+        for diagnostic in default_diagnostics
+    )
+    assert analyze(["--execution-profile", "concurrent"]) == []
 
 
 def test_diagnostic_code_actions(executable, root):
@@ -7457,6 +7520,16 @@ def main():
     )
     assert version.returncode == 0, version.stderr
     assert version.stdout.strip() == f"gti_lsp {expected_version}"
+    invalid_profile = subprocess.run(
+        [sys.argv[1], "--execution-profile", "parallel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        text=True,
+        timeout=5,
+    )
+    assert invalid_profile.returncode == 64
+    assert "must be single-threaded or concurrent" in invalid_profile.stderr
     test_protocol_input_validation(sys.argv[1])
 
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
@@ -7477,6 +7550,7 @@ def main():
     test_exact_qualified_specialization_tooling(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)
+    test_standalone_managed_thread_profile(sys.argv[1], root)
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
