@@ -4,12 +4,13 @@ constexpr int32_t image_width = 1000;
 constexpr int32_t image_height = 700;
 constexpr int32_t maximum_iterations = 600;
 constexpr int32_t worker_count = 4;
+constexpr int32_t repetition_count = 4;
 
-constexpr uint64_t first_partition_checksum = uint64_t(2538208660);
-constexpr uint64_t second_partition_checksum = uint64_t(2543135914);
-constexpr uint64_t third_partition_checksum = uint64_t(2559129491);
-constexpr uint64_t fourth_partition_checksum = uint64_t(2543225658);
-constexpr uint64_t expected_checksum = uint64_t(10183699723);
+constexpr uint64_t first_partition_checksum = uint64_t(10152834640);
+constexpr uint64_t second_partition_checksum = uint64_t(10172543656);
+constexpr uint64_t third_partition_checksum = uint64_t(10236517964);
+constexpr uint64_t fourth_partition_checksum = uint64_t(10172902632);
+constexpr uint64_t expected_checksum = uint64_t(40734798892);
 
 int32_t escape_iterations(double coordinate_real,
                           double coordinate_imaginary) {
@@ -58,9 +59,18 @@ uint64_t render_partition(int32_t first_row, int32_t row_stride) {
   return checksum;
 }
 
+uint64_t render_repeated_partition(int32_t first_row, int32_t row_stride) {
+  mut uint64_t checksum = uint64_t(0);
+  for (mut int32_t repetition = 0; repetition < repetition_count;
+       repetition++) {
+    checksum += render_partition(first_row, row_stride);
+  }
+  return checksum;
+}
+
 void require_partition(int32_t first_row, int32_t row_stride,
                        uint64_t expected_value) {
-  uint64_t checksum = render_partition(first_row, row_stride);
+  uint64_t checksum = render_repeated_partition(first_row, row_stride);
   if (checksum != expected_value) {
     // A bad result must fail inside the worker because the first managed-task
     // slice deliberately has no result channel or shared mutable state.
@@ -136,5 +146,5 @@ void print_digest(uint64_t digest) {
 void print_benchmark_record(uint64_t digest) {
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
-  std::println(" work-units:700000");
+  std::println(" work-units:2800000");
 }

@@ -51,6 +51,15 @@ selects the safe `None` or installed `Hosted` runtime profile; the latter
 derives thread support only for a supported target and is shared by CLI and
 LSP adapters.
 
+Successful direct executable builds may also request a versioned structured
+provenance sidecar with `--build-report <path>`. The driver captures its exact
+loaded source graph before moving frontend inputs and its actual runtime/header
+closure from a depfile emitted by the real generated-C++ native invocation;
+the CLI atomically serializes the typed result after collision checks. The
+record includes exact native argv, runtime archive, producer/native compiler
+hashes, and the compiler's build-time commit plus clean/dirty/unavailable state.
+Project-mode exposure remains outside the completed slice.
+
 Manifest schema version 1 also accepts `[workspace].members`, optional
 `[package].source-root`, and source-only `[dependencies]` path tables.
 Workspace members share `build/gti`, with package artifacts under

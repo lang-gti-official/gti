@@ -4,9 +4,11 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lang::driver {
@@ -77,6 +79,97 @@ struct BuildCacheResult {
   std::optional<std::string> warning;
 };
 
+inline constexpr int currentBuildProvenanceSchema = 1;
+
+enum class CompilerSourceState {
+  Clean,
+  Dirty,
+  Unavailable,
+};
+
+[[nodiscard]] std::string_view
+compilerSourceStateName(CompilerSourceState state);
+
+struct CompilerBuildIdentity {
+  CompilerSourceState state = CompilerSourceState::Unavailable;
+  std::optional<std::string> commit;
+};
+
+// Identity compiled into the driver at build time. A clean or dirty state has
+// an exact source commit; unavailable means the build could not establish both
+// facts and therefore cannot support exact-head evidence.
+[[nodiscard]] CompilerBuildIdentity currentCompilerBuildIdentity();
+
+struct BuildFileProvenance {
+  std::filesystem::path canonicalPath;
+  std::uintmax_t bytes = 0;
+  std::string sha256;
+};
+
+struct BuildSourceUnitProvenance {
+  SourceUnitId id = 0;
+  SourceUnitRole role = SourceUnitRole::Application;
+  BuildFileProvenance material;
+  std::optional<std::string> logicalIdentity;
+  std::optional<std::string> standardLibraryName;
+  std::optional<std::string> packageIdentity;
+  std::optional<std::string> packageRelativePath;
+  bool entry = false;
+  bool prelude = false;
+};
+
+struct BuildSourceDependencyProvenance {
+  SourceUnitId source = 0;
+  SourceUnitId target = 0;
+  SourceDependencyKind kind = SourceDependencyKind::Include;
+  std::string includeSpelling;
+  std::size_t includeOccurrence = 0;
+};
+
+struct BuildSourceProvenance {
+  SourceUnitId entryRoot = 0;
+  std::vector<SourceUnitId> preludeRoots;
+  std::vector<SourceUnitId> compilationOrder;
+  std::vector<BuildSourceUnitProvenance> units;
+  std::vector<BuildSourceDependencyProvenance> dependencies;
+  std::string materialsSha256;
+};
+
+enum class BuildRuntimeHeaderKind {
+  Runtime,
+  Compatibility,
+};
+
+[[nodiscard]] std::string_view
+buildRuntimeHeaderKindName(BuildRuntimeHeaderKind kind);
+
+struct BuildRuntimeHeaderProvenance {
+  BuildRuntimeHeaderKind kind = BuildRuntimeHeaderKind::Runtime;
+  std::string logicalIdentity;
+  BuildFileProvenance material;
+};
+
+struct BuildRuntimeProvenance {
+  std::vector<BuildRuntimeHeaderProvenance> headers;
+  BuildFileProvenance archive;
+  std::string materialsSha256;
+};
+
+struct BuildProvenance {
+  int schema = currentBuildProvenanceSchema;
+  BuildFileProvenance producerExecutable;
+  CompilerBuildIdentity compilerBuild;
+  BuildSourceProvenance source;
+  BuildFileProvenance nativeCompilerExecutable;
+  std::vector<std::string> nativeCommand;
+  BuildRuntimeProvenance runtime;
+};
+
+struct BuildReportRequest {
+  std::filesystem::path output;
+  std::filesystem::path producerExecutable;
+};
+
 class ExecutableBuildRequest final {
 public:
   ExecutableBuildRequest(
@@ -87,7 +180,8 @@ public:
       bool captureSuccessfulNativeOutput,
       std::optional<ManagedOutputPolicy> managedOutput = std::nullopt,
       std::optional<std::string> cCompiler = std::nullopt,
-      std::optional<BuildCachePolicy> cache = std::nullopt);
+      std::optional<BuildCachePolicy> cache = std::nullopt,
+      std::optional<BuildReportRequest> buildReport = std::nullopt);
 
   [[nodiscard]] const CompilationRequest &compilation() const;
   [[nodiscard]] const ToolchainLayout &toolchain() const;
@@ -101,6 +195,7 @@ public:
   [[nodiscard]] bool captureSuccessfulNativeOutput() const;
   [[nodiscard]] const std::optional<ManagedOutputPolicy> &managedOutput() const;
   [[nodiscard]] const std::optional<BuildCachePolicy> &cache() const;
+  [[nodiscard]] const std::optional<BuildReportRequest> &buildReport() const;
 
 private:
   CompilationRequest compilationRequest;
@@ -115,6 +210,7 @@ private:
   bool captureSuccessfulOutput;
   std::optional<ManagedOutputPolicy> managedOutputPolicy;
   std::optional<BuildCachePolicy> buildCachePolicy;
+  std::optional<BuildReportRequest> requestedBuildReport;
 };
 
 enum class ExecutableBuildStatus {
@@ -129,6 +225,7 @@ enum class ExecutableBuildStatus {
   NativeCompilerFailure,
   ArtifactPublicationFailure,
   ArtifactPathConflict,
+  BuildReportCaptureFailure,
 };
 
 struct NativeCCompilationResult {
@@ -160,6 +257,7 @@ struct ExecutableBuildResult {
   std::filesystem::path generatedSource;
   std::optional<std::string> driverDiagnostic;
   BuildCacheResult cache;
+  std::optional<BuildProvenance> provenance;
   bool generatedSourceRetained = false;
 
   [[nodiscard]] bool succeeded() const {

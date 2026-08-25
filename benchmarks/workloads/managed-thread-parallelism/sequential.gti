@@ -3,19 +3,19 @@
 int main() {
   mut uint64_t digest = uint64_t(0);
 
-  uint64_t first = render_partition(0, worker_count);
+  uint64_t first = render_repeated_partition(0, worker_count);
   if (first != first_partition_checksum) { return 1; }
   digest += first;
 
-  uint64_t second = render_partition(1, worker_count);
+  uint64_t second = render_repeated_partition(1, worker_count);
   if (second != second_partition_checksum) { return 2; }
   digest += second;
 
-  uint64_t third = render_partition(2, worker_count);
+  uint64_t third = render_repeated_partition(2, worker_count);
   if (third != third_partition_checksum) { return 3; }
   digest += third;
 
-  uint64_t fourth = render_partition(3, worker_count);
+  uint64_t fourth = render_repeated_partition(3, worker_count);
   if (fourth != fourth_partition_checksum) { return 4; }
   digest += fourth;
 

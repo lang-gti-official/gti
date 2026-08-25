@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from contextlib import contextmanager
 import hashlib
 import importlib.util
@@ -17,8 +18,23 @@ from typing import Any, Iterator
 
 EXPECTED_RECORD = "GTI-BENCH-1 digest:0000000014b81952 work-units:200000000"
 THREAD_EXPECTED_RECORD = (
-    "GTI-BENCH-1 digest:000000025efeed0b work-units:700000"
+    "GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000"
 )
+SCHEMA_1_BASE_SHAPE = Path(__file__).with_name(
+    "benchmark_schema1_base_shape.json"
+)
+SCHEMA_1_NULLABLE_SCALAR_TYPES = {
+    "$.environment.cpu_model": "string|null",
+    "$.environment.gti_toolchain_overrides.GTI_RUNTIME_INCLUDE": "string|null",
+    "$.environment.gti_toolchain_overrides.GTI_RUNTIME_LIBRARY": "string|null",
+    "$.environment.gti_toolchain_overrides.GTI_STDLIB_PATH": "string|null",
+    "$.environment.gti_toolchain_overrides.GTI_VENDOR_INCLUDE": "string|null",
+    "$.environment.logical_cpu_count": "number|null",
+    "$.repository.commit": "string|null",
+    "$.repository.dirty": "boolean|null",
+    "$.repository.reason": "string|null",
+    "$.repository.root": "string|null",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -630,6 +646,252 @@ def test_deterministic_sample_order(module: Any, root: Path) -> None:
     )
 
 
+def test_exact_head_truth_table(module: Any, root: Path) -> None:
+    compiler = root / "gti"
+    compiler.parent.mkdir(parents=True)
+    compiler.write_bytes(b"compiler")
+    compiler.chmod(0o755)
+    tool = module.Tool("gti", compiler, (str(compiler), "--version"), "gti test")
+    compiler_sha256 = sha256_file(compiler)
+    clean = {"commit": "1" * 40, "dirty": False}
+
+    def workloads(
+        state: str = "clean",
+        commit: str | None = "1" * 40,
+        producer_sha256: str = compiler_sha256,
+    ) -> list[dict[str, Any]]:
+        return [{
+            "variants": [{
+                "kind": "gti",
+                "provenance": {
+                    "build": {
+                        "producer": {
+                            "compiler_build": {"state": state, "commit": commit},
+                            "executable": {"sha256": producer_sha256},
+                        }
+                    }
+                },
+            }]
+        }]
+
+    require(
+        module.exact_head_evidence(clean, clean, tool, workloads())["exact"] is True,
+        "matching clean repository/compiler/producer identities were not exact",
+    )
+    cases = (
+        ({"commit": None, "dirty": False}, clean, workloads(),
+         "benchmarked_head_unavailable"),
+        (clean, {"commit": None, "dirty": False}, workloads(),
+         "recorded_head_unavailable"),
+        ({"commit": "1" * 40, "dirty": True}, clean, workloads(),
+         "repository_not_clean_before_benchmark"),
+        (clean, {"commit": "1" * 40, "dirty": True}, workloads(),
+         "repository_not_clean_after_benchmark"),
+        (clean, {"commit": "2" * 40, "dirty": False}, workloads(),
+         "recorded_head_differs_from_benchmarked_head"),
+        (clean, clean, workloads("unavailable", None),
+         "compiler_build_identity_unavailable"),
+        (clean, clean, workloads("clean", None),
+         "compiler_build_identity_unavailable"),
+        (clean, clean, workloads("dirty"), "compiler_build_identity_dirty"),
+        (clean, clean, workloads("clean", "2" * 40),
+         "compiler_commit_differs_from_benchmarked_head"),
+        (clean, clean, workloads(producer_sha256="2" * 64),
+         "sidecar_producer_differs_from_selected_compiler"),
+    )
+    for before, after, reports, reason in cases:
+        evidence = module.exact_head_evidence(before, after, tool, reports)
+        require(
+            evidence["exact"] is False and reason in evidence["reasons"],
+            f"exact-head evidence missed {reason}: {evidence!r}",
+        )
+    inconsistent = workloads()
+    inconsistent[0]["variants"].append(
+        workloads(commit="2" * 40)[0]["variants"][0]
+    )
+    evidence = module.exact_head_evidence(clean, clean, tool, inconsistent)
+    require(
+        evidence["exact"] is False
+        and "compiler_build_identity_inconsistent" in evidence["reasons"],
+        f"exact-head evidence accepted inconsistent compiler commits: {evidence!r}",
+    )
+    mixed_schema = workloads()
+    mixed_schema[0]["descriptor"] = {"schema": 2}
+    mixed_schema.append({
+        "descriptor": {"schema": 1},
+        "variants": [{"kind": "cpp"}],
+    })
+    require(
+        module.exact_head_evidence(clean, clean, tool, mixed_schema)["exact"] is True,
+        "a schema-1 C++ variant incorrectly invalidated GTI exact-head evidence",
+    )
+    mixed_schema[-1]["variants"].append({"kind": "gti"})
+    evidence = module.exact_head_evidence(clean, clean, tool, mixed_schema)
+    require(
+        evidence["exact"] is False
+        and "gti_build_provenance_unavailable" in evidence["reasons"],
+        f"exact-head evidence skipped a schema-1 GTI variant: {evidence!r}",
+    )
+
+
+def structural_paths(
+    value: Any,
+    nullable_scalar_types: dict[str, str],
+    path: str = "$",
+) -> list[str]:
+    paths: set[str] = set()
+    seen_nullable_paths: set[str] = set()
+
+    def visit(current: Any, current_path: str) -> None:
+        if isinstance(current, dict):
+            paths.add(f"{current_path}:object")
+            for key, child in current.items():
+                visit(child, f"{current_path}.{key}")
+            return
+        if isinstance(current, list):
+            paths.add(f"{current_path}:array")
+            for child in current:
+                visit(child, f"{current_path}[*]")
+            return
+        if current is None:
+            scalar_type = "null"
+        elif isinstance(current, bool):
+            scalar_type = "boolean"
+        elif isinstance(current, (int, float)):
+            scalar_type = "number"
+        elif isinstance(current, str):
+            scalar_type = "string"
+        else:
+            raise AssertionError(f"unexpected report value at {current_path}: {current!r}")
+        declared_type = nullable_scalar_types.get(current_path)
+        if declared_type is not None:
+            allowed_types = declared_type.split("|")
+            if scalar_type not in allowed_types:
+                raise AssertionError(
+                    f"{current_path} has {scalar_type}, outside declared "
+                    f"schema-1 union {declared_type}"
+                )
+            scalar_type = declared_type
+            seen_nullable_paths.add(current_path)
+        paths.add(f"{current_path}:{scalar_type}")
+
+    visit(value, path)
+    missing_nullable_paths = set(nullable_scalar_types) - seen_nullable_paths
+    if missing_nullable_paths:
+        raise AssertionError(
+            "schema-1 report omitted declared nullable scalar paths: "
+            f"{sorted(missing_nullable_paths)!r}"
+        )
+    return sorted(paths)
+
+
+def require_schema_1_base_shape(
+    report: dict[str, Any], reference: dict[str, Any], context: str
+) -> None:
+    actual = structural_paths(report, SCHEMA_1_NULLABLE_SCALAR_TYPES)
+    actual_digest = hashlib.sha256(
+        ("\n".join(actual) + "\n").encode("utf-8")
+    ).hexdigest()
+    require(
+        len(actual) == reference["structural_path_count"]
+        and actual_digest == reference["structural_paths_sha256"],
+        f"{context} schema-1 report shape differs from the frozen base implementation\n"
+        f"expected count/digest={reference['structural_path_count']}/"
+        f"{reference['structural_paths_sha256']}\n"
+        f"actual count/digest={len(actual)}/{actual_digest}\n"
+        f"actual paths={actual!r}",
+    )
+
+
+def test_schema_1_base_shape(report: dict[str, Any]) -> None:
+    reference = json.loads(SCHEMA_1_BASE_SHAPE.read_text(encoding="utf-8"))
+    require(
+        reference["base_commit"] == "90b32f0ffec221e7e357ac1748592e2fe598e807",
+        "schema-1 base-shape fixture lost its immutable base commit",
+    )
+    require(
+        reference["base_runner_sha256"]
+        == "55c11eeb1f89beec5160233f6050313262b30730a709e6c8a3dfe72d946ef6aa",
+        "schema-1 base-shape fixture lost its base runner identity",
+    )
+    require(
+        reference["generation"]["method"] == "executed-local-git-object"
+        and reference["generation"]["workload"] == "vector-checked-loop",
+        "schema-1 base-shape fixture lost transparent generation metadata",
+    )
+    require(
+        "GTI_STDLIB_PATH" in reference["generation"]["environment"],
+        "schema-1 base-shape fixture lost its generation environment",
+    )
+    require(
+        "Git-unavailable source archive"
+        in reference["generation"]["normalization_validation"],
+        "schema-1 base-shape fixture lost its cross-environment validation",
+    )
+    require(
+        reference["generation"]["normalization"]["nullable_scalar_types"]
+        == SCHEMA_1_NULLABLE_SCALAR_TYPES,
+        "schema-1 base-shape fixture lost its declared nullable scalar unions",
+    )
+    require(
+        report["schema"] == 1
+        and len(report["workloads"]) == 1
+        and report["workloads"][0]["descriptor"]["schema"] == 1,
+        "shape regression requires a real schema-1-only branch report",
+    )
+    require_schema_1_base_shape(report, reference, "actual")
+
+    git_available = copy.deepcopy(report)
+    git_available["repository"] = {
+        "root": "/repository",
+        "commit": "1" * 40,
+        "dirty": False,
+        "reason": None,
+    }
+    git_available["environment"]["cpu_model"] = "Test CPU"
+    git_available["environment"]["logical_cpu_count"] = 8
+    git_available["environment"]["gti_toolchain_overrides"] = {
+        name: "/toolchain" for name in (
+            "GTI_STDLIB_PATH",
+            "GTI_RUNTIME_INCLUDE",
+            "GTI_RUNTIME_LIBRARY",
+            "GTI_VENDOR_INCLUDE",
+        )
+    }
+    require_schema_1_base_shape(git_available, reference, "Git-available")
+
+    git_unavailable = copy.deepcopy(report)
+    git_unavailable["repository"] = {
+        "root": None,
+        "commit": None,
+        "dirty": None,
+        "reason": "Git repository unavailable",
+    }
+    git_unavailable["environment"]["cpu_model"] = None
+    git_unavailable["environment"]["logical_cpu_count"] = None
+    git_unavailable["environment"]["gti_toolchain_overrides"] = {
+        name: None for name in (
+            "GTI_STDLIB_PATH",
+            "GTI_RUNTIME_INCLUDE",
+            "GTI_RUNTIME_LIBRARY",
+            "GTI_VENDOR_INCLUDE",
+        )
+    }
+    require_schema_1_base_shape(git_unavailable, reference, "Git-unavailable")
+
+    invalid_nullable_type = copy.deepcopy(git_available)
+    invalid_nullable_type["repository"]["dirty"] = "false"
+    try:
+        structural_paths(invalid_nullable_type, SCHEMA_1_NULLABLE_SCALAR_TYPES)
+    except AssertionError as error:
+        require(
+            "outside declared schema-1 union" in str(error),
+            f"nullable scalar rejection was unclear: {error}",
+        )
+    else:
+        raise AssertionError("nullable scalar normalization accepted a wrong type")
+
+
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -661,8 +923,6 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         "120",
         "--workload",
         "vector-checked-loop",
-        "--workload",
-        "managed-thread-parallelism",
         "--output",
         str(output),
         "--json",
@@ -694,6 +954,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     )
 
     report = json.loads(json_report.read_text(encoding="utf-8"))
+    test_schema_1_base_shape(report)
     require(report["schema"] == 1, "unexpected benchmark report schema")
     require(report["runner"]["path"] == str(runner), "runner identity path changed")
     require(
@@ -738,10 +999,16 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             f"{name} version output does not match the resolved compiler",
         )
 
-    require(len(report["workloads"]) == 2, "smoke report lost a workload")
+    require(
+        "exact_head_evidence" not in report
+        and "source_identity" not in report["tools"]["gti"],
+        "schema-1 report gained schema-2 compiler evidence",
+    )
+
+    require(len(report["workloads"]) == 1, "schema-1 smoke report lost its workload")
     workloads = {entry["name"]: entry for entry in report["workloads"]}
     require(
-        set(workloads) == {"vector-checked-loop", "managed-thread-parallelism"},
+        set(workloads) == {"vector-checked-loop"},
         "smoke report contains the wrong workloads",
     )
     workload = workloads["vector-checked-loop"]
@@ -792,6 +1059,10 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     )
 
     for name, variant in variants.items():
+        require(
+            "execution_profile" not in variant and "provenance" not in variant,
+            f"schema-1 variant {name} gained schema-2 report fields",
+        )
         executable = variant["executable"]
         source = str(
             (Path(workload["descriptor_path"]).parent / descriptor_by_name[name]["source"])
@@ -850,7 +1121,52 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         "emitted GTI C++ digest is wrong",
     )
 
-    thread_workload = workloads["managed-thread-parallelism"]
+    thread_output = root / "provenance-smoke-output"
+    thread_json_report = thread_output / "report.json"
+    thread_markdown_report = thread_output / "report.md"
+    thread_command = [
+        sys.executable,
+        str(runner),
+        "--gti",
+        str(gti),
+        "--cxx",
+        str(cxx),
+        "--optimization",
+        "3",
+        "--cpp-standard",
+        "c++23",
+        "--warmup",
+        "7",
+        "--runs",
+        "5",
+        "--seed",
+        str(seed),
+        "--timeout",
+        "120",
+        "--workload",
+        "managed-thread-parallelism",
+        "--output",
+        str(thread_output),
+        "--json",
+        str(thread_json_report),
+        "--markdown",
+        str(thread_markdown_report),
+        "--smoke",
+    ]
+    run(thread_command, repository, environment=environment)
+    thread_report = json.loads(thread_json_report.read_text(encoding="utf-8"))
+    require(thread_report["schema"] == 2, "provenance run did not use report schema 2")
+    require(
+        "exact_head_evidence" in thread_report,
+        "schema-2 report omitted exact-head evidence",
+    )
+    thread_run_directory = Path(thread_report["run_directory"])
+    require(
+        thread_run_directory.is_relative_to(thread_output),
+        "schema-2 run directory escaped its output root",
+    )
+    require(len(thread_report["workloads"]) == 1, "schema-2 smoke lost its workload")
+    thread_workload = thread_report["workloads"][0]
     require(
         thread_workload["correctness_record"] == THREAD_EXPECTED_RECORD,
         "wrong managed-thread correctness record",
@@ -911,6 +1227,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             "--keep-cpp",
             "--execution-profile",
             "concurrent",
+            "--build-report",
+            variant["provenance"]["sidecar"]["path"],
             "-o",
             executable,
         ]
@@ -936,26 +1254,177 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         emitted = variant["artifacts"]["emitted_cpp"]
         emitted_path = Path(emitted["path"])
         require(
-            emitted_path.is_relative_to(run_directory) and emitted_path.is_file(),
+            emitted_path.is_relative_to(thread_run_directory)
+            and emitted_path.is_file(),
             f"{name} emitted C++ escaped or is missing",
         )
         require(
             emitted["sha256"] == sha256_file(emitted_path),
             f"{name} emitted C++ digest is wrong",
         )
+        provenance = variant["provenance"]
+        build_provenance = provenance["build"]
+        require(
+            provenance["sidecar"]["sha256"]
+            == sha256_file(Path(provenance["sidecar"]["path"])),
+            f"{name} sidecar identity is wrong",
+        )
+        producer = build_provenance["producer"]
+        require(
+            producer["executable"]["canonical_path"] == str(gti)
+            and producer["executable"]["sha256"] == sha256_file(gti),
+            f"{name} sidecar is not bound to the selected GTI compiler",
+        )
+        source_units = build_provenance["sources"]["units"]
+        source_paths = {unit["logical_identity"] for unit in source_units}
+        require(
+            "package:kernel.gti" in source_paths
+            and "prelude" in source_paths
+            and "stdlib:std/format" in source_paths,
+            f"{name} source provenance omitted recursive application/stdlib inputs",
+        )
+        if name == "gti-four-jthreads":
+            require(
+                "package:threaded.gti" in source_paths
+                and "stdlib:std/thread" in source_paths,
+                "threaded provenance omitted its entry or thread library closure",
+            )
+        else:
+            require(
+                "package:sequential.gti" in source_paths,
+                "sequential provenance omitted its entry source",
+            )
+        runtime = build_provenance["native"]["runtime"]
+        require(
+            any(header["kind"] == "runtime" for header in runtime["headers"])
+            and runtime["archive"]["canonical_path"]
+            in build_provenance["native"]["argv"],
+            f"{name} provenance omitted used runtime material",
+        )
+        materials = [
+            *(unit["material"] for unit in source_units),
+            *(header["material"] for header in runtime["headers"]),
+            runtime["archive"],
+        ]
+        for record in materials:
+            path = Path(record["canonical_path"])
+            require(path.is_file(), f"provenance material is missing: {path}")
+            require(
+                record["sha256"] == sha256_file(path)
+                and record["bytes"] == path.stat().st_size,
+                f"provenance material identity is wrong: {path}",
+            )
+
+    source_hashes = {
+        variant["provenance"]["build"]["sources"]["materials_sha256"]
+        for variant in thread_variants.values()
+    }
+    require(
+        len(source_hashes) == 2,
+        "different loaded source graphs did not alter source provenance",
+    )
+    tampered_path = root / "tampered-build-report.json"
+    tampered = json.loads(
+        Path(thread_variants["gti-sequential"]["provenance"]["sidecar"]["path"])
+        .read_text(encoding="utf-8")
+    )
+    tampered["sources"]["units"][0]["material"]["sha256"] = "0" * 64
+    tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+    expect_benchmark_error(
+        module,
+        lambda: module.load_build_provenance(
+            tampered_path,
+            module.Tool(str(gti), gti, (str(gti), "--version"), "gti"),
+            module.Tool(str(cxx), cxx, (str(cxx), "--version"), "cxx"),
+            (
+                Path(thread_workload["descriptor_path"]).parent
+                / thread_descriptors["gti-sequential"]["source"]
+            ).resolve(),
+        ),
+        "no longer matches its recorded material",
+    )
+
+    sequential_sidecar = Path(
+        thread_variants["gti-sequential"]["provenance"]["sidecar"]["path"]
+    )
+    sequential_report = json.loads(sequential_sidecar.read_text(encoding="utf-8"))
+    archive_path = Path(
+        sequential_report["native"]["runtime"]["archive"]["canonical_path"]
+    )
+    archive_index = sequential_report["native"]["argv"].index(str(archive_path))
+    selected_gti = module.Tool(str(gti), gti, (str(gti), "--version"), "gti")
+    selected_cxx = module.Tool(str(cxx), cxx, (str(cxx), "--version"), "cxx")
+    sequential_entry = (
+        Path(thread_workload["descriptor_path"]).parent
+        / thread_descriptors["gti-sequential"]["source"]
+    ).resolve()
+
+    archive_link = root / "runtime-archive-link"
+    try:
+        archive_link.symlink_to(archive_path)
+    except OSError:
+        pass
+    else:
+        linked_archive_report = json.loads(json.dumps(sequential_report))
+        linked_archive_report["native"]["argv"][archive_index] = str(archive_link)
+        linked_archive_path = root / "linked-archive-build-report.json"
+        linked_archive_path.write_text(
+            json.dumps(linked_archive_report), encoding="utf-8"
+        )
+        module.load_build_provenance(
+            linked_archive_path, selected_gti, selected_cxx, sequential_entry
+        )
+
+    missing_archive_report = json.loads(json.dumps(sequential_report))
+    missing_archive_report["native"]["argv"][archive_index] = str(
+        root / "missing-runtime-archive.a"
+    )
+    missing_archive_path = root / "missing-archive-build-report.json"
+    missing_archive_path.write_text(
+        json.dumps(missing_archive_report), encoding="utf-8"
+    )
+    expect_benchmark_error(
+        module,
+        lambda: module.load_build_provenance(
+            missing_archive_path, selected_gti, selected_cxx, sequential_entry
+        ),
+        "runtime archive is not present",
+    )
+
+    different_archive = root / "different-runtime-archive.a"
+    different_archive.write_bytes(archive_path.read_bytes())
+    different_archive_report = json.loads(json.dumps(sequential_report))
+    different_archive_report["native"]["argv"][archive_index] = str(
+        different_archive
+    )
+    different_archive_path = root / "different-archive-build-report.json"
+    different_archive_path.write_text(
+        json.dumps(different_archive_report), encoding="utf-8"
+    )
+    expect_benchmark_error(
+        module,
+        lambda: module.load_build_provenance(
+            different_archive_path, selected_gti, selected_cxx, sequential_entry
+        ),
+        "runtime archive is not present",
+    )
 
     markdown = markdown_report.read_text(encoding="utf-8")
     require("# GTI benchmark report" in markdown, "Markdown report has no heading")
     require(EXPECTED_RECORD in markdown, "Markdown report lost correctness evidence")
-    require(
-        THREAD_EXPECTED_RECORD in markdown,
-        "Markdown report lost managed-thread correctness evidence",
-    )
     require("Measurement quality: **smoke**" in markdown, "Markdown smoke quality is wrong")
     for name in variants:
         require(f"| {name} |" in markdown, f"Markdown report omitted {name}")
+    thread_markdown = thread_markdown_report.read_text(encoding="utf-8")
+    require(
+        THREAD_EXPECTED_RECORD in thread_markdown,
+        "Markdown report lost managed-thread correctness evidence",
+    )
     for name in thread_variants:
-        require(f"| {name} |" in markdown, f"Markdown report omitted {name}")
+        require(
+            f"| {name} |" in thread_markdown,
+            f"Markdown report omitted {name}",
+        )
 
 
 def main() -> None:
@@ -973,6 +1442,7 @@ def main() -> None:
         test_output_containment(module, runner, gti, cxx, root / "outputs")
         test_correctness_precedes_timing(module, root / "correctness")
         test_deterministic_sample_order(module, root / "ordering")
+        test_exact_head_truth_table(module, root / "exact-head")
         test_real_smoke(module, runner, gti, cxx, root / "smoke")
 
 

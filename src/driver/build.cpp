@@ -1,5 +1,7 @@
 #include "gti/driver/build.h"
 
+#include "build_source_identity.h"
+#include "gti/build_identity_config.h"
 #include "sha256.h"
 
 #include <algorithm>
@@ -23,40 +25,7 @@ namespace lang::driver {
 namespace {
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v2";
-
-class IdentityBuilder final {
-public:
-  void add(std::string_view label, std::string_view value) {
-    appendFramed(label);
-    appendFramed(value);
-  }
-
-  void add(std::string_view label, std::uint64_t value) {
-    std::array<char, 8> bytes{};
-    for (std::size_t index = 0; index < bytes.size(); ++index) {
-      bytes[bytes.size() - index - 1] =
-          static_cast<char>((value >> (index * 8U)) & 0xffU);
-    }
-    appendFramed(label);
-    appendFramed(std::string_view(bytes.data(), bytes.size()));
-  }
-
-  [[nodiscard]] std::string finish() const { return hash.finishHex(); }
-
-private:
-  void appendFramed(std::string_view value) {
-    std::array<char, 8> size{};
-    const std::uint64_t length = value.size();
-    for (std::size_t index = 0; index < size.size(); ++index) {
-      size[size.size() - index - 1] =
-          static_cast<char>((length >> (index * 8U)) & 0xffU);
-    }
-    hash.update(std::string_view(size.data(), size.size()));
-    hash.update(value);
-  }
-
-  Sha256 hash;
-};
+using detail::IdentityBuilder;
 
 struct FileDigest {
   std::string hash;
@@ -253,6 +222,19 @@ std::filesystem::path normalizedAbsolute(const std::filesystem::path &path) {
   std::filesystem::path canonical =
       std::filesystem::weakly_canonical(absolute, error);
   return error ? absolute.lexically_normal() : canonical;
+}
+
+std::optional<BuildFileProvenance>
+captureFileProvenance(const std::filesystem::path &path,
+                      std::string &errorMessage) {
+  const std::filesystem::path canonical = normalizedAbsolute(path);
+  const std::optional<FileDigest> digest = digestFile(canonical, errorMessage);
+  if (!digest) {
+    return std::nullopt;
+  }
+  return BuildFileProvenance{.canonicalPath = canonical,
+                             .bytes = digest->size,
+                             .sha256 = digest->hash};
 }
 
 bool addFileIdentity(IdentityBuilder &identity, std::string_view label,
@@ -482,101 +464,205 @@ logicalSourceName(const SourceUnit &unit,
   return "external:" + source.generic_string();
 }
 
-bool addSourceIdentity(IdentityBuilder &identity,
-                       const CompilationInputs &inputs,
-                       const std::filesystem::path &sourceRoot,
-                       std::string &errorMessage) {
-  struct UnitRecord {
-    const SourceUnit *unit = nullptr;
-    std::string logicalName;
-  };
-  std::vector<UnitRecord> units;
-  units.reserve(inputs.sourceGraph.sourceUnits().size());
-  std::vector<std::string> namesById(inputs.sourceGraph.sourceUnits().size() +
+} // namespace
+
+namespace detail {
+
+std::optional<BuildSourceMaterialProjection>
+projectBuildSourceMaterials(const CompilationInputs &inputs,
+                            const std::filesystem::path &sourceRoot,
+                            std::string &errorMessage) {
+  BuildSourceMaterialProjection projection;
+  projection.units.reserve(inputs.sourceGraph.sourceUnits().size());
+  projection.logicalNamesById.resize(inputs.sourceGraph.sourceUnits().size() +
                                      1);
   for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
     const std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
     if (!name) {
       errorMessage = "cannot derive a logical source name for '" +
                      unit.path.string() + "'";
-      return false;
+      return std::nullopt;
     }
-    if (unit.id >= namesById.size()) {
+    if (unit.id >= projection.logicalNamesById.size()) {
       errorMessage = "source graph contains an invalid unit identifier";
-      return false;
+      return std::nullopt;
     }
-    namesById[unit.id] = *name;
-    units.push_back({.unit = &unit, .logicalName = *name});
-  }
-  std::sort(units.begin(), units.end(),
-            [](const UnitRecord &left, const UnitRecord &right) {
-              return left.logicalName < right.logicalName;
-            });
-  for (std::size_t index = 1; index < units.size(); ++index) {
-    if (units[index - 1].logicalName == units[index].logicalName) {
-      errorMessage = "source graph contains duplicate logical unit '" +
-                     units[index].logicalName + "'";
-      return false;
-    }
-  }
-
-  identity.add("source.units", static_cast<std::uint64_t>(units.size()));
-  for (const UnitRecord &record : units) {
-    const std::string *source = inputs.sources.find(record.unit->path.string());
+    const std::string *source = inputs.sources.find(unit.path.string());
     if (source == nullptr) {
-      errorMessage = "loaded source text is missing for '" +
-                     record.unit->path.string() + "'";
-      return false;
+      errorMessage =
+          "loaded source text is missing for '" + unit.path.string() + "'";
+      return std::nullopt;
     }
-    identity.add("source.name", record.logicalName);
-    identity.add("source.role", static_cast<std::uint64_t>(record.unit->role));
-    identity.add("source.entry",
-                 static_cast<std::uint64_t>(record.unit->entry));
-    identity.add("source.prelude",
-                 static_cast<std::uint64_t>(record.unit->prelude));
-    identity.add("source.size", static_cast<std::uint64_t>(source->size()));
-    identity.add("source.sha256", digestText(*source));
+    projection.logicalNamesById[unit.id] = *name;
+    projection.units.push_back({.id = unit.id,
+                                .role = unit.role,
+                                .logicalIdentity = *name,
+                                .entry = unit.entry,
+                                .prelude = unit.prelude,
+                                .bytes = source->size(),
+                                .sha256 = digestText(*source)});
+  }
+  std::sort(projection.units.begin(), projection.units.end(),
+            [](const BuildSourceMaterialRecord &left,
+               const BuildSourceMaterialRecord &right) {
+              return left.logicalIdentity < right.logicalIdentity;
+            });
+  for (std::size_t index = 1; index < projection.units.size(); ++index) {
+    if (projection.units[index - 1].logicalIdentity ==
+        projection.units[index].logicalIdentity) {
+      errorMessage = "source graph contains duplicate logical unit '" +
+                     projection.units[index].logicalIdentity + "'";
+      return std::nullopt;
+    }
   }
 
   const std::vector<SourceUnitId> &preludeRoots =
       inputs.sourceGraph.preludeRoots();
-  identity.add("source.prelude-roots",
-               static_cast<std::uint64_t>(preludeRoots.size()));
+  projection.preludeRoots.reserve(preludeRoots.size());
   for (const SourceUnitId root : preludeRoots) {
-    if (root == 0 || root >= namesById.size() || namesById[root].empty()) {
+    if (root == 0 || root >= projection.logicalNamesById.size() ||
+        projection.logicalNamesById[root].empty()) {
       errorMessage = "source graph contains an invalid prelude root";
-      return false;
+      return std::nullopt;
     }
     const SourceUnit *unit = inputs.sourceGraph.findUnit(root);
     if (unit == nullptr ||
         (unit->role != SourceUnitRole::Prelude && !unit->prelude)) {
       errorMessage = "source graph prelude root does not name a prelude unit";
-      return false;
+      return std::nullopt;
     }
-    identity.add("source.prelude-root", namesById[root]);
+    projection.preludeRoots.push_back(projection.logicalNamesById[root]);
   }
 
-  std::vector<std::string> edges;
-  edges.reserve(inputs.sourceGraph.dependencyEdges().size());
+  projection.dependencyEdges.reserve(
+      inputs.sourceGraph.dependencyEdges().size());
   for (const SourceDependency &dependency :
        inputs.sourceGraph.dependencyEdges()) {
-    if (dependency.source >= namesById.size() ||
-        dependency.target >= namesById.size() ||
-        namesById[dependency.source].empty() ||
-        namesById[dependency.target].empty()) {
+    if (dependency.source >= projection.logicalNamesById.size() ||
+        dependency.target >= projection.logicalNamesById.size() ||
+        projection.logicalNamesById[dependency.source].empty() ||
+        projection.logicalNamesById[dependency.target].empty()) {
       errorMessage = "source graph contains an invalid dependency edge";
-      return false;
+      return std::nullopt;
     }
-    edges.push_back(namesById[dependency.source] + "\n" +
-                    namesById[dependency.target] + "\n" +
-                    std::to_string(static_cast<unsigned>(dependency.kind)));
+    projection.dependencyEdges.push_back(
+        projection.logicalNamesById[dependency.source] + "\n" +
+        projection.logicalNamesById[dependency.target] + "\n" +
+        std::to_string(static_cast<unsigned>(dependency.kind)));
   }
-  std::sort(edges.begin(), edges.end());
-  identity.add("source.edges", static_cast<std::uint64_t>(edges.size()));
-  for (const std::string &edge : edges) {
+  std::sort(projection.dependencyEdges.begin(),
+            projection.dependencyEdges.end());
+  return projection;
+}
+
+void appendBuildSourceMaterialsIdentity(
+    IdentityBuilder &identity,
+    const BuildSourceMaterialProjection &projection) {
+  identity.add("source.units",
+               static_cast<std::uint64_t>(projection.units.size()));
+  for (const BuildSourceMaterialRecord &record : projection.units) {
+    identity.add("source.name", record.logicalIdentity);
+    identity.add("source.role", static_cast<std::uint64_t>(record.role));
+    identity.add("source.entry", static_cast<std::uint64_t>(record.entry));
+    identity.add("source.prelude", static_cast<std::uint64_t>(record.prelude));
+    identity.add("source.size", static_cast<std::uint64_t>(record.bytes));
+    identity.add("source.sha256", record.sha256);
+  }
+  identity.add("source.prelude-roots",
+               static_cast<std::uint64_t>(projection.preludeRoots.size()));
+  for (const std::string &root : projection.preludeRoots) {
+    identity.add("source.prelude-root", root);
+  }
+  identity.add("source.edges",
+               static_cast<std::uint64_t>(projection.dependencyEdges.size()));
+  for (const std::string &edge : projection.dependencyEdges) {
     identity.add("source.edge", edge);
   }
+}
+
+std::string
+buildSourceMaterialsSha256(const BuildSourceMaterialProjection &projection) {
+  IdentityBuilder identity;
+  appendBuildSourceMaterialsIdentity(identity, projection);
+  return identity.finish();
+}
+
+} // namespace detail
+
+namespace {
+
+bool addSourceIdentity(IdentityBuilder &identity,
+                       const CompilationInputs &inputs,
+                       const std::filesystem::path &sourceRoot,
+                       std::string &errorMessage) {
+  const std::optional<detail::BuildSourceMaterialProjection> projection =
+      detail::projectBuildSourceMaterials(inputs, sourceRoot, errorMessage);
+  if (!projection) {
+    return false;
+  }
+  detail::appendBuildSourceMaterialsIdentity(identity, *projection);
   return true;
+}
+
+std::optional<BuildSourceProvenance>
+captureBuildSourceProvenance(const CompilationRequest &request,
+                             const CompilationInputs &inputs,
+                             std::string &errorMessage) {
+  BuildSourceProvenance provenance;
+  provenance.entryRoot = inputs.sourceGraph.entryUnit();
+  provenance.preludeRoots = inputs.sourceGraph.preludeRoots();
+  provenance.compilationOrder = inputs.sourceGraph.compilationOrder();
+
+  const std::filesystem::path logicalRoot = request.entry().parent_path();
+  const std::optional<detail::BuildSourceMaterialProjection> projection =
+      detail::projectBuildSourceMaterials(inputs, logicalRoot, errorMessage);
+  if (!projection) {
+    return std::nullopt;
+  }
+  std::vector<const detail::BuildSourceMaterialRecord *> projectedById(
+      projection->logicalNamesById.size());
+  for (const detail::BuildSourceMaterialRecord &record : projection->units) {
+    projectedById[record.id] = &record;
+  }
+  for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
+    if (unit.id >= projectedById.size() || projectedById[unit.id] == nullptr) {
+      errorMessage = "source material projection is missing a loaded unit";
+      return std::nullopt;
+    }
+    const detail::BuildSourceMaterialRecord &projected =
+        *projectedById[unit.id];
+    BuildSourceUnitProvenance record{
+        .id = unit.id,
+        .role = unit.role,
+        .material = {.canonicalPath = normalizedAbsolute(unit.path),
+                     .bytes = projected.bytes,
+                     .sha256 = projected.sha256},
+        .logicalIdentity = projected.logicalIdentity,
+        .standardLibraryName = unit.standardLibraryName,
+        .packageIdentity = unit.packageIdentity,
+        .packageRelativePath = unit.packageRelativePath,
+        .entry = unit.entry,
+        .prelude = unit.prelude,
+    };
+    provenance.units.push_back(std::move(record));
+  }
+
+  for (const SourceDependency &dependency :
+       inputs.sourceGraph.dependencyEdges()) {
+    if (inputs.sourceGraph.findUnit(dependency.source) == nullptr ||
+        inputs.sourceGraph.findUnit(dependency.target) == nullptr) {
+      errorMessage = "source graph contains an invalid dependency edge";
+      return std::nullopt;
+    }
+    provenance.dependencies.push_back(
+        {.source = dependency.source,
+         .target = dependency.target,
+         .kind = dependency.kind,
+         .includeSpelling = dependency.includeSpelling,
+         .includeOccurrence = dependency.includeOccurrence});
+  }
+  provenance.materialsSha256 = detail::buildSourceMaterialsSha256(*projection);
+  return provenance;
 }
 
 template <typename Value>
@@ -1365,7 +1451,124 @@ nativeObjectPath(const std::filesystem::path &generatedSource,
           nativeStem + std::string(extension));
 }
 
+std::optional<BuildRuntimeProvenance> captureBuildRuntimeProvenance(
+    const ToolchainLayout &toolchain,
+    const std::vector<std::filesystem::path> &dependencies,
+    std::string &errorMessage) {
+  BuildRuntimeProvenance provenance;
+  const std::filesystem::path runtimeRoot =
+      normalizedAbsolute(toolchain.runtimeInclude / "gti");
+  const std::filesystem::path compatibilityRoot =
+      normalizedAbsolute(toolchain.vendorInclude / "nonstd");
+  std::vector<std::string> seen;
+  for (const std::filesystem::path &dependency : dependencies) {
+    const std::filesystem::path canonical = normalizedAbsolute(dependency);
+    BuildRuntimeHeaderKind kind;
+    std::filesystem::path relative;
+    if (pathIsWithin(runtimeRoot, canonical)) {
+      kind = BuildRuntimeHeaderKind::Runtime;
+      relative = std::filesystem::path("gti") /
+                 canonical.lexically_relative(runtimeRoot);
+    } else if (pathIsWithin(compatibilityRoot, canonical)) {
+      kind = BuildRuntimeHeaderKind::Compatibility;
+      relative = std::filesystem::path("nonstd") /
+                 canonical.lexically_relative(compatibilityRoot);
+    } else {
+      continue;
+    }
+    const std::string key = canonical.generic_string();
+    if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+      continue;
+    }
+    seen.push_back(key);
+    std::optional<BuildFileProvenance> material =
+        captureFileProvenance(canonical, errorMessage);
+    if (!material) {
+      return std::nullopt;
+    }
+    provenance.headers.push_back({.kind = kind,
+                                  .logicalIdentity = relative.generic_string(),
+                                  .material = std::move(*material)});
+  }
+  std::sort(provenance.headers.begin(), provenance.headers.end(),
+            [](const BuildRuntimeHeaderProvenance &left,
+               const BuildRuntimeHeaderProvenance &right) {
+              if (left.kind != right.kind) {
+                return left.kind < right.kind;
+              }
+              return left.logicalIdentity < right.logicalIdentity;
+            });
+  if (std::none_of(provenance.headers.begin(), provenance.headers.end(),
+                   [](const BuildRuntimeHeaderProvenance &header) {
+                     return header.kind == BuildRuntimeHeaderKind::Runtime;
+                   })) {
+    errorMessage = "native dependency report contains no used GTI runtime "
+                   "headers";
+    return std::nullopt;
+  }
+  std::optional<BuildFileProvenance> archive =
+      captureFileProvenance(toolchain.runtimeLibrary, errorMessage);
+  if (!archive) {
+    return std::nullopt;
+  }
+  provenance.archive = std::move(*archive);
+
+  IdentityBuilder materialsIdentity;
+  materialsIdentity.add("runtime.headers",
+                        static_cast<std::uint64_t>(provenance.headers.size()));
+  for (const BuildRuntimeHeaderProvenance &header : provenance.headers) {
+    materialsIdentity.add("runtime.kind",
+                          static_cast<std::uint64_t>(header.kind));
+    materialsIdentity.add("runtime.logical", header.logicalIdentity);
+    materialsIdentity.add("runtime.bytes",
+                          static_cast<std::uint64_t>(header.material.bytes));
+    materialsIdentity.add("runtime.sha256", header.material.sha256);
+  }
+  materialsIdentity.add("runtime.archive.bytes",
+                        static_cast<std::uint64_t>(provenance.archive.bytes));
+  materialsIdentity.add("runtime.archive.sha256", provenance.archive.sha256);
+  provenance.materialsSha256 = materialsIdentity.finish();
+  return provenance;
+}
+
 } // namespace
+
+std::string_view compilerSourceStateName(CompilerSourceState state) {
+  switch (state) {
+  case CompilerSourceState::Clean:
+    return "clean";
+  case CompilerSourceState::Dirty:
+    return "dirty";
+  case CompilerSourceState::Unavailable:
+    return "unavailable";
+  }
+  return "unavailable";
+}
+
+CompilerBuildIdentity currentCompilerBuildIdentity() {
+  const std::string_view state = GTI_COMPILER_SOURCE_STATE;
+  const std::string_view commit = GTI_COMPILER_SOURCE_COMMIT;
+  if (commit.size() != 40) {
+    return {};
+  }
+  if (state == "clean") {
+    return {.state = CompilerSourceState::Clean, .commit = std::string(commit)};
+  }
+  if (state == "dirty") {
+    return {.state = CompilerSourceState::Dirty, .commit = std::string(commit)};
+  }
+  return {};
+}
+
+std::string_view buildRuntimeHeaderKindName(BuildRuntimeHeaderKind kind) {
+  switch (kind) {
+  case BuildRuntimeHeaderKind::Runtime:
+    return "runtime";
+  case BuildRuntimeHeaderKind::Compatibility:
+    return "compatibility";
+  }
+  return "runtime";
+}
 
 std::optional<std::vector<std::filesystem::path>>
 parseNativeDependencyFile(std::string_view contents,
@@ -1573,7 +1776,8 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     bool keepGeneratedSource, bool createParentDirectories,
     bool captureSuccessfulNativeOutput,
     std::optional<ManagedOutputPolicy> managedOutput,
-    std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache)
+    std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache,
+    std::optional<BuildReportRequest> buildReport)
     : compilationRequest(std::move(compilation)),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
@@ -1585,7 +1789,8 @@ ExecutableBuildRequest::ExecutableBuildRequest(
       createParents(createParentDirectories),
       captureSuccessfulOutput(captureSuccessfulNativeOutput),
       managedOutputPolicy(std::move(managedOutput)),
-      buildCachePolicy(std::move(cache)) {}
+      buildCachePolicy(std::move(cache)),
+      requestedBuildReport(std::move(buildReport)) {}
 
 const CompilationRequest &ExecutableBuildRequest::compilation() const {
   return compilationRequest;
@@ -1636,9 +1841,30 @@ const std::optional<BuildCachePolicy> &ExecutableBuildRequest::cache() const {
   return buildCachePolicy;
 }
 
+const std::optional<BuildReportRequest> &
+ExecutableBuildRequest::buildReport() const {
+  return requestedBuildReport;
+}
+
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  if (request.buildReport()) {
+    const std::filesystem::path report =
+        normalizedAbsolute(request.buildReport()->output);
+    const auto conflictsWith = [&](const std::filesystem::path &path) {
+      return artifactPathsAlias(report, path);
+    };
+    if (conflictsWith(request.output()) ||
+        conflictsWith(request.generatedSource()) ||
+        conflictsWith(request.buildReport()->producerExecutable)) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic =
+          "gti: --build-report must not overwrite the executable, generated "
+          "C++, or compiler executable";
+      return result;
+    }
+  }
   const std::vector<NativeDependencyGroup> &dependencyGroups =
       request.nativeInputs().dependencyGroups;
   std::vector<std::filesystem::path> nativeObjects;
@@ -1732,6 +1958,30 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     result.driverDiagnostic = diagnostic;
     return result;
   }
+  std::optional<BuildProvenance> buildProvenance;
+  if (request.buildReport()) {
+    if (const std::optional<std::string> diagnostic =
+            loadedSourceCollisionDiagnostic(request.buildReport()->output,
+                                            "build report",
+                                            compilationInputs.sources)) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic = diagnostic;
+      return result;
+    }
+    std::string provenanceError;
+    std::optional<BuildSourceProvenance> source = captureBuildSourceProvenance(
+        request.compilation(), compilationInputs, provenanceError);
+    if (!source) {
+      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+      result.driverDiagnostic =
+          "gti: failed to capture build source provenance: " + provenanceError;
+      return result;
+    }
+    buildProvenance = BuildProvenance{
+        .compilerBuild = currentCompilerBuildIdentity(),
+        .source = std::move(*source),
+    };
+  }
 
   const auto prepareOutputDirectories = [&]() {
     if (!request.createParentDirectories()) {
@@ -1763,8 +2013,12 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   std::optional<std::filesystem::path> cacheEntry;
   bool corruptCacheEntry = false;
   if (request.cache()) {
-    if (const std::optional<std::string> bypassDetail =
-            nativeCacheBypassDetail(request.nativeInputs())) {
+    if (request.buildReport()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "build-report capture requires a real native invocation";
+    } else if (const std::optional<std::string> bypassDetail =
+                   nativeCacheBypassDetail(request.nativeInputs())) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
     } else if (!request.nativeInputs().dependencyGroups.empty()) {
@@ -2091,12 +2345,21 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   const std::filesystem::path stagedOutput =
       stagedOutputDirectory / request.output().filename();
   TemporaryArtifact stagedArtifact(stagedOutput, true);
+  const std::filesystem::path nativeDependencyFile =
+      request.buildReport()
+          ? temporaryArtifactPath(request.output(), ".build-report.d")
+          : std::filesystem::path{};
+  TemporaryArtifact nativeDependencyCleanup(nativeDependencyFile,
+                                            request.buildReport().has_value());
   const NativeCompileRequest nativeRequest(
       request.nativeCompiler(), request.generatedSource(), stagedOutput,
       request.compilation().cppStandard(), request.compilation().optimization(),
       effectiveNativeInputs(request.toolchain(),
                             request.compilation().cppStandard(),
-                            request.nativeInputs(), nativeObjects));
+                            request.nativeInputs(), nativeObjects),
+      request.buildReport()
+          ? std::optional<std::filesystem::path>(nativeDependencyFile)
+          : std::nullopt);
   result.nativeCommand = nativeToolchain.command(nativeRequest);
   result.nativeProcess = nativeToolchain.invoke(
       nativeRequest,
@@ -2109,6 +2372,60 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     result.generatedSourceRetained = true;
     result.status = ExecutableBuildStatus::NativeCompilerFailure;
     return result;
+  }
+
+  if (buildProvenance) {
+    std::string provenanceError;
+    const std::optional<std::string> depfile =
+        readTextFile(nativeDependencyFile, provenanceError);
+    if (!depfile) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+      result.driverDiagnostic =
+          "gti: failed to read native build-report dependencies: " +
+          provenanceError;
+      return result;
+    }
+    std::optional<std::vector<std::filesystem::path>> dependencies =
+        parseNativeDependencyFile(*depfile, provenanceError);
+    if (!dependencies) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+      result.driverDiagnostic =
+          "gti: failed to parse native build-report dependencies: " +
+          provenanceError;
+      return result;
+    }
+    std::optional<BuildRuntimeProvenance> runtime =
+        captureBuildRuntimeProvenance(request.toolchain(), *dependencies,
+                                      provenanceError);
+    const std::optional<std::filesystem::path> nativeCompiler =
+        resolveExecutableForIdentity(request.nativeCompiler());
+    std::optional<BuildFileProvenance> producer = captureFileProvenance(
+        request.buildReport()->producerExecutable, provenanceError);
+    std::optional<BuildFileProvenance> nativeCompilerIdentity =
+        nativeCompiler ? captureFileProvenance(*nativeCompiler, provenanceError)
+                       : std::nullopt;
+    if (!runtime || !producer || !nativeCompilerIdentity) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+      if (!nativeCompiler) {
+        provenanceError = "cannot resolve native compiler executable '" +
+                          request.nativeCompiler() + "'";
+      }
+      result.driverDiagnostic =
+          "gti: failed to capture build provenance: " + provenanceError;
+      return result;
+    }
+    buildProvenance->producerExecutable = std::move(*producer);
+    buildProvenance->nativeCompilerExecutable =
+        std::move(*nativeCompilerIdentity);
+    buildProvenance->nativeCommand = result.nativeCommand;
+    buildProvenance->runtime = std::move(*runtime);
+    result.provenance = std::move(buildProvenance);
   }
 
   result.artifactPublishResult =
