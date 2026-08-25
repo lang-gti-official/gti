@@ -20,8 +20,8 @@ compiler telemetry, optimization remarks, and profiling support must work for
 any GTI source graph.
 
 This document owns measurement and observability. MIR transformation authority,
-pass management, analysis invalidation, effect classification, and migration
-from the current HIR replacement bridge are defined in
+pass management, analysis invalidation, effect classification, and retirement
+of the transitional HIR shadow analysis are defined in
 [`docs/plans/optimization.md`](optimization.md).
 
 ## Decision Summary

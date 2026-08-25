@@ -9,7 +9,8 @@
 > return, and one exact generic field owner are implemented. General owned
 > wrappers, extraction, erasure, and external storage remain planned.
 
-Baseline: GTI 0.94.0.
+Original design baseline: GTI 0.94.0. The status above and the operational
+sequence track later implementation.
 
 This document defines the callable identity, invocation, ownership, capture,
 movement, destruction, and escape model that later algorithm, thread-task, and

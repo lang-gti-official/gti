@@ -91,6 +91,9 @@ The current implemented foundation includes:
   once-callables; and
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
   from specified GTI floating-point operations; and
+- `<std/functional>` source-defined `less<T>`, `greater<T>`, `equal_to<T>`, and
+  `not_equal_to<T>` function objects over the corresponding exact comparison
+  concepts; `hash<T>` remains a customization scaffold; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
@@ -104,7 +107,8 @@ The current implemented foundation includes:
   unit also supplies exact fixed-width `wrapping_add/sub/mul` and
   `saturating_add/sub/mul` functions, and failure-free
   `checked_add/sub/mul` functions returning
-  `expected<T, std::arithmetic_errc>`; and
+  `expected<T, std::arithmetic_errc>`, plus source-defined integral `gcd` and
+  `lcm` and numeric `midpoint`; and
 - `<std/utility>` source-defined `std::pair` and `std::make_pair`; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
@@ -179,10 +183,12 @@ elements. They use checked private slot shifts while the source-defined vector
 retains logical size, capacity growth, and API policy. Invalid indices take the
 defined storage failure path rather than performing unchecked memory access.
 
-The current vector iterator is read-only and retains one checked borrow of its
-owner. Mutable iteration, multiple retained cursors, complete invalidation
-semantics, temporary-range traversal, and general owner-dependent views remain
-outside this slice.
+The ordinary vector iterator is read-only and retains one checked borrow of its
+owner. `begin_mut()` supplies the separate ephemeral mutable iterator used by
+range `for`; its exclusive parent loan prevents overlapping owner operations
+and each iteration carries one mutable element child loan. Multiple retained
+cursors, container-specific invalidation precision, and general
+owner-dependent views remain outside this slice.
 
 `std::forward_list<T>` implements its front operations as ordinary GTI over a
 recursive `std::unique_ptr` node chain. Its declaration-only iterator uses the
@@ -235,11 +241,10 @@ recoverable close operation exists.
 
 Public vector/string indexing reports `GTI-R0007` against logical size. A
 private-storage `GTI-R0010` is an internal invariant failure and must not leak
-as the public bounds category. The current wrappers delegate directly to
-capacity-sized private storage, so an index between logical size and capacity
-can still reach `invalid_storage_state`; the container/failure implementation
-must add the public logical check before claiming execution-contract
-conformance.
+as the public bounds category. The source-defined wrappers perform the trusted,
+identity-bound logical-size check before private storage access; reaching
+`GTI-R0010` through a valid public index therefore indicates a broken internal
+storage invariant rather than an alternate public bounds outcome.
 
 Each component specification must state whether failure is recoverable,
 terminating, or impossible under its preconditions. Hidden native exception or
@@ -274,8 +279,11 @@ The following component families remain planned or incomplete:
   breadth, connected networking, traffic buffers, and threading;
 - recoverable allocation factories;
 - allocator-aware containers and safe pools/arenas; and
-- broader native interoperability beyond the current call-only fixed-scalar
-  and counted-text-input surface.
+- broader native interoperability beyond the current bounded records, opaque
+  handles, pointers, C strings, returned fixed arrays, and same-thread
+  callbacks, including general pointer nesting and ownership transfer, array
+  parameters, varargs, alternate calling conventions, native variables, and
+  direct C++ linkage.
 
 Their absence is not permission to substitute similarly named C++ facilities
 without a GTI contract.

@@ -23,7 +23,7 @@ and compiler phase authority in
 contains both implemented foundations and remaining proposals; the canonical
 documents above own shipped behavior.
 The separate
-[`constructor-local type generics and constraints proposal`](constructor-local-type-generics.md)
+[`constructor-local type generics and constraints record`](archive/constructor-local-type-generics.md)
 defines the inferred iterator/sentinel constructor surface needed to construct
 an owning `std::string` from this protocol. It does not add a complete-range
 object constructor or change the range protocol described here.

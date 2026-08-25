@@ -1012,9 +1012,8 @@ order, but these executable-authority gaps remain:
   compound-expression child roles;
 - path-sensitive cleanup of fully initialized subobjects after partial
   construction or a defined failure;
-- production execution of the verified source-graph-derived Module
-  initialization plan inside the hosted boundary, plus a distinct contract for
-  generic static storage;
+- a distinct initialization and destruction contract for generic static
+  storage;
 - complete executable representation of Section 4.10 beyond the bounded
   full-expression-root and prepared-call-argument scalar MIR cleanup
   families; and

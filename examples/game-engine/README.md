@@ -1,6 +1,6 @@
 # Game engine port
 
-This directory pairs the cloned C++ Psych engine with a bounded GTI port:
+This directory contains a bounded GTI port of a Psych-style engine core:
 
 - [`gti/`](gti/README.md) is a runnable headless project that preserves the
   core `Application`/`App` polymorphism, layer contracts, ordered layer stack,

@@ -113,7 +113,7 @@ Therefore:
 > **Any `llvm/*.h` included from `include/gti/` becomes a mandatory transitive
 > dependency of every consumer of the installed GTI compiler library.**
 
-`docs/plans/compiler-library-migration.md` already names this exact failure
+`docs/plans/archive/compiler-library-migration.md` already names this exact failure
 mode as one of its motivations: *"private implementation dependencies become
 transitive consumer dependencies."* LLVM adoption is the concrete case that
 motivation was describing.
@@ -241,7 +241,7 @@ kind (`include/gti/semantic_analyzer.h:197`); the grammar has one `float`
 (`docs/language/grammar.ebnf:581`). Constant folding therefore computes with
 whatever the compiler that built GTI does.
 
-**The documented gap.** `docs/plans/compiler-roadmap-status.md`, Milestone 0,
+**The documented gap.** `docs/plans/archive/compiler-roadmap-status.md`, Milestone 0,
 "Still required": *"floating-point behavior for NaN, signed zero, contraction,
 conversion, and supported rounding environment."*
 `docs/language/execution.md` §4.3 repeats it. It is a stated 1.0 release

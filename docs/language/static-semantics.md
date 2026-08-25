@@ -229,8 +229,11 @@ directly or through a GTI call, a program-wide binding whose initialization
 step has not completed. Declaration visibility does not provide an early value.
 Substituting a frontend-computed `constexpr` value without forming or loading
 its storage is not such an access.
-The current compiler does not yet build that plan or call/access proof; its
-acceptance of such an initializer is an implementation gap.
+The compiler builds this ordered plan, closes initializer effects through exact
+calls and lifecycle operations, and rejects a later-storage access or unknown
+transitive effect with `GTI-S2068` before HIR. The merged verified `Module/0`
+body then executes the accepted plan through hosted startup or the no-entry
+initialization guard.
 
 Execution-profile selection adds one declaration-wide process-storage rule.
 In the concurrent profile, every namespace global and non-generic class static
