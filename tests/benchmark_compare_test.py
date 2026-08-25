@@ -16,6 +16,9 @@ from typing import Any, Iterator
 
 
 EXPECTED_RECORD = "GTI-BENCH-1 digest:0000000014b81952 work-units:200000000"
+THREAD_EXPECTED_RECORD = (
+    "GTI-BENCH-1 digest:000000025efeed0b work-units:700000"
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -209,6 +212,117 @@ def test_strict_descriptors(
         "must be finite and nonnegative",
     )
 
+    invalid_schema = descriptor_document()
+    invalid_schema["schema"] = []
+    descriptor = write_descriptor(workload, invalid_schema)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "requires schema 1 or 2",
+    )
+
+    invalid_kind = descriptor_document()
+    invalid_kind["variants"][0]["kind"] = []
+    descriptor = write_descriptor(workload, invalid_kind)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "kind must be 'gti' or 'cpp'",
+    )
+
+    multi_gti = descriptor_document()
+    multi_gti["schema"] = 2
+    multi_gti["variants"] = [
+        {
+            "name": "gti-sequential",
+            "kind": "gti",
+            "source": "main.gti",
+            "execution_profile": "concurrent",
+        },
+        {
+            "name": "gti-threaded",
+            "kind": "gti",
+            "source": "main.gti",
+            "execution_profile": "single-threaded",
+        },
+    ]
+    descriptor = write_descriptor(workload, multi_gti)
+    loaded = module.load_workload(str(descriptor))
+    require(
+        [variant.execution_profile for variant in loaded.variants]
+        == ["concurrent", "single-threaded"],
+        "schema 2 did not retain explicit GTI execution profiles",
+    )
+
+    legacy_multi_gti = descriptor_document()
+    legacy_multi_gti["variants"][1] = {
+        "name": "gti-second",
+        "kind": "gti",
+        "source": "main.gti",
+    }
+    descriptor = write_descriptor(workload, legacy_multi_gti)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "must declare exactly one GTI variant",
+    )
+
+    missing_profile = json.loads(json.dumps(multi_gti))
+    del missing_profile["variants"][0]["execution_profile"]
+    descriptor = write_descriptor(workload, missing_profile)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "is missing fields: execution_profile",
+    )
+
+    invalid_profile = json.loads(json.dumps(multi_gti))
+    invalid_profile["variants"][0]["execution_profile"] = "parallel"
+    descriptor = write_descriptor(workload, invalid_profile)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "must be 'single-threaded' or 'concurrent'",
+    )
+
+    native_profile = json.loads(json.dumps(multi_gti))
+    native_profile["variants"][1] = {
+        "name": "cpp",
+        "kind": "cpp",
+        "source": "main.cpp",
+        "execution_profile": "concurrent",
+    }
+    descriptor = write_descriptor(workload, native_profile)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "must be null for a C++ variant",
+    )
+
+    mixed_profiles = json.loads(json.dumps(native_profile))
+    mixed_profiles["variants"][1]["execution_profile"] = None
+    descriptor = write_descriptor(workload, mixed_profiles)
+    loaded = module.load_workload(str(descriptor))
+    require(
+        [variant.execution_profile for variant in loaded.variants]
+        == ["concurrent", None],
+        "schema 2 did not retain a GTI profile and null native profile",
+    )
+
+    no_gti = json.loads(json.dumps(mixed_profiles))
+    no_gti["variants"][0] = {
+        "name": "cpp-semantic",
+        "kind": "cpp",
+        "source": "main.cpp",
+        "execution_profile": None,
+    }
+    descriptor = write_descriptor(workload, no_gti)
+    expect_benchmark_error(
+        module,
+        lambda: module.load_workload(str(descriptor)),
+        "must declare at least one GTI variant",
+    )
+
 
 def test_source_containment(module: Any, root: Path) -> None:
     root.mkdir(parents=True)
@@ -335,9 +449,11 @@ def synthetic_workload(module: Any, root: Path) -> Any:
     third_source = descriptor.parent / "third.cpp"
     third_source.write_text("int main() { return 0; }\n", encoding="utf-8")
     variants = (
-        module.Variant("gti", "gti", descriptor.parent / "main.gti"),
-        module.Variant("cpp-semantic", "cpp", descriptor.parent / "main.cpp"),
-        module.Variant("cpp-idiomatic", "cpp", third_source),
+        module.Variant("gti", "gti", descriptor.parent / "main.gti", None),
+        module.Variant(
+            "cpp-semantic", "cpp", descriptor.parent / "main.cpp", None
+        ),
+        module.Variant("cpp-idiomatic", "cpp", third_source, None),
     )
     return module.Workload(
         name="synthetic",
@@ -545,6 +661,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         "120",
         "--workload",
         "vector-checked-loop",
+        "--workload",
+        "managed-thread-parallelism",
         "--output",
         str(output),
         "--json",
@@ -620,8 +738,13 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             f"{name} version output does not match the resolved compiler",
         )
 
-    require(len(report["workloads"]) == 1, "smoke report contains extra workloads")
-    workload = report["workloads"][0]
+    require(len(report["workloads"]) == 2, "smoke report lost a workload")
+    workloads = {entry["name"]: entry for entry in report["workloads"]}
+    require(
+        set(workloads) == {"vector-checked-loop", "managed-thread-parallelism"},
+        "smoke report contains the wrong workloads",
+    )
+    workload = workloads["vector-checked-loop"]
     require(workload["name"] == "vector-checked-loop", "wrong smoke workload")
     require(workload["correctness_record"] == EXPECTED_RECORD, "wrong correctness record")
     require(workload["quality"] == "smoke", "smoke run applied timing thresholds")
@@ -727,11 +850,111 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         "emitted GTI C++ digest is wrong",
     )
 
+    thread_workload = workloads["managed-thread-parallelism"]
+    require(
+        thread_workload["correctness_record"] == THREAD_EXPECTED_RECORD,
+        "wrong managed-thread correctness record",
+    )
+    require(
+        thread_workload["quality"] == "smoke"
+        and thread_workload["inconclusive_reasons"] == [],
+        "managed-thread smoke applied timing-quality thresholds",
+    )
+    require(
+        thread_workload["descriptor"]["schema"] == 2,
+        "managed-thread workload did not retain descriptor schema 2",
+    )
+    thread_descriptors = {
+        entry["name"]: entry
+        for entry in thread_workload["descriptor"]["variants"]
+    }
+    thread_variants = {
+        entry["name"]: entry for entry in thread_workload["variants"]
+    }
+    require(
+        set(thread_variants) == {"gti-sequential", "gti-four-jthreads"},
+        "managed-thread smoke variant set changed",
+    )
+    require(
+        {entry["validation"]["record"] for entry in thread_variants.values()}
+        == {THREAD_EXPECTED_RECORD},
+        "managed-thread variants did not publish one identical record",
+    )
+
+    thread_names = [
+        entry["name"] for entry in thread_workload["descriptor"]["variants"]
+    ]
+    random.Random(seed).shuffle(thread_names)
+    require(
+        thread_workload["sample_order"]
+        == [{"round": 0, "variants": thread_names}],
+        "managed-thread smoke order does not match its recorded seed",
+    )
+
+    for name, variant in thread_variants.items():
+        executable = variant["executable"]
+        descriptor_entry = thread_descriptors[name]
+        source = str(
+            (
+                Path(thread_workload["descriptor_path"]).parent
+                / descriptor_entry["source"]
+            ).resolve()
+        )
+        expected_command = [
+            str(gti),
+            source,
+            "-O3",
+            "--std",
+            "c++23",
+            "--cxx",
+            str(cxx),
+            "--keep-cpp",
+            "--execution-profile",
+            "concurrent",
+            "-o",
+            executable,
+        ]
+        require(
+            variant["kind"] == "gti"
+            and variant["execution_profile"] == "concurrent",
+            f"{name} lost its explicit concurrent GTI profile",
+        )
+        require(
+            variant["command"] == expected_command,
+            f"build command for {name} did not retain its execution profile",
+        )
+        require(
+            variant["validation"]["command"] == [executable],
+            f"validation command for {name} was not preserved exactly",
+        )
+        require(variant["warmup_samples_ns"] == [], f"{name} ran smoke warmups")
+        samples = variant["raw_samples_ns"]
+        require(
+            len(samples) == 1 and isinstance(samples[0], int) and samples[0] > 0,
+            f"{name} did not retain its one raw sample",
+        )
+        emitted = variant["artifacts"]["emitted_cpp"]
+        emitted_path = Path(emitted["path"])
+        require(
+            emitted_path.is_relative_to(run_directory) and emitted_path.is_file(),
+            f"{name} emitted C++ escaped or is missing",
+        )
+        require(
+            emitted["sha256"] == sha256_file(emitted_path),
+            f"{name} emitted C++ digest is wrong",
+        )
+
     markdown = markdown_report.read_text(encoding="utf-8")
     require("# GTI benchmark report" in markdown, "Markdown report has no heading")
     require(EXPECTED_RECORD in markdown, "Markdown report lost correctness evidence")
+    require(
+        THREAD_EXPECTED_RECORD in markdown,
+        "Markdown report lost managed-thread correctness evidence",
+    )
     require("Measurement quality: **smoke**" in markdown, "Markdown smoke quality is wrong")
     for name in variants:
+        require(f"| {name} |" in markdown, f"Markdown report omitted {name}")
+    for name in thread_variants:
         require(f"| {name} |" in markdown, f"Markdown report omitted {name}")
 
 

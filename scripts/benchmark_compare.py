@@ -36,6 +36,8 @@ DESCRIPTOR_KEYS = {
     "variants",
 }
 VARIANT_KEYS = {"name", "kind", "source"}
+VARIANT_SCHEMA_2_KEYS = {*VARIANT_KEYS, "execution_profile"}
+EXECUTION_PROFILES = {"single-threaded", "concurrent"}
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RESULT_PATTERN = re.compile(
     r"GTI-BENCH-1 digest:([0-9a-f]{16}) work-units:([1-9][0-9]{0,19})"
@@ -69,6 +71,7 @@ class Variant:
     name: str
     kind: str
     source: Path
+    execution_profile: str | None
 
 
 @dataclass(frozen=True)
@@ -287,8 +290,15 @@ def load_workload(selection: str) -> Workload:
     if not isinstance(decoded, dict):
         raise BenchmarkError(f"benchmark descriptor '{path}' must contain an object")
     require_exact_keys(decoded, DESCRIPTOR_KEYS, f"benchmark descriptor '{path}'")
-    if decoded["schema"] != 1 or isinstance(decoded["schema"], bool):
-        raise BenchmarkError(f"benchmark descriptor '{path}' requires schema 1")
+    schema = decoded["schema"]
+    if (
+        not isinstance(schema, int)
+        or isinstance(schema, bool)
+        or schema not in {1, 2}
+    ):
+        raise BenchmarkError(
+            f"benchmark descriptor '{path}' requires schema 1 or 2"
+        )
     name = require_name(decoded["name"], "benchmark name")
     if not isinstance(decoded["description"], str) or not decoded["description"].strip():
         raise BenchmarkError(f"benchmark '{name}' requires a nonempty description")
@@ -322,13 +332,15 @@ def load_workload(selection: str) -> Workload:
         context = f"benchmark '{name}' variant {index}"
         if not isinstance(entry, dict):
             raise BenchmarkError(f"{context} must contain an object")
-        require_exact_keys(entry, VARIANT_KEYS, context)
+        require_exact_keys(
+            entry, VARIANT_KEYS if schema == 1 else VARIANT_SCHEMA_2_KEYS, context
+        )
         variant_name = require_name(entry["name"], f"{context} name")
         if variant_name in names:
             raise BenchmarkError(f"benchmark '{name}' repeats variant '{variant_name}'")
         names.add(variant_name)
         kind = entry["kind"]
-        if kind not in {"gti", "cpp"}:
+        if not isinstance(kind, str) or kind not in {"gti", "cpp"}:
             raise BenchmarkError(f"{context} kind must be 'gti' or 'cpp'")
         source = source_path(directory, entry["source"], f"{context} source")
         expected_suffix = ".gti" if kind == "gti" else ".cpp"
@@ -336,9 +348,26 @@ def load_workload(selection: str) -> Workload:
             raise BenchmarkError(
                 f"{context} source must use {expected_suffix}, got {source.name}"
             )
-        variants.append(Variant(variant_name, kind, source))
-    if sum(variant.kind == "gti" for variant in variants) != 1:
+        execution_profile = entry.get("execution_profile")
+        if schema == 2:
+            if kind == "gti" and (
+                not isinstance(execution_profile, str)
+                or execution_profile not in EXECUTION_PROFILES
+            ):
+                raise BenchmarkError(
+                    f"{context} execution_profile must be 'single-threaded' "
+                    "or 'concurrent' for a GTI variant"
+                )
+            if kind == "cpp" and execution_profile is not None:
+                raise BenchmarkError(
+                    f"{context} execution_profile must be null for a C++ variant"
+                )
+        variants.append(Variant(variant_name, kind, source, execution_profile))
+    gti_variants = sum(variant.kind == "gti" for variant in variants)
+    if schema == 1 and gti_variants != 1:
         raise BenchmarkError(f"benchmark '{name}' must declare exactly one GTI variant")
+    if schema == 2 and gti_variants == 0:
+        raise BenchmarkError(f"benchmark '{name}' must declare at least one GTI variant")
     return Workload(
         name=name,
         description=decoded["description"].strip(),
@@ -449,9 +478,10 @@ def build_variant(
             "--cxx",
             str(cxx.resolved),
             "--keep-cpp",
-            "-o",
-            str(executable),
         ]
+        if variant.execution_profile is not None:
+            command.extend(("--execution-profile", variant.execution_profile))
+        command.extend(("-o", str(executable)))
         if native_flags:
             command.extend(("--", *native_flags))
     else:
@@ -496,6 +526,11 @@ def build_variant(
     return {
         "name": variant.name,
         "kind": variant.kind,
+        "execution_profile": (
+            variant.execution_profile
+            if variant.kind == "gti"
+            else None
+        ),
         "source": file_evidence(variant.source),
         "command": command,
         "duration_ns": duration,

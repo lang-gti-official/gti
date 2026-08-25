@@ -67,12 +67,19 @@ are not source artifacts.
 
 ## Workloads and variants
 
-Each directory under `workloads/` contains a schema-1 `benchmark.json` and the
-sources named by its `variants` array. Schema 1 deliberately contains only
-structured data; descriptors cannot run shell commands, interpolate the
-environment, or select output paths.
+Each directory under `workloads/` contains a versioned `benchmark.json` and
+the sources named by its `variants` array. Descriptors contain only structured
+data: they cannot run shell commands, interpolate the environment, or select
+output paths.
 
-The normal variants are:
+Schema 1 owns the GTI-versus-C++ comparison shape and requires exactly one GTI
+variant. Schema 2 also permits multiple GTI variants so one language feature
+can be compared against another GTI execution strategy. Every schema-2 GTI
+variant declares `execution_profile` as `single-threaded` or `concurrent`;
+every C++ variant declares it as `null`. The runner validates the field and
+retains the selected profile in the exact GTI build command.
+
+The normal schema-1 variants are:
 
 - `gti`: the checked GTI program compiled by the normal direct driver;
 - `cpp-semantic`: C++ with the relevant GTI checks represented explicitly;
@@ -140,6 +147,39 @@ The alternating multiplier keeps the arithmetic bounded while still making
 the element-wise multiply and reduction checks observable. No variant relies
 on signed overflow, wrapping, disabled checks, or unchecked invalid storage.
 
+## `managed-thread-parallelism`
+
+This schema-2 workload compares four deterministic, row-interleaved
+Mandelbrot partitions in two GTI binaries. Both are built with the same
+compiler, optimization level, C++ standard, native flags, and explicit
+`concurrent` execution profile.
+`gti-sequential` runs the four partitions in series;
+`gti-four-jthreads` starts all four as owned `std::jthread` tasks and joins
+them.
+
+One work unit is one computed pixel. Every partition validates its own
+checksum, and the parent publishes a partition only after ordinary return or a
+successful join. Both variants must produce:
+
+```text
+GTI-BENCH-1 digest:000000025efeed0b work-units:700000
+```
+
+The sequential variant is the reference. The reciprocal of
+`gti-four-jthreads`'s `median_ratio_to_reference` is the observed speedup.
+The number is machine-specific and should be interpreted with the report's
+CPU identity, raw samples, and variance; the benchmark demonstrates real
+parallel execution, not a universal speedup guarantee. See the workload's
+[`README.md`](workloads/managed-thread-parallelism/README.md) for its
+safe-state and result-validation contract.
+
+## Optimizer-level campaign
+
+[`optimiser/main.gti`](optimiser/main.gti) is the former
+`examples/optimiser` workload. It remains a manual Hyperfine campaign because
+it compares four optimization levels of one GTI source rather than variants
+built under one common optimization policy.
+
 ## Reproduction
 
 The repository runner is the canonical path because its JSON report records
@@ -159,6 +199,23 @@ python3 scripts/benchmark_compare.py \
   --output build/benchmarks \
   --json build/benchmarks/report.json \
   --markdown build/benchmarks/report.md
+```
+
+To measure managed-thread parallelism, select its descriptor instead:
+
+```sh
+python3 scripts/benchmark_compare.py \
+  --gti build/gti \
+  --cxx /usr/bin/clang++ \
+  --optimization 3 \
+  --cpp-standard c++23 \
+  --warmup 5 \
+  --runs 20 \
+  --seed 1 \
+  --workload managed-thread-parallelism \
+  --output build/benchmarks \
+  --json build/benchmarks/threading.json \
+  --markdown build/benchmarks/threading.md
 ```
 
 `--smoke` builds every variant and executes each once in a seeded order. That

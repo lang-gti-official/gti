@@ -265,10 +265,16 @@ it is runner configuration, not a GTI project manifest:
 }
 ```
 
-Version 1 accepts only known structured fields. It must not accept shell
-command strings, environment interpolation, setup hooks, or arbitrary output
-paths. Sources must resolve beneath the workload directory, and outputs must
-resolve beneath the selected runner-owned output root.
+Version 1 accepts only known structured fields and exactly one GTI variant for
+the ordinary GTI/C++ comparison. Implemented version 2 retains the same
+top-level fields, permits multiple GTI variants, and adds one required
+`execution_profile` field to every variant. Its value is `single-threaded` or
+`concurrent` for GTI and `null` for C++. This makes same-language execution
+strategies reproducible without admitting arbitrary per-variant compiler
+flags. Neither version accepts shell command strings, environment
+interpolation, setup hooks, or arbitrary output paths. Sources must resolve
+beneath the workload directory, and outputs must resolve beneath the selected
+runner-owned output root.
 
 Measurement policy such as repetitions and warmups belongs to runner arguments,
 not the workload descriptor. Work amount and minimum useful sample duration
