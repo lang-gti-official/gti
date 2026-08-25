@@ -14,6 +14,7 @@ import tempfile
 
 FieldValue = int | str
 Fields = tuple[tuple[str, FieldValue], ...]
+EvidenceBySource = tuple[tuple[str, Fields], ...]
 READINESS_PREFIX = "GTI_CPP_MIR_CORPUS_READINESS_V1"
 AGREEMENT_PREFIX = "GTI_CPP_MIR_CORPUS_AGREEMENT_V1"
 BASE_READINESS: Fields = (
@@ -53,6 +54,9 @@ class ProtocolCase:
     worker_exit: int = 0
     actual_sources: tuple[str, ...] = ("one.gti",)
     baseline_sources: tuple[str, ...] = ("one.gti",)
+    readiness_by_source: EvidenceBySource = ()
+    agreement_by_source: EvidenceBySource = ()
+    expected_stdout_fragments: tuple[str, ...] = ()
     expected_fragment: str | None = None
 
 
@@ -71,6 +75,11 @@ def with_field(fields: Fields, name: str, value: FieldValue) -> Fields:
                  for field, current in fields)
 
 
+def with_fields(fields: Fields, **updates: FieldValue) -> Fields:
+    return tuple((field, updates.get(field, current))
+                 for field, current in fields)
+
+
 def render_record(prefix: str, fields: Fields) -> str:
     return prefix + " " + " ".join(
         f"{name}={value}" for name, value in fields
@@ -78,17 +87,32 @@ def render_record(prefix: str, fields: Fields) -> str:
 
 
 def write_stub(path: Path, case: ProtocolCase) -> None:
-    records = [
-        *(
-            [render_record(READINESS_PREFIX, case.readiness)]
-            * case.readiness_records
-        ),
-        *(
-            [render_record(AGREEMENT_PREFIX, case.agreement)]
-            * case.agreement_records
-        ),
+    readiness_by_source = dict(case.readiness_by_source)
+    agreement_by_source = dict(case.agreement_by_source)
+    records_by_source = {}
+    for source in case.actual_sources:
+        records_by_source[source] = [
+            *(
+                [render_record(
+                    READINESS_PREFIX,
+                    readiness_by_source.get(source, case.readiness),
+                )] * case.readiness_records
+            ),
+            *(
+                [render_record(
+                    AGREEMENT_PREFIX,
+                    agreement_by_source.get(source, case.agreement),
+                )] * case.agreement_records
+            ),
+        ]
+    lines = [
+        "#!/usr/bin/env python3",
+        "from pathlib import Path",
+        "import sys",
+        f"records_by_source = {records_by_source!r}",
+        "for record in records_by_source[Path(sys.argv[-1]).name]:",
+        "    print(record)",
     ]
-    lines = ["#!/usr/bin/env python3", *[f"print({record!r})" for record in records]]
     if case.worker_exit:
         lines.append(f"raise SystemExit({case.worker_exit})")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -114,8 +138,110 @@ def run_coordinator(coordinator: Path, stub: Path, root: Path,
 
 
 def protocol_cases() -> tuple[ProtocolCase, ...]:
+    sources = ("one.gti", "two.gti")
+    split_readiness: EvidenceBySource = (
+        ("one.gti", with_fields(BASE_READINESS, bodies=2000, ready=900)),
+        ("two.gti", with_fields(BASE_READINESS, bodies=2171, ready=1000)),
+    )
+    split_agreement: EvidenceBySource = (
+        (
+            "one.gti",
+            with_fields(
+                BASE_AGREEMENT,
+                general=10,
+                matched=10,
+                checked_intrinsic=0,
+                loan=0,
+            ),
+        ),
+        (
+            "two.gti",
+            with_fields(
+                BASE_AGREEMENT,
+                general=20,
+                matched=20,
+            ),
+        ),
+    )
     cases = [
         ProtocolCase("valid_success"),
+        ProtocolCase(
+            "valid_two_source_aggregation",
+            actual_sources=sources,
+            baseline_sources=sources,
+            readiness_by_source=split_readiness,
+            agreement_by_source=split_agreement,
+            expected_stdout_fragments=(
+                "sources=2 bodies=4171 ready=1900 general=30 matched=30 jobs=1",
+                "cpp MIR body-emitter corpus tests passed",
+            ),
+        ),
+        ProtocolCase(
+            "two_source_determinism",
+            actual_sources=sources,
+            baseline_sources=sources,
+            readiness_by_source=split_readiness,
+            agreement_by_source=(
+                (
+                    "one.gti",
+                    with_field(split_agreement[0][1], "deterministic", 0),
+                ),
+                split_agreement[1],
+            ),
+            expected_fragment="production rows builder is not deterministic",
+        ),
+        ProtocolCase(
+            "two_source_direct_control_flow",
+            actual_sources=sources,
+            baseline_sources=sources,
+            readiness_by_source=split_readiness,
+            agreement_by_source=(
+                split_agreement[0],
+                (
+                    "two.gti",
+                    with_field(split_agreement[1][1], "direct", 0),
+                ),
+            ),
+            expected_fragment="used mutable block dispatch",
+        ),
+        ProtocolCase(
+            "compensated_readiness_source_counts",
+            actual_sources=sources,
+            baseline_sources=sources,
+            readiness_by_source=(
+                (
+                    "one.gti",
+                    with_field(split_readiness[0][1], "sources", 0),
+                ),
+                (
+                    "two.gti",
+                    with_field(split_readiness[1][1], "sources", 2),
+                ),
+            ),
+            agreement_by_source=split_agreement,
+            expected_fragment=(
+                "one.gti: readiness worker reported sources=0, expected 1"
+            ),
+        ),
+        ProtocolCase(
+            "compensated_agreement_source_counts",
+            actual_sources=sources,
+            baseline_sources=sources,
+            readiness_by_source=split_readiness,
+            agreement_by_source=(
+                (
+                    "one.gti",
+                    with_field(split_agreement[0][1], "sources", 0),
+                ),
+                (
+                    "two.gti",
+                    with_field(split_agreement[1][1], "sources", 2),
+                ),
+            ),
+            expected_fragment=(
+                "one.gti: agreement worker reported sources=0, expected 1"
+            ),
+        ),
         ProtocolCase(
             "readiness_floor",
             readiness=with_field(BASE_READINESS, "ready", 1899),
@@ -255,6 +381,12 @@ def main() -> int:
                     completed.returncode == 0,
                     f"{case.name}: valid evidence failed: {completed.stderr}",
                 )
+                for fragment in case.expected_stdout_fragments:
+                    expect(
+                        fragment in completed.stdout,
+                        f"{case.name}: missing success evidence {fragment!r}; "
+                        f"stdout={completed.stdout!r}",
+                    )
             else:
                 expect(
                     completed.returncode != 0 and
