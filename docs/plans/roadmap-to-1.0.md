@@ -544,7 +544,8 @@ confined until the lifecycle and owned-callable rows below land.
 The source concept layer now maps public standard-library declarations onto the
 first exact frontend capabilities:
 
-- `std::copyable`, `std::movable`, and `std::default_initializable`;
+- `std::copy_constructible`, `std::copyable`, `std::movable`, and
+  `std::default_initializable`;
 - `std::equality_comparable` and `std::totally_ordered` based on exact operator
   contracts, with `std::ordered` retained as a compatibility spelling;
 
@@ -555,14 +556,16 @@ by the backend. Public aliases and implications are composed in the prelude;
 the compiler owns only irreducible facts. User code may define
 multi-parameter conjunction concepts and bounded trailing `requires` clauses
 without introducing a second metaprogramming language. The first relational
-slice supplies public input-iterator, iterator/sentinel, and exact
-accumulation-referent concepts; ordinary `<std/numeric>` uses them for
-`std::accumulate`. Requirements affect validity only and do not rank overloads.
+slice supplies public input-iterator, iterator/sentinel, exact dereference, and
+forward-iterator concepts; ordinary `<std/numeric>` uses them for
+`std::accumulate`, and `<std/algorithm>` uses the forward contract for
+`std::binary_search`. Requirements affect validity only and do not rank
+overloads.
 The remaining capability work is:
 
 - callable and predicate capabilities with exact parameter and return types;
-- complete-range, readable, writable, sized, and multi-pass capabilities after
-  the range protocol is stable;
+- complete-range, readable, writable, sized, and later bidirectional or
+  random-access capabilities after the range protocol is stable;
 - heterogeneous accumulation through a separately specified exact operation
   relationship, rather than implicit conversion;
 - hashability through an exact hasher call rather than hidden ADL.

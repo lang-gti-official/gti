@@ -1,0 +1,26 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> sorted =
+      std::vector<int32_t>({2, 4, 6, 8, 10, 12});
+
+  // A read cursor may be copied. Each copy has an independent position, but
+  // both retain the same read-only dependency on sorted.
+  mut auto first = sorted.begin();
+  mut auto probe = first;
+  ++probe;
+
+  // Sequence the checked integer conversion before moving the cursor into
+  // next, so every failure path has an explicit owner for the cursor value.
+  std::size_t one_step = std::size_t(1);
+  mut auto middle = std::next(std::move(probe), one_step);
+
+  int32_t present = 8;
+  int32_t missing = 9;
+  bool found = std::binary_search(sorted.begin(), sorted.end(), present);
+  bool absent = !std::binary_search(sorted.begin(), sorted.end(), missing);
+
+  return (*first == 2 && *middle == 6 && found && absent) ? 0 : 1;
+}

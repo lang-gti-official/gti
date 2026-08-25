@@ -51,8 +51,14 @@ struct CppMirTypeRepresentation {
   // assignment (the 0.215 boundary rule, carried here because the MIR
   // program records no special-member status).
   bool boundaryConstructible = false;
-  // The 0.286 copy proof: a usable copy constructor and copy assignment
-  // let a Load copy the place into the declared local.
+  // A usable copy constructor lets a Load publish directly into an
+  // uninitialized lifetime slot.  Keep this separate from assignment:
+  // borrow-carrying forward iterators deliberately support independent
+  // cursor construction while forbidding reseating assignment.
+  bool copyConstructible = false;
+  // The 0.286 copy-assignment proof: both copy construction and copy
+  // assignment are usable, so an already initialized destination may be
+  // replaced from a copied place.
   bool copyable = false;
 
   friend bool operator==(const CppMirTypeRepresentation &,

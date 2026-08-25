@@ -112,15 +112,17 @@ parsed GTI source units and do not re-export their own dependencies.
 
 Comparison algorithms and function objects use source-defined
 `std::equality_comparable` and `std::totally_ordered` concepts from the prelude.
-The same prelude exposes compiler-backed `std::transferable` and
-`std::shareable` concepts over structural type facts and nominal capability
-policy.
+The same prelude exposes compiler-backed `std::transferable`,
+`std::shareable`, and `std::copy_constructible` concepts over structural type
+facts and nominal capability policy. Copy construction is distinct from the
+broader `std::copyable` contract, which also requires copy assignment.
 Nominal types meet their underlying compiler capabilities only through exact
 public read-only member operators; the public library names do not trigger
 compiler recognition. Library authors may define conjunction concepts with one
 or more type parameters. Generic functions and ordinary non-polymorphic methods
-may use bounded trailing `requires` clauses for type capabilities. Constructors,
-operators, and polymorphic methods still cannot carry such clauses, so a
+may use bounded trailing `requires` clauses for type capabilities. Ordinary
+constructors may also carry bounded requirements. Operators and polymorphic
+methods still cannot carry such clauses, so a
 container skeleton must not pretend that every C++ conditional member can be
 expressed yet.
 
@@ -149,7 +151,9 @@ through `clone()`. `std::to_string(integer)` constructs the canonical base-10
 owning representation for every fixed-width integer, including signed minima.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
-borrow of the backing storage. This avoids hidden allocation on an ordinary
+borrow of the backing storage. A read cursor can be copy-constructed into an
+independently positioned cursor; both copies retain the same owner loan and
+remain non-assignable. This avoids hidden allocation on an ordinary string
 copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
 retain an owner-tied lifetime. `<std/format>` implements sequential `{}`
@@ -192,7 +196,13 @@ receiver-tied reference. GTI does not implement C++ forwarding references:
 the method receives an immutable by-value pack, so copyable arguments may be
 copied at that boundary and a pack containing a move-only argument is consumed
 by its first expansion. The read-only iterator retains one checked storage
-borrow. `begin_mut()` returns a separate compiler-confined iterator carrying
+borrow. It may be copy-constructed for independent multi-pass traversal while
+sharing that owner dependency, but it cannot be copy-assigned or reseated.
+Consequently it satisfies `std::copy_constructible` but not `std::copyable`.
+A helper receiving this carrier by value may relay only the iterator value or
+its exact stored storage referent; cursor fields and other shell projections do
+not inherit the external owner dependency.
+`begin_mut()` returns a separate compiler-confined, non-copyable iterator carrying
 the exclusive range loan; mutable dereference returns the current element's
 loop-bounded child loan through checked storage access. Reserve, push, clear,
 movement, and other overlapping owner operations are rejected while that range
@@ -277,11 +287,11 @@ may invoke them repeatedly, and reject consuming once-callables.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and `count_if`; remaining search, copy, transform, reverse, and sort declarations |
+| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, `count_if`, and forward-iterator `binary_search`; remaining find/count, copy, transform, reverse, and sort declarations |
 | `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
 | `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
 | `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
-| `<std/iterator>` | Structural input-iterator/sentinel concepts and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
+| `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |

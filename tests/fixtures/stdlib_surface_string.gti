@@ -35,7 +35,8 @@ int main() {
   }
   text[std::size_t(2)] = 'C';
   mut std::string cloned = text.clone();
-  if (cloned != "ABCdE" || cloned == "abcde") {
+  mut std::string ranged = std::string(text.begin(), text.end());
+  if (cloned != "ABCdE" || cloned == "abcde" || ranged != "ABCdE") {
     return 2;
   }
   cloned.pop_back();

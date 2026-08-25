@@ -121,4 +121,51 @@ OutputIterator transform<InputIterator, OutputIterator, UnaryOperation>(
 void reverse<Iterator>(Iterator first, Iterator last);
 void sort<Iterator>(Iterator first, Iterator last);
 void sort<Iterator, Compare>(Iterator first, Iterator last, Compare compare);
+
+namespace detail {
+bool binary_search_counted<Iterator, T>(mut Iterator first,
+                                        ptrdiff_t count,
+                                        T& value)
+  requires std::forward_iterator<Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::totally_ordered<T> {
+  if (count <= 0) {
+    return false;
+  }
+
+  ptrdiff_t half = count / 2;
+  mut Iterator middle = first;
+  mut size_t offset = size_t(half);
+  while (offset > 0) {
+    ++middle;
+    offset--;
+  }
+
+  if (*middle < value) {
+    ++middle;
+    ptrdiff_t remaining = count - half - 1;
+    return binary_search_counted(std::move(middle), remaining, value);
+  }
+  if (value < *middle) {
+    return binary_search_counted(std::move(first), half, value);
+  }
+  return true;
+}
+}
+
+bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
+                                          Sentinel last,
+                                          T& value)
+  requires std::forward_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::totally_ordered<T> {
+  mut Iterator scan = first;
+  mut ptrdiff_t count = 0;
+  while (scan != last) {
+    ++scan;
+    count++;
+  }
+  return detail::binary_search_counted(std::move(first), count, value);
+}
 }

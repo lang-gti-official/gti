@@ -64,7 +64,8 @@
     "63-random-engine.gti": 137,
     "64-restricted-arithmetic-operators.gti": 39,
     "65-mutable-ranges.gti": 49,
-    "66-managed-threads.gti": 62
+    "66-managed-threads.gti": 62,
+    "67-forward-iterators.gti": 60
   },
-  "total": 3495
+  "total": 3555
 }

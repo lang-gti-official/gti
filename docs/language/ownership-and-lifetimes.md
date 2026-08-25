@@ -325,9 +325,14 @@ type is a direct one-owner borrowed-state carrier can only transfer its
 existing dependency; it does not create a new runtime borrow. Concrete generic
 instances are checked by the same rule, but the declaration must name the
 carrier shape: an unconstrained `T` parameter does not gain this capability
-from an eventual view substitution. The selected parameter index is part
-of resolved call metadata, so callers attach the result to the argument's owner
-instead of treating the returned value as independent:
+from an eventual view substitution. A carrier value return must transfer that
+same carrier dependency. A reference return may name only the carrier's one
+designated stored referent, with the exact referent type. An ordinary field of
+the by-value carrier, a projection rooted in the carrier shell, a projection
+beyond the stored referent, or a referent of another type is not evidence of
+the external owner and is rejected with `GTI-S2085`. The selected parameter
+index is part of resolved call metadata, so callers attach the result to the
+argument's owner instead of treating the returned value as independent:
 
 ```gti
 T& identity<T>(T& value) {
@@ -499,9 +504,12 @@ One deliberately confined stored-reference form is available for owner-tied
 library values such as iterators. A class or struct may contain one direct
 read-only `T&` field. Every constructor must bind that field directly from one
 exact read-only reference parameter. The resulting class is move-constructible
-but noncopyable and nonassignable. An instance method may return it when the
+and copy-constructible, but neither copy nor move assignment is available. A
+copy constructs a new carrier shell, copies its ordinary fields independently,
+and adds an alias to the same shared read-only owner dependency; it never
+reseats that dependency. An instance method may return the carrier when the
 dependency is derived from `this`; a free function or static method may return
-it when the dependency is derived from one eligible read-only parameter:
+it under the exact carrier rule above:
 
 ```gti
 class Iterator<T> {
@@ -536,7 +544,9 @@ stored dependency.
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan
 remains live. Moving the carrier transfers the same loan identity; creating a
-read-only alias adds a carrier to that identity. HIR carries proven
+read-only alias, including copy construction of the carrier, adds a carrier to
+that identity. Dropping one copy ends only that shell's lifetime; owner
+protection remains until the final reachable use of every alias. HIR carries proven
 straight-line, nested-merge, and conditional branch-entry endpoints, along
 with bounded switch-exit and same-path immediate-break endpoints. MIR records
 every carrier on one loan and emits an explicit borrow ending only after the
@@ -551,9 +561,10 @@ checked-storage dependency from `begin_mut()` until range cleanup. These
 exceptions apply only to the carrier field and its exact binding constructor
 parameter. They allow an ordinary source-defined iterator to traverse checked
 storage without exposing an address or making the compiler recognize a
-container name. Application fields, user-retainable mutable carriers, multiple
-origins, and references to the private unique-owner capability remain
-rejected.
+container name. The writable carrier is noncopyable: duplicating its shell
+would duplicate an exclusive capability. Application fields, user-retainable
+mutable carriers, multiple origins, and references to the private unique-owner
+capability remain rejected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only

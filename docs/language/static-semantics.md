@@ -63,6 +63,13 @@ narrower rules.
 
 A local borrowed-state carrier may retain an ordinary read-only owner
 dependency, but it may not retain a mutable parent loan or a child reborrow.
+Copy construction of a direct read-only stored-reference carrier creates an
+independent shell alias of the same owner loan; assignment is unavailable and
+does not reseat that dependency. A mutable carrier is noncopyable. When such a
+read-only carrier enters a function by value, a carrier result may transfer
+only that dependency and a reference result may name only its exact designated
+stored referent of the same type. Shell fields, projections, and unrelated or
+type-incompatible references are ill-formed (`GTI-S2085`).
 The mutable range iterator exception is compiler-generated, confined to its
 range plan, and cannot be named as an ordinary escaping local. Other child
 reborrows remain limited to non-retained full-expression temporaries.

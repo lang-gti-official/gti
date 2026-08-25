@@ -8,6 +8,10 @@ concept sentinel_for<Sentinel, Iterator> =
     gti_internal::sentinel_for_capability<Sentinel, Iterator>;
 concept dereferences_to<Iterator, T> =
     gti_internal::dereferences_to_capability<Iterator, T>;
+concept forward_iterator<Iterator> =
+    std::input_iterator<Iterator> &&
+    std::copy_constructible<Iterator> &&
+    std::sentinel_for<Iterator, Iterator>;
 
 struct input_iterator_tag {};
 struct output_iterator_tag {};
@@ -50,9 +54,12 @@ Iterator next<Iterator>(mut Iterator iterator)
 Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
   requires std::input_iterator<Iterator>;
 
-Iterator next<Iterator>(mut Iterator iterator, size_t distance)
+Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
-  std::advance(iterator, distance);
+  while (distance > 0) {
+    ++iterator;
+    distance--;
+  }
   return std::move(iterator);
 }
 

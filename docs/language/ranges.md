@@ -238,11 +238,22 @@ predicates, exact context-supplied non-reference value results without tracked
 borrowed state or lambda identity, and proven forwarding through other
 confined callable parameters are available for algorithm callbacks. Result
 inference through `auto`, borrowed results, and owned escape remain
-unavailable. The bounded input-iterator, sentinel, and exact
-`dereferences_to` capability are implemented. `std::string(first, last)` uses
-them in an ordinary constructor-local generic declaration and copies the
-selected character range without retaining either iterator. Complete-range,
-readable/writable element, sized, and multi-pass capabilities are still
-missing. A public `std::for_each` over arbitrary structural ranges should wait
-for those capabilities instead of teaching the compiler a public container or
-algorithm name.
+unavailable. The bounded input-iterator, sentinel, exact `dereferences_to`,
+lifecycle `copy_constructible`, and source-composed `forward_iterator`
+capabilities are implemented. `std::string(first, last)` uses the input family
+in an ordinary constructor-local generic declaration and copies the selected
+character range without retaining either iterator. Read-only string and vector
+cursors may be copy-constructed: each copy has an independent position while
+retaining the same shared owner loan. They remain non-assignable, and the
+compiler-confined mutable vector iterator remains non-copyable.
+
+`std::binary_search(first, last, value)` is the first forward-iterator client.
+It makes one counting pass, then copies and advances cursors to select
+midpoints. A possibly distinct `last` remains an immutable sentinel; no
+iterator subtraction or numeric iterator operation is required. The algorithm
+performs logarithmic comparisons and linear iterator increments, and requires
+the input to already be sorted according to `operator<`. Complete-range,
+readable/writable element, sized-range, random-access, and public invalidation
+capabilities are still missing. A public range-first `std::for_each` over
+arbitrary structural ranges should wait for those capabilities instead of
+teaching the compiler a public container or algorithm name.

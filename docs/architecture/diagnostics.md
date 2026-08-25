@@ -270,6 +270,17 @@ diagnostics or letting a backend message choose either identity.
   or target is not mechanical. Ordinary missing-move diagnostics remain
   `GTI-S2046`. The LSP publishes the shared diagnostic unchanged and must not
   recognize `std::jthread` by spelling.
+- `GTI-S2085` owns an incoherent return from a by-value direct
+  stored-reference carrier. Point at the actionable terminal token of the
+  returned expression and distinguish a carrier-shell field/projection, a
+  projection beyond the exact stored referent, an unrelated source, and a
+  returned dependency whose referent type differs from the carrier's proven
+  external referent. Relate the exact carrier parameter and suggest returning
+  either the carrier itself or its one exact stored referent. Do not offer a
+  fix-it: choosing the intended owner, value, or API shape requires user
+  intent. Ordinary reference value-type/addressability errors remain
+  `GTI-S2017`. The LSP publishes `GTI-S2085` unchanged, including its source
+  range, phase data, and related parameter.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

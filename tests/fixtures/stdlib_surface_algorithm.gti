@@ -1,4 +1,5 @@
 #include <std/algorithm>
+#include <std/vector>
 
 class audit_iterator {
   mut std::size_t index;
@@ -54,6 +55,35 @@ int main() {
       audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)), even());
   if (*found != 2 || *not_found != 1) {
     return 2;
+  }
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({1, 3, 5, 7, 9});
+  mut auto first = values.begin();
+  mut auto copied = first;
+  ++copied;
+  if (*first != 1 || *copied != 3) {
+    return 3;
+  }
+
+  int32_t first_value = 1;
+  int32_t middle_value = 5;
+  int32_t last_value = 9;
+  int32_t below = 0;
+  int32_t gap = 6;
+  int32_t above = 10;
+  if (!std::binary_search(values.begin(), values.end(), first_value) ||
+      !std::binary_search(values.begin(), values.end(), middle_value) ||
+      !std::binary_search(values.begin(), values.end(), last_value) ||
+      std::binary_search(values.begin(), values.end(), below) ||
+      std::binary_search(values.begin(), values.end(), gap) ||
+      std::binary_search(values.begin(), values.end(), above)) {
+    return 4;
+  }
+
+  mut std::vector<int32_t> empty{};
+  if (std::binary_search(empty.begin(), empty.end(), first_value)) {
+    return 5;
   }
   return 0;
 }

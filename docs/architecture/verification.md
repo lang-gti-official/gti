@@ -37,6 +37,7 @@ assertions.
 | `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; and failure-free virtual dispatch through those references runs at O0/O3 under C++20/C++23 |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
+| `compiler_pipeline` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; move/drop alias liveness; assignment and mutable-carrier copy rejection; exact carrier/stored-referent relay; `GTI-S2085` shell/projection/type rejection and publication; and direct MIR mutations of return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
@@ -368,6 +369,17 @@ stored-reference carrier construction, and a carrier returned from a method
 called on an owning field. A same-named local remains a negative case, and MIR
 verification requires every receiver-dependent return loan to originate from a
 concrete `This` place.
+
+By-value stored-carrier return provenance is split between semantic and MIR
+authority. `compiler_pipeline` accepts only an exact carrier transfer or its
+designated stored referent of the same type, and isolates carrier-shell,
+nested-shell-projection, incompatible-type, copy-assignment, mutable-copy, and
+owner-liveness cases by diagnostic code, source range, and reason. It mutates
+otherwise valid MIR to prove the verifier independently rejects a forged
+return source, wrong entry dependency, wrong payload type, and shell runtime
+place. `lsp_protocol` preserves the existing `std::copyable` tooling fixture,
+checks `std::copy_constructible` independently, and publishes `GTI-S2085`
+unchanged. Backend text is not a provenance oracle.
 
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.

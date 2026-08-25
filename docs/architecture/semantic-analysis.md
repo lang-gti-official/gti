@@ -539,6 +539,12 @@ access used by the explicit spelling; MIR therefore retains a `This` root for
 direct reference returns, stored-reference construction, and calls made on the
 field.
 
+For a by-value direct stored-reference parameter, the semantic entry loan also
+retains the exact resolved `SymbolId` of the class's designated reference
+field. HIR and MIR carry that fact directionally so MIR verification can bind a
+returned runtime place or carrier value to the same formal dependency; later
+phases do not infer the field from its type or emitted representation.
+
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
