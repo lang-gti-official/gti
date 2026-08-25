@@ -1,5 +1,0 @@
-// A character literal must be closed on the same line.
-int main() {
-  char broken = 'a;
-  return 0;
-}

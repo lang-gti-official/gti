@@ -1,6 +1,0 @@
-// Bindings are immutable by default; assignment requires `mut`.
-int main() {
-  int32_t value = 1;
-  value = 2;
-  return value;
-}
