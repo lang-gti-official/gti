@@ -1,0 +1,49 @@
+// Generic instantiation identity and concept clauses. #110, #116 and #119
+// all came from this family, and #119 in particular from the `>` that closes
+// a generic parameter clause meeting the next token. `cell` deliberately has
+// no destructor: giving it one makes this seed itself ICE (#120), and a seed
+// that does not compile is poor raw material for a mutator.
+concept small<T> = std::movable<T>;
+
+class cell<std::default_initializable T> {
+public:
+  cell() {}
+  mut T v = T();
+};
+
+class box<std::default_initializable T> {
+public:
+  box() {}
+  mut T v = T();
+};
+
+class unused_generic<T> {
+public:
+  unused_generic() {}
+  ~unused_generic() {}
+};
+
+T identity<T>(T value) {
+  return value;
+}
+
+uint64_t extent<uint64_t N>(int32_t values[N]) {
+  return N;
+}
+
+void consume<T>(T& value) {}
+
+void each<T...>(T... values) {
+  (consume(values), ...);
+}
+
+int main() {
+  mut box<cell<int32_t>> nested = box<cell<int32_t>>();
+  mut cell<int32_t> plain = cell<int32_t>();
+  mut int32_t data[2] = {};
+
+  each<int32_t, int32_t>(1, 2);
+  mut int32_t total = int32_t(identity<int32_t>(0)) + nested.v.v + plain.v;
+  total = total + int32_t(extent(data));
+  return int(total) - int(total);
+}

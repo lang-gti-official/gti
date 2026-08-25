@@ -1,0 +1,38 @@
+// Lambda shapes. #103, #107, #108, #117 and #118 all came from here: captured
+// field reads, immediate invocation, nesting, move captures, and a lambda used
+// as a comma operand. The nested lambda captures a local declared inside the
+// outer one rather than the outer one's own capture, because capture-of-
+// capture is still open (#117) and a seed must compile to be useful.
+#include <std/string>
+
+class holder {
+public:
+  holder() {}
+  mut int32_t value = 3;
+};
+
+int32_t apply(int32_t seed) {
+  mut holder captured = holder();
+  auto bound = [captured]() -> int32_t {
+    return captured.value;
+  };
+
+  auto nested = []() -> int32_t {
+    mut int32_t inner_local = 1;
+    return [inner_local]() -> int32_t { return inner_local; }();
+  };
+
+  mut std::string owned_text = std::string("abc");
+  auto owning = [held = std::move(owned_text)]() -> uint64_t {
+    return held.size();
+  };
+
+  mut int32_t total = int32_t(bound()) + int32_t(nested());
+  total = total + int32_t(owning());
+  return total;
+}
+
+int main() {
+  mut int32_t direct = int32_t([](int32_t v) -> int32_t { return v * 2; }(2));
+  return int(apply(0)) - int(apply(0)) + int(direct) - int(direct);
+}
