@@ -83,8 +83,12 @@ rejects represented synchronization in the single-threaded profile. Thus an
 unused `<std/thread>` import remains valid without granting a backend or
 transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v47`/`mir-body-v43`.
-Program v47 and body v43 expose the lowering-owned dormant trusted-wrapper
+The deterministic serialization is currently `mir-v48`/`mir-body-v44`.
+Program v48 and body v44 serialize the exact designated stored-reference field
+on a by-value carrier's `Stored` entry loan. Verification binds that field to
+the unprojected formal-parameter source and uses it to prove the exact runtime
+referent or returned carrier transfer without backend reconstruction. Program
+v47 and body v43 exposed the lowering-owned dormant trusted-wrapper
 marker on every body header. Program v46 added the ordered managed-thread
 task-adapter inventory. Each row
 binds one exact task type and once-invocation contract to its HIR spawn value,
@@ -247,16 +251,20 @@ place directly and do not reconstruct source expressions from loan parents,
 full-expression roots, or carrier order.
 
 Version 37 makes a by-value stored-reference carrier return similarly
-self-contained. Lowering gives the carrier parameter one body-local entry
-`Stored` loan whose binding-rooted source is the opaque identity of the
-external dependency proven by semantics. Returning the carrier or its exact
-stored referent publishes a fresh escaping `Return` loan through one `Borrow`
-operand that names that entry loan; a reference return also carries the exact
-runtime referent place and referent type. The entry loan ends at that transfer.
-The verifier independently rejects a missing or duplicate entry loan, a shell
-or unrelated dependency source, a reused or multiply produced return loan, a
-wrong payload/referent type, or a reference result whose terminator does not
-carry the same loan and runtime place.
+self-contained; version 48 completes its independent proof. Lowering gives the
+carrier parameter one body-local entry `Stored` loan whose unprojected formal-
+binding source is the opaque identity of the external dependency proven by
+semantics, and the loan retains the exact designated reference-field symbol.
+Returning the carrier or its exact stored referent publishes a fresh escaping
+`Return` loan through one `Borrow` operand that names that entry loan. A carrier
+return also names the exact SSA value loaded or moved from one of that loan's
+carrier bindings. A reference return carries a binding-rooted runtime place
+whose only projections are the designated field and its dereference. The entry
+loan ends at that transfer. The verifier independently rejects a projected or
+wrong-field entry, a shell or unrelated same-typed carrier, an ordinary call-
+result place, a reused or multiply produced return loan, a wrong payload or
+referent type, or a terminator that does not carry the same loan and exact
+runtime value/place.
 
 The C++ representation snapshot keeps `copyConstructible` distinct from
 `copyable`. The former permits initialization of a fresh lifetime slot from a

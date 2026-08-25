@@ -1210,7 +1210,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v43\n") &&
+  expect(dump.starts_with("mir-body-v44\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5934,7 +5934,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v43\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v44\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7949,7 +7949,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v47 ") &&
+  expect(mirDump.starts_with("mir-v48 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -10207,8 +10207,17 @@ public:
   ReadCarrier(int& source) : referent(source) {}
 };
 
-int& relay_external(ReadCarrier carrier) { return carrier.referent; }
-ReadCarrier relay_carrier(ReadCarrier carrier) { return carrier; }
+int& relay_reference(int& source) { return source; }
+int& relay_external(ReadCarrier carrier) {
+  int& ordinary = relay_reference(carrier.referent);
+  return carrier.referent;
+}
+ReadCarrier relay_carrier(ReadCarrier carrier) {
+  mut int unrelated_owner = 11;
+  ReadCarrier unrelated = ReadCarrier(unrelated_owner);
+  ReadCarrier unused = unrelated;
+  return carrier;
+}
 
 int main() {
   mut int owner = 7;
@@ -10235,12 +10244,15 @@ int main() {
          "exact external referent");
 
   const lang::HirFunctionInstance *relayHir = nullptr;
+  const lang::HirFunctionInstance *relayCarrierHir = nullptr;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
     if (instance.source != nullptr &&
         instance.source->name().lexeme == "relay_external") {
       relayHir = &instance;
-      break;
+    } else if (instance.source != nullptr &&
+               instance.source->name().lexeme == "relay_carrier") {
+      relayCarrierHir = &instance;
     }
   }
   const lang::MirFunctionInstance *relayMir =
@@ -10271,6 +10283,9 @@ int main() {
   expect(
       relayMir != nullptr && entryLoan != nullptr && returnLoan != nullptr &&
           returnTransfer != nullptr && returnTransfer->operands.size() == 1 &&
+          entryLoan->designatedField != 0 &&
+          relayMir->body.findPlace(entryLoan->source) != nullptr &&
+          relayMir->body.findPlace(entryLoan->source)->projections.empty() &&
           returnTransfer->operands.front().kind == lang::MirOperandKind::Loan &&
           returnTransfer->operands.front().loan == entryLoan->id &&
           returnTransfer->operands.front().place != 0,
@@ -10360,14 +10375,33 @@ int main() {
          "MIR verification should independently reject a return transfer "
          "whose dependency payload type is forged");
 
+  lang::SymbolId shellField = 0;
+  if (entryLoan != nullptr && relayMir != nullptr) {
+    const lang::MirPlace *entry = relayMir->body.findPlace(entryLoan->source);
+    if (entry != nullptr) {
+      const auto carrier = std::find_if(
+          valid.mir.classInstances().begin(), valid.mir.classInstances().end(),
+          [&](const lang::MirClassInstance &instance) {
+            return instance.type == entry->type;
+          });
+      if (carrier != valid.mir.classInstances().end()) {
+        const auto shell = std::find_if(
+            carrier->declaredFields.begin(), carrier->declaredFields.end(),
+            [&](const lang::MirClassFieldInfo &field) {
+              return field.symbol != entryLoan->designatedField &&
+                     field.type == lang::SemanticType::Int32;
+            });
+        if (shell != carrier->declaredFields.end()) {
+          shellField = shell->symbol;
+        }
+      }
+    }
+  }
   const auto forgedRuntimePlace =
-      mutateRelay([](lang::MirFunctionInstance &fn) {
+      mutateRelay([shellField](lang::MirFunctionInstance &fn) {
         lang::MirLoanId returned = 0;
-        lang::MirPlaceId entrySource = 0;
         for (const lang::MirLoan &loan : fn.body.loans) {
-          if (loan.kind == lang::MirLoanKind::Stored && loan.entry) {
-            entrySource = loan.source;
-          } else if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+          if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
             returned = loan.id;
           }
         }
@@ -10375,7 +10409,14 @@ int main() {
           for (lang::MirInstruction &instruction : block.instructions) {
             if (instruction.kind == lang::MirInstructionKind::Borrow &&
                 instruction.loan == returned && !instruction.operands.empty()) {
-              instruction.operands.front().place = entrySource;
+              lang::MirPlace *runtime = const_cast<lang::MirPlace *>(
+                  fn.body.findPlace(instruction.operands.front().place));
+              if (runtime != nullptr && shellField != 0 &&
+                  runtime->projections.size() == 2 &&
+                  runtime->projections.front().kind ==
+                      lang::MirProjectionKind::Field) {
+                runtime->projections.front().field = shellField;
+              }
               return;
             }
           }
@@ -10383,9 +10424,122 @@ int main() {
       });
   expect(forgedRuntimePlace.first && !forgedRuntimePlace.second.valid() &&
              hasMirVerificationError(forgedRuntimePlace.second,
-                                     "runtime referent place"),
+                                     "designated stored referent place"),
          "MIR verification should independently reject a return transfer "
-         "whose runtime place is the carrier shell");
+         "whose same-typed runtime place is the carrier shell field");
+
+  const auto forgedCallResultPlace =
+      mutateRelay([](lang::MirFunctionInstance &fn) {
+        lang::MirLoanId returned = 0;
+        lang::MirInstruction *transfer = nullptr;
+        for (const lang::MirLoan &loan : fn.body.loans) {
+          if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+            returned = loan.id;
+          }
+        }
+        for (lang::MirBlock &block : fn.body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == returned && !instruction.operands.empty()) {
+              transfer = &instruction;
+            }
+          }
+        }
+        if (transfer == nullptr) {
+          return;
+        }
+        for (const lang::MirPlace &place : fn.body.places) {
+          const lang::MirLoan *loan = fn.body.findLoan(place.loan);
+          if (place.root == lang::MirPlaceRootKind::Loan &&
+              place.type == transfer->operands.front().type &&
+              loan != nullptr && loan->kind == lang::MirLoanKind::CallResult) {
+            transfer->operands.front().place = place.id;
+            return;
+          }
+        }
+      });
+  expect(forgedCallResultPlace.first && !forgedCallResultPlace.second.valid() &&
+             hasMirVerificationError(forgedCallResultPlace.second,
+                                     "designated stored referent place"),
+         "MIR verification should independently reject an ordinary "
+         "reference-return call result forged into the runtime place");
+
+  lang::MirProgram forgedCarrier = valid.mir;
+  auto &carrierFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedCarrier.functionInstances());
+  bool forgedUnrelatedCarrier = false;
+  if (relayCarrierHir != nullptr) {
+    const auto candidate =
+        std::find_if(carrierFunctions.begin(), carrierFunctions.end(),
+                     [&](const lang::MirFunctionInstance &instance) {
+                       return instance.id == relayCarrierHir->id;
+                     });
+    if (candidate != carrierFunctions.end()) {
+      const auto entry = std::find_if(
+          candidate->body.loans.begin(), candidate->body.loans.end(),
+          [](const lang::MirLoan &loan) {
+            return loan.kind == lang::MirLoanKind::Stored && loan.entry &&
+                   loan.designatedField != 0;
+          });
+      lang::MirValueId alternateValue = 0;
+      for (const lang::MirValue &value : candidate->body.values) {
+        const lang::MirBlock *definition =
+            candidate->body.findBlock(value.definitionBlock);
+        if (definition == nullptr || value.info.type != candidate->returnType) {
+          continue;
+        }
+        const auto producer = std::find_if(
+            definition->instructions.begin(), definition->instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.id == value.definition;
+            });
+        if (producer == definition->instructions.end() ||
+            producer->operands.size() != 1) {
+          continue;
+        }
+        const lang::MirPlace *source =
+            candidate->body.findPlace(producer->operands.front().place);
+        if (source != nullptr &&
+            source->root == lang::MirPlaceRootKind::Binding &&
+            source->projections.empty() &&
+            entry != candidate->body.loans.end() &&
+            std::find(entry->carriers.begin(), entry->carriers.end(),
+                      source->binding) == entry->carriers.end()) {
+          alternateValue = value.id;
+          break;
+        }
+      }
+      lang::MirLoanId returned = 0;
+      for (const lang::MirLoan &loan : candidate->body.loans) {
+        if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+          returned = loan.id;
+        }
+      }
+      for (lang::MirBlock &block : candidate->body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Borrow &&
+              instruction.loan == returned && !instruction.operands.empty() &&
+              alternateValue != 0) {
+            instruction.operands.front().value = alternateValue;
+            if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+                block.terminator.returnLoan == returned &&
+                block.terminator.value &&
+                block.terminator.value->kind == lang::MirOperandKind::Value) {
+              block.terminator.value->value = alternateValue;
+              forgedUnrelatedCarrier = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  const lang::MirVerificationResult unrelatedCarrierResult =
+      lang::verifyMirProgram(forgedCarrier);
+  expect(forgedUnrelatedCarrier && !unrelatedCarrierResult.valid() &&
+             hasMirVerificationError(unrelatedCarrierResult,
+                                     "exact runtime carrier"),
+         "MIR verification should correlate a carrier return with the exact "
+         "entry loan instead of accepting an unrelated same-typed carrier");
 
   const std::string shellSource = R"(
 class ReadCarrier {
@@ -27620,7 +27774,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v47 ") &&
+             mirDump.starts_with("mir-v48 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

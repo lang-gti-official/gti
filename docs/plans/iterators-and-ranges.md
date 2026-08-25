@@ -255,10 +255,8 @@ mutable carrier remains noncopyable. A by-value carrier return may publish only
 the carrier or its exact stored referent, never a shell projection or
 type-incompatible referent. HIR and MIR retain the selected
 receiver or parameter origin and stored loan through calls, moves, returns,
-C++ backend reference field is not the source of these rules.
 copies, and drops, while source-level invalidation checks keep the owner stable.
 The C++ backend reference field is not the source of these rules.
-C++ backend reference field is not the source of these rules.
 
 This deliberately confined aggregate form is sufficient for a source-defined
 read-only iterator over vector, string, or another user range. L-RANGE-02 adds

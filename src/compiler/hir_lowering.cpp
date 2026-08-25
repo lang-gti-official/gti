@@ -1558,6 +1558,7 @@ private:
                       .parent = loan.parent,
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
+                      .designatedField = loan.designatedField,
                       .entry = loan.entry};
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);

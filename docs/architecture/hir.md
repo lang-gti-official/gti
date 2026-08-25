@@ -327,11 +327,12 @@ For a by-value parameter whose concrete type directly stores one reference,
 `HirLoan.kind == SemanticLoanKind::StoredValue` records that the parameter is a
 carrier shell for an existing external dependency, not a reference parameter
 to the shell itself. The loan is an entry loan, carries the parameter binding,
-and retains the semantic access and place identity. A checked carrier or exact
-stored-referent return keeps `BorrowOriginKind::Argument`, the exact parameter
-index, and the returned value's concrete type. HIR does not turn a shell field
-or projection into that stored dependency; MIR lowering must transfer the
-entry loan explicitly, and MIR verification rechecks the transfer.
+and retains the semantic access, place identity, and exact designated stored-
+reference field symbol. A checked carrier or exact stored-referent return keeps
+`BorrowOriginKind::Argument`, the exact parameter index, and the returned
+value's concrete type. HIR does not turn a shell field or projection into that
+stored dependency; MIR lowering must transfer the entry loan explicitly, and
+MIR verification rechecks the transfer.
 
 Global-origin call values likewise carry the exact semantic place and access.
 The semantic full-expression or retained-loan endpoint remains authoritative;

@@ -1907,6 +1907,12 @@ private:
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
+    if (lowered.designatedField != 0 &&
+        lowered.designatedField != loan.designatedField) {
+      valid = false;
+      return;
+    }
+    lowered.designatedField = loan.designatedField;
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
       valid = false;
@@ -6460,21 +6466,26 @@ private:
       if (output.returnType.kind == SemanticType::Reference) {
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {
-          const bool storedCarrierArgumentReturn =
-              function != nullptr &&
+          MirLoanId storedCarrierEntry = 0;
+          if (function != nullptr &&
               function->returnBorrowOrigin == BorrowOriginKind::Argument &&
               function->returnBorrowParameter <
                   function->parameterBindings.size() &&
-              borrow.loan <= output.loans.size() &&
-              output.loans[borrow.loan - 1].kind == MirLoanKind::Stored &&
-              output.loans[borrow.loan - 1].entry &&
-              std::find(
-                  output.loans[borrow.loan - 1].carriers.begin(),
-                  output.loans[borrow.loan - 1].carriers.end(),
-                  function
-                      ->parameterBindings[function->returnBorrowParameter]) !=
-                  output.loans[borrow.loan - 1].carriers.end();
-          if (storedCarrierArgumentReturn) {
+              borrow.loan <= output.loans.size()) {
+            const HirBindingId parameter =
+                function->parameterBindings[function->returnBorrowParameter];
+            const MirLoan &candidate = output.loans[borrow.loan - 1];
+            const MirPlace *source = output.findPlace(candidate.source);
+            if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
+                candidate.designatedField != 0 && source != nullptr &&
+                source->root == MirPlaceRootKind::Binding &&
+                source->binding == parameter && source->projections.empty() &&
+                std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                          parameter) != candidate.carriers.end()) {
+              storedCarrierEntry = borrow.loan;
+            }
+          }
+          if (storedCarrierEntry != 0) {
             const HirValue *value = findValue(*statement.value);
             const MirPlaceId runtimePlace = placeForValue(*statement.value);
             const MirPlace *runtime = output.findPlace(runtimePlace);
@@ -6491,7 +6502,7 @@ private:
               // by this body. Publish both facts into a fresh Return loan and
               // retire the by-value carrier parameter's body-local entry loan
               // at the same instruction boundary.
-              const MirLoan retainedLoan = output.loans[borrow.loan - 1];
+              const MirLoan retainedLoan = output.loans[storedCarrierEntry - 1];
               const MirLoanId published =
                   createLoan(MirLoanKind::Return, retainedLoan.source,
                              retainedLoan.access, *statement.value);
@@ -6609,13 +6620,25 @@ private:
             const MirLoanId published =
                 createLoan(MirLoanKind::Return, retainedLoan.source,
                            retainedLoan.access, *statement.value);
-            (void)appendInstruction({.kind = MirInstructionKind::Borrow,
-                                     .hirValue = *statement.value,
-                                     .operands = {{.kind = MirOperandKind::Loan,
-                                                   .loan = retained,
-                                                   .type = value->info.type}},
-                                     .loan = published,
-                                     .info = value->info});
+            const MirValueId returnedValue =
+                result && result->kind == MirOperandKind::Value ? result->value
+                                                                : 0;
+            const bool exactStoredCarrierEntry =
+                retainedLoan.kind == MirLoanKind::Stored &&
+                retainedLoan.entry && retainedLoan.designatedField != 0;
+            if (exactStoredCarrierEntry && returnedValue == 0) {
+              valid = false;
+            }
+            (void)appendInstruction(
+                {.kind = MirInstructionKind::Borrow,
+                 .hirValue = *statement.value,
+                 .operands = {{.kind = MirOperandKind::Loan,
+                               .value =
+                                   exactStoredCarrierEntry ? returnedValue : 0,
+                               .loan = retained,
+                               .type = value->info.type}},
+                 .loan = published,
+                 .info = value->info});
             (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                      .hirValue = *statement.value,
                                      .loan = retained});
