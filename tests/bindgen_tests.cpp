@@ -18,8 +18,10 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
-lang::bindgen::ReadResult readC(std::string_view header) {
-  lang::bindgen::BoundedCReader reader;
+lang::bindgen::ReadResult
+readC(std::string_view header,
+      lang::bindgen::CTargetProfile profile = lang::bindgen::CTargetProfile{}) {
+  lang::bindgen::BoundedCReader reader(profile);
   return reader.read(header);
 }
 
@@ -206,6 +208,31 @@ int _Reserved(int value);
   expectSkip("_Reserved", "implementation-reserved");
 }
 
+void testTargetDataModels() {
+  constexpr std::string_view header = R"(
+typedef long NativeLong;
+typedef unsigned long NativeUnsignedLong;
+typedef size_t NativeSize;
+long transform(long value, size_t count);
+)";
+  const lang::bindgen::ReadResult lp64 = readC(
+      header, lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Lp64));
+  const lang::bindgen::ReadResult llp64 = readC(
+      header, lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
+  const std::string lp64Model = lang::bindgen::printNativeModel(lp64.model);
+  const std::string llp64Model = lang::bindgen::printNativeModel(llp64.model);
+  expect(contains(lp64Model, "typedef NativeLong = i64") &&
+             contains(lp64Model, "typedef NativeUnsignedLong = u64") &&
+             contains(lp64Model, "function transform(value: i64, count: u64) "
+                                 "-> i64"),
+         "LP64 should model long as 64 bits and size_t as 64 bits");
+  expect(contains(llp64Model, "typedef NativeLong = i32") &&
+             contains(llp64Model, "typedef NativeUnsignedLong = u32") &&
+             contains(llp64Model, "function transform(value: i32, count: u64) "
+                                  "-> i32"),
+         "LLP64 should model long as 32 bits and size_t as 64 bits");
+}
+
 void testEnumAndTypedefPlanning() {
   const lang::bindgen::ReadResult read = readC(R"(
 enum Small { NEGATIVE = -2, POSITIVE = 7 };
@@ -326,6 +353,7 @@ int main() {
   testReaderRecovery();
   testRecordDegradation();
   testTypeMappingMatrix();
+  testTargetDataModels();
   testEnumAndTypedefPlanning();
   testWriterShapeAndDeterminism();
   testGeneratedBindingsCompile();

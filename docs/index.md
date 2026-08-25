@@ -123,8 +123,8 @@ than mixed into the active queue.
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [Native bindings import](plans/native-bindings-import.md) — the
-  `gti bindgen` foundation: bounded C17 header import into GTI declarations,
-  its four-phase architecture, and the C++/build-integration growth seams
+  C-first `gti bindgen` plan: current bounded C17/LP64/LLP64 import, its
+  scalable libclang migration, and the later C++/build-integration gates
 - [LSP evolution](plans/lsp-evolution.md)
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,

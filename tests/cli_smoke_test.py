@@ -3320,6 +3320,37 @@ def main():
             assert "constexpr MeterMode METER_ACTIVE = 2;" in bindings_text
             assert 'extern "C" {' in bindings_text
             assert "// Not imported:" in bindings_text
+            target_header = root / "target-model.h"
+            target_header.write_text(
+                "typedef long NativeLong;\n"
+                "NativeLong native_long(NativeLong value);\n",
+                encoding="utf-8",
+            )
+            windows_bindings = run(
+                [
+                    gti,
+                    "bindgen",
+                    str(target_header),
+                    "--target",
+                    "x86_64-pc-windows-msvc",
+                ]
+            ).stdout
+            linux_bindings = run(
+                [
+                    gti,
+                    "bindgen",
+                    str(target_header),
+                    "--target",
+                    "x86_64-unknown-linux-gnu",
+                ]
+            ).stdout
+            assert "using NativeLong = int32_t;" in windows_bindings
+            assert "using NativeLong = int64_t;" in linux_bindings
+            invalid_bindgen_target = run(
+                [gti, "bindgen", str(target_header), "--target", "banana"],
+                64,
+            )
+            assert "invalid bindgen target" in invalid_bindgen_target.stderr
             bindgen_impl_c = root / "meter-impl.c"
             bindgen_impl_object = root / "meter-impl.o"
             bindgen_impl_c.write_text(

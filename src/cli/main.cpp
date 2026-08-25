@@ -7,6 +7,7 @@
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
 #include "gti/support.h"
+#include "gti/target.h"
 #include "project_presentation.h"
 
 #include <algorithm>
@@ -132,7 +133,8 @@ void printUsage(std::ostream &stream) {
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
-         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]\n"
+         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] "
+         "[--target <triple>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -194,6 +196,14 @@ void printUsage(std::ostream &stream) {
          "anything.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
+         "\n"
+         "Bindgen options:\n"
+         "  -o, --output <path>  Write generated GTI declarations to a file.\n"
+         "      --namespace <name>\n"
+         "                       Wrap generated source names in a GTI "
+         "namespace.\n"
+         "      --target <triple>\n"
+         "                       Select the C ABI target (default: host).\n"
          "\n"
          "Project commands:\n"
          "  new                  Create a new executable package.\n"
@@ -1931,6 +1941,7 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
 int runBindgen(int argc, char *argv[]) {
   std::filesystem::path header;
   std::filesystem::path output;
+  std::optional<std::string> targetTriple;
   lang::bindgen::BindingOptions options;
   for (int index = 2; index < argc; ++index) {
     const std::string_view argument = argv[index];
@@ -1948,6 +1959,14 @@ int runBindgen(int argc, char *argv[]) {
         return exitCode(ExitStatus::Usage);
       }
       options.namespaceName = argv[++index];
+      continue;
+    }
+    if (argument == "--target") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --target requires a target triple\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      targetTriple = argv[++index];
       continue;
     }
     if (argument == "--help" || argument == "-h") {
@@ -1968,6 +1987,26 @@ int runBindgen(int argc, char *argv[]) {
     std::cerr << "gti: bindgen requires a C header path\n";
     return exitCode(ExitStatus::Usage);
   }
+  lang::TargetInfo target = lang::TargetInfo::host();
+  if (targetTriple) {
+    lang::TargetTripleParseResult parsed =
+        lang::parseTargetTripleResult(*targetTriple);
+    if (!parsed.succeeded()) {
+      std::cerr << "gti: invalid bindgen target '" << *targetTriple
+                << "': " << lang::targetTripleErrorMessage(parsed.error)
+                << '\n';
+      return exitCode(ExitStatus::Usage);
+    }
+    target = std::move(*parsed.target);
+  }
+  if (!target.supported()) {
+    std::cerr << "gti: bindgen requires a supported 64-bit host or an "
+                 "explicit --target triple\n";
+    return exitCode(ExitStatus::ToolchainConfiguration);
+  }
+  const lang::bindgen::CTargetProfile profile(
+      target.os == "windows" ? lang::bindgen::CDataModel::Llp64
+                             : lang::bindgen::CDataModel::Lp64);
   std::ifstream stream(header, std::ios::binary);
   if (!stream) {
     std::cerr << "gti: failed to open header: " << header << '\n';
@@ -1976,7 +2015,7 @@ int runBindgen(int argc, char *argv[]) {
   std::ostringstream contents;
   contents << stream.rdbuf();
   const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
-      contents.str(), header.filename().string(), std::move(options));
+      contents.str(), header.filename().string(), std::move(options), profile);
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
     std::cerr << header.string() << ':' << diagnostic.origin.line << ": "
               << (diagnostic.severity == lang::bindgen::ReaderSeverity::Error
