@@ -3285,13 +3285,19 @@ def main():
         # `gti bindgen`: generate GTI bindings from a C header, then compile
         # and run a GTI program against a real C implementation of it.
         if sys.platform != "win32":
+            bindgen_include = root / "bindgen-include"
+            bindgen_include.mkdir()
+            (bindgen_include / "meter-types.h").write_text(
+                "typedef struct MeterSample { int32_t value; int32_t weight; }"
+                " MeterSample;\n",
+                encoding="utf-8",
+            )
             bindgen_header = root / "meter.h"
             bindgen_header.write_text(
                 "#ifndef METER_H\n"
                 "#define METER_H\n"
+                "#include <meter-types.h>\n"
                 "typedef struct Meter Meter;\n"
-                "typedef struct MeterSample { int32_t value; int32_t weight; }"
-                " MeterSample;\n"
                 "enum MeterMode { METER_IDLE, METER_ACTIVE = 2 };\n"
                 "Meter *meter_open(int32_t mode);\n"
                 "void meter_close(Meter *meter);\n"
@@ -3300,6 +3306,12 @@ def main():
                 "int32_t meter_accumulate(Meter *meter, MeterSample sample);\n"
                 "const char *meter_label(const Meter *meter);\n"
                 "int meter_variadic(const char *format, ...);\n"
+                "#if defined(METER_ENABLE_FEATURE)\n"
+                "int32_t meter_feature(void);\n"
+                "#endif\n"
+                "#ifdef METER_DISABLED\n"
+                "int32_t meter_disabled(void);\n"
+                "#endif\n"
                 "#endif\n",
                 encoding="utf-8",
             )
@@ -3311,6 +3323,12 @@ def main():
                     str(bindgen_header),
                     "-o",
                     str(bindgen_bindings),
+                    "-I",
+                    str(bindgen_include),
+                    "-DMETER_ENABLE_FEATURE=1",
+                    "-DMETER_DISABLED=1",
+                    "-U",
+                    "METER_DISABLED",
                 ]
             )
             assert "meter_variadic" in bindgen_generation.stderr
@@ -3318,6 +3336,8 @@ def main():
             assert "[[c_opaque]] struct Meter;" in bindings_text
             assert "[[c_abi]]" in bindings_text
             assert "constexpr MeterMode METER_ACTIVE = 2;" in bindings_text
+            assert "meter_feature" in bindings_text
+            assert "meter_disabled" not in bindings_text
             assert 'extern "C" {' in bindings_text
             assert "// Not imported:" in bindings_text
             target_header = root / "target-model.h"
@@ -3351,6 +3371,14 @@ def main():
                 64,
             )
             assert "invalid bindgen target" in invalid_bindgen_target.stderr
+            broken_bindgen_header = root / "broken-bindgen.h"
+            broken_bindgen_header.write_text(
+                '#include "missing-bindgen-dependency.h"\n', encoding="utf-8"
+            )
+            broken_bindgen = run(
+                [gti, "bindgen", str(broken_bindgen_header)], 65
+            )
+            assert "missing-bindgen-dependency.h" in broken_bindgen.stderr
             bindgen_impl_c = root / "meter-impl.c"
             bindgen_impl_object = root / "meter-impl.o"
             bindgen_impl_c.write_text(

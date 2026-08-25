@@ -97,8 +97,14 @@ findLoadedSourceCollision(const std::filesystem::path &artifact,
 }
 
 std::filesystem::path temporaryCppPath(const std::filesystem::path &input) {
+  return temporaryArtifactPath(input, ".cpp");
+}
+
+std::filesystem::path temporaryArtifactPath(const std::filesystem::path &input,
+                                            std::string_view extension) {
   return std::filesystem::temp_directory_path() /
-         ("gti-" + temporaryIdentity() + "-" + input.stem().string() + ".cpp");
+         ("gti-" + temporaryIdentity() + "-" + input.stem().string() +
+          std::string(extension));
 }
 
 std::filesystem::path stagedArtifactPath(const std::filesystem::path &output) {
