@@ -8,7 +8,7 @@
 > `examples/`, because the examples directory is part of the MIR census.
 
 GLFW 3.4 is the named acceptance client for
-[`S-FFI-02`](implementation-sequence.md). A binding attempt at 0.199.0 bound
+[`S-FFI-02`](../implementation-sequence.md). A binding attempt at 0.199.0 bound
 3 of 5 records and roughly 90 functions using only the earlier boundary. GLFW
 3.4 declares 124 public `GLFWAPI` functions. The completed fixture declares all
 124, all five public records, every callback typedef, the three GLFW opaque
@@ -29,7 +29,7 @@ Only `S-CALL-01` and F3 extend the grammar. F1 and F2 are semantic admissions.
 ## Raw layer
 
 A faithful mirror of `glfw3.h`. It claims no safety; per
-[ADR 004](../decisions/004-standard-library-runtime-boundary.md) safety is a
+[ADR 004](../../decisions/004-standard-library-runtime-boundary.md) safety is a
 wrapper written in ordinary GTI over this surface.
 
 ```gti

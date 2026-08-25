@@ -1,8 +1,9 @@
 # Build And Driver Architecture
 
-Status: Current implementation. Local path dependencies and deterministic
-workspaces are implemented; remote acquisition, lockfiles, and finer-grained
-incremental compilation remain plans.
+Status: Current implementation. Local and pinned-Git dependencies,
+deterministic workspaces, lockfiles, and explicit dependency acquisition are
+implemented. Finer-grained incremental compilation and a package registry
+remain plans.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -503,7 +504,7 @@ a shell. The display contract does not claim compatibility with Windows
 Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved into the plan's `TargetInfo`, and the command-line option is an
-explicit project override. Metadata schema 7 publishes the declared value for
+explicit project override. Metadata schema 9 publishes the declared value for
 every profile plus the selected workspace and sorted package/dependency graph.
 This build profile field selects static language policy only;
 the later target/runtime `threads` capability remains independent.
@@ -520,13 +521,10 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
 Git dependencies support pinned full revisions only; registry ranges, branch
-or tag selectors, replacement/override authority, native dependency
-composition, arbitrary native build scripts, and a package registry are not
-implemented.
-Git/registry dependencies, lockfiles, `fetch`, arbitrary native build
+or tag selectors, replacement/override authority, arbitrary native build
 scripts, and a package registry are not implemented. Dependency native groups
-bypass the whole-program cache until dependency discovery covers group
-sources.
+are composed into builds, but plans containing them bypass the whole-program
+cache until dependency discovery covers their source and link inputs.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

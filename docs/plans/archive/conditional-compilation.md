@@ -2,7 +2,7 @@
 
 > **Plan status:** implemented by `S-CFG-01` for GTI 0.292.0. The language
 > contract now lives in
-> [`programs-and-targets.md`](../language/programs-and-targets.md) and the
+> [`programs-and-targets.md`](../../language/programs-and-targets.md) and the
 > canonical grammar. This document retains the design rationale and delivery
 > evidence.
 
@@ -59,7 +59,7 @@ preserve:
   active branch for outline and tooling queries.
 
 Three properties follow from that structure, all recorded in
-[`docs/language/grammar.ebnf`](../language/grammar.ebnf) lines 85–90:
+[`docs/language/grammar.ebnf`](../../language/grammar.ebnf) lines 85–90:
 
 1. **Every branch must be syntactically valid GTI.** Inactive branches are
    parsed, not skipped as text.
@@ -243,7 +243,7 @@ costs one string.
 
 Note the client-support caveat: clients that do not request semantic tokens get
 no greying and must not be broken by its absence. The
-[LSP evolution plan](lsp-evolution.md) acceptance checks apply.
+[LSP evolution plan](../lsp-evolution.md) acceptance checks apply.
 
 ### Delivered work
 
@@ -319,10 +319,10 @@ Deferred, not rejected:
 ## Registration
 
 This plan owns no work queue of its own.
-[`docs/plans/implementation-sequence.md`](implementation-sequence.md) is the
+[`docs/plans/implementation-sequence.md`](../implementation-sequence.md) is the
 single queue, where **`S-CFG-01`** is recorded complete.
 
-[`docs/plans/language-alignment.md`](language-alignment.md) carries the
+[`docs/plans/language-alignment.md`](../language-alignment.md) carries the
 matching restriction row **`R-BUILD-CONFIG`** as closed. Implemented behaviour
 is specified in `docs/language/programs-and-targets.md` and
 `docs/language/grammar.ebnf`; this plan is rationale and historical evidence.

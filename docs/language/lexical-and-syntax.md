@@ -113,7 +113,7 @@ must not rescan nearby source text to infer documentation.
 
 ## 2.6 Source Units And Includes
 
-An `include` directive appears only at source-unit top level and names a quoted
+An `#include` directive appears only at source-unit top level and names a quoted
 `.gti` dependency, a compiler-managed `<std/name>` unit, or a project-provided
 `<alias/name>` package unit. A package alias resolves only when the compilation
 request supplies the including package's direct dependency graph; the compiler

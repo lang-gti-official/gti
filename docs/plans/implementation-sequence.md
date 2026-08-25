@@ -4,7 +4,8 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.206.0
+Checkpoint: maintained against current `main`; canonical behavior remains in
+`docs/language/` and `docs/architecture/`.
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -16,10 +17,12 @@ It answers three questions for every substantial piece of future work:
 
 Current behavior remains authoritative in [`docs/language/`](../language/) and
 [`docs/architecture/`](../architecture/). The durable release capability map
-remains [`roadmap-to-1.0.md`](roadmap-to-1.0.md), and implementation evidence
-remains [`compiler-roadmap-status.md`](compiler-roadmap-status.md). Detailed
-domain decisions remain in the other files under `docs/plans/`. The documents
-under [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
+remains [`roadmap-to-1.0.md`](roadmap-to-1.0.md). Current implementation
+evidence belongs in architecture documents and tests; the older
+[`compiler-roadmap-status.md`](archive/compiler-roadmap-status.md) is retained
+only as a historical checkpoint. Detailed domain decisions remain in the other
+files under `docs/plans/`. The documents under
+[`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
 ## How To Use This Plan
@@ -173,9 +176,10 @@ shadow infrastructure:
    gate covers O0/O1/O3 and C++20/C++23; broader signatures, lifecycle failure,
    initialization, double failure, embedding, and callbacks remain separate
    work rather than implied completion of M-FAIL-01.
-7. **Final authority cutover — done (`M-BACK-02`).** All 2,962 reviewed source
-   body identities across 63 examples emit through `CppMirBodyEmitter` from
-   verified optimized MIR and copied representation rows. Functions,
+7. **Final authority cutover — done (`M-BACK-02`).** Every source body in the
+   reviewed `tests/mir_census_baseline.json` inventory emits through
+   `CppMirBodyEmitter` from verified optimized MIR and copied representation
+   rows. Functions,
    constructors, destructors, lambdas, class initializers, module
    initialization, hosted startup, generic specializations, ownership,
    failure, storage, callable, and native-boundary forms are covered by the
@@ -355,7 +359,7 @@ update it rather than copying a new sequence elsewhere.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `P-MEASURE-01` | **in progress** | none | Complete benchmark breadth without weakening backend-authority gates. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 2 | `A-CACHE-01` | **ready** | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
-| 3 | `S-CFG-01` | **done** | `M-BACK-02` done | Add a build-configuration axis to compile-time conditionals: valueless `#define`/`#undef`/`#ifdef`/`#ifndef` and boolean conditions over the existing `target.*` primary, with no substitution and no function-like macros. | Compiler selection tests cover external/source/include flags, dead-branch isolation, inactive syntax, diagnostics, and formatting; direct/project CLI tests cover `-D` and `[build].defines`; Tree-sitter and LSP tests cover syntax and inactive-token toggling; the MIR census is unchanged. Design history in `docs/plans/conditional-compilation.md`; closed ledger row `R-BUILD-CONFIG`. |
+| 3 | `S-CFG-01` | **done** | `M-BACK-02` done | Add a build-configuration axis to compile-time conditionals: valueless `#define`/`#undef`/`#ifdef`/`#ifndef` and boolean conditions over the existing `target.*` primary, with no substitution and no function-like macros. | Compiler selection tests cover external/source/include flags, dead-branch isolation, inactive syntax, diagnostics, and formatting; direct/project CLI tests cover `-D` and `[build].defines`; Tree-sitter and LSP tests cover syntax and inactive-token toggling; the MIR census is unchanged. Design history in `docs/plans/archive/conditional-compilation.md`; closed ledger row `R-BUILD-CONFIG`. |
 
 `M-BACK-02` no longer blocks those outcome rows. The permanent gate is that any
 new executable feature must extend verified MIR, its verifier, and the general
@@ -379,7 +383,7 @@ make the proposal feel concrete.
   readiness role, user-facing client, and the plan row that owns any change.
 - **Required coverage:** at least the complete gap list in the external
   language audit, all explicit specification gaps in `docs/language/`, and all
-  restrictions currently justified by the transitional C++ backend.
+  restrictions that were then justified by the transitional C++ backend.
 - **Non-goals:** changing current language semantics or choosing syntax merely
   to complete the classification.
 - **Exit gate:** no restriction says merely “deferred”; it names why, the
@@ -806,17 +810,14 @@ analysis, HIR, MIR, and the backend.
   remaining families are systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
-  During backend recovery, co-deliver the largest coherent set required by the
-  active M-BACK phase rather than landing one shadow family per prompt.
   Remaining work includes operators and one-time assignment places, compound
-  expressions, then the generated hosted setup plus one merged executable MIR
-  program/module initialization body. The semantic `ProgramInitializationPlan`,
-  `HostedProgramEntryPlan`, closed later-storage effect proof, HIR plan copies,
-  exact constant-substitution lowering, and production HIR plan verifier are
-  now landed. The remaining final family must consume those authorities rather
-  than reconstruct source order or startup targets. Add structural verifier
-  mutations for ordering, materialization, full-expression boundaries, and
-  cleanup.
+  expressions, and wider partial-construction/failure schedules. The semantic
+  `ProgramInitializationPlan`, `HostedProgramEntryPlan`, closed later-storage
+  effect proof, HIR plan copies, exact constant-substitution lowering, merged
+  module MIR body, and production verification are landed. New slices extend
+  those authorities rather than reconstructing source order or startup targets.
+  Add structural verifier mutations for ordering, materialization,
+  full-expression boundaries, and cleanup.
 - **Landed bounded slices:** Eligible ordinary calls retain one HIR receiver
   and source-ordered arguments; eligible ordinary constructors retain no
   receiver, one exact constructor target, and at least one source-ordered
@@ -851,9 +852,9 @@ analysis, HIR, MIR, and the backend.
   value substitutions are retained through HIR and lowered to verified MIR
   constants rather than early loads. HIR exact-compares the semantic/HIR
   analysis seal, initialization/hosted plans, module inventory, and
-  provenance. This is not yet the generated hosted-startup or merged
-  program-initialization MIR body, and the compatibility backend remains
-  non-authoritative for that schedule.
+  provenance. The generated hosted startup executes the merged verified
+  `Module/0` body inside the containment boundary; generic static-storage
+  scheduling remains a separate open contract.
 - **Implemented bounded follow-on (`M-TEMP-ARG-01`; GTI 0.297.0):** A
   direct fresh, self-contained class/struct result may initialize one exact
   read-only `T&` call parameter through a full-expression-owned ephemeral
@@ -866,7 +867,7 @@ analysis, HIR, MIR, and the backend.
   local or stored references, explicit moves, borrowed-state or escaping
   results, compound producers, and native calls remain excluded. The detailed
   contract and failure/runtime matrix are in
-  [`mutable-temporary-receivers.md`](mutable-temporary-receivers.md#implemented-follow-on-one-call-read-only-temporary-arguments).
+  [`mutable-temporary-receivers.md`](archive/mutable-temporary-receivers.md#implemented-follow-on-one-call-read-only-temporary-arguments).
 - **Non-goals:** broad AST emitter rewrite, production body emission, or an
   IIFE workaround. M-BACK owns production C++ consumption of this schedule.
 - **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove
@@ -905,8 +906,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-02: Complete MIR Body-Family Migration
 
-- **State/role:** complete for source executable bodies. All 2,962 reviewed
-  body identities across 63 examples use the verified-MIR production route.
+- **State/role:** complete for source executable bodies. Every identity in
+  `tests/mir_census_baseline.json` uses the verified-MIR production route.
   The named families below are historical migration stages, not current
   selectors or fallback authorities.
 - **Completed scalar-CFG scope:** `scalar-cfg-v1` admits fixed-width integers,
@@ -1894,7 +1895,7 @@ do not expose C++ object layout as GTI semantics.
     that type family when exact callback aliases occur in records and C
     parameters/results.
   - The surface these families are built against is written out in
-    [`c-interop-target-surface.md`](c-interop-target-surface.md): the raw
+    [`c-interop-target-surface.md`](archive/c-interop-target-surface.md): the raw
     mirror, the safe wrapper, and the acceptance program.
 - **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
@@ -2738,7 +2739,7 @@ do not overlap an active semantic/lowering phase.
 ### C-MIG: Compiled Compiler Library
 
 The accepted detailed plan remains
-[`compiler-library-migration.md`](compiler-library-migration.md).
+[`compiler-library-migration.md`](archive/compiler-library-migration.md).
 
 | ID | State | Next bounded result | Serialization rule |
 | --- | --- | --- | --- |
@@ -2777,7 +2778,7 @@ Prefix-storage execution tracking:
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `P-MEASURE-01` | in progress | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. Complete the integer, fixed-array, dispatch, compiler, LSP, and project-driver workload breadth before marking the milestone done. |
-| `P-STORAGE-01` | active | Prerequisites delivered: the checked-vector fixture shipped through `P-MEASURE-01`, `M-FAIL-01`'s defined-failure contract is live, and the failure-capable `M-BACK-02` slices landed (0.176.0-0.189.0). Slice 1 shipped in 0.190.0: the identity-bound public logical-size check (`gti_internal::index_bounds_check`, `IntrinsicKind::StorageBoundsCheck`) guards every public vector/string accessor while sparse storage remains, reporting `GTI-R0007` with the enclosing trusted container's detail (`index_out_of_bounds` in `vector`/`string`) rather than leaking `GTI-R0010`. Slice 2 shipped in 0.191.0: the distinct compiler-private prefix-initialized storage capability (`gti_internal::prefix_storage<T>`, `CompilerCapabilityTypeKind::PrefixStorage`, `SemanticType::PrefixStorage`, the seven-intrinsic family, and the length-tracking backend representation with no per-slot bitmap) exists end to end through semantics, HIR, MIR (`mir-v31`), the effects tables, and the compatibility backend, proven by trusted-prelude fixtures; sparse `storage<T>` remains for arbitrary partial slots and the two capabilities reject each other's operations. Slice 3's capability-level evidence shipped in 0.192.0: the dedicated native evidence battery (`prefix_storage_native_evidence`) compiles trusted generated programs across C++20/C++23 and native -O0/-O2/-O3, runs the full behavioral contract (append order, logical-prefix reads and mutation, pop-last destruction, complete-prefix relocation with moved-from shells correctly skipping user destructor bodies, move transfer, reverse destruction at scope exit), trips all five runtime guards on their exact diagnostics, and runs the success path clean under dedicated generated-program AddressSanitizer/UndefinedBehaviorSanitizer builds. The wrapper migration shipped in 0.193.0: `vector` and `string` internals moved wholly onto the prefix capability (fields, iterators' storage borrows, and every operation), with the shift gap filled by two sealed invariant-preserving primitives — `prefix_storage_insert` and `prefix_storage_erase` — whose element shift and construction or destruction happen inside one runtime operation, so no partially initialized slot is ever observable at the language surface; the example corpus stayed byte-identical in stdout and exit codes and the checked-vector benchmark workload passes on the migrated containers. Sparse `storage<T>` remains the arbitrary-slot capability. What remains of this row is the backend slice: the storage capability row and general-emitter vocabulary that admit the storage-gated bodies to verified-MIR emission. Historical: add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
+| `P-STORAGE-01` | complete | Prerequisites delivered: the checked-vector fixture shipped through `P-MEASURE-01`, `M-FAIL-01`'s defined-failure contract is live, and the failure-capable `M-BACK-02` slices landed (0.176.0-0.189.0). Slice 1 shipped in 0.190.0: the identity-bound public logical-size check (`gti_internal::index_bounds_check`, `IntrinsicKind::StorageBoundsCheck`) guards every public vector/string accessor while sparse storage remains, reporting `GTI-R0007` with the enclosing trusted container's detail (`index_out_of_bounds` in `vector`/`string`) rather than leaking `GTI-R0010`. Slice 2 shipped in 0.191.0: the distinct compiler-private prefix-initialized storage capability (`gti_internal::prefix_storage<T>`, `CompilerCapabilityTypeKind::PrefixStorage`, `SemanticType::PrefixStorage`, the seven-intrinsic family, and the length-tracking backend representation with no per-slot bitmap) exists end to end through semantics, HIR, MIR (`mir-v31`), the effects tables, and the compatibility backend, proven by trusted-prelude fixtures; sparse `storage<T>` remains for arbitrary partial slots and the two capabilities reject each other's operations. Slice 3's capability-level evidence shipped in 0.192.0: the dedicated native evidence battery (`prefix_storage_native_evidence`) compiles trusted generated programs across C++20/C++23 and native -O0/-O2/-O3, runs the full behavioral contract (append order, logical-prefix reads and mutation, pop-last destruction, complete-prefix relocation with moved-from shells correctly skipping user destructor bodies, move transfer, reverse destruction at scope exit), trips all five runtime guards on their exact diagnostics, and runs the success path clean under dedicated generated-program AddressSanitizer/UndefinedBehaviorSanitizer builds. The wrapper migration shipped in 0.193.0: `vector` and `string` internals moved wholly onto the prefix capability (fields, iterators' storage borrows, and every operation), with the shift gap filled by two sealed invariant-preserving primitives — `prefix_storage_insert` and `prefix_storage_erase` — whose element shift and construction or destruction happen inside one runtime operation, so no partially initialized slot is ever observable at the language surface; the example corpus stayed byte-identical in stdout and exit codes and the checked-vector benchmark workload passes on the migrated containers. Sparse `storage<T>` remains the arbitrary-slot capability. The later backend slice is complete: the storage capability rows and general-emitter vocabulary admit these storage-gated bodies to verified-MIR emission. Historical: add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
   foundations; do not reimplement them under the older performance plan.
@@ -2798,8 +2799,8 @@ The next order resolves drift between the build proposal and checkpoint:
 | --- | --- | --- |
 | `B-PROJECT-01` | complete | Project test targets and `gti test` use driver-owned immutable build plans. Deterministic all/named selection, independent outputs, runtime-failure continuation/propagation, metadata kind publication, direct-mode preservation, and installed CLI/library coverage pass. |
 | `B-PROJECT-02` | complete | Project build/run/test requests use a deterministic SHA-256 whole-program cache over the compiler-owned loaded source graph, including ordered configured prelude-root provenance, effective target/profile/backend policy, runtime/toolchain identity, and admitted native environment. Verified generated-C++/executable payloads publish atomically under `build/gti/cache/v2`; hits skip frontend/backend/native compilation, corruption rebuilds before replacement, legacy schema entries are ignored, and `--no-cache` bypasses read/write. Requests with declared native sources, native search directories (including dependency-injecting environment paths), opaque native argument vectors, native link operands, or unresolved libraries/frameworks conservatively bypass the cache until their transitive inputs are modeled; pure-GTI checkout moves retain content identity, and direct mode remains uncached. |
-| `B-PROJECT-03` | complete | Manifest schema 1 resolves canonical workspace members and recursive source-only path dependencies without network access. Direct aliases feed the compiler-owned source graph, transitive/quoted cross-package access is rejected, cycles/duplicate names/roots/nested workspaces fail before compilation, `--package` selection and shared collision-free outputs are deterministic, schema-7 metadata publishes the graph, and cache identity includes package provenance. Direct mode remains manifest-independent. |
-| `B-PROJECT-04` | ready | Add exact Git resolution, lockfile, `fetch`, `--locked`, and `--offline`, with immutable checkouts and reproducible installed-toolchain tests. Do not add registry ranges or execute dependency code. |
+| `B-PROJECT-03` | complete | Manifest schema 1 resolves canonical workspace members and recursive source-only path dependencies without network access. Direct aliases feed the compiler-owned source graph, transitive/quoted cross-package access is rejected, cycles/duplicate names/roots/nested workspaces fail before compilation, `--package` selection and shared collision-free outputs are deterministic, schema-9 metadata publishes the graph, and cache identity includes package provenance. Direct mode remains manifest-independent. |
+| `B-PROJECT-04` | complete | Exact pinned-revision Git resolution, `gti.lock`, explicit `gti fetch`, `--locked`, and `--offline` use immutable content-verified checkouts and have reproducible CLI and installed-toolchain coverage. Registry ranges, mutable branch/tag selectors, and dependency code execution remain out of scope. |
 | `B-PROJECT-05` | ready | Publish a stable read-only driver `ProjectFacts` API and library tests over the implemented workspace graph. This row does not integrate the LSP, fetch, or build. |
 
 Each row must preserve direct mode. Dependency fetching, manifests, cache, and
@@ -2826,7 +2827,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | bounded hosted consumer and same-thread native-callback firewall complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, and callback termination adapter are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/foreign-thread-callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
-| `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and a semantics-aware reducer are explicitly deferred by [the tooling plan](compiler-bug-finding-and-triage.md). |
+| `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and a semantics-aware reducer are explicitly deferred by [the tooling record](archive/compiler-bug-finding-and-triage.md). |
 
 Examples, sanitizers, installed-library consumers, release packaging,
 deterministic output, and the local language audit are standing release
@@ -2869,7 +2870,7 @@ owned by the rows and domain plans above.
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-05`; later families require numbered measured clients |
-| MIR-backed C++ emission | **ADR 016 complete** | 2,962/2,962 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
+| MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | Natural-loop/range facts | **complete bounded analysis** | `O-MIR-06`; first transform client is gated by `O-MIR-08` |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |

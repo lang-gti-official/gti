@@ -9,7 +9,8 @@
 > technical prerequisites remain evidence, while the bounded public
 > concurrency profile is now systems-readiness work.
 
-Baseline: GTI 0.93.0.
+Original design baseline: GTI 0.93.0. Current implemented policy is documented
+in the canonical language and architecture documents linked above.
 
 This document proposes the language boundary needed before GTI can add
 threads, atomics, mutexes, or callbacks entered from native threads. It does

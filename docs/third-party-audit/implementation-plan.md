@@ -12,7 +12,7 @@ Inputs merged by this document:
 
 - [`audit.md`](audit.md) — architectural audit, cited as `A§N`
 - [`llvm-audit.md`](llvm-audit.md) — LLVM adoption audit, cited as `L§N`
-- [`docs/plans/compiler-library-migration.md`](../plans/compiler-library-migration.md)
+- [`docs/plans/archive/compiler-library-migration.md`](../plans/archive/compiler-library-migration.md)
   — cited as `M-Phase N`
 
 **Standing direction for this plan:** **LLVM should be selected only when it

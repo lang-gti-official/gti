@@ -749,9 +749,10 @@ call arguments still require an exact parameter type.
 The default `make_unique` operation is infallible at the type level: allocation
 exhaustion raises `GTI-R0011` with detail `unique_owner`. Future
 `try_make_unique` and `try_make_shared` APIs may return `expected` for programs
-that need recoverable allocation failure. The transitional C++ emitter catches
-native allocation failure but still uses its old generic abort helper; that is
-an implementation gap, not the language contract.
+that need recoverable allocation failure. The backend contains native
+allocation failure at the generated boundary and routes the admitted operation
+through GTI's defined-failure record and cleanup contract; native allocator
+exceptions are not exposed to source.
 
 ## Destruction
 
@@ -990,6 +991,16 @@ allocation and explicit construction/destruction. This remains a backend
 choice. A future LLVM backend can lower the same checked operations to MIR plus
 narrow aligned allocation/deallocation runtime calls.
 
+The prelude also declares `gti_internal::prefix_storage<T>` for containers whose
+live elements must always occupy the half-open prefix `[0, length)`. Its narrow
+operations allocate capacity, append or pop the final live element, read within
+the prefix, relocate the complete prefix, and insert or erase while preserving
+that invariant atomically. Unlike sparse `storage<T>`, it cannot expose or
+create an arbitrary initialized-slot pattern. Both capabilities are move-only,
+reject borrowed-state elements, expose no raw address or manual deallocation,
+and keep container policy such as public size, growth, and invalidation in
+ordinary GTI source.
+
 ## Source-Defined Vector
 
 `std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
@@ -1036,14 +1047,14 @@ current lifetime model. It supports `size()`, `empty()`, and checked read-only
 indexing, but cannot be formed from dynamically owned storage yet.
 
 `std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
-class over `gti_internal::storage<char>`. It supports construction and append
-from a string view, capacity management, checked read-only and mutable indexing,
-clear, comparison, explicit `clone()`, and read-only structural iteration.
-Its source-defined iterator retains a checked read-only storage borrow, so a
-live iterator prevents mutation, replacement, or movement of the string.
-Because its storage field is a unique owner, the compiler derives a move-only
-lifecycle for the class. This avoids a hidden allocation on assignment;
-duplication is visible at the call site as `value.clone()`.
+class over `gti_internal::prefix_storage<char>`. It supports construction and
+append from a string view, capacity management, checked read-only and mutable
+indexing, clear, comparison, explicit `clone()`, and read-only structural
+iteration. Its source-defined iterator retains a checked read-only storage
+borrow, so a live iterator prevents mutation, replacement, or movement of the
+string. Because its storage field is a unique owner, the compiler derives a
+move-only lifecycle for the class. This avoids a hidden allocation on
+assignment; duplication is visible at the call site as `value.clone()`.
 
 Returning a dynamic `std::string_view` from `std::string` is intentionally
 deferred. The single-origin read-only dependency now provides the necessary
