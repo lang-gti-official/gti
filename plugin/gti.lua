@@ -86,7 +86,7 @@ for group, target in pairs({
   ["@lsp.type.string.gti"] = "@string",
   ["@lsp.type.number.gti"] = "@number",
   ["@lsp.type.operator.gti"] = "@operator",
-  ["@lsp.type.macro.gti"] = "@constant.macro",
+  ["@lsp.type.macro.gti"] = "@lsp.type.macro",
   ["@lsp.type.decorator.gti"] = "@attribute",
   ["@lsp.type.comment.gti"] = "@comment",
   ["@lsp.type.enumMember.gti"] = "@constant",
