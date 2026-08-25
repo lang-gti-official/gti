@@ -102,6 +102,43 @@ findDiagnosticByCode(const std::vector<lang::Diagnostic> &diagnostics,
   return nullptr;
 }
 
+bool hasDiagnosticAt(const std::vector<lang::Diagnostic> &diagnostics,
+                     std::string_view code, std::string_view source,
+                     std::size_t start, std::string_view reason) {
+  const bool matched =
+      std::any_of(diagnostics.begin(), diagnostics.end(),
+                  [&](const lang::Diagnostic &diagnostic) {
+                    const std::string_view actualSource =
+                        diagnostic.primary.source;
+                    const std::string actualFile =
+                        std::filesystem::path(diagnostic.primary.source)
+                            .filename()
+                            .string();
+                    return diagnostic.code == code &&
+                           (actualSource == source || actualFile == source) &&
+                           diagnostic.primary.start == start &&
+                           diagnostic.message.find(reason) != std::string::npos;
+                  });
+  if (!matched) {
+    std::cerr << "Expected diagnostic " << code << " at " << source << ':'
+              << start << " containing '" << reason << "'.\n";
+    for (const lang::Diagnostic &diagnostic : diagnostics) {
+      std::cerr << "  found " << diagnostic.code << " at "
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  return matched;
+}
+
+bool hasMirVerificationError(const lang::MirVerificationResult &result,
+                             std::string_view reason) {
+  return std::any_of(result.errors.begin(), result.errors.end(),
+                     [&](const lang::MirVerificationError &error) {
+                       return error.message.find(reason) != std::string::npos;
+                     });
+}
+
 bool hasRelatedDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
                           const std::string &text) {
   for (const lang::Diagnostic &diagnostic : diagnostics) {
@@ -10161,6 +10198,410 @@ int main() {
       "graphs, assignment, and temporary owners");
 }
 
+void testStoredCarrierReturnProvenance() {
+  const std::string validSource = R"(
+class ReadCarrier {
+public:
+  int& referent;
+  mut int shell = 0;
+  ReadCarrier(int& source) : referent(source) {}
+};
+
+int& relay_external(ReadCarrier carrier) { return carrier.referent; }
+ReadCarrier relay_carrier(ReadCarrier carrier) { return carrier; }
+
+int main() {
+  mut int owner = 7;
+  ReadCarrier first = ReadCarrier(owner);
+  ReadCarrier copied = first;
+  ReadCarrier moved = std::move(copied);
+  int& exact = relay_external(moved);
+  ReadCarrier relayed = relay_carrier(std::move(moved));
+  return exact + relayed.referent - 14;
+}
+)";
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("stored-carrier-exact-relay.gti", validSource,
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected stored-carrier relay diagnostic: "
+                << diagnostic.code << ' ' << diagnostic.primary.start << ' '
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "a read-only by-value carrier should copy, move, and relay only its "
+         "exact external referent");
+
+  const lang::HirFunctionInstance *relayHir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "relay_external") {
+      relayHir = &instance;
+      break;
+    }
+  }
+  const lang::MirFunctionInstance *relayMir =
+      relayHir == nullptr ? nullptr
+                          : valid.mir.findFunctionInstance(relayHir->id);
+  const lang::MirLoan *entryLoan = nullptr;
+  const lang::MirLoan *returnLoan = nullptr;
+  const lang::MirInstruction *returnTransfer = nullptr;
+  if (relayMir != nullptr) {
+    for (const lang::MirLoan &loan : relayMir->body.loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && loan.entry) {
+        entryLoan = &loan;
+      } else if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        returnLoan = &loan;
+      }
+    }
+    if (returnLoan != nullptr) {
+      for (const lang::MirBlock &block : relayMir->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Borrow &&
+              instruction.loan == returnLoan->id) {
+            returnTransfer = &instruction;
+          }
+        }
+      }
+    }
+  }
+  expect(
+      relayMir != nullptr && entryLoan != nullptr && returnLoan != nullptr &&
+          returnTransfer != nullptr && returnTransfer->operands.size() == 1 &&
+          returnTransfer->operands.front().kind == lang::MirOperandKind::Loan &&
+          returnTransfer->operands.front().loan == entryLoan->id &&
+          returnTransfer->operands.front().place != 0,
+      "a reference relay should publish an exact runtime place from its "
+      "stored entry dependency");
+
+  const auto mutateRelay = [&](const auto &mutation) {
+    lang::MirProgram forged = valid.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    lang::MirFunctionInstance *candidate = nullptr;
+    if (relayHir != nullptr) {
+      const auto found =
+          std::find_if(functions.begin(), functions.end(),
+                       [&](const lang::MirFunctionInstance &instance) {
+                         return instance.id == relayHir->id;
+                       });
+      if (found != functions.end()) {
+        candidate = &*found;
+      }
+    }
+    if (candidate != nullptr) {
+      mutation(*candidate);
+    }
+    return std::pair{candidate != nullptr, lang::verifyMirProgram(forged)};
+  };
+
+  const auto forgedProvenance = mutateRelay([](lang::MirFunctionInstance &fn) {
+    const auto loan = std::find_if(
+        fn.body.loans.begin(), fn.body.loans.end(),
+        [](const lang::MirLoan &item) {
+          return item.kind == lang::MirLoanKind::Return && item.escapes;
+        });
+    if (loan != fn.body.loans.end()) {
+      loan->source = 0;
+    }
+  });
+  expect(forgedProvenance.first && !forgedProvenance.second.valid() &&
+             hasMirVerificationError(forgedProvenance.second,
+                                     "has no source identity"),
+         "MIR verification should independently reject a return loan with "
+         "forged provenance");
+
+  const auto forgedDependency = mutateRelay([](lang::MirFunctionInstance &fn) {
+    lang::MirLoanId returned = 0;
+    for (const lang::MirLoan &loan : fn.body.loans) {
+      if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        returned = loan.id;
+      }
+    }
+    for (lang::MirBlock &block : fn.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Borrow &&
+            instruction.loan == returned && !instruction.operands.empty()) {
+          instruction.operands.front().loan = returned;
+          return;
+        }
+      }
+    }
+  });
+  expect(forgedDependency.first && !forgedDependency.second.valid() &&
+             hasMirVerificationError(forgedDependency.second,
+                                     "exact entry dependency"),
+         "MIR verification should independently reject a return transfer "
+         "that does not consume the stored entry dependency");
+
+  const auto forgedType = mutateRelay([](lang::MirFunctionInstance &fn) {
+    lang::MirLoanId returned = 0;
+    for (const lang::MirLoan &loan : fn.body.loans) {
+      if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        returned = loan.id;
+      }
+    }
+    for (lang::MirBlock &block : fn.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Borrow &&
+            instruction.loan == returned && !instruction.operands.empty()) {
+          instruction.operands.front().type = lang::SemanticType::Bool;
+          instruction.info.type = lang::SemanticType::Bool;
+          return;
+        }
+      }
+    }
+  });
+  expect(forgedType.first && !forgedType.second.valid() &&
+             hasMirVerificationError(forgedType.second, "payload type"),
+         "MIR verification should independently reject a return transfer "
+         "whose dependency payload type is forged");
+
+  const auto forgedRuntimePlace =
+      mutateRelay([](lang::MirFunctionInstance &fn) {
+        lang::MirLoanId returned = 0;
+        lang::MirPlaceId entrySource = 0;
+        for (const lang::MirLoan &loan : fn.body.loans) {
+          if (loan.kind == lang::MirLoanKind::Stored && loan.entry) {
+            entrySource = loan.source;
+          } else if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+            returned = loan.id;
+          }
+        }
+        for (lang::MirBlock &block : fn.body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == returned && !instruction.operands.empty()) {
+              instruction.operands.front().place = entrySource;
+              return;
+            }
+          }
+        }
+      });
+  expect(forgedRuntimePlace.first && !forgedRuntimePlace.second.valid() &&
+             hasMirVerificationError(forgedRuntimePlace.second,
+                                     "runtime referent place"),
+         "MIR verification should independently reject a return transfer "
+         "whose runtime place is the carrier shell");
+
+  const std::string shellSource = R"(
+class ReadCarrier {
+public:
+  int& referent;
+  mut int shell = 0;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int& escape_shell(ReadCarrier carrier) { return carrier.shell; }
+)";
+  const lang::FrontendResult shell =
+      lang::Frontend().analyze("stored-carrier-shell-escape.gti", shellSource);
+  expect(!shell.canGenerateCode() &&
+             hasDiagnosticAt(shell.diagnostics, "GTI-S2085",
+                             "stored-carrier-shell-escape.gti",
+                             shellSource.rfind("shell"),
+                             "projection of the by-value carrier shell"),
+         "a carrier object's ordinary field should fail at the returned "
+         "field with the carrier-shell provenance reason");
+
+  const std::string shellProjectionSource = R"(
+class Shell {
+public:
+  int value = 0;
+};
+class ReadCarrier {
+public:
+  int& referent;
+  Shell shell = Shell();
+  ReadCarrier(int& source) : referent(source) {}
+};
+int& escape_shell_projection(ReadCarrier carrier) {
+  return carrier.shell.value;
+}
+)";
+  const lang::FrontendResult shellProjection = lang::Frontend().analyze(
+      "stored-carrier-shell-projection.gti", shellProjectionSource);
+  expect(!shellProjection.canGenerateCode() &&
+             hasDiagnosticAt(shellProjection.diagnostics, "GTI-S2085",
+                             "stored-carrier-shell-projection.gti",
+                             shellProjectionSource.rfind("value"),
+                             "projection of the by-value carrier shell"),
+         "a nested projection rooted in the carrier shell should be rejected "
+         "at the escaping expression");
+
+  const std::string referentProjectionSource = R"(
+class Node {
+public:
+  Node& next;
+  Node(Node& source) : next(source) {}
+};
+class NodeCarrier {
+public:
+  Node& referent;
+  NodeCarrier(Node& source) : referent(source) {}
+};
+Node& escape_referent_projection(NodeCarrier carrier) {
+  return carrier.referent.next;
+}
+)";
+  const lang::FrontendResult referentProjection = lang::Frontend().analyze(
+      "stored-carrier-referent-projection.gti", referentProjectionSource);
+  expect(!referentProjection.canGenerateCode() &&
+             hasDiagnosticAt(referentProjection.diagnostics, "GTI-S2085",
+                             "stored-carrier-referent-projection.gti",
+                             referentProjectionSource.rfind("next"),
+                             "projection of the carried referent"),
+         "a same-typed projection beyond the designated stored referent "
+         "should not masquerade as the exact external dependency");
+
+  const std::string helperProjectionSource = R"(
+class Node {
+public:
+  Node& next;
+  Node(Node& source) : next(source) {}
+};
+class NodeCarrier {
+public:
+  Node& referent;
+  NodeCarrier(Node& source) : referent(source) {}
+};
+Node& project(Node& source) { return source.next; }
+Node& escape_through_helper(NodeCarrier carrier) {
+  return project(carrier.referent);
+}
+)";
+  const lang::FrontendResult helperProjection = lang::Frontend().analyze(
+      "stored-carrier-helper-projection.gti", helperProjectionSource);
+  expect(!helperProjection.canGenerateCode() &&
+             hasDiagnosticAt(helperProjection.diagnostics, "GTI-S2085",
+                             "stored-carrier-helper-projection.gti",
+                             helperProjectionSource.rfind(')'),
+                             "does not relay the exact external owner "
+                             "dependency"),
+         "an ordinary reference-return summary should not launder a "
+         "same-typed projection of the carried referent");
+
+  const std::string incompatibleSource = R"(
+class ReadCarrier {
+public:
+  int& referent;
+  mut uint64_t position = 0;
+  ReadCarrier(int& source) : referent(source) {}
+};
+uint64_t& escape_incompatible(ReadCarrier carrier) {
+  return carrier.position;
+}
+)";
+  const lang::FrontendResult incompatible = lang::Frontend().analyze(
+      "stored-carrier-incompatible-referent.gti", incompatibleSource);
+  expect(!incompatible.canGenerateCode() &&
+             hasDiagnosticAt(incompatible.diagnostics, "GTI-S2085",
+                             "stored-carrier-incompatible-referent.gti",
+                             incompatibleSource.rfind("position"),
+                             "proves only 'int32_t'"),
+         "a carrier-shell reference with a type unlike the external referent "
+         "should report the incoherent owner-dependency type");
+
+  const std::string copyAssignmentSource = R"(
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int owner = 1;
+  mut ReadCarrier left = ReadCarrier(owner);
+  ReadCarrier right = ReadCarrier(owner);
+  left = right;
+  return 0;
+}
+)";
+  const lang::FrontendResult copyAssignment = lang::Frontend().analyze(
+      "stored-carrier-copy-assignment.gti", copyAssignmentSource);
+  expect(!copyAssignment.canGenerateCode() &&
+             hasDiagnosticAt(copyAssignment.diagnostics, "GTI-S2003",
+                             "stored-carrier-copy-assignment.gti",
+                             copyAssignmentSource.rfind("right"),
+                             "Cannot assign a value of type"),
+         "read-only carriers should reject copy assignment at the source "
+         "value because assignment could reseat their dependency");
+
+  const std::string mutableCopySource = R"(
+#include <std/vector>
+int use() {
+  mut std::vector<int> values = std::vector<int>({1});
+  mut auto cursor = values.begin_mut();
+  auto copied = cursor;
+  return 0;
+}
+)";
+  const lang::FrontendResult mutableCopy = lang::Frontend().analyze(
+      "mutable-carrier-copy.gti", mutableCopySource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(!mutableCopy.canGenerateCode() &&
+             hasDiagnosticAt(mutableCopy.diagnostics, "GTI-S2003",
+                             "mutable-carrier-copy.gti",
+                             mutableCopySource.rfind("cursor"),
+                             "copying move-only type"),
+         "a mutable owner-loan carrier should reject copy construction at "
+         "the attempted source alias");
+
+  const std::string aliasLifetimeSource = R"(
+#include <std/vector>
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  {
+    mut auto first = values.begin();
+    {
+      auto copied = first;
+      mut auto moved = std::move(copied);
+      ++moved;
+      int observed = *moved;
+    }
+    int original = *first;
+  }
+  values.push_back(4);
+  return 0;
+}
+)";
+  const lang::FrontendResult aliasLifetime = lang::Frontend().analyze(
+      "stored-carrier-alias-lifetime.gti", aliasLifetimeSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(aliasLifetime.canGenerateCode(),
+         "copying, moving, and dropping one read-only carrier alias should "
+         "leave the shared owner loan live until the final alias ends");
+
+  const std::string liveAliasSource = R"(
+#include <std/vector>
+int use() {
+  mut std::vector<int> values = std::vector<int>({1, 2});
+  mut auto first = values.begin();
+  {
+    auto copied = first;
+    mut auto moved = std::move(copied);
+    int observed = *moved;
+  }
+  values.push_back(3);
+  int still_live = *first;
+  return still_live;
+}
+)";
+  const lang::FrontendResult liveAlias = lang::Frontend().analyze(
+      "stored-carrier-live-alias.gti", liveAliasSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const std::size_t invalidation =
+      liveAliasSource.find(')', liveAliasSource.find("push_back"));
+  expect(!liveAlias.canGenerateCode() &&
+             hasDiagnosticAt(liveAlias.diagnostics, "GTI-S2017",
+                             "stored-carrier-live-alias.gti", invalidation,
+                             "while a reference borrowed from it may still "
+                             "be live"),
+         "dropping a copied or moved alias must not end the owner loan while "
+         "another carrier remains live");
+}
+
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
@@ -10296,10 +10737,8 @@ int main() {
            "iterator and binary-search client");
   }
 
-  const lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-forward-iterator-contracts.gti", R"(
+  const std::string copyBlockedSource = R"(
 #include <std/iterator>
-#include <std/vector>
 
 class CopyBlockedIterator {
   int& value;
@@ -10311,6 +10750,35 @@ public:
   void operator++() mut {}
   bool operator!=(CopyBlockedIterator& other) { return false; }
 };
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut int value = 1;
+  mut CopyBlockedIterator blocked = CopyBlockedIterator(value);
+  bool result = accepts_forward(std::move(blocked));
+  return 0;
+}
+)";
+  const lang::FrontendResult copyBlocked = lang::Frontend().analyze(
+      "forward-iterator-copy-blocked.gti", copyBlockedSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const std::size_t copyBlockedCall =
+      copyBlockedSource.rfind("accepts_forward");
+  expect(!copyBlocked.canGenerateCode() &&
+             hasDiagnosticAt(
+                 copyBlocked.diagnostics, "GTI-S2029",
+                 "forward-iterator-copy-blocked.gti",
+                 copyBlockedSource.find(';', copyBlockedCall) - 1,
+                 "does not satisfy generic constraint 'std::forward_iterator'"),
+         "forward_iterator should reject a cursor without copy construction at "
+         "the constrained call");
+
+  const std::string distinctSentinelSource = R"(
+#include <std/iterator>
 
 class DistinctSentinel {};
 
@@ -10330,22 +10798,53 @@ bool accepts_forward<Iterator>(Iterator iterator)
 
 int use() {
   mut int value = 1;
-  mut CopyBlockedIterator blocked = CopyBlockedIterator(value);
-  bool blocked_result = accepts_forward(std::move(blocked));
   DistinctOnlyIterator distinct = DistinctOnlyIterator(value);
-  bool distinct_result = accepts_forward(distinct);
-  mut std::vector<int> values = std::vector<int>({1});
-  mut auto mutable_cursor = values.begin_mut();
-  bool mutable_result = accepts_forward(std::move(mutable_cursor));
+  bool result = accepts_forward(distinct);
   return 0;
 }
-)",
+)";
+  const lang::FrontendResult distinctSentinel = lang::Frontend().analyze(
+      "forward-iterator-distinct-sentinel.gti", distinctSentinelSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!invalid.canGenerateCode() &&
-             countDiagnosticContaining(invalid.diagnostics,
-                                       "'std::forward_iterator'") >= 3,
-         "forward_iterator should reject a non-copyable cursor, a "
-         "distinct-sentinel-only cursor, and a mutable owner loan");
+  const std::size_t distinctCall =
+      distinctSentinelSource.rfind("accepts_forward");
+  expect(!distinctSentinel.canGenerateCode() &&
+             hasDiagnosticAt(distinctSentinel.diagnostics, "GTI-S2029",
+                             "forward-iterator-distinct-sentinel.gti",
+                             distinctSentinelSource.find(';', distinctCall) - 1,
+                             "Generic arguments do not satisfy concept "
+                             "'std::forward_iterator'"),
+         "forward_iterator should reject a distinct-sentinel-only cursor at "
+         "the constrained call with the structural reason");
+
+  const std::string mutableCursorSource = R"(
+#include <std/iterator>
+#include <std/vector>
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut std::vector<int> values = std::vector<int>({1});
+  mut auto cursor = values.begin_mut();
+  bool result = accepts_forward(std::move(cursor));
+  return 0;
+}
+)";
+  const lang::FrontendResult mutableCursor = lang::Frontend().analyze(
+      "forward-iterator-mutable-cursor.gti", mutableCursorSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const std::size_t mutableCall = mutableCursorSource.rfind("accepts_forward");
+  expect(!mutableCursor.canGenerateCode() &&
+             hasDiagnosticAt(
+                 mutableCursor.diagnostics, "GTI-S2029",
+                 "forward-iterator-mutable-cursor.gti",
+                 mutableCursorSource.find(';', mutableCall) - 1,
+                 "does not satisfy generic constraint 'std::forward_iterator'"),
+         "forward_iterator should reject a mutable owner-loan cursor at the "
+         "constrained call");
 }
 
 void testGeneralOwnerDependentReturns() {
@@ -31264,6 +31763,7 @@ int main(int argc, char **argv) {
     return failures == 0 ? 0 : 1;
   }
   if (argc == 2 && std::string(argv[1]) == "forward-iterators") {
+    testStoredCarrierReturnProvenance();
     testForwardIteratorContractsAndBinarySearch();
     return failures == 0 ? 0 : 1;
   }
@@ -31301,6 +31801,7 @@ int main(int argc, char **argv) {
   testPrefixStorageCapability();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
+  testStoredCarrierReturnProvenance();
   testForwardIteratorContractsAndBinarySearch();
   testGeneralOwnerDependentReturns();
   testSwitchAndBreakLoanFlow();

@@ -6460,10 +6460,65 @@ private:
       if (output.returnType.kind == SemanticType::Reference) {
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {
-          if (function != nullptr &&
-              function->returnBorrowOrigin != BorrowOriginKind::None &&
+          const bool storedCarrierArgumentReturn =
+              function != nullptr &&
+              function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+              function->returnBorrowParameter <
+                  function->parameterBindings.size() &&
               borrow.loan <= output.loans.size() &&
-              output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult) {
+              output.loans[borrow.loan - 1].kind == MirLoanKind::Stored &&
+              output.loans[borrow.loan - 1].entry &&
+              std::find(
+                  output.loans[borrow.loan - 1].carriers.begin(),
+                  output.loans[borrow.loan - 1].carriers.end(),
+                  function
+                      ->parameterBindings[function->returnBorrowParameter]) !=
+                  output.loans[borrow.loan - 1].carriers.end();
+          if (storedCarrierArgumentReturn) {
+            const HirValue *value = findValue(*statement.value);
+            const MirPlaceId runtimePlace = placeForValue(*statement.value);
+            const MirPlace *runtime = output.findPlace(runtimePlace);
+            const bool exactRuntimeReferent =
+                value != nullptr && output.returnType.arguments.size() == 1 &&
+                runtime != nullptr &&
+                runtime->type == output.returnType.arguments.front() &&
+                value->info.type == output.returnType.arguments.front();
+            if (!exactRuntimeReferent) {
+              valid = false;
+            } else {
+              // The entry Stored loan names the caller-owned dependency,
+              // while runtimePlace names the exact reference value returned
+              // by this body. Publish both facts into a fresh Return loan and
+              // retire the by-value carrier parameter's body-local entry loan
+              // at the same instruction boundary.
+              const MirLoan retainedLoan = output.loans[borrow.loan - 1];
+              const MirLoanId published =
+                  createLoan(MirLoanKind::Return, retainedLoan.source,
+                             retainedLoan.access, *statement.value);
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = MirOperandKind::Loan,
+                                 .place = runtimePlace,
+                                 .loan = borrow.loan,
+                                 .type = value->info.type}},
+                   .loan = published,
+                   .info = value->info});
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = *statement.value,
+                                       .loan = borrow.loan});
+              removeLoanFromState(borrow.loan, scopes, bindingLoans);
+              output.loans[published - 1].escapes = true;
+              borrow = {.kind = MirOperandKind::Loan,
+                        .place = runtimePlace,
+                        .loan = published,
+                        .type = value->info.type};
+            }
+          } else if (function != nullptr &&
+                     function->returnBorrowOrigin != BorrowOriginKind::None &&
+                     borrow.loan <= output.loans.size() &&
+                     output.loans[borrow.loan - 1].kind ==
+                         MirLoanKind::CallResult) {
             const MirPlaceId sourcePlace = output.loans[borrow.loan - 1].source;
             std::vector<MirLoanId> transientChain;
             std::unordered_set<MirLoanId> visited;

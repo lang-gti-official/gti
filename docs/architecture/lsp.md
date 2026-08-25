@@ -240,6 +240,15 @@ diagnostics without retaining stale semantic range errors. The protocol layer
 does not infer a range protocol, access mode, parent/child loan lifetime,
 array strategy, invalidation rule, or temporary ownership from punctuation.
 
+Stored-carrier return diagnostics remain compiler authority as well. A
+by-value carrier return that selects a shell projection, a non-exact referent,
+or an incompatible dependency type publishes `GTI-S2085` with its exact return
+range and related carrier parameter; replacing it with the exact stored
+referent clears the diagnostic on the next document version. Hover continues
+to render `std::copyable` and `std::copy_constructible` as distinct declared
+concepts. The protocol layer does not infer owner provenance from member names
+or lifecycle capability from spelling.
+
 Managed-thread diagnostics also remain shared frontend authority. An invalid
 task transfer, single-threaded profile, or target without thread support
 publishes `GTI-S2084` with its semantic related spans and hints. The LSP reads
