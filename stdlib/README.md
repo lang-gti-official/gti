@@ -198,6 +198,10 @@ copied at that boundary and a pack containing a move-only argument is consumed
 by its first expansion. The read-only iterator retains one checked storage
 borrow. It may be copy-constructed for independent multi-pass traversal while
 sharing that owner dependency, but it cannot be copy-assigned or reseated.
+Consequently it satisfies `std::copy_constructible` but not `std::copyable`.
+A helper receiving this carrier by value may relay only the iterator value or
+its exact stored storage referent; cursor fields and other shell projections do
+not inherit the external owner dependency.
 `begin_mut()` returns a separate compiler-confined, non-copyable iterator carrying
 the exclusive range loan; mutable dereference returns the current element's
 loop-bounded child loan through checked storage access. Reserve, push, clear,

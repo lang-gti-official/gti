@@ -376,15 +376,20 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
    A class or struct may contain one direct read-only reference field. Every
    constructor must initialize it directly from one exact read-only reference
-   parameter. Such a value is move-constructible, noncopyable, and
-   nonassignable. Mutable or multiple reference fields, nested or inherited
+   parameter. Such a value is copy- and move-constructible: every copy has an
+   independent carrier shell and shares the same read-only owner dependency.
+   Copy and move assignment remain unavailable, so the dependency cannot be
+   reseated. Mutable or multiple reference fields, nested or inherited
    borrowed state, user cleanup, global/static/captured storage, and
    dependency-changing assignment are rejected by semantics. An instance
    method may return the direct carrier from its receiver; a free function or
-   static method may return it from one eligible read-only parameter. The
+   static method may return it from one eligible read-only parameter. A
+   by-value carrier parameter may return only that carrier dependency or a
+   reference to its exact designated stored referent; shell fields, shell or
+   referent projections, and incompatible referent types are rejected. The
    dependency survives concrete generic carrier relays, calls, moves, returns,
-   and drops. Mutable/exclusive stored origins or multiple origins remain
-   unsupported. *)
+   copies, and drops. Mutable/exclusive carriers are noncopyable, and multiple
+   origins remain unsupported. *)
 
 constructor-declaration
                        = IDENTIFIER [ generic-parameter-clause ] parameter-clause
@@ -989,8 +994,10 @@ range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent } ;
    Fixed arrays do not yet supply this member protocol. Imported
    standard-library iterators may retain one checked read-only storage borrow
    through the confined stored-reference contract. A free/static factory may
-   propagate one such owner dependency from an eligible read-only parameter;
-   mutable, nested, or multiple owner-borrowing iterators and dedicated
+   propagate one such owner dependency from an eligible read-only parameter.
+   Read-only iterator copies share that dependency while retaining independent
+   positions and remain nonassignable. Compiler-generated mutable iterators
+   remain noncopyable; nested or multiple owner-borrowing iterators and general
    range/element loan scopes remain later lifetime layers. *)
 
 switch-statement       = "switch" "(" expression ")"

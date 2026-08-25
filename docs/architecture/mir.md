@@ -246,6 +246,25 @@ type-correct, and paired with the destination carrier. Backends consume that
 place directly and do not reconstruct source expressions from loan parents,
 full-expression roots, or carrier order.
 
+Version 37 makes a by-value stored-reference carrier return similarly
+self-contained. Lowering gives the carrier parameter one body-local entry
+`Stored` loan whose binding-rooted source is the opaque identity of the
+external dependency proven by semantics. Returning the carrier or its exact
+stored referent publishes a fresh escaping `Return` loan through one `Borrow`
+operand that names that entry loan; a reference return also carries the exact
+runtime referent place and referent type. The entry loan ends at that transfer.
+The verifier independently rejects a missing or duplicate entry loan, a shell
+or unrelated dependency source, a reused or multiply produced return loan, a
+wrong payload/referent type, or a reference result whose terminator does not
+carry the same loan and runtime place.
+
+The C++ representation snapshot keeps `copyConstructible` distinct from
+`copyable`. The former permits initialization of a fresh lifetime slot from a
+copy and is sufficient for read-only forward-iterator carriers. The latter
+also requires copy assignment and is used only when an already initialized
+destination may be replaced. Backends consume these verified lifecycle facts;
+they do not decide whether a stored dependency may be duplicated or reseated.
+
 `deriveMirDefinedFailureEffects` starts every function, constructor, and
 destructor conservatively at `true`. Its function component retains version
 20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
@@ -778,6 +797,13 @@ every carrier simultaneously, and verification rejects any subsequent carrier
 use or inconsistent state at a join. Each local reference carrier's
 `Initialize` separately retains its physical address-source place, so sharing
 one provenance identity does not erase the runtime alias chain.
+
+Copy construction of a read-only stored-reference carrier adds a binding to
+that same loan while copying ordinary shell fields into independent storage.
+Moving transfers a binding, and destroying one alias does not end owner
+protection while another carrier remains live. Assignment is absent because it
+would reseat an established dependency. A mutable compiler-generated carrier
+has an exclusive loan and is noncopyable rather than gaining this shared state.
 
 A bounded exclusive reborrow instead lowers as a distinct mutable or read-only
 child loan linked to one mutable parent. Producing the child suspends the

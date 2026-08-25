@@ -201,7 +201,11 @@ defined storage failure path rather than performing unchecked memory access.
 The ordinary vector iterator is read-only and retains one checked borrow of its
 owner. It is copy-constructible: copies retain the same shared owner dependency
 but carry independent positions, which is sufficient for the source-defined
-`std::forward_iterator` contract. It is not copy-assignable or reseatable.
+`std::forward_iterator` contract. It satisfies `std::copy_constructible`, not
+the broader `std::copyable`, because it is not copy-assignable or reseatable.
+A source-defined helper that receives the iterator by value may return only
+the iterator's exact owner dependency: either the carrier value or its exact
+stored referent of the same type, never an iterator-position/shell projection.
 `begin_mut()` supplies the separate ephemeral mutable iterator used by range
 `for`; its exclusive parent loan prevents overlapping owner operations and each
 iteration carries one mutable element child loan. The mutable iterator remains

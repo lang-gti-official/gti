@@ -249,9 +249,15 @@ provides it, and instance-method returns may propagate that dependency from
 `this`. A free function or static method may propagate a result derived from
 one eligible read-only parameter; a by-value direct carrier may transfer its
 existing dependency through a concrete generic instance. Semantic traits make
-the carrier move-only and nonassignable. HIR and MIR retain the selected
+a read-only carrier copy- and move-constructible but nonassignable. Copies have
+independent cursor shells and share the same owner loan; the compiler-generated
+mutable carrier remains noncopyable. A by-value carrier return may publish only
+the carrier or its exact stored referent, never a shell projection or
+type-incompatible referent. HIR and MIR retain the selected
 receiver or parameter origin and stored loan through calls, moves, returns,
-and drops, while source-level invalidation checks keep the owner stable. The
+C++ backend reference field is not the source of these rules.
+copies, and drops, while source-level invalidation checks keep the owner stable.
+The C++ backend reference field is not the source of these rules.
 C++ backend reference field is not the source of these rules.
 
 This deliberately confined aggregate form is sufficient for a source-defined
