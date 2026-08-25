@@ -33,6 +33,9 @@ for the current implementation when a document is stale or ambiguous.
   queries, document state, and protocol separation.
 - [Formatting](architecture/formatting.md) — current formatter contract and
   syntax-tooling boundary.
+- [Reference documentation](architecture/reference-documentation.md) —
+  compiler-owned API projection, authored MDX, page-owned examples, and static
+  site validation.
 - [Verification](architecture/verification.md) — test ownership, broad checks,
   and the optional local language audit.
 

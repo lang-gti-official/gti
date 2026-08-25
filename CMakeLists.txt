@@ -295,6 +295,7 @@ add_library(
   "src/compiler/checked_integer.cpp"
   "src/compiler/constant_evaluator.cpp"
   "src/compiler/diagnostic.cpp"
+  "src/compiler/documentation.cpp"
   "src/compiler/executable_path.cpp"
   "src/compiler/failure_metadata.cpp"
   "src/compiler/format_config.cpp"
@@ -474,6 +475,17 @@ target_compile_definitions(
   "gti"
   PRIVATE
     GTI_VERSION="${PROJECT_VERSION}"
+)
+
+# Build-time producer for the reference site's compiler-owned API manifest.
+# It is intentionally not installed with the user-facing toolchain.
+add_executable("gti_docgen" EXCLUDE_FROM_ALL
+               "reference/tools/docgen_main.cpp")
+target_link_libraries("gti_docgen" PRIVATE gti_compiler)
+target_compile_definitions(
+  "gti_docgen"
+  PRIVATE
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
 )
 
 if(GTI_BUILD_LSP)
@@ -668,6 +680,11 @@ if(BUILD_TESTING)
                  "tests/compiler_library_smoke.cpp")
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
   add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
+
+  add_executable("gti_documentation_index_tests"
+                 "tests/documentation_index_tests.cpp")
+  target_link_libraries("gti_documentation_index_tests" PRIVATE gti_compiler)
+  add_test(NAME documentation_index COMMAND gti_documentation_index_tests)
 
   if(TARGET gti_lsp_state)
     add_executable("gti_frontend_cache_tests"

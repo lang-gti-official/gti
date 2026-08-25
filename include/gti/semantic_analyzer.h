@@ -1527,6 +1527,7 @@ struct SemanticOccurrence {
   const ClassDecl *classType = nullptr;
   const EnumDecl *enumType = nullptr;
   const TypeAliasDecl *typeAlias = nullptr;
+  const ConceptDecl *conceptDeclaration = nullptr;
   const ConstructorDecl *constructor = nullptr;
   const DestructorDecl *destructor = nullptr;
   std::optional<ResolvedCallInfo> selectedCall;
