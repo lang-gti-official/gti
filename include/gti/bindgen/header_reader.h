@@ -39,15 +39,33 @@ struct ReadResult {
   }
 };
 
-// The platform seam: how C's platform-width builtin spellings resolve to
-// sized integers. The defaults describe the LP64 hosts the toolchain
-// currently targets; a target-selected profile is the extension point.
-struct CTargetProfile {
-  std::uint32_t intBits = 32;
-  std::uint32_t longBits = 64;
-  std::uint32_t longLongBits = 64;
-  std::uint32_t sizeBits = 64;
-  bool plainCharIsSigned = true;
+enum class CDataModel {
+  // 64-bit Unix targets: int=32, long=64, pointer/size=64.
+  Lp64,
+  // 64-bit Windows targets: int/long=32, pointer/size=64.
+  Llp64,
+};
+
+// The platform seam for C's implementation-defined integer widths. GTI's
+// supported targets are all 64-bit, so their C ABIs reduce to LP64 and LLP64.
+// Keeping the choice explicit prevents a host assumption from leaking into a
+// cross-target binding file; a future Clang-backed reader may replace these
+// facts with Clang target information behind the same reader boundary.
+class CTargetProfile final {
+public:
+  constexpr explicit CTargetProfile(CDataModel dataModel = CDataModel::Lp64)
+      : dataModel_(dataModel) {}
+
+  [[nodiscard]] constexpr CDataModel dataModel() const { return dataModel_; }
+  [[nodiscard]] constexpr std::uint32_t intBits() const { return 32; }
+  [[nodiscard]] constexpr std::uint32_t longBits() const {
+    return dataModel_ == CDataModel::Llp64 ? 32 : 64;
+  }
+  [[nodiscard]] constexpr std::uint32_t longLongBits() const { return 64; }
+  [[nodiscard]] constexpr std::uint32_t sizeBits() const { return 64; }
+
+private:
+  CDataModel dataModel_;
 };
 
 class NativeHeaderReader {
@@ -58,7 +76,7 @@ public:
 
 class BoundedCReader final : public NativeHeaderReader {
 public:
-  explicit BoundedCReader(CTargetProfile profile = {});
+  explicit BoundedCReader(CTargetProfile profile = CTargetProfile{});
   [[nodiscard]] ReadResult read(std::string_view headerText) override;
 
 private:

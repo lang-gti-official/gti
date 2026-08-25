@@ -140,8 +140,11 @@ portable, available on every target, or linked into the executable.
 
 ## Importing Existing C Headers
 
-`gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]` generates the
-GTI declarations for a C header's bounded-ABI-compatible surface: complete
+`gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]
+[--target <triple>]` generates the GTI declarations for a C header's
+bounded-ABI-compatible surface. The host target is used by default; an
+explicit supported 64-bit target selects the C data model, including LP64
+`long` on macOS/Linux and LLP64 `long` on Windows. Complete
 passive records become `[[c_abi]]` structs, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become an `int32_t` alias plus `constexpr` constants, function-pointer

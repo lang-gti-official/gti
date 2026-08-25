@@ -25,9 +25,9 @@ struct BindgenResult {
   }
 };
 
-[[nodiscard]] BindgenResult runCBindgen(std::string_view headerText,
-                                        std::string_view headerName,
-                                        BindingOptions options = {},
-                                        CTargetProfile profile = {});
+[[nodiscard]] BindgenResult
+runCBindgen(std::string_view headerText, std::string_view headerName,
+            BindingOptions options = {},
+            CTargetProfile profile = CTargetProfile{});
 
 } // namespace lang::bindgen
