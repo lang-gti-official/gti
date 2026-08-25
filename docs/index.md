@@ -122,6 +122,9 @@ than mixed into the active queue.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
+- [Native bindings import](plans/native-bindings-import.md) — the
+  `gti bindgen` foundation: bounded C17 header import into GTI declarations,
+  its four-phase architecture, and the C++/build-integration growth seams
 - [LSP evolution](plans/lsp-evolution.md)
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
