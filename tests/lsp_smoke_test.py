@@ -1913,6 +1913,196 @@ def test_constructor_local_generic_tooling(executable, root):
         session.close()
 
 
+def test_copy_constructible_carrier_provenance_tooling(executable, root):
+    valid_source = (
+        "class ReadCarrier {\n"
+        "public:\n"
+        "  int& referent;\n"
+        "  mut int shell = 0;\n"
+        "  ReadCarrier(int& source) : referent(source) {}\n"
+        "};\n"
+        "T copy_relay<T>(T value) requires std::copy_constructible<T> {\n"
+        "  return value;\n"
+        "}\n"
+        "int& exact_relay(ReadCarrier carrier) {\n"
+        "  return carrier.referent;\n"
+        "}\n"
+        "int main() {\n"
+        "  mut int owner = 1;\n"
+        "  ReadCarrier source = ReadCarrier(owner);\n"
+        "  ReadCarrier copied = copy_relay(source);\n"
+        "  return exact_relay(copied);\n"
+        "}\n"
+    )
+    path = root / "copy-constructible-carrier-provenance.gti"
+    path.write_text(valid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, valid_source)
+
+        call = valid_source.rindex("copy_relay(source)")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(valid_source, call + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert (
+            "ReadCarrier copy_relay<ReadCarrier>(ReadCarrier value) "
+            "requires std::copy_constructible<ReadCarrier>"
+            in hover["contents"]["value"]
+        ), hover
+
+        invalid_source = valid_source.replace(
+            "return carrier.referent;", "return carrier.shell;"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and any(
+                diagnostic.get("code") == "GTI-S2085"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2085"
+        )
+        shell = invalid_source.index("carrier.shell") + len("carrier.")
+        assert diagnostic["range"] == {
+            "start": lsp_position(invalid_source, shell),
+            "end": lsp_position(invalid_source, shell + len("shell")),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["hints"] == [
+            "Return the carrier value itself, or return its one exact stored "
+            "referent with the same type; ordinary carrier fields and shell "
+            "projections cannot escape."
+        ], diagnostic
+        assert (
+            "projection of the by-value carrier shell"
+            in diagnostic["message"]
+        ), diagnostic
+        assert any(
+            related["message"] == "Stored owner dependency enters here."
+            for related in diagnostic["relatedInformation"]
+        ), diagnostic
+
+        laundered_source = valid_source.replace(
+            "int& exact_relay(ReadCarrier carrier) {\n"
+            "  return carrier.referent;\n"
+            "}\n",
+            "int& relay_reference(int& source) { return source; }\n"
+            "int& exact_relay(ReadCarrier carrier) {\n"
+            "  return relay_reference(carrier.referent);\n"
+            "}\n",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": laundered_source}],
+                },
+            }
+        )
+        laundered_publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and any(
+                diagnostic.get("code") == "GTI-S2085"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        laundered = next(
+            item
+            for item in laundered_publication["diagnostics"]
+            if item.get("code") == "GTI-S2085"
+        )
+        call = laundered_source.index(
+            "relay_reference(carrier.referent)"
+        )
+        terminal = laundered_source.index(")", call)
+        assert laundered["range"] == {
+            "start": lsp_position(laundered_source, terminal),
+            "end": lsp_position(laundered_source, terminal + 1),
+        }, laundered
+        assert (
+            "does not relay the exact external owner dependency"
+            in laundered["message"]
+        ), laundered
+        assert any(
+            related["message"] == "Stored owner dependency enters here."
+            for related in laundered["relatedInformation"]
+        ), laundered
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+            and not message["params"]["diagnostics"]
+        )
+    finally:
+        session.close()
+
+
 def test_defaulted_lifecycle_tooling(executable, root):
     source = (
         "class Defaulted {\n"
@@ -7280,6 +7470,7 @@ def main():
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)
+    test_copy_constructible_carrier_provenance_tooling(sys.argv[1], root)
     test_defaulted_lifecycle_tooling(sys.argv[1], root)
     test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)

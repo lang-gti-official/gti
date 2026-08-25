@@ -462,6 +462,31 @@ public:
                                 functionValueArguments)) {
       return scope.finish();
     }
+    FunctionInfo concreteFunction = *function;
+    const GenericSubstitution substitution{.types = instanceTypeSubstitution,
+                                           .values = instanceValueSubstitution};
+    concreteFunction.returnType =
+        substituteType(concreteFunction.returnType, substitution);
+    for (SemanticType &parameter : concreteFunction.parameterTypes) {
+      parameter = substituteType(parameter, substitution);
+    }
+    for (AppliedConceptRequirement &requirement :
+         concreteFunction.requirements) {
+      for (SemanticType &argument : requirement.arguments) {
+        argument = substituteType(argument, substitution);
+      }
+    }
+    if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+      const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
+          concreteFunction.returnType, concreteFunction.parameterTypes,
+          concreteFunction.ownerClass, concreteFunction.staticMember,
+          concreteFunction.intrinsic);
+      concreteFunction.returnBorrowOrigin = borrow.origin;
+      concreteFunction.returnBorrowParameter = borrow.parameter;
+      concreteFunction.returnBorrowAccess = borrow.access;
+      concreteFunction.returnBorrowPlace = borrow.place;
+    }
+    semanticModel.record(*function->declaration, std::move(concreteFunction));
     function->declaration->accept(*this);
     validateDefaultArgumentCycles();
     semanticModel.finalizeCallableArguments();
@@ -1725,7 +1750,8 @@ public:
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
               ? SemanticType::typePack(declaredType.genericParameterId)
               : declaredType;
-      if (nestsBorrowedState(parameterType)) {
+      if (nestsBorrowedState(parameterType) &&
+          !isReadOnlyBorrowedCarrierParameter(parameterType)) {
         report(parameter.name,
                "Function parameters cannot nest borrowed state in the "
                "current lifetime model.",
@@ -6868,6 +6894,14 @@ private:
     bool transfer = false;
   };
 
+  enum class StoredCarrierReturnProvenance {
+    None,
+    CarrierValue,
+    CarrierShellProjection,
+    ExternalReferent,
+    ExternalReferentProjection,
+  };
+
   struct ActiveLoanFlowConditionalArm {
     std::size_t conditional = 0;
     bool thenBranch = false;
@@ -9343,7 +9377,12 @@ private:
       traits.ownership = traits.ownership == OwnershipKind::Value
                              ? OwnershipKind::Borrowed
                              : traits.ownership;
-      traits.copyable = false;
+      // A direct read-only stored reference may be copied safely: the copy
+      // retains the same semantic owner loan while its ordinary value fields
+      // (for example an iterator cursor) remain independent. Mutable stored
+      // references still carry an exclusive capability and remain move-only.
+      traits.copyable = traits.copyable &&
+                        owner.storedReference->access == AccessMode::ReadOnly;
       traits.copyAssignable = false;
       traits.moveAssignable = false;
       traits.containsBorrowedState = true;
@@ -9575,6 +9614,21 @@ private:
     return owner != nullptr && owner->storedReference.has_value();
   }
 
+  [[nodiscard]] std::optional<SemanticType>
+  storedReferenceReferent(const SemanticType &type) const {
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr || !owner->storedReference) {
+      return std::nullopt;
+    }
+    const SemanticType reference =
+        substituteType(owner->storedReference->type, classSubstitution(type));
+    if (reference.kind != SemanticType::Reference ||
+        reference.arguments.size() != 1) {
+      return std::nullopt;
+    }
+    return reference.arguments.front();
+  }
+
   [[nodiscard]] bool isBorrowReturningType(const SemanticType &type) const {
     return type.kind == SemanticType::Reference ||
            isDirectStoredReferenceType(type);
@@ -9583,7 +9637,6 @@ private:
   [[nodiscard]] FunctionReturnBorrowSummary
   functionReturnBorrowSummary(const SemanticType &returnType,
                               const std::vector<SemanticType> &parameterTypes,
-                              const FunctionDecl *declaration,
                               ClassId ownerClass, bool staticMember,
                               IntrinsicKind intrinsic) const {
     FunctionReturnBorrowSummary summary;
@@ -9600,10 +9653,6 @@ private:
 
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const SemanticType &parameter = parameterTypes[index];
-      const Parameter *syntax =
-          declaration != nullptr && index < declaration->parameters().size()
-              ? &declaration->parameters()[index]
-              : nullptr;
       const bool readOnlyReference =
           parameter.kind == SemanticType::Reference &&
           parameter.referenceAccess == AccessMode::ReadOnly &&
@@ -9611,7 +9660,7 @@ private:
            !typeTraits(parameter.arguments.front()).containsBorrowedState);
       const bool readOnlyBorrowedValue =
           isDirectStoredReferenceType(parameter) &&
-          (syntax == nullptr || syntax->mutability == Mutability::Immutable);
+          borrowAccess(parameter) == AccessMode::ReadOnly;
       if (readOnlyReference || readOnlyBorrowedValue) {
         if (summary.eligibleParameters == 0) {
           summary.parameter = index;
@@ -9619,8 +9668,8 @@ private:
         ++summary.eligibleParameters;
       } else if ((parameter.kind == SemanticType::Reference &&
                   parameter.referenceAccess == AccessMode::Mutable) ||
-                 (isDirectStoredReferenceType(parameter) && syntax != nullptr &&
-                  syntax->mutability == Mutability::Mutable)) {
+                 (isDirectStoredReferenceType(parameter) &&
+                  borrowAccess(parameter) == AccessMode::Mutable)) {
         summary.hasMutableCandidate = true;
       }
     }
@@ -9633,8 +9682,8 @@ private:
 
   void applyFunctionReturnBorrowSummary(FunctionCandidate &function) const {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-        function.returnType, function.parameterTypes, function.declaration,
-        function.ownerClass, function.staticMember, function.intrinsic);
+        function.returnType, function.parameterTypes, function.ownerClass,
+        function.staticMember, function.intrinsic);
     function.returnBorrowOrigin = summary.origin;
     function.returnBorrowParameter = summary.parameter;
     function.returnBorrowAccess = summary.access;
@@ -9644,7 +9693,7 @@ private:
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
                                                 const FunctionInfo &info) {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-        info.returnType, info.parameterTypes, &function, info.ownerClass,
+        info.returnType, info.parameterTypes, info.ownerClass,
         info.staticMember, info.intrinsic);
     const std::string code = info.returnType.kind == SemanticType::Reference
                                  ? "GTI-S2017"
@@ -9667,7 +9716,7 @@ private:
               !typeTraits(parameter.arguments.front())
                    .containsBorrowedState)) ||
             (isDirectStoredReferenceType(parameter) &&
-             function.parameters()[index].mutability == Mutability::Immutable);
+             borrowAccess(parameter) == AccessMode::ReadOnly);
         if (eligible) {
           diagnostic.related.push_back(
               {tokenSpan(function.parameters()[index].name),
@@ -9716,6 +9765,17 @@ private:
     }
     return typeTraits(type).containsBorrowedState &&
            !isDirectStoredReferenceType(type);
+  }
+
+  [[nodiscard]] bool
+  isReadOnlyBorrowedCarrierParameter(const SemanticType &type) const {
+    if (type.kind != SemanticType::Reference ||
+        type.referenceAccess != AccessMode::ReadOnly ||
+        type.arguments.size() != 1 ||
+        !isDirectStoredReferenceType(type.arguments.front())) {
+      return false;
+    }
+    return borrowAccess(type.arguments.front()) == AccessMode::ReadOnly;
   }
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
@@ -11045,7 +11105,8 @@ private:
                                     bool receiverOrigin, AccessMode access,
                                     bool protectsStorage,
                                     SemanticLoanId parent = 0,
-                                    bool entry = false) {
+                                    bool entry = false,
+                                    SymbolId designatedField = 0) {
     const SemanticLoanId id = nextSemanticLoanId++;
     semanticModel.recordLoan({.id = id,
                               .kind = kind,
@@ -11057,6 +11118,7 @@ private:
                               .place = std::move(place),
                               .access = access,
                               .protectsStorage = protectsStorage,
+                              .designatedField = designatedField,
                               .carriers = {carrierSymbol}});
     loanFlow.records.emplace(
         id, LoanFlowRecord{.id = id,
@@ -11075,12 +11137,19 @@ private:
 
   void recordParameterEntryLoan(const Parameter &parameter) {
     Symbol *carrier = resolveMutable(parameter.name);
-    if (carrier == nullptr || carrier->type.kind != SemanticType::Reference ||
-        carrier->type.arguments.size() != 1) {
+    if (carrier == nullptr) {
+      return;
+    }
+    const bool referenceCarrier =
+        carrier->type.kind == SemanticType::Reference &&
+        carrier->type.arguments.size() == 1;
+    const bool storedValueCarrier = isDirectStoredReferenceType(carrier->type);
+    if (!referenceCarrier && !storedValueCarrier) {
       return;
     }
     const FunctionInfo *function = currentFunctionInfo();
     const bool summarizedReadOnlySource =
+        referenceCarrier &&
         carrier->type.referenceAccess == AccessMode::ReadOnly &&
         function != nullptr && function->declaration != nullptr &&
         function->returnBorrowOrigin == BorrowOriginKind::Argument &&
@@ -11088,15 +11157,41 @@ private:
             function->declaration->parameters().size() &&
         &function->declaration->parameters()[function->returnBorrowParameter] ==
             &parameter;
-    if (carrier->type.referenceAccess != AccessMode::Mutable &&
+    if (referenceCarrier &&
+        carrier->type.referenceAccess != AccessMode::Mutable &&
         !summarizedReadOnlySource) {
       return;
     }
     const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
     const SemanticLoanPlace place{.root = carrierSymbol};
+    const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
+                                               : borrowAccess(carrier->type);
+    SymbolId designatedField = 0;
+    if (storedValueCarrier) {
+      const ClassInfo *owner = classInfo(carrier->type);
+      if (owner != nullptr && owner->storedReference) {
+        const auto member =
+            owner->members.find(owner->storedReference->field->name().lexeme);
+        if (member != owner->members.end()) {
+          designatedField = toolingSymbolFor(member->second.symbol);
+        }
+      }
+      if (designatedField == 0) {
+        return;
+      }
+    }
     const SemanticLoanId id = createRetainedLoan(
-        *carrier, carrierSymbol, SemanticLoanKind::Reference, nullptr, place,
-        carrierSymbol, false, carrier->type.referenceAccess, true, 0, true);
+        *carrier, carrierSymbol,
+        storedValueCarrier ? SemanticLoanKind::StoredValue
+                           : SemanticLoanKind::Reference,
+        nullptr, place, carrierSymbol, false, access,
+        // A by-value stored-reference parameter carries an owner dependency,
+        // but its own binding is the cursor/carrier object rather than the
+        // unnameable caller-side owner storage.  Protecting the carrier as if
+        // it were that owner would incorrectly reject increment, copy, and
+        // move of the iterator itself.  The caller's retained loan continues
+        // to protect the actual owner for the duration of the call.
+        referenceCarrier, 0, true, designatedField);
     semanticModel.recordBindingLoan(parameter, id);
   }
 
@@ -14067,6 +14162,8 @@ private:
       return isUnsignedInteger(argument);
     case GenericConstraintKind::FloatingPoint:
       return semanticFloatFormat(argument).has_value();
+    case GenericConstraintKind::CopyConstructible:
+      return typeTraits(argument).copyable;
     case GenericConstraintKind::Copyable: {
       const SemanticTypeTraits traits = typeTraits(argument);
       return traits.copyable && traits.copyAssignable;
@@ -17044,18 +17141,35 @@ private:
     if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
       declarationInfo = instanceBaseModel->findFunction(function.id);
     }
+    const FunctionReturnBorrowSummary concreteBorrow =
+        functionReturnBorrowSummary(
+            function.returnType, function.parameterTypes, function.ownerClass,
+            function.staticMember, function.intrinsic);
+    const bool declarationOwnsBorrow =
+        declarationInfo != nullptr &&
+        declarationInfo->returnBorrowOrigin != BorrowOriginKind::None;
+    const bool candidateOwnsBorrow =
+        function.returnBorrowOrigin != BorrowOriginKind::None;
     const BorrowOriginKind returnBorrowOrigin =
-        declarationInfo == nullptr ? function.returnBorrowOrigin
-                                   : declarationInfo->returnBorrowOrigin;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowOrigin
+            : (candidateOwnsBorrow ? function.returnBorrowOrigin
+                                   : concreteBorrow.origin);
     const std::size_t returnBorrowParameter =
-        declarationInfo == nullptr ? function.returnBorrowParameter
-                                   : declarationInfo->returnBorrowParameter;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowParameter
+            : (candidateOwnsBorrow ? function.returnBorrowParameter
+                                   : concreteBorrow.parameter);
     const AccessMode returnBorrowAccess =
-        declarationInfo == nullptr ? function.returnBorrowAccess
-                                   : declarationInfo->returnBorrowAccess;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowAccess
+            : (candidateOwnsBorrow ? function.returnBorrowAccess
+                                   : concreteBorrow.access);
     const std::optional<BorrowOriginPlace> returnBorrowPlace =
-        declarationInfo == nullptr ? function.returnBorrowPlace
-                                   : declarationInfo->returnBorrowPlace;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowPlace
+            : (candidateOwnsBorrow ? function.returnBorrowPlace
+                                   : concreteBorrow.place);
     std::vector<const Expr *> defaultArguments =
         function.declaration == nullptr
             ? std::vector<const Expr *>{}
@@ -19777,21 +19891,240 @@ private:
     }
     const Parameter &source =
         function->declaration->parameters()[function->returnBorrowParameter];
+    const bool storedValueSource =
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        isDirectStoredReferenceType(
+            function->parameterTypes[function->returnBorrowParameter]);
+    if (storedValueSource) {
+      validateStoredCarrierReturnSource(*function, source, value, description);
+      return;
+    }
     if (isParameterDerivedBorrow(value, source)) {
       return;
     }
     Diagnostic diagnostic = makeDiagnostic(
         std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
         "Returned " + std::string(description) +
-            " must derive from read-only "
-            "parameter '" +
-            source.name.lexeme + "'.");
+            " must derive from read-only parameter '" + source.name.lexeme +
+            "'.");
     diagnostic.related.push_back(
         {tokenSpan(source.name), "Required owner dependency source is here."});
     diagnostic.hints.emplace_back(
         "Return the parameter, a checked projection of it, or a borrowed "
         "value constructed from it; local, temporary, global, and unrelated "
         "parameter storage cannot escape.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  [[nodiscard]] StoredCarrierReturnProvenance storedCarrierReturnProvenance(
+      const ExprPtr &expression, const Parameter &parameter,
+      std::unordered_set<const Expr *> &visiting) const {
+    if (!expression || !visiting.insert(expression.get()).second) {
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
+        return StoredCarrierReturnProvenance::CarrierValue;
+      }
+      if (const ExprPtr *source = storedBorrowSource(expression)) {
+        return storedCarrierReturnProvenance(*source, parameter, visiting);
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+      return storedCarrierReturnProvenance(grouping->expression(), parameter,
+                                           visiting);
+    }
+    if (const auto *binary = exprAs<Binary>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return storedCarrierReturnProvenance(binary->right(), parameter,
+                                           visiting);
+    }
+    if (const auto *member = exprAs<Get>(expression.get())) {
+      const StoredCarrierReturnProvenance object =
+          storedCarrierReturnProvenance(member->object(), parameter, visiting);
+      const SemanticType objectType = memberAccessObjectType(*member);
+      const ClassInfo *owner = classInfo(objectType);
+      const MemberInfo *selected = findMember(objectType, member->name());
+      if (object == StoredCarrierReturnProvenance::CarrierValue) {
+        if (owner != nullptr && owner->storedReference && selected != nullptr &&
+            selected->symbol.variableDeclaration ==
+                owner->storedReference->field) {
+          return StoredCarrierReturnProvenance::ExternalReferent;
+        }
+        return StoredCarrierReturnProvenance::CarrierShellProjection;
+      }
+      if (object == StoredCarrierReturnProvenance::CarrierShellProjection) {
+        return object;
+      }
+      if (object == StoredCarrierReturnProvenance::ExternalReferent ||
+          object == StoredCarrierReturnProvenance::ExternalReferentProjection) {
+        return StoredCarrierReturnProvenance::ExternalReferentProjection;
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const auto *index = exprAs<Index>(expression.get())) {
+      const StoredCarrierReturnProvenance object =
+          storedCarrierReturnProvenance(index->object(), parameter, visiting);
+      if (object == StoredCarrierReturnProvenance::CarrierValue ||
+          object == StoredCarrierReturnProvenance::CarrierShellProjection) {
+        return StoredCarrierReturnProvenance::CarrierShellProjection;
+      }
+      if (object == StoredCarrierReturnProvenance::ExternalReferent ||
+          object == StoredCarrierReturnProvenance::ExternalReferentProjection) {
+        return StoredCarrierReturnProvenance::ExternalReferentProjection;
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const auto *unary = exprAs<Unary>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      const StoredCarrierReturnProvenance operand =
+          storedCarrierReturnProvenance(unary->right(), parameter, visiting);
+      if (operand == StoredCarrierReturnProvenance::CarrierValue ||
+          operand == StoredCarrierReturnProvenance::CarrierShellProjection) {
+        return StoredCarrierReturnProvenance::CarrierShellProjection;
+      }
+      if (operand == StoredCarrierReturnProvenance::ExternalReferent ||
+          operand ==
+              StoredCarrierReturnProvenance::ExternalReferentProjection) {
+        return StoredCarrierReturnProvenance::ExternalReferentProjection;
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const ResolvedConstructionInfo *construction =
+            semanticModel.findConstruction(*expression);
+        construction != nullptr &&
+        construction->borrowOrigin == BorrowOriginKind::Argument) {
+      const ExprPtr *source = nullptr;
+      if (const auto *call = exprAs<Call>(expression.get());
+          call != nullptr &&
+          construction->borrowArgument < call->arguments().size()) {
+        source = &call->arguments()[construction->borrowArgument];
+      } else if (const auto *initializer =
+                     exprAs<DirectInitializer>(expression.get());
+                 initializer != nullptr &&
+                 construction->borrowArgument <
+                     initializer->arguments().size()) {
+        source = &initializer->arguments()[construction->borrowArgument];
+      }
+      if (source != nullptr &&
+          storedCarrierReturnProvenance(*source, parameter, visiting) ==
+              StoredCarrierReturnProvenance::ExternalReferent) {
+        return StoredCarrierReturnProvenance::CarrierValue;
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    if (const auto *call = exprAs<Call>(expression.get())) {
+      if (resolvedIntrinsicKind(*call) == IntrinsicKind::Move) {
+        return call->arguments().size() == 1
+                   ? storedCarrierReturnProvenance(call->arguments().front(),
+                                                   parameter, visiting)
+                   : StoredCarrierReturnProvenance::None;
+      }
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved == nullptr ||
+          resolved->borrowOrigin != BorrowOriginKind::Argument ||
+          resolved->borrowArgument >= call->arguments().size()) {
+        return StoredCarrierReturnProvenance::None;
+      }
+      const StoredCarrierReturnProvenance source =
+          storedCarrierReturnProvenance(
+              call->arguments()[resolved->borrowArgument], parameter, visiting);
+      if (source == StoredCarrierReturnProvenance::None ||
+          source == StoredCarrierReturnProvenance::CarrierShellProjection ||
+          source == StoredCarrierReturnProvenance::ExternalReferentProjection) {
+        return source;
+      }
+      const bool formalStoredCarrier =
+          resolved->borrowArgument < resolved->parameterTypes.size() &&
+          isDirectStoredReferenceType(
+              resolved->parameterTypes[resolved->borrowArgument]);
+      // An ordinary reference-parameter summary proves only that the result
+      // depends on that owner root; it does not prove that the runtime
+      // referent is the exact argument instead of a same-typed projection.
+      // Only a carrier formal has itself passed the stricter return check.
+      if (!formalStoredCarrier ||
+          source != StoredCarrierReturnProvenance::CarrierValue) {
+        return StoredCarrierReturnProvenance::None;
+      }
+      if (isDirectStoredReferenceType(resolved->returnType)) {
+        return StoredCarrierReturnProvenance::CarrierValue;
+      }
+      if (resolved->returnType.kind == SemanticType::Reference) {
+        return StoredCarrierReturnProvenance::ExternalReferent;
+      }
+      return StoredCarrierReturnProvenance::None;
+    }
+    return StoredCarrierReturnProvenance::None;
+  }
+
+  void validateStoredCarrierReturnSource(const FunctionInfo &function,
+                                         const Parameter &source,
+                                         const ExprPtr &value,
+                                         std::string_view description) {
+    const SemanticType &sourceType =
+        function.parameterTypes[function.returnBorrowParameter];
+    const std::optional<SemanticType> sourceReferent =
+        storedReferenceReferent(sourceType);
+    std::optional<SemanticType> resultReferent;
+    StoredCarrierReturnProvenance required =
+        StoredCarrierReturnProvenance::None;
+    if (function.returnType.kind == SemanticType::Reference &&
+        function.returnType.arguments.size() == 1) {
+      resultReferent = function.returnType.arguments.front();
+      required = StoredCarrierReturnProvenance::ExternalReferent;
+    } else if (isDirectStoredReferenceType(function.returnType)) {
+      resultReferent = storedReferenceReferent(function.returnType);
+      required = StoredCarrierReturnProvenance::CarrierValue;
+    }
+
+    std::unordered_set<const Expr *> visiting;
+    const StoredCarrierReturnProvenance actual =
+        storedCarrierReturnProvenance(value, source, visiting);
+    if (sourceReferent && resultReferent &&
+        *sourceReferent == *resultReferent && actual == required) {
+      return;
+    }
+
+    std::string message;
+    if (sourceReferent && resultReferent &&
+        *sourceReferent != *resultReferent) {
+      message = "Returned " + std::string(description) +
+                " has owner-dependency referent type '" +
+                typeSpelling(*resultReferent) +
+                "', but by-value carrier parameter '" + source.name.lexeme +
+                "' proves only '" + typeSpelling(*sourceReferent) + "'.";
+    } else if (actual ==
+               StoredCarrierReturnProvenance::CarrierShellProjection) {
+      message = "Returned " + std::string(description) +
+                " is a projection of the by-value carrier shell rather than "
+                "its external owner dependency.";
+    } else if (actual ==
+               StoredCarrierReturnProvenance::ExternalReferentProjection) {
+      message = "Returned " + std::string(description) +
+                " is a projection of the carried referent rather than the "
+                "exact external owner dependency.";
+    } else if (actual == StoredCarrierReturnProvenance::CarrierValue &&
+               required == StoredCarrierReturnProvenance::ExternalReferent) {
+      message = "Returned " + std::string(description) +
+                " refers to the by-value carrier shell rather than its "
+                "external owner dependency.";
+    } else {
+      message = "Returned " + std::string(description) +
+                " does not relay the exact external owner dependency carried "
+                "by parameter '" +
+                source.name.lexeme + "'.";
+    }
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2085", DiagnosticPhase::Semantics,
+                       expressionToken(value), std::move(message));
+    diagnostic.related.push_back(
+        {tokenSpan(source.name), "Stored owner dependency enters here."});
+    diagnostic.hints.emplace_back(
+        "Return the carrier value itself, or return its one exact stored "
+        "referent with the same type; ordinary carrier fields and shell "
+        "projections cannot escape.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
@@ -25710,8 +26043,8 @@ private:
       }
       FunctionInfo updated = *existing;
       FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-          updated.returnType, updated.parameterTypes, declaration,
-          updated.ownerClass, updated.staticMember, updated.intrinsic);
+          updated.returnType, updated.parameterTypes, updated.ownerClass,
+          updated.staticMember, updated.intrinsic);
       if (isBorrowReturningType(updated.returnType) &&
           updated.intrinsic == IntrinsicKind::None) {
         if (std::optional<BorrowOriginPlace> place =
@@ -26338,6 +26671,12 @@ private:
     if (ownerClass != 0) {
       qualifiedScope.emplace_back(classInfo(ownerClass).name.lexeme);
     }
+    const FunctionReturnBorrowSummary concreteBorrow =
+        functionReturnBorrowSummary(
+            candidate.returnType, candidate.parameterTypes, ownerClass,
+            registered->staticMember, registered->intrinsic);
+    const bool candidateOwnsBorrow =
+        candidate.returnBorrowOrigin != BorrowOriginKind::None;
     semanticModel.record(
         function,
         FunctionInfo{.id = registered->id,
@@ -26369,10 +26708,18 @@ private:
                      .pureVirtual = candidate.pureVirtual,
                      .overrideMethod = candidate.overrideMethod,
                      .intrinsic = registered->intrinsic,
-                     .returnBorrowOrigin = candidate.returnBorrowOrigin,
-                     .returnBorrowParameter = candidate.returnBorrowParameter,
-                     .returnBorrowAccess = candidate.returnBorrowAccess,
-                     .returnBorrowPlace = candidate.returnBorrowPlace,
+                     .returnBorrowOrigin = candidateOwnsBorrow
+                                               ? candidate.returnBorrowOrigin
+                                               : concreteBorrow.origin,
+                     .returnBorrowParameter =
+                         candidateOwnsBorrow ? candidate.returnBorrowParameter
+                                             : concreteBorrow.parameter,
+                     .returnBorrowAccess = candidateOwnsBorrow
+                                               ? candidate.returnBorrowAccess
+                                               : concreteBorrow.access,
+                     .returnBorrowPlace = candidateOwnsBorrow
+                                              ? candidate.returnBorrowPlace
+                                              : concreteBorrow.place,
                      .virtualRoots = candidate.virtualRoots,
                      .compilerPrivate = candidate.compilerPrivate});
   }

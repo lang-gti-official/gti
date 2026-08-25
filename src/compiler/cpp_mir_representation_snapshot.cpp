@@ -951,6 +951,7 @@ struct RowsBuilder {
       // constructor and move assignment let a value of the type declare
       // in the prelude and receive its construction by assignment.
       bool boundaryConstructible = false;
+      bool copyConstructible = false;
       bool copyable = false;
       std::string templateNameSpelling;
       if (type.kind == SemanticType::Class) {
@@ -963,6 +964,9 @@ struct RowsBuilder {
              classInfo->passiveCAbiRecord ||
              (classInfo->defaultConstructor != SpecialMemberStatus::Deleted &&
               classInfo->moveAssignment != SpecialMemberStatus::Deleted));
+        copyConstructible = classInfo && (classInfo->passiveCAbiRecord ||
+                                          classInfo->copyConstructor !=
+                                              SpecialMemberStatus::Deleted);
         copyable =
             classInfo &&
             (classInfo->passiveCAbiRecord ||
@@ -981,6 +985,7 @@ struct RowsBuilder {
            .spelling = facts.typeSpelling(standard, type),
            .templateNameSpelling = std::move(templateNameSpelling),
            .boundaryConstructible = boundaryConstructible,
+           .copyConstructible = copyConstructible,
            .copyable = copyable});
       // An enum type's declaration authority is its enum row; copy it
       // alongside the type row so a boundary that carries the enum can

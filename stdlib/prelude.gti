@@ -17,6 +17,7 @@ namespace gti_internal {
   @compiler_constraint("signed_integral") concept signed_integral_capability<T>;
   @compiler_constraint("unsigned_integral") concept unsigned_integral_capability<T>;
   @compiler_constraint("floating_point") concept floating_point_capability<T>;
+  @compiler_constraint("copy_constructible") concept copy_constructible_capability<T>;
   @compiler_constraint("copyable") concept copyable_capability<T>;
   @compiler_constraint("movable") concept movable_capability<T>;
   @compiler_constraint("transferable") concept transferable_capability<T>;
@@ -131,7 +132,8 @@ namespace std {
   concept movable<T> = gti_internal::movable_capability<T>;
   concept transferable<T> = gti_internal::transferable_capability<T>;
   concept shareable<T> = gti_internal::shareable_capability<T>;
-  concept copyable<T> = gti_internal::copyable_capability<T> && std::movable<T>;
+  concept copy_constructible<T> = gti_internal::copy_constructible_capability<T>;
+  concept copyable<T> = std::copy_constructible<T> && gti_internal::copyable_capability<T> && std::movable<T>;
   concept default_initializable<T> = gti_internal::default_initializable_capability<T>;
   concept equality_comparable<T> = gti_internal::equality_comparable_capability<T>;
   concept totally_ordered<T> = std::equality_comparable<T> && gti_internal::relationally_ordered_capability<T>;
