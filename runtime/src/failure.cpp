@@ -1,4 +1,5 @@
 #include "gti/runtime_failure.h"
+#include "gti/runtime_thread.hpp"
 
 #include "failure_internal.h"
 
@@ -6,6 +7,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -618,6 +620,11 @@ struct ActiveTerminal {
 thread_local const ActiveTerminal *gActiveTerminal = nullptr;
 
 [[noreturn]] void completeTerminal() {
+  // Defined failure exits through _Exit so host atexit/destructor machinery
+  // cannot run after GTI cleanup. Preserve stdout writes that completed before
+  // the failure boundary, including worker-local destructor output handed back
+  // through a managed join.
+  (void)std::fflush(stdout);
   gTerminalState.store(2, std::memory_order_release);
   std::_Exit(GTI_FAILURE_EXIT_STATUS);
 }
@@ -666,6 +673,11 @@ gti_rt_failure_terminate_v1(const gti_failure_record_v1 *record,
                             const gti_failure_artifact_descriptor_v1 *artifact,
                             gti_failure_observer_v1 observer,
                             void *observer_context) {
+  if (record != nullptr && gti_runtime_detail::managed_worker_active()) {
+    // Worker failures are observed only by join. The generated MIR path has
+    // already completed task cleanup before reaching this containment call.
+    gti_runtime_detail::handoff_managed_worker_failure(*record, artifact);
+  }
   claimTerminalWinner();
 
   const gti_failure_record_v1 invalidRecord{};
@@ -699,6 +711,10 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v1(
     const gti_failure_emergency_v1 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  if (failure != nullptr && gti_runtime_detail::managed_worker_active()) {
+    gti_runtime_detail::handoff_managed_worker_cleanup_failure(
+        *failure, primary_artifact, secondary_artifact);
+  }
   claimTerminalWinner();
   (void)writeCleanupNative(failure, primary_artifact, secondary_artifact);
   completeTerminal();

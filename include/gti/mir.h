@@ -26,6 +26,7 @@ using MirDropObligationId = std::size_t;
 using MirFailureRecordId = std::size_t;
 using MirHostedStartupOperationId = std::size_t;
 using MirNativeCallbackAdapterId = std::size_t;
+using MirThreadTaskAdapterId = std::size_t;
 
 struct MirFullExpression {
   HirFullExpressionId id = 0;
@@ -577,6 +578,7 @@ struct MirInstruction {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
+  std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
@@ -803,6 +805,14 @@ struct MirRangeIteration {
 
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
+  // Source-defined standard-library wrappers are part of the complete MIR
+  // declaration inventory even when their public surface is unavailable in
+  // the selected execution profile. Lowering sets this bit only on a
+  // compiler-trusted body that actually contains an exact private
+  // synchronization intrinsic. Program verification treats it as a narrow
+  // exemption for that dormant wrapper body, never as executable profile
+  // authority.
+  bool compilerTrustedSynchronization = false;
   PlaceDomain placeDomain;
   MirBlockId entry = 0;
   SemanticType returnType = SemanticType::Void;
@@ -1108,6 +1118,24 @@ struct MirNativeCallbackAdapter {
                          const MirNativeCallbackAdapter &) = default;
 };
 
+struct MirThreadTaskAdapter {
+  MirThreadTaskAdapterId id = 0;
+  SemanticType taskType = SemanticType::Unknown;
+  HirValueId spawnValue = 0;
+  MirBodyAddress sourceBody;
+  MirInstructionId spawnInstruction = 0;
+  std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirLambdaId> lambdaTarget;
+  CallableInvocationCapability targetInvocation =
+      CallableInvocationCapability::Read;
+  CallableInvocationCapability invocation = CallableInvocationCapability::Once;
+  bool catchesWorkerFailure = true;
+  bool catchesNativeExceptions = true;
+
+  friend bool operator==(const MirThreadTaskAdapter &,
+                         const MirThreadTaskAdapter &) = default;
+};
+
 struct MirConstructorInitializer {
   ConstructorInitializerTargetKind kind =
       ConstructorInitializerTargetKind::Field;
@@ -1390,6 +1418,11 @@ public:
     return nativeCallbacks;
   }
 
+  [[nodiscard]] const std::vector<MirThreadTaskAdapter> &
+  threadTaskAdapters() const {
+    return threadTasks;
+  }
+
   [[nodiscard]] const std::vector<MirConstructorInstance> &
   constructorInstances() const {
     return constructors;
@@ -1413,6 +1446,11 @@ public:
   findNativeCallbackAdapter(MirNativeCallbackAdapterId id) const {
     return id == 0 || id > nativeCallbacks.size() ? nullptr
                                                   : &nativeCallbacks[id - 1];
+  }
+
+  [[nodiscard]] const MirThreadTaskAdapter *
+  findThreadTaskAdapter(MirThreadTaskAdapterId id) const {
+    return id == 0 || id > threadTasks.size() ? nullptr : &threadTasks[id - 1];
   }
 
   [[nodiscard]] const MirClassInstance *
@@ -1455,6 +1493,7 @@ private:
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;
+  std::vector<MirThreadTaskAdapter> threadTasks;
   std::vector<MirConstructorInstance> constructors;
   std::vector<MirDestructorInstance> destructors;
   std::vector<MirLambdaInstance> lambdas;
@@ -1583,7 +1622,8 @@ private:
       const HirConstructorInstance *constructor = nullptr,
       const HirLambda *lambda = nullptr,
       const HirProgramInitializationPlan *programInitialization = nullptr,
-      MirProgramInitializationPlan *loweredProgramInitialization = nullptr);
+      MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
+      bool compilerTrusted = false);
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

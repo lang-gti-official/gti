@@ -124,6 +124,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     if (classInfo == nullptr) {
       return "void";
     }
+    if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::ThreadHandle) {
+      return "::gti_internal::backend::thread_handle";
+    }
     std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
                                                  classInfo->cOpaqueHandle);
     const std::vector<SemanticType> &typeArguments =

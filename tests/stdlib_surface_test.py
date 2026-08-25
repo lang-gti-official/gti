@@ -104,6 +104,10 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
         case_by_id[case_id] = case
         mode = case.get("mode")
         require(mode in CASE_MODES, f"invalid case mode for {case_id}: {mode}")
+        require(
+            case.get("execution_profile") in {None, "single-threaded", "concurrent"},
+            f"invalid execution profile for {case_id}",
+        )
         repository_path(repository, case.get("source"), f"case {case_id} source")
         native_sources = case.get("native_sources", [])
         require(isinstance(native_sources, list), f"{case_id} native_sources must be a list")
@@ -305,6 +309,10 @@ def run_case(
             "-o",
             str(executable),
         ]
+        if case.get("execution_profile") is not None:
+            command.extend(
+                ["--execution-profile", str(case["execution_profile"])]
+            )
         if native_sources:
             command.extend(["--", *(str(path) for path in native_sources)])
         built = subprocess.run(

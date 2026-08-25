@@ -706,6 +706,7 @@ enum class CallableBoundary {
 enum class CallableOwnedTransportKind {
   ExactReturn,
   ExactField,
+  ThreadTask,
 };
 
 struct CallableOwnedTransport {
@@ -723,6 +724,19 @@ struct CallableArgumentBoundary {
 
   friend bool operator==(const CallableArgumentBoundary &,
                          const CallableArgumentBoundary &) = default;
+};
+
+// The exact source callable selected for a managed-thread task. A concrete
+// task names exactly one function declaration or one lambda declaration; the
+// selected invocation capability is retained so later phases never reopen
+// operator() selection from the host-language type.
+struct ResolvedThreadTaskEntry {
+  FunctionId function = 0;
+  LambdaId lambda = 0;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
+
+  friend bool operator==(const ResolvedThreadTaskEntry &,
+                         const ResolvedThreadTaskEntry &) = default;
 };
 
 struct CallableParameterContract {
@@ -782,6 +796,11 @@ enum class IntrinsicKind {
   ArrayRangeBegin,
   ArraySize,
   ExpectedHasValue,
+  ThreadHandleEmpty,
+  ThreadSpawn,
+  ThreadJoinable,
+  ThreadJoin,
+  ThreadAutoJoin,
   Count,
 };
 
@@ -802,6 +821,7 @@ enum class CompilerCapabilityTypeKind {
   TextView,
   CString,
   PrefixStorage,
+  ThreadHandle,
 };
 
 enum class ProgramEntryKind {
@@ -1252,6 +1272,7 @@ struct ResolvedCallInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1663,7 +1684,8 @@ struct SemanticAnalysisSeal {
     return target.os == candidate.os && target.vendor == candidate.vendor &&
            target.arch == candidate.arch &&
            target.dataLayout == candidate.dataLayout &&
-           target.executionProfile == candidate.executionProfile;
+           target.executionProfile == candidate.executionProfile &&
+           target.runtimeCapabilities == candidate.runtimeCapabilities;
   }
 
   [[nodiscard]] bool matchesProgram(const Program &program,

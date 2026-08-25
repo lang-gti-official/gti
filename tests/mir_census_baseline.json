@@ -63,7 +63,8 @@
     "62-native-c-boundaries.gti": 39,
     "63-random-engine.gti": 137,
     "64-restricted-arithmetic-operators.gti": 39,
-    "65-mutable-ranges.gti": 49
+    "65-mutable-ranges.gti": 49,
+    "66-managed-threads.gti": 62
   },
-  "total": 3433
+  "total": 3495
 }

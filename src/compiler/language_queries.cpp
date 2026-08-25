@@ -1172,13 +1172,18 @@ private:
 
       if (contract->boundary == CallableBoundary::Owned &&
           contract->ownedTransport) {
-        note += ", exact transport: ";
-        note += contract->ownedTransport->kind ==
-                        CallableOwnedTransportKind::ExactReturn
-                    ? "return "
-                    : "field of ";
-        note += types.print(substituteSelectedCallType(
-            contract->ownedTransport->destinationType, substitution));
+        if (contract->ownedTransport->kind ==
+            CallableOwnedTransportKind::ThreadTask) {
+          note += ", exact transport: managed thread task (void(), once)";
+        } else {
+          note += ", exact transport: ";
+          note += contract->ownedTransport->kind ==
+                          CallableOwnedTransportKind::ExactReturn
+                      ? "return "
+                      : "field of ";
+          note += types.print(substituteSelectedCallType(
+              contract->ownedTransport->destinationType, substitution));
+        }
       } else if (renderedSignatures.empty()) {
         note += contract->forwardings.empty()
                     ? "; no direct invocation signature"

@@ -3196,6 +3196,194 @@ movedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
   return executableUses == 1 && matched;
 }
 
+[[nodiscard]] bool
+freshOwnedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
+                               MirInstructionId expectedInstruction,
+                               std::size_t expectedOperandIndex) {
+  if (operand.kind != MirOperandKind::Value) {
+    return false;
+  }
+  const MirInstruction *definition = linearValueDefinition(body, operand.value);
+  const MirInstruction *producer = definition;
+  const MirInstruction *preparation = nullptr;
+  MirOperand producerResult = operand;
+  if (definition != nullptr &&
+      definition->kind == MirInstructionKind::CallInput &&
+      definition->callInputKind == HirCallInputKind::MoveValue &&
+      definition->operands.size() == 1 &&
+      definition->operands.front().kind == MirOperandKind::Value &&
+      hasOneExactValueUse(body, definition->operands.front().value,
+                          MirValueUseKind::InstructionOperand, definition->id,
+                          0)) {
+    producerResult = definition->operands.front();
+    producer = linearValueDefinition(body, producerResult.value);
+    preparation = definition;
+  }
+  const bool exactClosure = producer != nullptr &&
+                            producer->kind == MirInstructionKind::Compute &&
+                            producer->operation == MirOperation::Closure &&
+                            producer->lambdaTarget.has_value();
+  const bool exactConstruction =
+      producer != nullptr && producer->kind == MirInstructionKind::Construct &&
+      producer->constructorTarget.has_value();
+  const bool exactDefaultConstruction =
+      producer != nullptr && producer->kind == MirInstructionKind::Call &&
+      producer->result.has_value() &&
+      producer->info.type.kind == SemanticType::Class &&
+      producer->info.category == ValueCategory::Value && !producer->receiver &&
+      producer->operands.empty() && !producer->functionTarget &&
+      !producer->constructorTarget && !producer->lambdaTarget &&
+      !producer->nativeCallbackAdapter && !producer->threadTaskAdapter &&
+      producer->intrinsic == IntrinsicKind::None &&
+      producer->operation == MirOperation::None &&
+      producer->synchronization.kind == SynchronizationOperationKind::None &&
+      producer->definedFailure.empty() && producer->callableArguments.empty();
+  if ((!exactClosure && !exactConstruction && !exactDefaultConstruction) ||
+      producer->result != std::optional{producerResult.value} ||
+      producerResult.type != operand.type || definition == nullptr ||
+      definition->result != operand.value ||
+      definition->info.type != operand.type) {
+    return false;
+  }
+
+  std::size_t executableUses = 0;
+  bool matched = false;
+  const MirInstruction *consumer = nullptr;
+  std::optional<MirPlaceId> bookkeepingPlace;
+  std::optional<MirDropObligationId> bookkeepingDrop;
+  for (const MirPlace &place : body.places) {
+    if (place.root == MirPlaceRootKind::Value && place.value == operand.value) {
+      const auto found = std::find_if(
+          body.dropObligations.begin(), body.dropObligations.end(),
+          [&](const MirDropObligation &obligation) {
+            return obligation.kind == MirDropObligationKind::Value &&
+                   obligation.place == place.id &&
+                   obligation.value == definition->hirValue &&
+                   obligation.dropType.type == definition->info.type;
+          });
+      if (bookkeepingPlace || !place.projections.empty() ||
+          place.sourceValue != definition->hirValue ||
+          found == body.dropObligations.end()) {
+        return false;
+      }
+      bookkeepingPlace = place.id;
+      bookkeepingDrop = found->id;
+    }
+    for (const MirPlaceProjection &projection : place.projections) {
+      if ((projection.kind == MirProjectionKind::Index ||
+           projection.kind == MirProjectionKind::RawIndex) &&
+          projection.index == operand.value) {
+        return false;
+      }
+    }
+  }
+  if (preparation != nullptr) {
+    const MirPlace *place = preparation->destination
+                                ? body.findPlace(*preparation->destination)
+                                : nullptr;
+    const MirDropObligation *drop =
+        preparation->preparedParameterDrop
+            ? body.findDropObligation(*preparation->preparedParameterDrop)
+            : nullptr;
+    if (bookkeepingPlace || bookkeepingDrop || place == nullptr ||
+        drop == nullptr || place->root != MirPlaceRootKind::Temporary ||
+        !place->projections.empty() ||
+        place->sourceValue != preparation->hirValue ||
+        place->type != operand.type ||
+        drop->kind != MirDropObligationKind::PreparedParameter ||
+        drop->place != place->id || drop->dropType.type != operand.type ||
+        drop->initiallyActive) {
+      return false;
+    }
+    bookkeepingPlace = place->id;
+    bookkeepingDrop = drop->id;
+  }
+
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (bookkeepingPlace) {
+        const bool usesBookkeeping =
+            (instruction.destination &&
+             *instruction.destination == *bookkeepingPlace) ||
+            (instruction.receiver &&
+             instruction.receiver->place == *bookkeepingPlace) ||
+            std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(),
+                        [&](const MirOperand &candidate) {
+                          return candidate.place == *bookkeepingPlace;
+                        });
+        const bool exactPreparationDestination =
+            instruction.id == definition->id && instruction.destination &&
+            *instruction.destination == *bookkeepingPlace &&
+            (!instruction.receiver ||
+             instruction.receiver->place != *bookkeepingPlace) &&
+            std::none_of(instruction.operands.begin(),
+                         instruction.operands.end(),
+                         [&](const MirOperand &candidate) {
+                           return candidate.place == *bookkeepingPlace;
+                         });
+        if (usesBookkeeping && !exactPreparationDestination) {
+          return false;
+        }
+      }
+      if (instruction.receiver &&
+          instruction.receiver->kind == MirOperandKind::Value &&
+          instruction.receiver->value == operand.value) {
+        ++executableUses;
+      }
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (instruction.operands[index].kind != MirOperandKind::Value ||
+            instruction.operands[index].value != operand.value) {
+          continue;
+        }
+        ++executableUses;
+        if (instruction.id == expectedInstruction &&
+            index == expectedOperandIndex) {
+          matched = true;
+          consumer = &instruction;
+        }
+      }
+    }
+    if (block.terminator.value &&
+        block.terminator.value->kind == MirOperandKind::Value &&
+        block.terminator.value->value == operand.value) {
+      ++executableUses;
+    }
+    if (bookkeepingPlace && block.terminator.value &&
+        block.terminator.value->place == *bookkeepingPlace) {
+      return false;
+    }
+  }
+  if (executableUses != 1 || !matched || consumer == nullptr) {
+    return false;
+  }
+
+  if (definition->info.traits.drop == DropKind::Trivial) {
+    return !bookkeepingPlace && !bookkeepingDrop;
+  }
+  if (!bookkeepingPlace || !bookkeepingDrop) {
+    return false;
+  }
+  const bool initialized =
+      std::any_of(definition->lifecycle.begin(), definition->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.kind == MirLifecycleEventKind::Initialize &&
+                           event.source == 0 &&
+                           event.target == *bookkeepingDrop &&
+                           !event.conditional && !event.failureCleanup;
+                  });
+  const bool transferred =
+      std::any_of(consumer->lifecycle.begin(), consumer->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.kind == MirLifecycleEventKind::TransferOut &&
+                           event.source == *bookkeepingDrop &&
+                           event.target == 0 && !event.conditional &&
+                           !event.failureCleanup;
+                  });
+  return initialized && transferred;
+}
+
 [[nodiscard]] constexpr bool validAtomicMemoryOrder(AtomicMemoryOrder order) {
   return static_cast<std::size_t>(order) <
          static_cast<std::size_t>(AtomicMemoryOrder::Count);
@@ -8648,6 +8836,43 @@ ownedTransportFailure(const MirProgram &program,
   const CallableOwnedTransport &transport = *parameter.ownedTransport;
   const SemanticType &callableType =
       instance.parameterTypes[parameter.parameterIndex];
+  if (transport.kind == CallableOwnedTransportKind::ThreadTask) {
+    if (transport.destinationType != SemanticType::Void ||
+        transport.field != 0) {
+      return "thread-task transport has an invalid destination contract";
+    }
+    std::size_t exactSpawns = 0;
+    for (const MirBlock &block : instance.body.blocks) {
+      if (!block.reachable) {
+        continue;
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic != IntrinsicKind::ThreadSpawn) {
+          continue;
+        }
+        if (instruction.operands.size() != 2 ||
+            instruction.operands[1].type != callableType ||
+            !instruction.threadTaskAdapter ||
+            !exactMoveFromBinding(
+                instance.body, instruction.operands[1],
+                instance.parameterBindings[parameter.parameterIndex]) ||
+            (!movedValueIntoInstruction(instance.body, instruction.operands[1],
+                                        instruction.id, 1) &&
+             !consumedCallableReceiver(instance.body, instruction.operands[1],
+                                       MirValueUseKind::InstructionOperand,
+                                       instruction.id, 1)) ||
+            !valueTransferredOut(instance.body, instruction.operands[1],
+                                 true)) {
+          return "thread-task transport is not rooted in the parameter move";
+        }
+        ++exactSpawns;
+      }
+    }
+    return exactSpawns == 1
+               ? std::nullopt
+               : std::optional<std::string>{
+                     "thread-task transport must feed exactly one spawn"};
+  }
   if (transport.destinationType != instance.returnType) {
     return "owned transport destination does not match the function return";
   }
@@ -9294,9 +9519,16 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                 operandIndex >= functionTarget->parameterTypes.size() ||
                 instruction.operands[operandIndex].type !=
                     functionTarget->parameterTypes[operandIndex] ||
-                !movedValueIntoInstruction(body,
+                (!movedValueIntoInstruction(body,
+                                            instruction.operands[operandIndex],
+                                            instruction.id, operandIndex) &&
+                 !consumedCallableReceiver(body,
                                            instruction.operands[operandIndex],
-                                           instruction.id, operandIndex)) {
+                                           MirValueUseKind::InstructionOperand,
+                                           instruction.id, operandIndex) &&
+                 !freshOwnedValueIntoInstruction(
+                     body, instruction.operands[operandIndex], instruction.id,
+                     operandIndex))) {
               return failure(body, owner,
                              "owned callable argument is not rooted in its "
                              "exact ownership move",
@@ -14859,6 +15091,16 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
+            !instruction.threadTaskAdapter) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "thread spawn instruction has no task adapter "
+                          "reference"});
+        }
         if (instruction.nativeCallbackAdapter) {
           const MirNativeCallbackAdapter *adapter =
               program.findNativeCallbackAdapter(
@@ -14873,6 +15115,26 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                  .instruction = instruction.id,
                  .message = "native callback instruction has no exact "
                             "program adapter"});
+          }
+        }
+        if (instruction.threadTaskAdapter) {
+          const MirThreadTaskAdapter *adapter =
+              program.findThreadTaskAdapter(*instruction.threadTaskAdapter);
+          if (adapter == nullptr ||
+              instruction.intrinsic != IntrinsicKind::ThreadSpawn ||
+              instruction.synchronization.kind !=
+                  SynchronizationOperationKind::ThreadSpawn ||
+              instruction.hirValue != adapter->spawnValue ||
+              instruction.id != adapter->spawnInstruction ||
+              body.kind != adapter->sourceBody.kind ||
+              owner != adapter->sourceBody.owner) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "thread spawn instruction has no exact program "
+                            "task adapter"});
           }
         }
         for (std::size_t originIndex = 0;
@@ -14895,13 +15157,27 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
         }
       }
     }
-    if (program.executionProfile() != ExecutionProfile::SingleThreaded) {
-      return;
-    }
+    bool hasSynchronization = false;
+    bool exactTrustedSynchronization = true;
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.synchronization.kind ==
             SynchronizationOperationKind::None) {
+          continue;
+        }
+        hasSynchronization = true;
+        const bool exactPrivateThreadIntrinsic =
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::ThreadSpawn &&
+             instruction.intrinsic == IntrinsicKind::ThreadSpawn) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::ThreadJoin &&
+             (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
+              instruction.intrinsic == IntrinsicKind::ThreadAutoJoin));
+        exactTrustedSynchronization =
+            exactTrustedSynchronization && exactPrivateThreadIntrinsic;
+        if (program.executionProfile() != ExecutionProfile::SingleThreaded ||
+            body.compilerTrustedSynchronization) {
           continue;
         }
         result.errors.push_back(
@@ -14912,6 +15188,16 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
              .message = "synchronization operation is unavailable in the "
                         "single-threaded execution profile"});
       }
+    }
+    if (body.compilerTrustedSynchronization &&
+        (!hasSynchronization || !exactTrustedSynchronization ||
+         body.kind == MirBodyKind::Module ||
+         body.kind == MirBodyKind::HostedStartup)) {
+      result.errors.push_back(
+          {.bodyKind = body.kind,
+           .owner = owner,
+           .message = "compiler-trusted synchronization marker is stale or "
+                      "does not name exact private thread intrinsics"});
     }
   };
 
@@ -14941,6 +15227,72 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           {.bodyKind = MirBodyKind::Function,
            .owner = adapter.target,
            .message = "native callback adapter contract is invalid"});
+    }
+  }
+
+  for (std::size_t index = 0; index < program.threadTaskAdapters().size();
+       ++index) {
+    const MirThreadTaskAdapter &adapter = program.threadTaskAdapters()[index];
+    const MirBody *body = findMirBody(program, adapter.sourceBody);
+    const MirInstruction *spawn = nullptr;
+    if (body != nullptr) {
+      for (const MirBlock &block : body->blocks) {
+        const auto found =
+            std::find_if(block.instructions.begin(), block.instructions.end(),
+                         [&](const MirInstruction &instruction) {
+                           return instruction.id == adapter.spawnInstruction;
+                         });
+        if (found != block.instructions.end()) {
+          spawn = &*found;
+          break;
+        }
+      }
+    }
+    const bool functionEntry = adapter.functionTarget.has_value();
+    const bool lambdaEntry = adapter.lambdaTarget.has_value();
+    bool exactEntry = functionEntry != lambdaEntry;
+    if (functionEntry) {
+      const MirFunctionInstance *target =
+          program.findFunctionInstance(*adapter.functionTarget);
+      const MirClassInstance *owner =
+          target == nullptr || !target->owner
+              ? nullptr
+              : program.findClassInstance(*target->owner);
+      exactEntry = exactEntry && target != nullptr && owner != nullptr &&
+                   owner->type == adapter.taskType &&
+                   target->definitionKind == MirDefinitionKind::Source &&
+                   target->overloadedOperator ==
+                       std::optional{OverloadedOperator::Call} &&
+                   target->returnType == SemanticType::Void &&
+                   target->parameterTypes.empty() && !target->pureVirtual &&
+                   adapter.targetInvocation ==
+                       callableInvocationCapability(target->receiverMutability);
+    }
+    if (lambdaEntry) {
+      const MirLambdaInstance *target =
+          program.findLambda(*adapter.lambdaTarget);
+      exactEntry =
+          exactEntry && target != nullptr && target->type == adapter.taskType &&
+          target->returnType == SemanticType::Void &&
+          target->parameterTypes.empty() &&
+          adapter.targetInvocation == CallableInvocationCapability::Read;
+    }
+    if (adapter.id != index + 1 || adapter.taskType == SemanticType::Unknown ||
+        adapter.spawnValue == 0 || adapter.spawnInstruction == 0 ||
+        adapter.invocation != CallableInvocationCapability::Once ||
+        !adapter.catchesWorkerFailure || !adapter.catchesNativeExceptions ||
+        !exactEntry || body == nullptr || spawn == nullptr ||
+        spawn->hirValue != adapter.spawnValue ||
+        spawn->intrinsic != IntrinsicKind::ThreadSpawn ||
+        spawn->threadTaskAdapter != adapter.id ||
+        spawn->synchronization.kind !=
+            SynchronizationOperationKind::ThreadSpawn ||
+        program.executionProfile() != ExecutionProfile::Concurrent) {
+      result.errors.push_back(
+          {.bodyKind = adapter.sourceBody.kind,
+           .owner = adapter.sourceBody.owner,
+           .instruction = adapter.spawnInstruction,
+           .message = "managed thread task adapter contract is invalid"});
     }
   }
 

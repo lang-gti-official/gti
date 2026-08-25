@@ -97,6 +97,7 @@ Every generated family has a target-independent contract:
 | Callable adapter | exact function/capability payload and declaration root |
 | Lifecycle cleanup | exact class/destructor instance, ordinary or concrete-specialization form, failure policy, and destructor root |
 | Native interop adapter | exact callback target, signature, source-body roots, order, and containment policy |
+| Thread task adapter | exact task type, spawn body/instruction, once-invocation contract, synchronization identity, and worker containment firewalls |
 | Concrete-instance adapter | exact generic function/constructor declaration, concrete owner/body, failure effect, and declaration root |
 
 Ordinary C/runtime declarations and boundary shells are resolved linkage and
@@ -358,6 +359,34 @@ non-failing target is called directly. A failure-capable target uses its
 verified failure sibling and forwards the original record to the runtime
 terminal boundary. Native exceptions are contained and terminate; the backend
 cannot select another target or weaken that policy.
+
+Each thread-task item produces one private type-specific adapter rooted by its
+exact verified spawn instruction and exact concrete function-or-lambda entry.
+For an overloaded nominal callable the adapter invokes the already selected
+generated member spelling with its verified read, mutable, or consuming
+receiver; C++ overload resolution is not authority. The backend boxes the
+concrete task only at that boundary and passes an opaque context plus
+entry/destroy callbacks to the version-one runtime thread ABI. Creation
+failure destroys the box on the spawning thread exactly once; success invokes
+it once and destroys it on the worker. The entry catches only the runtime's
+in-process failure-handoff sentinel after MIR cleanup and terminates on any
+unrelated native exception. Neither the opaque runtime state nor a C++
+`std::thread` type appears in public GTI source or `LoweredProgram`.
+
+Private handle intrinsics lower from their exact verified MIR identities.
+Spawn and join retain their synchronization records; explicit and automatic
+join translate native status separately from an ordinary worker record or
+cleanup-emergency envelope. The latter two are reintroduced into the joining
+body's existing MIR failure channel with their descriptor pointers unchanged.
+Task-object/capture destruction remains inside the worker boundary and may
+publish the first failure or the second record of an emergency envelope without
+throwing through a native `noexcept` destructor. A recoverable explicit join
+failure retains the handle for retry. The same status during automatic join
+has no return channel: the backend transfers the still-coherent native state
+to a private terminal quarantine before propagating `GTI-R0012`, preventing a
+live representation destructor while the hosted terminal path completes.
+The backend does not infer this route from `std::jthread`, a destructor name,
+or native C++ ownership behavior.
 
 ## Native Header Backend
 

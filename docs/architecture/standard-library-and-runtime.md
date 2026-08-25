@@ -55,7 +55,8 @@ coverage. `stdlib_surface_manifest` additionally injects missing source,
 stale fingerprint, missing executable evidence, and wrong evidence-kind
 mutations. The checked-in manifest exhaustively classifies every shipped
 standard-library source unit and its executable, diagnostic, or scaffold
-evidence, including concrete `std::pair` construction/field access and the
+evidence, including managed-thread construction and join, concrete `std::pair`
+construction/field access, and the
 `std::forward_list` empty, front, push, pop, and clear operations.
 
 ## Compiler-Private Capabilities
@@ -68,15 +69,16 @@ units below the configured standard-library root are compiler-trusted. A
 quoted application file, an override-only path beneath that root, or a source
 spelling cannot mint that role.
 
-Semantic analysis grants intrinsic behavior by trusted declaration identity in
-the implicit prelude. The private `unique_owner<T>`, `storage<T>`,
-`prefix_storage<T>`, and `text_view` type declarations likewise receive
-compiler-capability identities only when the exact trusted prelude declarations
-are selected. Aliases preserve the selected semantic type; reusing a
-declaration or qualified spelling in application source creates no capability.
-HIR/MIR retain selected intrinsic identity, and the backend queries semantic
-capability facts rather than recognizing a source name before choosing its
-representation.
+Semantic analysis grants intrinsic behavior by exact trusted declaration
+identity. The private `unique_owner<T>`, `storage<T>`, `prefix_storage<T>`, and
+`text_view` type declarations receive compiler-capability identities only when
+the exact trusted prelude declarations are selected. Module-specific
+capabilities may instead be bound to one exact installed standard-library unit;
+managed threads use this route. Aliases preserve the selected semantic type;
+reusing a declaration or qualified spelling in application source creates no
+capability. HIR/MIR retain selected intrinsic identity, and the backend queries
+semantic capability facts rather than recognizing a source name before choosing
+its representation.
 
 Capabilities should expose only an irreducible invariant. Public engagement,
 size, capacity, allocation policy, or container behavior belongs in ordinary
@@ -101,29 +103,52 @@ names or `std::accumulate`, and application source cannot name the underlying
 
 ## Managed Concurrency Boundary
 
-The public managed-thread type will be an ordinary source-defined
-`std::jthread` class. The compiler must not recognize that class, its
+The public managed-thread type is the ordinary source-defined `std::jthread`
+class in `<std/thread>`. The compiler does not recognize that class, its
 constructors, `join`, or its destructor by qualified spelling. Its move-only
-handle state, automatic-join policy, and eventual stop-token policy belong in
-GTI source and use the ordinary class lifecycle rules.
+handle state and automatic-join policy belong in GTI source and use the
+ordinary class lifecycle rules. Stop tokens are not part of this first slice.
 
-Only the irreducible host boundary is compiler-private. The planned capability
-surface consists of an opaque owning native-thread state plus identity-bound
-spawn and join operations. A compiler-generated, type-specific task-entry
-adapter may erase the exact closure only after semantic analysis has proved a
-consumed `void()` callable and transfer-capable captures. The runtime owns the
-native thread and fixed worker-failure handoff; it does not own public class
-policy or know a GTI standard-library type.
+Only the irreducible host boundary is compiler-private. Its capability surface
+is the identity-bound `gti_internal::thread_handle` plus empty, spawn,
+joinable, explicit-join, and automatic-join operations. These declarations are
+owned by the exact trusted `<std/thread>` unit rather
+than the implicit prelude, so programs that do not import the module retain no
+thread declaration bodies or runtime bridge dependency. A compiler-generated,
+type-specific task-entry adapter erases the exact closure only after semantic
+analysis proves one consumed exact `void()` callable and transfer-capable
+captures. HIR, MIR, `LoweredProgram`, and the C++ backend retain and verify
+that adapter identity. The runtime owns only the native thread, opaque state,
+task destruction, and fixed worker-failure handoff; it does not own public
+class policy or know a GTI standard-library type.
 
-The implemented C-MIR-01 groundwork gives a resolved private capability call
+The synchronization contract gives a resolved private capability call
 an exact backend-independent synchronization record. HIR and MIR distinguish
 thread spawn/join, atomic operation families, and mutex lock/unlock; atomic
 records retain legal order dimensions. MIR rejects these records in the
-single-threaded execution profile, and optimizer effects preserve every record
-as a barrier. No public thread declaration, native task adapter, runtime thread
-handle, or backend lowering is implemented yet. Those remain gated on the
-owned-task, defined-failure, ordered-execution, runtime, and backend rows rather
-than being approximated with C++ `std::thread` behavior.
+single-threaded execution profile except in an exact, lowering-marked dormant
+compiler-trusted thread-wrapper body. That exception lets the complete unused
+`<std/thread>` declaration inventory exist; it cannot create a task adapter and
+does not bypass the public semantic profile check. Optimizer effects preserve
+every record as a barrier. The concurrent profile plus target `threads`
+capability admits the implemented thread operations. Spawn transfers one exact
+owned task to the worker, successful explicit or automatic join establishes
+completion-before-return, and no public detach operation exists.
+
+Worker checked failure completes the worker's verified MIR cleanup before the
+generated adapter copies the exact ordinary record or `GTI-R0014` envelope and
+its immutable descriptor pointers into runtime-owned state. The worker does
+not invoke the observer or report. The runtime then destroys the transferred
+callable and captures as the final task-entry cleanup phase. A failure there is
+stored as the worker outcome; if the body already failed it completes the
+exact `GTI-R0014` envelope, while an unrepresentable third failure terminates
+for integrity. Explicit or automatic join consumes that state and re-raises it
+on the joining thread. Recoverable native creation and explicit-join errors
+remain `expected` results; an incoherent native join state is an integrity
+termination rather than a forgeable recoverable handle. An automatic-join
+host failure transfers its still-coherent state into a private terminal
+quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
+ownership state.
 
 ## Native And Runtime Boundary
 
@@ -140,6 +165,17 @@ lossless `uint8_t(char)` code-unit extraction. Neither entry knows about
 `std::string`, a format grammar, a variadic argument, or a formatter object,
 and the scalar entry preserves byte zero rather than relying on C-string
 termination.
+
+The hosted runtime serializes each stdout entry with one process-wide mutex.
+The bytes of one call do not interleave with another call, but a source-level
+operation implemented by several calls may interleave between those calls.
+This serialization is a host-service integrity property, not a language
+`synchronizes-with` edge. Failure-state publication is protected inside each
+managed worker and consumed after native join. File, socket, and opaque native
+owners remain governed by their transfer/share facts; the runtime does not
+make a thread-affine or unsynchronized handle safe merely because it can be
+moved as native storage. Unknown native calls remain conservative effect
+barriers and retain their documented unsafe and thread-safety obligations.
 
 `<std/random>` keeps seeded pseudo-random state and sequence policy in ordinary
 GTI source. Its `std::random_device` crosses the bounded runtime entry
@@ -194,10 +230,11 @@ original record before immediate status-70 termination. POSIX report writes
 retry `EINTR`, complete partial writes, and contain a broken-pipe `SIGPIPE` in
 the reporting thread; Windows uses binary `WriteFile` so the final LF is not
 translated. Report-write failure is nonrecursive and does not change terminal
-status. The bounded generated hosted adapter now owns containment for the
-selected scalar failure component. Future general hosted, task, callback, and
-E-EMBED-01 wrappers still own their containment policy, cleanup completion,
-context guards, and record return/storage. This boundary does not make the
+status. The generated hosted adapter owns process containment, the same-thread
+native callback adapter owns its terminating firewall, and generated managed-
+task adapters own worker handoff after verified cleanup. Future embedding and
+foreign-thread callback wrappers still own their containment policy, cleanup
+completion, context guards, and record return/storage. This boundary does not make the
 failure record the ABI of a public GTI class and does not establish a general
 callable ABI.
 
@@ -228,8 +265,9 @@ asking a backend to inspect names or call stacks.
 integrity and low-level capability helpers that call `std::abort()`. These are
 representation guards and legacy terminal operations, not an alternate source-
 body emitter, and they must not be used to bypass a MIR-defined failure edge or
-cleanup schedule. Double-failure cleanup and task, callback, and embedding
-containment remain open.
+cleanup schedule. Embedding and foreign-thread callback containment remain
+open. Managed-task ordinary and cleanup-double-failure containment are
+implemented for the exact owned `void()` task boundary.
 
 ## Source And Tooling Privacy
 

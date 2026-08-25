@@ -188,6 +188,97 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirLambda &instance : program.lambdaInstances()) {
     verifyNativeCallbackValues(instance.body);
   }
+
+  std::vector<std::size_t> threadTaskRoots(program.threadTaskAdapters().size(),
+                                           0);
+  const auto verifyThreadTaskValues = [&](const HirBody &body) {
+    for (const HirValue &value : body.values) {
+      if (value.intrinsic != IntrinsicKind::ThreadSpawn) {
+        if (value.threadTaskAdapter) {
+          result.errors.emplace_back(
+              "non-spawn HIR value carries a thread task adapter");
+        }
+        continue;
+      }
+      const HirThreadTaskAdapter *adapter =
+          value.threadTaskAdapter
+              ? program.findThreadTaskAdapter(*value.threadTaskAdapter)
+              : nullptr;
+      if (adapter == nullptr || adapter->spawnValue != value.id) {
+        result.errors.emplace_back(
+            "managed thread spawn has no exact HIR task adapter");
+        continue;
+      }
+      ++threadTaskRoots[adapter->id - 1];
+    }
+  };
+  verifyThreadTaskValues(program.module());
+  for (const HirClassInstance &instance : program.classInstances()) {
+    verifyThreadTaskValues(instance.fieldInitializers);
+    verifyThreadTaskValues(instance.staticFieldInitializers);
+  }
+  for (const HirFunctionInstance &instance : program.functionInstances()) {
+    verifyThreadTaskValues(instance.body);
+  }
+  for (const HirConstructorInstance &instance :
+       program.constructorInstances()) {
+    verifyThreadTaskValues(instance.body);
+  }
+  for (const HirDestructorInstance &instance : program.destructorInstances()) {
+    verifyThreadTaskValues(instance.body);
+  }
+  for (const HirLambda &instance : program.lambdaInstances()) {
+    verifyThreadTaskValues(instance.body);
+  }
+
+  for (std::size_t index = 0; index < program.threadTaskAdapters().size();
+       ++index) {
+    const HirThreadTaskAdapter &adapter = program.threadTaskAdapters()[index];
+    const bool functionEntry = adapter.functionTarget.has_value();
+    const bool lambdaEntry = adapter.lambdaTarget.has_value();
+    bool exactEntry = functionEntry != lambdaEntry;
+    if (functionEntry) {
+      const HirFunctionInstance *target =
+          program.findFunctionInstance(*adapter.functionTarget);
+      const FunctionInfo *declaration =
+          target == nullptr ? nullptr
+                            : semantics.findFunction(target->declaration);
+      const HirClassInstance *owner =
+          target == nullptr || !target->owner ||
+                  *target->owner > program.classInstances().size()
+              ? nullptr
+              : &program.classInstances()[*target->owner - 1];
+      exactEntry =
+          exactEntry && target != nullptr && declaration != nullptr &&
+          target->source != nullptr &&
+          declaration->declaration == target->source && owner != nullptr &&
+          owner->type == adapter.taskType &&
+          target->returnType == SemanticType::Void &&
+          target->parameterTypes.empty() &&
+          target->source->operatorName().has_value() &&
+          target->source->operatorName()->kind == OverloadedOperator::Call &&
+          adapter.targetInvocation == callableInvocationCapability(
+                                          target->source->receiverMutability());
+    }
+    if (lambdaEntry) {
+      const HirLambda *target = program.findLambda(*adapter.lambdaTarget);
+      exactEntry =
+          exactEntry && target != nullptr && target->type == adapter.taskType &&
+          target->returnType == SemanticType::Void &&
+          target->parameterTypes.empty() &&
+          adapter.targetInvocation == CallableInvocationCapability::Read;
+    }
+    if (adapter.id != index + 1 || adapter.spawnValue == 0 ||
+        adapter.taskType == SemanticType::Unknown ||
+        adapter.taskType.kind == SemanticType::TypeParameter ||
+        adapter.invocation != CallableInvocationCapability::Once ||
+        program.executionProfile() != ExecutionProfile::Concurrent ||
+        threadTaskRoots[index] != 1 || !exactEntry) {
+      result.errors.emplace_back(
+          "managed thread HIR task adapter contract is invalid");
+    }
+  }
+
   const auto verifyRangeIterations = [&](const HirBody &body) {
     for (const HirStatement &statement : body.statements) {
       const auto *source = stmtAs<RangeForStmt>(statement.source);

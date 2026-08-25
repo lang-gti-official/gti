@@ -27,6 +27,14 @@ MANIFEST_PATH = AUDIT_ROOT / "cases.json"
 EXAMPLES_ROOT = REPOSITORY_ROOT / "examples"
 COMPARISON_RUNNER = EXAMPLES_ROOT / "gti-vs-cpp" / "verify.py"
 
+# Public examples normally use the safe single-threaded default. Examples that
+# intentionally exercise a capability-gated execution profile declare that
+# requirement here so the full audit validates them under their supported
+# configuration instead of silently excluding them from the corpus.
+PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
+    "66-managed-threads.gti": "concurrent",
+}
+
 INTERNAL_FAILURE_MARKERS = (
     "GTI-B0001",
     "internal compiler error",
@@ -648,6 +656,9 @@ def verify_public_examples(
             command = compile_command(
                 gti, cxx, source, executable, optimization, standard
             )
+            execution_profile = PUBLIC_EXAMPLE_EXECUTION_PROFILES.get(source.name)
+            if execution_profile is not None:
+                command.extend(["--execution-profile", execution_profile])
             compile_successfully(
                 f"public example {source.relative_to(REPOSITORY_ROOT)} {variant}",
                 command,
