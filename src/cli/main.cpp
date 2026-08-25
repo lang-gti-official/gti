@@ -1,3 +1,4 @@
+#include "gti/bindgen/bindgen.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/build.h"
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -130,6 +132,7 @@ void printUsage(std::ostream &stream) {
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
+         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -1925,6 +1928,80 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
   return exitCode(ExitStatus::Success);
 }
 
+int runBindgen(int argc, char *argv[]) {
+  std::filesystem::path header;
+  std::filesystem::path output;
+  lang::bindgen::BindingOptions options;
+  for (int index = 2; index < argc; ++index) {
+    const std::string_view argument = argv[index];
+    if (argument == "-o" || argument == "--output") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: " << argument << " requires a path\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      output = argv[++index];
+      continue;
+    }
+    if (argument == "--namespace") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --namespace requires a name\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.namespaceName = argv[++index];
+      continue;
+    }
+    if (argument == "--help" || argument == "-h") {
+      printUsage(std::cout);
+      return exitCode(ExitStatus::Success);
+    }
+    if (!argument.empty() && argument.front() == '-') {
+      std::cerr << "gti: unknown bindgen option '" << argument << "'\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    if (!header.empty()) {
+      std::cerr << "gti: bindgen accepts exactly one header\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    header = argument;
+  }
+  if (header.empty()) {
+    std::cerr << "gti: bindgen requires a C header path\n";
+    return exitCode(ExitStatus::Usage);
+  }
+  std::ifstream stream(header, std::ios::binary);
+  if (!stream) {
+    std::cerr << "gti: failed to open header: " << header << '\n';
+    return exitCode(ExitStatus::Io);
+  }
+  std::ostringstream contents;
+  contents << stream.rdbuf();
+  const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
+      contents.str(), header.filename().string(), std::move(options));
+  for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
+    std::cerr << header.string() << ':' << diagnostic.origin.line << ": "
+              << (diagnostic.severity == lang::bindgen::ReaderSeverity::Error
+                      ? "error: "
+                      : "note: ")
+              << diagnostic.message << '\n';
+  }
+  for (const lang::bindgen::BindingItem &item : result.plan.items) {
+    if (item.kind == lang::bindgen::BindingItemKind::Skipped) {
+      std::cerr << header.string() << ':' << item.origin.line
+                << ": note: skipped '" << item.name << "': " << item.reason
+                << '\n';
+    }
+  }
+  if (!result.usable()) {
+    return exitCode(ExitStatus::Compilation);
+  }
+  if (output.empty()) {
+    std::cout << result.gtiSource;
+    return exitCode(ExitStatus::Success);
+  }
+  return writeFile(output, result.gtiSource) ? exitCode(ExitStatus::Success)
+                                             : exitCode(ExitStatus::Io);
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -2006,6 +2083,10 @@ int main(int argc, char *argv[]) {
       return exitCode(ExitStatus::Usage);
     }
     return runScaffold(options);
+  }
+
+  if (command == "bindgen") {
+    return runBindgen(argc, argv);
   }
 
   if (command == "format") {

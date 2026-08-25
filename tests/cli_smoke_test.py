@@ -3282,6 +3282,119 @@ def main():
         assert "cannot appear inside '#if' blocks" in rejected_include.stderr
 
         assert run([gti, "--version"]).stdout.startswith("gti ")
+        # `gti bindgen`: generate GTI bindings from a C header, then compile
+        # and run a GTI program against a real C implementation of it.
+        if sys.platform != "win32":
+            bindgen_header = root / "meter.h"
+            bindgen_header.write_text(
+                "#ifndef METER_H\n"
+                "#define METER_H\n"
+                "typedef struct Meter Meter;\n"
+                "typedef struct MeterSample { int32_t value; int32_t weight; }"
+                " MeterSample;\n"
+                "enum MeterMode { METER_IDLE, METER_ACTIVE = 2 };\n"
+                "Meter *meter_open(int32_t mode);\n"
+                "void meter_close(Meter *meter);\n"
+                "MeterSample meter_sample_make(int32_t value,"
+                " int32_t weight);\n"
+                "int32_t meter_accumulate(Meter *meter, MeterSample sample);\n"
+                "const char *meter_label(const Meter *meter);\n"
+                "int meter_variadic(const char *format, ...);\n"
+                "#endif\n",
+                encoding="utf-8",
+            )
+            bindgen_bindings = root / "meter-bindings.gti"
+            bindgen_generation = run(
+                [
+                    gti,
+                    "bindgen",
+                    str(bindgen_header),
+                    "-o",
+                    str(bindgen_bindings),
+                ]
+            )
+            assert "meter_variadic" in bindgen_generation.stderr
+            bindings_text = bindgen_bindings.read_text(encoding="utf-8")
+            assert "[[c_opaque]] struct Meter;" in bindings_text
+            assert "[[c_abi]]" in bindings_text
+            assert "constexpr MeterMode METER_ACTIVE = 2;" in bindings_text
+            assert 'extern "C" {' in bindings_text
+            assert "// Not imported:" in bindings_text
+            bindgen_impl_c = root / "meter-impl.c"
+            bindgen_impl_object = root / "meter-impl.o"
+            bindgen_impl_c.write_text(
+                "#include <stdint.h>\n"
+                "#include <stdlib.h>\n"
+                "typedef struct MeterSample { int32_t value; int32_t weight; }"
+                " MeterSample;\n"
+                "struct Meter { int32_t mode; int32_t total; };\n"
+                "struct Meter *meter_open(int32_t mode) {\n"
+                "  struct Meter *meter = malloc(sizeof(struct Meter));\n"
+                "  meter->mode = mode;\n"
+                "  meter->total = 0;\n"
+                "  return meter;\n"
+                "}\n"
+                "void meter_close(struct Meter *meter) { free(meter); }\n"
+                "MeterSample meter_sample_make(int32_t value,"
+                " int32_t weight) {\n"
+                "  MeterSample sample = { value, weight };\n"
+                "  return sample;\n"
+                "}\n"
+                "int32_t meter_accumulate(struct Meter *meter,"
+                " MeterSample sample) {\n"
+                "  meter->total += sample.value * sample.weight;\n"
+                "  return meter->total;\n"
+                "}\n"
+                "const char *meter_label(const struct Meter *meter) {\n"
+                "  (void)meter;\n"
+                "  return \"meter\";\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    "cc",
+                    "-std=c11",
+                    "-c",
+                    str(bindgen_impl_c),
+                    "-o",
+                    str(bindgen_impl_object),
+                ]
+            )
+            bindgen_program = root / "meter-program.gti"
+            bindgen_executable = root / "meter-program"
+            bindgen_program.write_text(
+                bindings_text
+                + "\n"
+                + "int main() {\n"
+                + "  mut Meter* meter = nullptr;\n"
+                + "  unsafe {\n"
+                + "    meter = meter_open(METER_ACTIVE);\n"
+                + "    MeterSample sample = meter_sample_make(6, 7);\n"
+                + "    int32_t total = meter_accumulate(meter, sample);\n"
+                + "    meter_close(meter);\n"
+                + "    if (total != 42) {\n"
+                + "      return 1;\n"
+                + "    }\n"
+                + "  }\n"
+                + "  return 0;\n"
+                + "}\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    gti,
+                    str(bindgen_program),
+                    "-o",
+                    str(bindgen_executable),
+                    "--",
+                    str(bindgen_impl_object),
+                ]
+            )
+            run([str(bindgen_executable)])
+            run([gti, "bindgen"], 64)
+            run([gti, "bindgen", str(root / "missing.h")], 74)
+
         assert "Usage: gti" in run([gti, "--help"]).stdout
         run([gti], 64)
         run([gti, str(source), "--unknown"], 64)
