@@ -127,9 +127,10 @@ The current implemented foundation includes:
   exact transfer-safe `void()` callable and returns
   `expected<std::jthread, std::thread_errc>`; `join()` returns recoverable
   native join errors, destruction autojoins, and either join route re-raises an
-  exact worker defined failure after worker cleanup. This first surface has no
-  detach, stop token, separate argument pack, task result, or cross-thread
-  borrow; and
+  exact worker defined failure after worker cleanup. Move construction
+  transfers the join obligation; move assignment is unavailable. This first
+  surface has no detach, stop token, separate argument pack, task result, or
+  cross-thread borrow; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
   `std::tcp::socket` owner with typed creation and close errors; and
 - `<std/filesystem>` a move-only `std::filesystem::path` giving C++'s

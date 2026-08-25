@@ -19,7 +19,7 @@
     "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
     "stdlib/std/string.gti": "70e0a61fa362352950c2131903ec302c50fa2e879dd971c4795e09c84386316b",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/thread.gti": "c690d26d00f2d4e4d25d5b3fbc42f16e5e0958daef264a7a7650061e1dede55e",
+    "stdlib/std/thread.gti": "a5e99020dfdadb32d4383bd4ecebc412b8a23d97e8fc92d933f3795a09c54ca7",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
     "stdlib/std/vector.gti": "6115ac17db61843b1edaf815e79dd360b2bfc7da9e658b7988f3bf3acd1482e1"
   },

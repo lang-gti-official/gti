@@ -115,6 +115,12 @@ diagnostics or letting a backend message choose either identity.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+- `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
+  does not provide move assignment. If the right-hand side is already an
+  explicit `std::move`, its hint must identify unavailable move assignment and
+  suggest initializing a new binding; it must not repeat the same
+  `std::move(owner)` advice. No fix-it is safe because replacing an existing
+  value can carry cleanup or other ownership obligations.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field

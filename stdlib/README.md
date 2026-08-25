@@ -80,7 +80,9 @@ returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 source-defined `std::jthread`. `std::jthread::start(task)` consumes one exact
 transfer-safe `void()` lambda or callable object and returns
 `expected<std::jthread, std::thread_errc>`. The move-only handle may be joined
-explicitly and otherwise autojoins during destruction. A recoverable native
+explicitly and otherwise autojoins during destruction. Move construction
+transfers its join obligation; move assignment is unavailable in this first
+surface. A recoverable native
 creation/join condition uses `thread_errc`; a GTI failure in the worker is
 cleaned there, preserved exactly, and re-raised by explicit or automatic join.
 References, borrowed captures, raw pointers, and non-transferable owned

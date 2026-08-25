@@ -3142,12 +3142,12 @@ public:
     targetPlace =
         placeTarget == nullptr ? SemanticPlace{} : placeForSymbol(*placeTarget);
     const auto *moveCall = exprAs<Call>(expr.value().get());
-    const Variable *movedSource =
+    const bool explicitMove =
         moveCall != nullptr &&
-                resolvedIntrinsicKind(*moveCall) == IntrinsicKind::Move &&
-                moveCall->arguments().size() == 1
-            ? movedVariable(moveCall->arguments().front())
-            : nullptr;
+        resolvedIntrinsicKind(*moveCall) == IntrinsicKind::Move &&
+        moveCall->arguments().size() == 1;
+    const Variable *movedSource =
+        explicitMove ? movedVariable(moveCall->arguments().front()) : nullptr;
     const bool directSelfMove =
         movedSource != nullptr &&
         movedSource->name().lexeme == expr.name().lexeme;
@@ -3197,9 +3197,13 @@ public:
              "GTI-S2003");
       if (isMoveOnlyOwnerType(targetType) && targetType == valueType) {
         diagnostics.back().hints.emplace_back(
-            "Move-only owners cannot be copied; use std::move(owner) to "
-            "transfer "
-            "ownership.");
+            explicitMove ? "This type does not support "
+                           "move assignment; initialize "
+                           "a new binding from the moved "
+                           "value instead."
+                         : "Move-only owners cannot be "
+                           "copied; use std::move(owner) "
+                           "to transfer ownership.");
       }
     }
     if (!simpleAssignment) {

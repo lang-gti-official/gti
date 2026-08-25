@@ -265,6 +265,26 @@ int main() {
 }
 """
 
+NESTED_FAILURE_SOURCE = """\
+#include <std/thread>
+
+int main() {
+  auto outer_started = std::jthread::start([]() -> void {
+    auto inner_started = std::jthread::start([]() -> void {
+      int32_t zero = 0;
+      int32_t value = 1 / zero;
+    });
+    if (!inner_started.has_value()) { return; }
+    mut std::jthread inner = std::move(inner_started).value();
+    auto inner_join = inner.join();
+  });
+  if (!outer_started.has_value()) { return 1; }
+  mut std::jthread outer = std::move(outer_started).value();
+  auto outer_join = outer.join();
+  return 0;
+}
+"""
+
 
 def execute(
     command: list[str],
@@ -522,6 +542,20 @@ def test_automatic_join_host_failure(
         )
 
 
+def test_nested_worker_failure(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    name = "managed_thread_nested_failure"
+    source = NESTED_FAILURE_SOURCE
+    binary = build(compiler, root, name, source)
+    line = source_line(source, "int32_t value = 1 / zero;")
+    expected = (
+        f"{name}.gti:{line}: runtime error[GTI-R0002]: "
+        "division_by_zero in integer_division\n"
+    )
+    expect_process(binary, code=70, stdout="", stderr=expected)
+
+
 def test_project_profile(
     compiler: pathlib.Path, root: pathlib.Path
 ) -> None:
@@ -574,6 +608,7 @@ def main() -> int:
         test_task_internal_cleanup_emergency(compiler, root)
         test_stress(compiler, root)
         test_automatic_join_host_failure(compiler, root)
+        test_nested_worker_failure(compiler, root)
         test_project_profile(compiler, root)
     print("managed thread end-to-end checks passed")
     return 0

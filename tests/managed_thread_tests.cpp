@@ -59,6 +59,17 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
                      });
 }
 
+bool hasHint(const lang::FrontendResult &result, std::string_view text) {
+  return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const lang::Diagnostic &diagnostic) {
+                       return std::any_of(
+                           diagnostic.hints.begin(), diagnostic.hints.end(),
+                           [&](const std::string &hint) {
+                             return hint.find(text) != std::string::npos;
+                           });
+                     });
+}
+
 void printDiagnostics(const lang::FrontendResult &result) {
   for (const lang::Diagnostic &diagnostic : result.diagnostics) {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -461,6 +472,27 @@ int main() {
   expect(!copiedHandle.canGenerateCode() && !hasCode(copiedHandle, "GTI-B0001"),
          "the public jthread handle should be move-only");
 
+  const lang::FrontendResult assignedHandle =
+      analyze("move-assign-jthread.gti", R"(
+#include <std/thread>
+int main() {
+  auto first_started = std::jthread::start([]() -> void {});
+  auto second_started = std::jthread::start([]() -> void {});
+  if (!first_started.has_value() || !second_started.has_value()) { return 1; }
+  mut std::jthread first = std::move(first_started).value();
+  mut std::jthread second = std::move(second_started).value();
+  first = std::move(second);
+  return 0;
+}
+)");
+  expect(!assignedHandle.canGenerateCode() &&
+             hasCode(assignedHandle, "GTI-S2003") &&
+             hasHint(assignedHandle, "does not support move assignment") &&
+             !hasHint(assignedHandle, "use std::move(owner)") &&
+             !hasCode(assignedHandle, "GTI-B0001"),
+         "jthread move assignment should stop in semantics with a correction "
+         "that does not repeat the already-written std::move");
+
   const lang::FrontendResult privateHandle =
       analyze("private-thread-handle.gti", R"(
 int main() {
@@ -498,6 +530,19 @@ void testVerifierMutations() {
       .clear();
   expect(!lang::verifyMirProgram(missing).valid(),
          "MIR should reject a missing task adapter inventory");
+
+  lang::MirProgram stripped = frontend.mir;
+  lang::MirInstruction *strippedSpawn =
+      findIntrinsic(stripped, lang::IntrinsicKind::ThreadSpawn);
+  if (strippedSpawn != nullptr) {
+    strippedSpawn->threadTaskAdapter.reset();
+  }
+  const_cast<std::vector<lang::MirThreadTaskAdapter> &>(
+      stripped.threadTaskAdapters())
+      .clear();
+  expect(strippedSpawn != nullptr && !lang::verifyMirProgram(stripped).valid(),
+         "MIR should reject a spawn whose adapter reference and inventory row "
+         "were both removed");
 
   lang::MirProgram duplicated = frontend.mir;
   auto &duplicateAdapters =
