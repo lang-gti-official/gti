@@ -1,10 +1,11 @@
 # Native Bindings Import (`gti bindgen`)
 
 Status: C-01 through C-03 implemented (bounded C17 declaration import,
-target-selected LP64/LLP64 mapping, and Clang-driver preprocessing with
-ordered translation-unit inputs). A libclang declaration reader,
-build-manifest integration, and C++ import remain bounded future milestones
-below.
+target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
+translation-unit inputs, and exact opaque-handle out parameters sufficient for
+an end-to-end SQLite open/prepare/step/finalize/close client). A libclang
+declaration reader, build-manifest integration, and C++ import remain bounded
+future milestones below.
 
 ## Problem
 
@@ -115,9 +116,12 @@ methods, overloads) lands without touching the reader. Two passes:
    shared type-mapping authority implementing the documented ABI allowlist:
    fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
    admitted pointees, `const char*` as `c_string`, by-value bindable
-   records, and named callback shapes. Everything else — variadics, plain
-   `char`/`bool`, multi-level pointers, native variables, reserved or
-   GTI-invalid identifiers — becomes a `SkippedItem{origin, name, reason}`.
+   records, named callback shapes, `const char**` as `c_string*`, and one exact
+   `OpaqueHandle**` direct function-parameter form. The latter is position
+   aware: callback shapes, fields, aliases, and returns do not inherit it.
+   Everything else — variadics, plain `char`/`bool`, other multi-level
+   pointers, native variables, reserved or GTI-invalid identifiers — becomes a
+   `SkippedItem{origin, name, reason}`.
 
 The plan is an ordered value type: inspectable, testable, and the future
 driver integration surface (a manifest import produces a plan the build can
@@ -218,14 +222,18 @@ gate — feeding generated bindings through the real `lang::Frontend` and
 requiring the generated GTI to be accepted, so the language's own interop
 validation certifies the output. `cli_workflow` runs the subcommand
 end-to-end: generate bindings from a header, compile a GTI program against a
-real C implementation of that header, and run it. It also verifies explicit
-LP64/LLP64 target selection and invalid-target rejection.
+real C implementation of that header, mutate an opaque handle through an exact
+C out parameter, and run it. It also verifies explicit LP64/LLP64 target
+selection and invalid-target rejection. The external acceptance client is
+SQLite: generated bindings must admit the ordinary open/prepare/step/column/
+finalize/close workflow without a SQLite-specific parser or planner rule.
 
 ## Numbered Delivery Milestones
 
 1. **C-01: bounded C foundation (complete).** GTI-owned model, planner,
    writer, bootstrap C17 reader, CLI, diagnostics, deterministic output, and
-   generated-source frontend/runtime validation.
+   generated-source frontend/runtime validation, including exact
+   opaque-handle out parameters and direct contextual address arguments.
 2. **C-02: target-correct C widths (complete).** Host/explicit target
    selection and exact LP64/LLP64 mapping for supported GTI targets.
 3. **C-03: Clang preprocessing bridge (complete).** Driver-owned Clang C17

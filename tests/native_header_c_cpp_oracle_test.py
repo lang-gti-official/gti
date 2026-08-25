@@ -74,6 +74,7 @@ extern "C" {
 
 extern "C" {
   NativeCounter* c_counter_create(int32_t initial);
+  int32_t c_counter_open(int32_t initial, NativeCounter** out_counter);
   void c_counter_destroy(NativeCounter* counter);
   int32_t c_counter_read(const NativeCounter* counter);
   [[c_array(count)]] NativeCounter** c_counter_array(int32_t* count);
@@ -97,27 +98,33 @@ int main() {
   mut NativePoint point = c_point_make(3.0, 4.0);
   mut int32_t counter_value = 0;
   mut int32_t counter_count = 0;
+  mut int32_t open_status = -1;
   mut uint32_t name_count = 0;
   mut c_string native_name = c_static_name();
   mut c_string description = native_name;
   unsafe {
     NativeCounter* counter = c_counter_create(17);
+    mut NativeCounter* opened_counter = nullptr;
+    open_status = c_counter_open(19, &opened_counter);
     bridge_cpp::Engine* engine = bridge_cpp::cpp_engine_create(2.0);
     point = bridge_cpp::cpp_engine_apply(engine, point);
     point = cpp_point_scale(point, 1.0);
     point = bridge_cpp::cpp_apply_offset(
         point, bridge_cpp::cpp_offset_make(1.0, -1.0));
     counter_value = c_counter_read(counter);
+    counter_value += c_counter_read(opened_counter);
     auto counters = c_counter_array(&counter_count);
     auto names = c_names(&name_count);
     counter_value += c_counter_read(counters[0]);
     counter_value += c_c_string_length(names[1]);
     bridge_cpp::cpp_engine_destroy(engine);
     c_counter_destroy(counter);
+    c_counter_destroy(opened_counter);
     c_replace_description(&description);
   }
   if (point.x != 7.0 || point.y != 7.0 ||
-      counter_value != 47 || counter_count != 1 || name_count != uint32_t(2) ||
+      counter_value != 66 || open_status != 0 || counter_count != 1 ||
+      name_count != uint32_t(2) ||
       c_boundary_version() != uint32_t(17) ||
       cpp_text_length("bridge") != 6 || native_name == nullptr ||
       c_c_string_length("bridge") != 6 ||
@@ -151,6 +158,14 @@ NativeCounter* c_counter_create(int32_t initial) {
     counter->value = initial;
   }
   return counter;
+}
+
+int32_t c_counter_open(int32_t initial, NativeCounter** out_counter) {
+  if (out_counter == NULL) {
+    return 1;
+  }
+  *out_counter = c_counter_create(initial);
+  return *out_counter == NULL ? 2 : 0;
 }
 
 void c_counter_destroy(NativeCounter* counter) { free(counter); }
@@ -321,6 +336,8 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
             "const char* c_static_name(void)" not in header
             or "c_c_string_length(const char* value)" not in header
             or "c_replace_description(const char** value)" not in header
+            or "c_counter_open(int32_t initial, NativeCounter** out_counter)"
+            not in header
             or "NativeCounter** c_counter_array(int32_t* count)" not in header
             or "const char** c_names(uint32_t* count)" not in header
         ):

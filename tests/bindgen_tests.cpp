@@ -165,9 +165,12 @@ typedef struct Item Item;
 int scalars(signed char a, unsigned short b, long c, unsigned long long d);
 float floats(float a, double b);
 void *pointers(const char *name, void *user, const double *values);
+int open_item(Item **out_item);
+int find_tail(const char **out_tail);
 int rejected_bool(_Bool flag);
 int rejected_char(char letter);
 int rejected_two_level(int **matrix);
+int rejected_const_handle(const Item **out_item);
 int rejected_unknown(some_unknown_t value);
 void template(int value);
 int _Reserved(int value);
@@ -191,6 +194,15 @@ int _Reserved(int value);
              pointers->parameters[1].spelling == "void*" &&
              pointers->parameters[2].spelling == "const double*",
          "pointer spellings should map c_string, void*, and const pointees");
+  const lang::bindgen::BindingItem *openItem = findItem(plan, "open_item");
+  const lang::bindgen::BindingItem *findTail = findItem(plan, "find_tail");
+  expect(openItem != nullptr && findTail != nullptr &&
+             openItem->kind == lang::bindgen::BindingItemKind::Function &&
+             findTail->kind == lang::bindgen::BindingItemKind::Function &&
+             openItem->parameters[0].spelling == "Item**" &&
+             findTail->parameters[0].spelling == "c_string*",
+         "the importer should retain exact opaque-handle and C-string out "
+         "parameters without enabling general nested pointers");
   const auto expectSkip = [&](std::string_view name,
                               std::string_view fragment) {
     const lang::bindgen::BindingItem *item = findItem(plan, name);
@@ -202,7 +214,8 @@ int _Reserved(int value);
   };
   expectSkip("rejected_bool", "not a GTI C ABI scalar");
   expectSkip("rejected_char", "plain 'char'");
-  expectSkip("rejected_two_level", "multi-level");
+  expectSkip("rejected_two_level", "two-level pointers are limited");
+  expectSkip("rejected_const_handle", "two-level pointers are limited");
   expectSkip("rejected_unknown", "outside the bounded surface");
   expectSkip("template", "reserved GTI spelling");
   expectSkip("_Reserved", "implementation-reserved");

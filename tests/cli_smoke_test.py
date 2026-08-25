@@ -3300,6 +3300,7 @@ def main():
                 "typedef struct Meter Meter;\n"
                 "enum MeterMode { METER_IDLE, METER_ACTIVE = 2 };\n"
                 "Meter *meter_open(int32_t mode);\n"
+                "int32_t meter_open_out(int32_t mode, Meter **out_meter);\n"
                 "void meter_close(Meter *meter);\n"
                 "MeterSample meter_sample_make(int32_t value,"
                 " int32_t weight);\n"
@@ -3338,6 +3339,10 @@ def main():
             assert "constexpr MeterMode METER_ACTIVE = 2;" in bindings_text
             assert "meter_feature" in bindings_text
             assert "meter_disabled" not in bindings_text
+            assert (
+                "meter_open_out(int32_t mode, Meter** out_meter)"
+                in bindings_text
+            )
             assert 'extern "C" {' in bindings_text
             assert "// Not imported:" in bindings_text
             target_header = root / "target-model.h"
@@ -3393,6 +3398,12 @@ def main():
                 "  meter->total = 0;\n"
                 "  return meter;\n"
                 "}\n"
+                "int32_t meter_open_out(int32_t mode,"
+                " struct Meter **out_meter) {\n"
+                "  if (out_meter == NULL) { return 1; }\n"
+                "  *out_meter = meter_open(mode);\n"
+                "  return *out_meter == NULL ? 2 : 0;\n"
+                "}\n"
                 "void meter_close(struct Meter *meter) { free(meter); }\n"
                 "MeterSample meter_sample_make(int32_t value,"
                 " int32_t weight) {\n"
@@ -3428,7 +3439,8 @@ def main():
                 + "int main() {\n"
                 + "  mut Meter* meter = nullptr;\n"
                 + "  unsafe {\n"
-                + "    meter = meter_open(METER_ACTIVE);\n"
+                + "    int32_t opened = meter_open_out(METER_ACTIVE, &meter);\n"
+                + "    if (opened != 0) { return opened; }\n"
                 + "    MeterSample sample = meter_sample_make(6, 7);\n"
                 + "    int32_t total = meter_accumulate(meter, sample);\n"
                 + "    meter_close(meter);\n"
