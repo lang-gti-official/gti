@@ -695,8 +695,9 @@ smoke workloads likewise remain part of the milestone exit gate.
 The managed-thread schema-2 workload and report-hardening slice is implemented.
 Its 2,800,000 deterministic pixel visits keep the fixed 0.10-second minimum
 conservative; an exploratory fastest result of about 225 ms leaves more than
-twice that floor. The integration rebase is complete on the corrected PR #135
-lineage and retains PRs #138 and #140. A 5-warmup, 20-run managed-thread
+twice that floor. Both variants use the concurrent execution profile, and the
+threaded variant shares no mutable state: each owned task validates private
+state before its deterministic join. A 5-warmup, 20-run managed-thread
 campaign from the final clean commit is a publication gate. Its generated
 reports belong under the configured build output and in review evidence rather
 than in source control. Earlier exploratory runs must not be presented as
