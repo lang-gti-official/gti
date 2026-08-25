@@ -24,12 +24,38 @@
 namespace {
 
 int failures = 0;
+std::optional<std::filesystem::path> corpusSource;
 
 void expect(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+std::vector<std::filesystem::path> exampleCorpusSources() {
+  if (corpusSource.has_value()) {
+    if (std::filesystem::is_regular_file(*corpusSource) &&
+        corpusSource->extension() == ".gti") {
+      return {*corpusSource};
+    }
+    return {};
+  }
+
+  const std::filesystem::path repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::filesystem::path examples = repository / "examples";
+  std::vector<std::filesystem::path> sources;
+  if (std::filesystem::is_directory(examples)) {
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(examples)) {
+      if (entry.is_regular_file() && entry.path().extension() == ".gti") {
+        sources.push_back(entry.path());
+      }
+    }
+  }
+  std::sort(sources.begin(), sources.end());
+  return sources;
 }
 
 lang::FrontendResult analyze(std::string name, std::string source) {
@@ -2725,17 +2751,7 @@ void instantiate() {
 void testExampleCorpusEmissionReadiness() {
   const std::filesystem::path repository =
       std::filesystem::path(__FILE__).parent_path().parent_path();
-  const std::filesystem::path examples = repository / "examples";
-  std::vector<std::filesystem::path> sources;
-  if (std::filesystem::is_directory(examples)) {
-    for (const std::filesystem::directory_entry &entry :
-         std::filesystem::directory_iterator(examples)) {
-      if (entry.is_regular_file() && entry.path().extension() == ".gti") {
-        sources.push_back(entry.path());
-      }
-    }
-  }
-  std::sort(sources.begin(), sources.end());
+  const std::vector<std::filesystem::path> sources = exampleCorpusSources();
   expect(!sources.empty(), "the example corpus should be discoverable");
 
   std::size_t rejected = 0;
@@ -2838,9 +2854,10 @@ void testExampleCorpusEmissionReadiness() {
     }
   }
 
-  std::cout << "example-corpus emission readiness: sources=" << sources.size()
+  std::cout << "GTI_CPP_MIR_CORPUS_READINESS_V1 sources=" << sources.size()
             << " rejected=" << rejected << " bodies=" << bodies
-            << " ready=" << ready << " incoherent=" << incoherent << '\n';
+            << " ready=" << ready << " incoherent=" << incoherent
+            << " invalid=" << invalidIssues << '\n';
 
   expect(rejected == 0,
          "every shipped example should still reach verified MIR; a rejected "
@@ -2850,11 +2867,13 @@ void testExampleCorpusEmissionReadiness() {
          "generic emission gate");
   expect(invalidIssues == 0,
          "frontend-produced MIR should raise no invalid-shape emission issue");
-  // A floor rather than an exact count: the gate protects against regression
-  // without forcing an update on every representation improvement.
-  expect(ready >= 1900,
-         "generic emission readiness across the example corpus should not "
-         "regress below its recorded floor");
+  if (!corpusSource.has_value()) {
+    // A floor rather than an exact count: the gate protects against regression
+    // without forcing an update on every representation improvement.
+    expect(ready >= 1900,
+           "generic emission readiness across the example corpus should not "
+           "regress below its recorded floor");
+  }
 }
 
 // ADR 016 phases 4-5 agreement gate: the production rows builder plus the
@@ -2866,17 +2885,7 @@ void testExampleCorpusEmissionReadiness() {
 void testGeneralTextStepMatchesProductionEmission() {
   const std::filesystem::path repository =
       std::filesystem::path(__FILE__).parent_path().parent_path();
-  const std::filesystem::path examples = repository / "examples";
-  std::vector<std::filesystem::path> sources;
-  if (std::filesystem::is_directory(examples)) {
-    for (const std::filesystem::directory_entry &entry :
-         std::filesystem::directory_iterator(examples)) {
-      if (entry.is_regular_file() && entry.path().extension() == ".gti") {
-        sources.push_back(entry.path());
-      }
-    }
-  }
-  std::sort(sources.begin(), sources.end());
+  const std::vector<std::filesystem::path> sources = exampleCorpusSources();
   expect(!sources.empty(), "the example corpus should be discoverable");
 
   const std::string_view markerPrefix = "// GTI verified-MIR body: ";
@@ -2989,29 +2998,36 @@ void testGeneralTextStepMatchesProductionEmission() {
     }
   }
 
-  std::cout << "general text-step agreement: bodies=" << generalBodies
-            << " matched=" << matchedBodies << '\n';
-  expect(loanBodies,
-         "the corpus should emit at least one loan-erasure body (ADR 018): "
-         "a pointer loan local, an address-of borrow, and a dereferenced "
-         "loan return");
-  expect(intrinsicBodies,
-         "the corpus should emit at least one wrapping/saturating intrinsic "
-         "helper call from verified MIR");
-  expect(checkedIntrinsicBodies,
-         "the corpus should emit at least one checked-result intrinsic "
-         "helper call from verified MIR now that Expected sums joined the "
-         "signature boundary (0.183.0)");
+  std::cout << "GTI_CPP_MIR_CORPUS_AGREEMENT_V1 sources=" << sources.size()
+            << " general=" << generalBodies << " matched=" << matchedBodies
+            << " deterministic=" << deterministic
+            << " intrinsic=" << intrinsicBodies
+            << " checked_intrinsic=" << checkedIntrinsicBodies
+            << " loan=" << loanBodies << " direct=" << directControlFlowBodies
+            << '\n';
   expect(deterministic,
          "the production rows builder should be run-to-run deterministic");
   expect(directControlFlowBodies,
          "every production MIR body should use verified direct labels and "
          "gotos without a mutable block dispatcher");
-  expect(generalBodies >= 30,
-         "the corpus should keep exercising the migrated per-body families");
   expect(matchedBodies == generalBodies,
          "every production scalar-cfg body must byte-match the "
          "general text step's emission");
+  if (!corpusSource.has_value()) {
+    expect(loanBodies,
+           "the corpus should emit at least one loan-erasure body (ADR 018): "
+           "a pointer loan local, an address-of borrow, and a dereferenced "
+           "loan return");
+    expect(intrinsicBodies,
+           "the corpus should emit at least one wrapping/saturating intrinsic "
+           "helper call from verified MIR");
+    expect(checkedIntrinsicBodies,
+           "the corpus should emit at least one checked-result intrinsic "
+           "helper call from verified MIR now that Expected sums joined the "
+           "signature boundary (0.183.0)");
+    expect(generalBodies >= 30,
+           "the corpus should keep exercising the migrated per-body families");
+  }
 }
 
 // The production rows now carry namespace-global storage names,
@@ -7440,11 +7456,12 @@ int main() {
          "before entering the success block");
 }
 
-// The tests are independent, so CI shards them across parallel ctest
-// entries: `--shard K/N` runs every Nth test starting at K-1 (interleaved,
-// which balances the skewed per-test durations better than contiguous
-// blocks). Without arguments every test runs, so local invocation is
-// unchanged. The shard union is the full table by construction.
+// The lightweight tests are independent, so CI shards them across parallel
+// ctest entries: `--shard K/N` runs every Nth non-corpus test starting at K-1.
+// The two whole-corpus sweeps are intentionally excluded from those entries;
+// the Python coordinator runs both for every exact census source and
+// re-aggregates their corpus-wide assertions. Without arguments every test
+// still runs in-process, so local invocation is unchanged.
 struct NamedTest {
   const char *name;
   void (*run)();
@@ -7578,9 +7595,11 @@ constexpr NamedTest kTests[] = {
 int main(int argc, char **argv) {
   std::size_t shard = 1;
   std::size_t shardCount = 1;
+  bool shardRequested = false;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--shard" && index + 1 < argc) {
+      shardRequested = true;
       const std::string specification = argv[++index];
       const std::size_t separator = specification.find('/');
       if (separator == std::string::npos) {
@@ -7593,22 +7612,47 @@ int main(int argc, char **argv) {
         std::cerr << "--shard expects 1 <= K <= N\n";
         return 2;
       }
+    } else if (argument == "--corpus-source" && index + 1 < argc) {
+      corpusSource = std::filesystem::path(argv[++index]);
     } else {
       std::cerr << "unknown argument: " << argument << "\n";
       return 2;
     }
   }
 
+  if (shardRequested && corpusSource.has_value()) {
+    std::cerr << "--shard and --corpus-source are mutually exclusive\n";
+    return 2;
+  }
+
   std::size_t ran = 0;
-  for (std::size_t index = 0; index < std::size(kTests); ++index) {
-    if (index % shardCount != shard - 1) {
-      continue;
+  std::size_t available = std::size(kTests);
+  if (corpusSource.has_value()) {
+    testExampleCorpusEmissionReadiness();
+    testGeneralTextStepMatchesProductionEmission();
+    ran = 2;
+    available = 2;
+  } else {
+    std::size_t shardedIndex = 0;
+    if (shardRequested) {
+      available -= 2;
     }
-    kTests[index].run();
-    ++ran;
+    for (const NamedTest &test : kTests) {
+      const bool corpusTest =
+          test.run == testExampleCorpusEmissionReadiness ||
+          test.run == testGeneralTextStepMatchesProductionEmission;
+      if (shardRequested && corpusTest) {
+        continue;
+      }
+      if (shardRequested && shardedIndex++ % shardCount != shard - 1) {
+        continue;
+      }
+      test.run();
+      ++ran;
+    }
   }
   std::cout << "cpp MIR body-emitter shard " << shard << "/" << shardCount
-            << ": ran " << ran << " of " << std::size(kTests) << " tests\n";
+            << ": ran " << ran << " of " << available << " tests\n";
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

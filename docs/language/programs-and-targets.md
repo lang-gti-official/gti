@@ -352,6 +352,15 @@ managed-thread operations when the selected target advertises its independent
 `threads` runtime capability. It grants no atomic, mutex, detach, or other
 unimplemented operation.
 
+The reference driver resolves execution policy and runtime support into one
+immutable analysis configuration before frontend entry. A raw compiler-library
+target advertises no runtime capabilities; selecting the installed hosted
+runtime derives `threads` only for a supported target. `gti_lsp` accepts the
+same `--execution-profile` option for standalone documents; an explicit startup
+selection overrides a nearest manifest's `dev` profile, while omission uses
+that profile when present and otherwise remains single-threaded. Neither the
+compiler nor the LSP derives capability from `std::jthread` spelling.
+
 ## 6.7 Build Systems And Packages
 
 Manifest discovery, dependency acquisition, caches, profiles, and artifact

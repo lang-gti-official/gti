@@ -445,26 +445,26 @@ const ProjectProfile *selectProfile(const ProjectManifest &manifest,
   return nullptr;
 }
 
-ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
-                               const ProjectManifest &manifest,
-                               const ProjectTarget &selectedTarget,
-                               const ProjectProfile &selectedProfile,
-                               const TargetInfo &target,
-                               NativeInputs nativeInputs,
-                               const ProjectBuildOverrides &overrides = {}) {
+ProjectBuildPlan makeBuildPlan(
+    const ProjectWorkspace &workspace, const ProjectManifest &manifest,
+    const ProjectTarget &selectedTarget, const ProjectProfile &selectedProfile,
+    const TargetInfo &target, NativeInputs nativeInputs,
+    const ProjectBuildOverrides &overrides = {},
+    RuntimeProfile runtimeProfile = RuntimeProfile::None) {
   const OptimizationLevel optimization =
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
-  TargetInfo resolvedTarget = target;
-  resolvedTarget.executionProfile =
-      overrides.executionProfile.value_or(selectedProfile.executionProfile);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
   ConfigurationFlags configurationFlags = manifest.build().defines;
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
                             overrides.configurationFlags.end());
-  normalizeConfigurationFlags(configurationFlags);
+  const AnalysisConfiguration configuration(
+      target,
+      overrides.executionProfile.value_or(selectedProfile.executionProfile),
+      runtimeProfile, std::move(configurationFlags));
+  const TargetInfo &resolvedTarget = configuration.target();
   std::filesystem::path outputDirectory = workspace.root() / "build" / "gti";
   if (workspace.declared()) {
     outputDirectory /= "packages";
@@ -481,16 +481,16 @@ ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
       outputDirectory / ".gti-intermediate" /
       (selectedTarget.name + ".gti.cpp");
   std::string modelIdentity = workspace.modelIdentity();
-  for (const std::string &flag : configurationFlags) {
+  for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
   }
   return ProjectBuildPlan(
       manifest.path(), manifest.packageRoot(), workspace.root(),
       manifest.package().name, manifest.package().version, selectedTarget.name,
       selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
-      generatedSource, std::move(resolvedTarget), optimization, cppStandard,
-      keepCpp, std::move(nativeInputs), workspace.packageSourceRoots(),
-      std::move(configurationFlags), std::move(modelIdentity));
+      generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
+      std::move(nativeInputs), workspace.packageSourceRoots(),
+      configuration.configurationFlags(), std::move(modelIdentity));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -577,16 +577,21 @@ ProjectBuildRequest::ProjectBuildRequest(
     std::filesystem::path startDirectory, std::optional<std::string> targetName,
     std::string profileName, TargetInfo target, ProjectBuildOverrides overrides,
     std::optional<std::string> packageName,
-    WorkspaceDependencyPolicy dependencyPolicy)
+    WorkspaceDependencyPolicy dependencyPolicy, RuntimeProfile runtimeProfile)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
       cliOverrides(std::move(overrides)),
       selectedPackage(std::move(packageName)),
-      workspaceDependencyPolicy(dependencyPolicy) {}
+      workspaceDependencyPolicy(dependencyPolicy),
+      selectedRuntimeProfile(runtimeProfile) {}
 
 const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
   return workspaceDependencyPolicy;
+}
+
+RuntimeProfile ProjectBuildRequest::runtimeProfile() const {
+  return selectedRuntimeProfile;
 }
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
@@ -870,9 +875,9 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan = makeBuildPlan(workspace, manifest, *selectedTarget,
-                              *selectedProfile, request.target(),
-                              std::move(*nativeInputs), request.overrides());
+  result.plan = makeBuildPlan(
+      workspace, manifest, *selectedTarget, *selectedProfile, request.target(),
+      std::move(*nativeInputs), request.overrides(), request.runtimeProfile());
   return result;
 }
 
@@ -982,9 +987,10 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       return result;
     }
     nativeInputs->dependencyGroups = *composed;
-    result.plans.push_back(makeBuildPlan(
-        workspace, manifest, *selectedTarget, *selectedProfile,
-        request.target(), std::move(*nativeInputs), request.overrides()));
+    result.plans.push_back(
+        makeBuildPlan(workspace, manifest, *selectedTarget, *selectedProfile,
+                      request.target(), std::move(*nativeInputs),
+                      request.overrides(), request.runtimeProfile()));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1057,19 +1063,19 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
       result.plans.clear();
       return result;
     }
-    result.plans.push_back(makeBuildPlan(
-        workspace, manifest, target, *selectedProfile, request.target(),
-        std::move(*nativeInputs), request.overrides()));
+    result.plans.push_back(
+        makeBuildPlan(workspace, manifest, target, *selectedProfile,
+                      request.target(), std::move(*nativeInputs),
+                      request.overrides(), request.runtimeProfile()));
   }
 
   result.status = ProjectResolutionStatus::Success;
   return result;
 }
 
-ProjectMetadataResult
-resolveProjectMetadata(const std::filesystem::path &startDirectory,
-                       TargetInfo target,
-                       std::optional<std::string> packageName) {
+ProjectMetadataResult resolveProjectMetadata(
+    const std::filesystem::path &startDirectory, TargetInfo target,
+    std::optional<std::string> packageName, RuntimeProfile runtimeProfile) {
   ProjectMetadataResult result;
   WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
       startDirectory, packageName, {.allowAcquisition = false});
@@ -1117,12 +1123,15 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
       }
       nativeInputs->dependencyGroups = *composed;
       plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
-                                    target, std::move(*nativeInputs)));
+                                    target, std::move(*nativeInputs), {},
+                                    runtimeProfile));
     }
   }
 
+  const AnalysisConfiguration metadataConfiguration(
+      std::move(target), ExecutionProfile::SingleThreaded, runtimeProfile);
   result.status = ProjectMetadataStatus::Success;
-  result.metadata.emplace(std::move(workspace), std::move(target),
+  result.metadata.emplace(std::move(workspace), metadataConfiguration.target(),
                           std::move(plans));
   return result;
 }

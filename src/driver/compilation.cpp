@@ -146,6 +146,30 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
 } // namespace
 
+AnalysisConfiguration::AnalysisConfiguration(
+    TargetInfo target, ExecutionProfile executionProfile,
+    RuntimeProfile runtimeProfile, ConfigurationFlags configurationFlags)
+    : targetInfo(std::move(target)), selectedRuntimeProfile(runtimeProfile),
+      configuredFlags(std::move(configurationFlags)) {
+  targetInfo.executionProfile = executionProfile;
+  targetInfo.runtimeCapabilities = {};
+  if (selectedRuntimeProfile == RuntimeProfile::Hosted &&
+      targetInfo.supported()) {
+    targetInfo.runtimeCapabilities.threads = true;
+  }
+  normalizeConfigurationFlags(configuredFlags);
+}
+
+const TargetInfo &AnalysisConfiguration::target() const { return targetInfo; }
+
+RuntimeProfile AnalysisConfiguration::runtimeProfile() const {
+  return selectedRuntimeProfile;
+}
+
+const ConfigurationFlags &AnalysisConfiguration::configurationFlags() const {
+  return configuredFlags;
+}
+
 CompilationRequest::CompilationRequest(
     std::filesystem::path entry, StandardLibraryLayout standardLibrary,
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
