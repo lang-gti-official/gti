@@ -217,6 +217,12 @@ ensures no managed child outlives the cleanup of its owned task state. Later
 result-bearing tasks must require explicit observation or an explicit discard
 policy.
 
+The normal public spelling for this managed-thread contract is `std::jthread`.
+GTI does not pair it with a separate C++-style detach-capable `std::thread` in
+the first concurrent profile. A later detached or otherwise unstructured task
+facility is a distinct design problem and cannot weaken `std::jthread`'s owned
+join obligation.
+
 Creation and recoverable join errors use `expected` whenever a valid ownership
 state can be returned. Task and argument values are moved into runtime-owned
 storage before native creation publishes them. Creation failure destroys those

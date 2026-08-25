@@ -109,6 +109,12 @@ constructors, `join`, or its destructor by qualified spelling. Its move-only
 handle state and automatic-join policy belong in GTI source and use the
 ordinary class lifecycle rules. Stop tokens are not part of this first slice.
 
+`std::jthread` is GTI's normal managed-thread model, not a safer companion to a
+detach-capable `std::thread`. The first public concurrency profile does not
+provide a separate `std::thread` or detach operation. Any later unstructured or
+detached task facility requires its own explicit lifetime, shutdown, and
+unobserved-failure contract rather than weakening `std::jthread`.
+
 Only the irreducible host boundary is compiler-private. Its capability surface
 is the identity-bound `gti_internal::thread_handle` plus empty, spawn,
 joinable, explicit-join, and automatic-join operations. These declarations are

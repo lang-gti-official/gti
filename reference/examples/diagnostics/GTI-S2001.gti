@@ -1,4 +1,0 @@
-// Undefined name: the identifier resolves to nothing in scope.
-int main() {
-  return undefined_name;
-}

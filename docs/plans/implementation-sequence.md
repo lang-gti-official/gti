@@ -2135,14 +2135,16 @@ or MIR prerequisite.
 
 - **State/role:** done in 0.309.0 for the first source-defined
   `std::jthread` vertical slice.
-- **Scope:** Start with a join-required thread handle. Move a transfer-capable
-  callable and arguments into the thread, define join result/failure, and make
-  handle destruction follow the adopted contract. Do not detach in the first
-  slice. References cannot cross unless a later scoped-borrow proof is designed.
+- **Scope:** Make ordinary source-defined `std::jthread` GTI's normal public
+  managed-thread model. Move a transfer-capable callable and arguments into the
+  thread, define join result/failure, and make handle destruction automatically
+  join under the adopted contract. Do not add a separate C++-style
+  detach-capable `std::thread` or a detach operation. References cannot cross
+  unless a later scoped-borrow proof is designed.
 - **Exit gate:** move-only argument transfer, rejection of borrow/raw/global
   violations, join cleanup on every normal edge, original-record re-raise
   distinct from recoverable native join error, runtime stress, and sanitizer
-  coverage. If automatic join is adopted, it has the same re-raise behavior.
+  coverage. Automatic join has the same re-raise behavior as explicit join.
   Initialization sequenced before spawn must happen-before task entry, and task
   completion must happen-before a successful join.
 - **Unlocks:** owned thread convenience APIs and later scoped borrowing.

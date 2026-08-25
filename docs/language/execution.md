@@ -582,6 +582,8 @@ its managed-thread surface still fails semantically before MIR publication.
 These internal records are not source operations. `std::jthread` reaches the
 implemented spawn and join records through exact trusted private capabilities;
 public atomics and mutexes remain unavailable.
+`std::jthread` is the normal public managed-thread type: GTI does not expose a
+separate C++-style detach-capable `std::thread` in the first concurrent profile.
 
 The reference toolchain accepts an explicit concurrent-profile selection
 before semantic analysis and retains it in semantic, HIR, and MIR program
