@@ -860,6 +860,54 @@ def test_missing_include_and_format_config(executable, root):
         assert "\n        case 0:\n            return 0;" in formatted
         assert "if(bits > 0 && true || false)\n" in formatted
         assert "return (bits);" in formatted
+
+        (config_root / ".gti-format").write_text(
+            "BasedOnStyle: GTI\n", encoding="utf-8"
+        )
+        declarator_path = source_root / "declarators.gti"
+        declarator_source = (
+            "T & borrow<T>(T & value){return value;}"
+            "T * address<T>(T * value){return value;}"
+            "virtual void observe(External & reference,External * pointer);"
+            "int combine(int left,int right){return left&right;}"
+        )
+        declarator_path.write_text(declarator_source, encoding="utf-8")
+        declarator_uri = declarator_path.resolve().as_uri()
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": declarator_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": declarator_source,
+                    }
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": declarator_uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        default_response = session.receive_until(
+            lambda message: message.get("id") == 3
+        )
+        default_formatted = default_response["result"][0]["newText"]
+        assert "T& borrow<T>(T& value)" in default_formatted
+        assert "T* address<T>(T* value)" in default_formatted
+        assert (
+            "observe(External& reference, External* pointer)" in default_formatted
+        )
+        assert "return left & right;" in default_formatted
     finally:
         session.close()
 

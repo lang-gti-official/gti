@@ -28823,6 +28823,36 @@ int choice() {
          "default left alignment should cover included nominal return types "
          "and remain idempotent");
 
+  const std::string dependentDeclarators = lang::Formatter().format(
+      "T & borrow<T>(T & value){return value;}"
+      "T * address<T>(T * value){return value;}"
+      "virtual void observe(External & reference,External * pointer);"
+      "int expressions(int left,int right){mut External * handle=nullptr;"
+      "int product=left*right;return left&right;}");
+  const std::string expectedDependentDeclarators = R"(T& borrow<T>(T& value) {
+  return value;
+}
+T* address<T>(T* value) {
+  return value;
+}
+virtual void observe(External& reference, External* pointer);
+int expressions(int left, int right) {
+  mut External* handle = nullptr;
+  int product = left * right;
+  return left & right;
+}
+)";
+  if (dependentDeclarators != expectedDependentDeclarators) {
+    std::cerr << "Dependent declarator formatting was:\n"
+              << dependentDeclarators;
+  }
+  expect(dependentDeclarators == expectedDependentDeclarators &&
+             lang::Formatter().format(dependentDeclarators) ==
+                 dependentDeclarators,
+         "default declarator alignment should attach generic and imported "
+         "pointer/reference markers to their types without changing binary "
+         "operator spacing");
+
   const std::string pointerFormatted = lang::Formatter().format(
       "class Byte{};void use(mut uint8_t * data,const uint8_t*read_only){"
       "mut uint8_t*alias=& data[0];* data=read_only [0];"
