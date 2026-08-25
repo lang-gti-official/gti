@@ -141,9 +141,13 @@ portable, available on every target, or linked into the executable.
 ## Importing Existing C Headers
 
 `gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]
-[--target <triple>]` generates the GTI declarations for a C header's
-bounded-ABI-compatible surface. The host target is used by default; an
-explicit supported 64-bit target selects the C data model, including LP64
+[--target <triple>] [--clang <path>] [-I <directory>]... [-D
+<macro[=value]>]... [-U <macro>]...` generates the GTI declarations for a C
+header's bounded-ABI-compatible surface. Clang preprocesses the C17
+translation unit, so includes, macros, conditionals, ordered header search
+paths, and explicit definitions have their native meaning before declaration
+import. The host target is used by default; an explicit supported 64-bit
+target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
 passive records become `[[c_abi]]` structs, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
@@ -151,9 +155,12 @@ enums become an `int32_t` alias plus `constexpr` constants, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
 block. Everything the bounded surface cannot express is reported with its
 reason and listed in the generated file's skip report rather than silently
-dropped. The generated source has no special status: this language contract
-remains the sole ABI authority when it is compiled. The tool's architecture
-and growth phases are recorded in
+dropped. Native preprocessor errors retain Clang's source diagnostics. Notes
+from the temporary bounded declaration reader identify preprocessed line
+numbers until the planned libclang reader owns source provenance. The
+generated source has no special status: this language contract remains the
+sole ABI authority when it is compiled. The tool's architecture and growth
+phases are recorded in
 [the native-bindings-import plan](../plans/native-bindings-import.md).
 
 ## Native Callback Types

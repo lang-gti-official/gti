@@ -562,6 +562,20 @@ NativeToolchain::preprocessCommand(const NativeCppCompileRequest &request,
       &depfile);
 }
 
+NativePreprocessingResult
+NativeToolchain::preprocess(const NativeCCompileRequest &request,
+                            const std::filesystem::path &depfile,
+                            NativeInvocationOptions options) const {
+  NativePreprocessingResult result;
+  result.command = preprocessCommand(request, depfile);
+  result.process =
+      invokeProcess(result.command,
+                    {.outputMode = ProcessOutputMode::Capture,
+                     .captureSuccessfulOutput = options.captureSuccessfulOutput,
+                     .description = "native C preprocessor"});
+  return result;
+}
+
 NativeProcessResult
 NativeToolchain::invoke(const NativeCompileRequest &request,
                         NativeInvocationOptions options) const {
