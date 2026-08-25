@@ -743,12 +743,12 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  # The binary owns 67 lightweight tests and two aggregate corpus sweeps. Four
+  # The binary owns 68 lightweight tests and two aggregate corpus sweeps. Four
   # interleaved shards keep every lightweight test running exactly once. The
   # Python coordinator below reserves four CTest processors, runs both corpus
   # sweeps once per exact census source, and re-aggregates the original
   # whole-corpus assertions without one indivisible sanitizer test. Invoking
-  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 69 tests.
+  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 70 tests.
   if(Python3_Interpreter_FOUND)
     foreach(shard RANGE 1 4)
       add_test(NAME cpp_mir_body_emitter_${shard}of4
@@ -756,7 +756,7 @@ if(BUILD_TESTING)
     endforeach()
   else()
     # Fail closed when the corpus coordinator cannot run: the no-argument
-    # binary executes all 69 tests, including both aggregate corpus sweeps.
+    # binary executes all 70 tests, including both aggregate corpus sweeps.
     add_test(NAME cpp_mir_body_emitter
              COMMAND gti_cpp_mir_body_emitter_tests)
     set_tests_properties(cpp_mir_body_emitter PROPERTIES PROCESSORS 4)
@@ -1054,6 +1054,12 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
     )
     add_test(
+      NAME expected_propagation_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/expected_propagation_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
       NAME returned_class_field_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/returned_class_field_runtime_test.py"
@@ -1333,7 +1339,8 @@ if(BUILD_TESTING)
         stdlib_include_sweep
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
         defined_integer_runtime_3of4 defined_integer_runtime_4of4
-        expected_wrong_state_runtime returned_class_field_runtime
+        expected_wrong_state_runtime expected_propagation_runtime
+        returned_class_field_runtime
         reference_parameter_range_runtime mutable_range_runtime
         evaluation_order_runtime optimizer_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle

@@ -1565,7 +1565,8 @@ private:
   void emitTemporaryDrops(const std::vector<TemporaryDrop> &baseline,
                           HirValueId hirValue = 0,
                           HirStatementId hirStatement = 0,
-                          std::size_t constructorInitializer = 0) {
+                          std::size_t constructorInitializer = 0,
+                          bool earlyExit = false) {
     std::vector<MirDropObligationId> consumedDrops;
     for (auto candidate = temporaryDrops.rbegin();
          candidate != temporaryDrops.rend(); ++candidate) {
@@ -1605,6 +1606,11 @@ private:
           if (constructorInitializer != 0) {
             return expression.constructorInitializer == constructorInitializer;
           }
+          if (earlyExit) {
+            const HirValue *exit = findValue(hirValue);
+            return exit != nullptr && exit->fullExpression != 0 &&
+                   expression.id == exit->fullExpression;
+          }
           return hirStatement != 0 && expression.statement == hirStatement &&
                  hirValue != 0 &&
                  std::find(expression.roots.begin(), expression.roots.end(),
@@ -1619,6 +1625,11 @@ private:
           if (constructorInitializer != 0) {
             return expression.constructorInitializer == constructorInitializer;
           }
+          if (earlyExit) {
+            const HirValue *exit = findValue(hirValue);
+            return exit != nullptr && exit->fullExpression != 0 &&
+                   expression.id == exit->fullExpression;
+          }
           return expression.statement == hirStatement &&
                  std::find(expression.roots.begin(), expression.roots.end(),
                            hirValue) != expression.roots.end();
@@ -1631,12 +1642,22 @@ private:
     if (boundaryId == 0) {
       return;
     }
-    (void)appendInstruction({.kind = MirInstructionKind::Lifecycle,
-                             .hirValue = hirValue,
-                             .hirStatement = hirStatement,
-                             .fullExpressionEnd = boundaryId},
-                            output.kind != MirBodyKind::Module ||
-                                currentProgramInitializationStep == 0);
+    if (earlyExit && boundary->roots.empty()) {
+      valid = false;
+      return;
+    }
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Lifecycle,
+         .hirValue = earlyExit ? boundary->roots.front() : hirValue,
+         .hirStatement = earlyExit ? boundary->statement : hirStatement,
+         .fullExpressionEnd = boundaryId,
+         .earlyExitFullExpressionEnd = earlyExit},
+        output.kind != MirBodyKind::Module ||
+            currentProgramInitializationStep == 0);
+    if (!earlyExit) {
+      fullExpressionTemporaryBaselines.erase(boundary->id);
+      fullExpressionScopeBaselines.erase(boundary->id);
+    }
   }
 
   void emitTemporaryTransfer(HirValueId value, HirStatementId statement = 0) {
@@ -2652,12 +2673,25 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
+  [[nodiscard]] bool isExpectedPropagationExtraction(HirValueId valueId) const {
+    return std::any_of(
+        source.values.begin(), source.values.end(),
+        [&](const HirValue &candidate) {
+          return candidate.expectedPropagation &&
+                 (candidate.expectedPropagation->successExtraction == valueId ||
+                  candidate.expectedPropagation->errorExtraction == valueId);
+        });
+  }
+
   [[nodiscard]] MirOperand
   temporaryBorrowOperand(HirValueId id, AccessMode access,
-                         const SemanticType &stagedType) {
+                         const SemanticType &stagedType,
+                         bool allowExpected = false) {
     const HirValue *temporary = findValue(id);
     if (temporary == nullptr ||
-        temporary->info.type.kind != SemanticType::Class ||
+        (temporary->info.type.kind != SemanticType::Class &&
+         (!allowExpected ||
+          temporary->info.type.kind != SemanticType::Expected)) ||
         temporary->info.category != ValueCategory::Value ||
         temporary->info.traits.containsBorrowedState) {
       valid = false;
@@ -2681,12 +2715,18 @@ private:
       }
       place = drop->place;
     } else {
-      place = appendPlace({.root = MirPlaceRootKind::Value,
-                           .value = produced.value,
-                           .type = temporary->info.type,
-                           .access = AccessMode::Mutable,
-                           .traits = temporary->info.traits,
-                           .sourceValue = temporary->id});
+      const auto existing = valuePlaces.find(id);
+      if (existing != valuePlaces.end()) {
+        place = existing->second;
+      } else {
+        place = appendPlace({.root = MirPlaceRootKind::Value,
+                             .value = produced.value,
+                             .type = temporary->info.type,
+                             .access = AccessMode::Mutable,
+                             .traits = temporary->info.traits,
+                             .sourceValue = temporary->id});
+        valuePlaces.insert_or_assign(id, place);
+      }
     }
     const MirPlace *materialized = output.findPlace(place);
     if (materialized == nullptr ||
@@ -3308,7 +3348,19 @@ private:
     } else if (const std::optional<HirValueId> receiver =
                    receiverValue(value)) {
       const AccessMode access = receiverAccess(value);
-      MirOperand operand = receiverOperand(*receiver, access);
+      const HirValue *receiverSource = findValue(*receiver);
+      const bool expectedTemporaryExtraction =
+          isExpectedPropagationExtraction(value.id) &&
+          receiverSource != nullptr &&
+          receiverSource->info.category == ValueCategory::Value &&
+          receiverSource->info.type.kind == SemanticType::Expected &&
+          (value.intrinsic == IntrinsicKind::ExpectedValue ||
+           value.intrinsic == IntrinsicKind::ExpectedError);
+      MirOperand operand =
+          expectedTemporaryExtraction
+              ? temporaryBorrowOperand(*receiver, AccessMode::ReadOnly,
+                                       receiverSource->info.type, true)
+              : receiverOperand(*receiver, access);
       if (expandsPack) {
         const HirValue *input = findValue(*receiver);
         const HirCallInputKind kind =
@@ -4438,6 +4490,121 @@ private:
     emittedValues.insert(value.id);
   }
 
+  void emitExpectedPropagation(const HirValue &value) {
+    if (!value.expectedPropagation ||
+        value.info.type == SemanticType::Unknown) {
+      valid = false;
+      return;
+    }
+    const HirExpectedPropagationPlan &plan = *value.expectedPropagation;
+    const HirValue *operand = findValue(plan.operand);
+    const HirValue *successExtraction = findValue(plan.successExtraction);
+    const HirValue *errorExtraction = findValue(plan.errorExtraction);
+    const HirValue *unexpected = findValue(plan.unexpected);
+    if (operand == nullptr || successExtraction == nullptr ||
+        errorExtraction == nullptr || unexpected == nullptr ||
+        operand->info.type.kind != SemanticType::Expected ||
+        operand->info.type.arguments.size() != 2 ||
+        operand->info.type.arguments[0] != value.info.type ||
+        successExtraction->intrinsic != IntrinsicKind::ExpectedValue ||
+        errorExtraction->intrinsic != IntrinsicKind::ExpectedError ||
+        unexpected->kind != HirValueKind::Unexpected ||
+        unexpected->info.type.kind != SemanticType::Unexpected ||
+        unexpected->info.type.arguments.size() != 1 ||
+        unexpected->info.type.arguments.front() !=
+            operand->info.type.arguments[1]) {
+      valid = false;
+      return;
+    }
+
+    const auto temporaryBaseline =
+        fullExpressionTemporaryBaselines.find(value.fullExpression);
+    const auto scopeBaseline =
+        fullExpressionScopeBaselines.find(value.fullExpression);
+    if (value.fullExpression == 0 ||
+        temporaryBaseline == fullExpressionTemporaryBaselines.end() ||
+        scopeBaseline == fullExpressionScopeBaselines.end()) {
+      valid = false;
+      return;
+    }
+    const MirOperand condition = conditionOperand(plan.operand);
+    const std::vector<Scope> evaluatedScopes = scopes;
+    const std::vector<TemporaryDrop> evaluatedTemporaryDrops = temporaryDrops;
+    const MirBlockId successBlock = appendBlock();
+    const MirBlockId errorBlock = appendBlock();
+    terminate({.kind = MirTerminatorKind::Branch,
+               .hirValue = value.id,
+               .value = condition,
+               .target = successBlock,
+               .elseTarget = errorBlock});
+
+    current = errorBlock;
+    scopes = evaluatedScopes;
+    temporaryDrops = evaluatedTemporaryDrops;
+    const MirOperand propagatedError = valueOperand(plan.unexpected);
+    emitTemporaryTransfer(plan.unexpected);
+    endReturnExpressionLoans(scopeBaseline->second);
+    emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+    emitScopeExit(0);
+    terminate({.kind = MirTerminatorKind::Return,
+               .hirValue = value.id,
+               .value = propagatedError});
+
+    current = successBlock;
+    scopes = evaluatedScopes;
+    temporaryDrops = evaluatedTemporaryDrops;
+    if (value.info.type == SemanticType::Void) {
+      emitValue(plan.successExtraction);
+      endAddedLoans(evaluatedScopes);
+      emittedValues.insert(value.id);
+      return;
+    }
+    if (plan.successValue == 0 || findValue(plan.successValue) == nullptr) {
+      valid = false;
+      return;
+    }
+
+    const MirPlaceId temporary = conditionalTemporary(value);
+    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                              .hirValue = value.id,
+                              .destination = temporary,
+                              .operands = {valueOperand(plan.successValue)},
+                              .info = {.type = value.info.type,
+                                       .category = ValueCategory::Place,
+                                       .access = AccessMode::Mutable,
+                                       .traits = value.info.traits}};
+    const MirDropObligationId resultObligation =
+        dropObligationForValue(value.id, temporary);
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(plan.successValue);
+    if (resultObligation != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation,
+                                      resultObligation);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = resultObligation});
+      }
+      registerTemporary(resultObligation);
+    }
+    (void)appendInstruction(std::move(initialize));
+    const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
+                            !value.info.traits.copyable;
+    (void)appendInstruction(
+        {.kind =
+             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
+         .hirValue = value.id,
+         .result = resultFor(value),
+         .operands = {{.kind = moveResult ? MirOperandKind::Move
+                                          : MirOperandKind::Copy,
+                       .place = temporary,
+                       .type = value.info.type}},
+         .info = value.info});
+    endAddedLoans(evaluatedScopes);
+    emittedValues.insert(value.id);
+  }
+
   // An ordered compound update reads its place once, checks the arithmetic,
   // and commits the result. Representing those stages explicitly keeps the
   // schedule inside MIR's primitive vocabulary instead of one opaque
@@ -4759,8 +4926,20 @@ private:
       return;
     }
 
+    if (value->fullExpression != 0 &&
+        !fullExpressionTemporaryBaselines.contains(value->fullExpression)) {
+      fullExpressionTemporaryBaselines.emplace(value->fullExpression,
+                                               temporaryDrops);
+      fullExpressionScopeBaselines.emplace(value->fullExpression, scopes);
+    }
+
     if (value->programConstantSubstitution) {
       emitProgramConstantSubstitution(*value);
+      return;
+    }
+
+    if (value->kind == HirValueKind::ExpectedPropagation) {
+      emitExpectedPropagation(*value);
       return;
     }
 
@@ -6700,6 +6879,10 @@ private:
   std::unordered_map<HirDropObligationId, MirDropObligationId> dropObligations;
   std::unordered_map<HirFullExpressionId, HirFullExpressionId>
       fullExpressionIds;
+  std::unordered_map<HirFullExpressionId, std::vector<TemporaryDrop>>
+      fullExpressionTemporaryBaselines;
+  std::unordered_map<HirFullExpressionId, std::vector<Scope>>
+      fullExpressionScopeBaselines;
   std::unordered_map<HirValueId, MirValueId> loweredValues;
   std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;

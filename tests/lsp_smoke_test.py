@@ -3955,6 +3955,84 @@ def test_recursive_layout_diagnostic(executable, root):
         session.close()
 
 
+def test_expected_propagation_tooling(executable, root):
+    source = (
+        "expected<int, int> leaf(int value) { return value; }\n"
+        "expected<int, int> forward(expected<int, int> result) {\n"
+        "  return    ? result;\n"
+        "}\n"
+        "int invalid() { return ?1; }\n"
+    )
+    path = root / "expected-propagation-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2086"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2086"
+        )
+        invalid_operator = source.index("?1")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, invalid_operator),
+            "end": lsp_position(source, invalid_operator + 1),
+        }, diagnostic
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        edits = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert edits and "return ?result;" in edits[0]["newText"], edits
+    finally:
+        session.close()
+
+
 def test_static_assertion_tooling(executable, root):
     source = (
         "int main() {\n"
@@ -7602,6 +7680,7 @@ def main():
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_recursive_layout_diagnostic(sys.argv[1], root)
+    test_expected_propagation_tooling(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
     test_concrete_generic_diagnostics(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)

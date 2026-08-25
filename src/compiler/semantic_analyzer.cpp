@@ -6057,6 +6057,89 @@ public:
   }
 
   void visitUnaryExpr(const Unary &expr) override {
+    if (expr.oper().kind == TokenKind::QUESTION) {
+      const SemanticType operandType = analyze(expr.right());
+      if (operandType == SemanticType::Unknown) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (operandType.kind != SemanticType::Expected ||
+          operandType.arguments.size() != 2) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+            "Error propagation requires an 'expected<T, E>' operand, but "
+            "received '" +
+                typeSpelling(operandType) + "'.");
+        diagnostic.hints.emplace_back(
+            "Apply '?' to a fallible result, or handle this value without "
+            "error propagation.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (currentReturnType.kind != SemanticType::Expected ||
+          currentReturnType.arguments.size() != 2) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+            "Error propagation is only available in a function or lambda "
+            "returning 'expected<U, E>'.");
+        diagnostic.hints.emplace_back(
+            "Return an expected type from this callable, or inspect "
+            "has_value(), value(), and error() explicitly.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      const SemanticType &valueType = operandType.arguments[0];
+      const SemanticType &errorType = operandType.arguments[1];
+      const SemanticType &returnErrorType = currentReturnType.arguments[1];
+      if (errorType != returnErrorType) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+            "Error propagation requires the exact enclosing error type '" +
+                typeSpelling(returnErrorType) + "', but the operand uses '" +
+                typeSpelling(errorType) + "'.");
+        diagnostic.hints.emplace_back(
+            "Convert the error explicitly before applying '?'; propagation "
+            "does not perform implicit error conversion.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      const ExpressionInfo *operandInfo =
+          semanticModel.findExpression(*expr.right());
+      const bool moves = operandInfo != nullptr &&
+                         operandInfo->category == ValueCategory::Value;
+      const auto transferable = [&](const SemanticType &type) {
+        if (type == SemanticType::Void) {
+          return true;
+        }
+        const SemanticTypeTraits traits = typeTraits(type);
+        return moves ? traits.movable : traits.copyable;
+      };
+      if (!transferable(valueType) || !transferable(errorType)) {
+        const SemanticType &blocked =
+            !transferable(valueType) ? valueType : errorType;
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+                           std::string("Error propagation cannot ") +
+                               (moves ? "move" : "copy") + " the active '" +
+                               typeSpelling(blocked) + "' alternative.");
+        diagnostic.hints.emplace_back(
+            moves ? "Use a result whose value and error alternatives are "
+                    "movable."
+                  : "Apply '?' to std::move(result) to consume a named "
+                    "move-only result explicitly.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      currentType = valueType;
+      return;
+    }
     if (contextualOperatorIntegerType &&
         (expr.oper().kind == TokenKind::PLUS ||
          expr.oper().kind == TokenKind::MINUS) &&

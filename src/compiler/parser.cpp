@@ -2202,7 +2202,7 @@ private:
   ExprPtr unary() {
     if (match({TokenKind::BANG, TokenKind::MINUS, TokenKind::PLUS,
                TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS, TokenKind::STAR,
-               TokenKind::AMPERSAND, TokenKind::TILDE})) {
+               TokenKind::AMPERSAND, TokenKind::TILDE, TokenKind::QUESTION})) {
       const NestingGuard nesting = enterNesting(peek());
       Token oper = previous();
       return std::make_unique<Unary>(oper, unary());

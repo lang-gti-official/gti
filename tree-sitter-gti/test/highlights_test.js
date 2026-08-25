@@ -3,12 +3,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const executable = path.join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tree-sitter.cmd" : "tree-sitter",
-);
+const executable =
+  process.env.TREE_SITTER_CLI ??
+  path.join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tree-sitter.cmd" : "tree-sitter",
+  );
 const fixture = path.join(__dirname, "highlights.gti");
 const capturePattern =
   /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: \((\d+), (\d+)\), text: `(.*)$/;
@@ -56,6 +58,18 @@ function requireCapture(row, text, name) {
   ) {
     throw new Error(
       `Missing @${name} capture for ${JSON.stringify(text)} on row ${row + 1}`,
+    );
+  }
+}
+
+function requireCaptureCount(row, text, name, count) {
+  const actual = captures.filter(
+    (capture) =>
+      capture.row === row && capture.text === text && capture.name === name,
+  ).length;
+  if (actual !== count) {
+    throw new Error(
+      `Expected ${count} @${name} capture(s) for ${JSON.stringify(text)} on row ${row + 1}, found ${actual}`,
     );
   }
 }
@@ -144,7 +158,7 @@ requireCapture(107, "movable", "type");
 requireCapture(109, "sortable", "type");
 requireCapture(114, "do", "keyword.repeat");
 requireCapture(116, "while", "keyword.repeat");
-requireCapture(120, "?", "operator");
+requireCaptureCount(120, "?", "operator", 1);
 requireCapture(120, ":", "operator");
 requireCapture(120, "condition", "variable");
 requireCapture(124, "*=", "operator");
@@ -254,6 +268,11 @@ requireCapture(undefFlagRow, "#undef", "keyword.directive");
 requireCapture(undefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifdefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifndefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+
+const expectedPropagationRow = fixtureLines.findIndex((line) =>
+  line.includes("return ?result;"),
+);
+requireCaptureCount(expectedPropagationRow, "?", "operator", 1);
 
 const groupedFieldRow = fixtureLines.findIndex((line) =>
   line.includes("grouped_value"),

@@ -1210,7 +1210,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v44\n") &&
+  expect(dump.starts_with("mir-body-v45\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -2096,7 +2096,7 @@ int main() { return lifetime(true) - 13; }
   expect(removedFullExpressionMarker &&
              !missingFullExpressionMarkerResult.valid() &&
              hasVerificationMessage(missingFullExpressionMarkerResult,
-                                    "exactly one boundary marker"),
+                                    "exactly one primary boundary marker"),
          "MIR verification should reject a missing full-expression marker");
 
   lang::MirProgram duplicateFullExpressionMarker = frontend.mir;
@@ -2132,7 +2132,7 @@ int main() { return lifetime(true) - 13; }
   expect(duplicatedFullExpressionMarker &&
              !duplicateFullExpressionMarkerResult.valid() &&
              hasVerificationMessage(duplicateFullExpressionMarkerResult,
-                                    "exactly one boundary marker"),
+                                    "exactly one primary boundary marker"),
          "MIR verification should reject a duplicate full-expression marker");
 
   lang::MirProgram wrongFullExpressionDropOrder = frontend.mir;
@@ -5934,7 +5934,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v44\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v45\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7949,7 +7949,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v48 ") &&
+  expect(mirDump.starts_with("mir-v49 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -27774,7 +27774,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v48 ") &&
+             mirDump.starts_with("mir-v49 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -28021,6 +28021,264 @@ int main() {
          "invalid expected types, states, and observers should fail");
   expect(invalidSemantic.errors().size() == 6,
          "expected validation should produce focused diagnostics");
+}
+
+void testExpectedPropagationOperator() {
+  const std::string source = R"(
+expected<int, int> leaf(bool fail, int error, int value) {
+  if (fail) { return unexpected(error); }
+  return value;
+}
+
+expected<int, int> sum(bool first, bool second) {
+  return ?leaf(first, 11, 20) + ?leaf(second, 12, 22);
+}
+
+expected<void, int> complete(bool fail) {
+  if (fail) { return unexpected(13); }
+  return;
+}
+
+expected<void, int> forward_void(bool fail) {
+  ?complete(fail);
+  return;
+}
+
+expected<int, int> copy_named(bool fail) {
+  expected<int, int> result = leaf(fail, 14, 40);
+  return ?result;
+}
+
+int main() {
+  auto forward = [](bool fail) -> expected<int, int> {
+    return ?leaf(fail, 15, 42);
+  };
+  expected<int, int> value = forward(false);
+  return value.value() - 42;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("expected-propagation.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected propagation diagnostic: " << diagnostic.code
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "expected propagation should reach verified MIR in functions and "
+         "lambdas");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  std::size_t propagationValues = 0;
+  std::size_t copyingPropagations = 0;
+  std::size_t movingPropagations = 0;
+  const auto inspectBody = [&](const lang::HirBody &body) {
+    for (const lang::HirValue &value : body.values) {
+      if (value.kind != lang::HirValueKind::ExpectedPropagation) {
+        continue;
+      }
+      ++propagationValues;
+      const lang::HirExpectedPropagationPlan *plan =
+          value.expectedPropagation ? &*value.expectedPropagation : nullptr;
+      expect(value.source != nullptr && value.fullExpression != 0 &&
+                 value.operation == lang::TokenKind::QUESTION &&
+                 plan != nullptr && plan->operand != 0 &&
+                 plan->successExtraction != 0 && plan->errorExtraction != 0 &&
+                 plan->errorValue != 0 && plan->unexpected != 0,
+             "HIR propagation should retain its source, full-expression, "
+             "branch extractions, and unexpected return value");
+      if (plan != nullptr && plan->moves) {
+        ++movingPropagations;
+      } else {
+        ++copyingPropagations;
+      }
+    }
+  };
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    inspectBody(function.body);
+  }
+  for (const lang::HirLambda &lambda : frontend.hir.lambdaInstances()) {
+    inspectBody(lambda.body);
+  }
+  expect(propagationValues == 5 && copyingPropagations == 1 &&
+             movingPropagations == 4,
+         "HIR should distinguish copying a named expected from consuming four "
+         "temporary results");
+
+  const auto sumHir =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.source != nullptr &&
+                            function.source->name().lexeme == "sum";
+                   });
+  const lang::MirFunctionInstance *sumMir =
+      sumHir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(sumHir->id);
+  std::size_t branches = 0;
+  std::size_t returns = 0;
+  std::size_t earlyBoundaries = 0;
+  std::size_t primaryBoundaries = 0;
+  if (sumMir != nullptr) {
+    for (const lang::MirBlock &block : sumMir->body.blocks) {
+      branches += block.terminator.kind == lang::MirTerminatorKind::Branch;
+      returns += block.terminator.kind == lang::MirTerminatorKind::Return;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.fullExpressionEnd == 0) {
+          continue;
+        }
+        if (instruction.earlyExitFullExpressionEnd) {
+          ++earlyBoundaries;
+        } else {
+          ++primaryBoundaries;
+        }
+      }
+    }
+  }
+  expect(sumMir != nullptr && branches == 2 && returns == 3 &&
+             earlyBoundaries == 2 && primaryBoundaries == 1,
+         "MIR should lower two propagations in one expression to ordered, "
+         "mutually exclusive early returns and one normal boundary");
+
+  const lang::FrontendResult manualExtraction =
+      analyzeTrustedPreludeFixture("manual-expected-extraction.gti", R"(
+expected<int, int> manual_leaf(bool fail) {
+  if (fail) { return unexpected(16); }
+  return 44;
+}
+
+int manual_extract(bool fail) {
+  expected<int, int> result = manual_leaf(fail);
+  return std::move(result).value();
+}
+
+int main() { return manual_extract(false) - 44; }
+)");
+  const auto manualExtractHir =
+      std::find_if(manualExtraction.hir.functionInstances().begin(),
+                   manualExtraction.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.source != nullptr &&
+                            function.source->name().lexeme == "manual_extract";
+                   });
+  const lang::MirFunctionInstance *manualExtractMir =
+      manualExtractHir == manualExtraction.hir.functionInstances().end()
+          ? nullptr
+          : manualExtraction.mir.findFunctionInstance(manualExtractHir->id);
+  bool manualExtractionConsumesValue = false;
+  if (manualExtractMir != nullptr) {
+    for (const lang::MirBlock &block : manualExtractMir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        manualExtractionConsumesValue =
+            manualExtractionConsumesValue ||
+            (instruction.intrinsic == lang::IntrinsicKind::ExpectedValue &&
+             instruction.receiver &&
+             instruction.receiver->kind == lang::MirOperandKind::Value);
+      }
+    }
+  }
+  expect(manualExtraction.canGenerateCode() &&
+             lang::verifyMirProgram(manualExtraction.mir).valid() &&
+             manualExtractionConsumesValue,
+         "materializing propagation extractions must not turn an ordinary "
+         "std::move(expected).value() receiver into a borrow");
+
+  if (sumMir != nullptr) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    bool changedEarlyBoundary = false;
+    for (lang::MirBlock &block : functions.at(sumHir->id - 1).body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.earlyExitFullExpressionEnd) {
+          instruction.earlyExitFullExpressionEnd = false;
+          changedEarlyBoundary = true;
+          break;
+        }
+      }
+      if (changedEarlyBoundary) {
+        break;
+      }
+    }
+    const lang::MirVerificationResult result = lang::verifyMirProgram(forged);
+    expect(changedEarlyBoundary && !result.valid() &&
+               std::any_of(result.errors.begin(), result.errors.end(),
+                           [](const lang::MirVerificationError &error) {
+                             return error.message.find(
+                                        "exactly one primary boundary") !=
+                                    std::string::npos;
+                           }),
+           "the MIR verifier should reject an early propagation endpoint "
+           "forged into a second primary full-expression boundary");
+  }
+
+  const std::string cpp23 = gti_test::emitCppText(frontend);
+  const std::string cpp20 =
+      gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
+  expect(cpp23.find(".has_value()") != std::string::npos &&
+             cpp23.find("std::unexpected(") != std::string::npos &&
+             cpp20.find(".has_value()") != std::string::npos &&
+             cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
+         "both C++ backends should emit checked propagation branches instead "
+         "of delegating the operator to C++");
+
+  const std::string formatted = lang::Formatter().format(
+      "expected<int,int> forward(bool fail){return ? leaf(fail,1,2);}\n");
+  expect(formatted.find("return ?leaf(fail, 1, 2);") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should keep '?' tight to its operand and remain "
+         "idempotent");
+
+  const lang::FrontendResult invalid =
+      analyzeTrustedPreludeFixture("invalid-expected-propagation.gti", R"(
+int non_expected_operand() { return ?1; }
+
+int wrong_return_context() {
+  expected<int, int> result = 1;
+  return ?result;
+}
+
+expected<int, bool> wrong_error_type() {
+  expected<int, int> result = 1;
+  return ?result;
+}
+
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+expected<MoveOnly, int> named_move_only() {
+  expected<MoveOnly, int> result = MoveOnly();
+  return ?result;
+}
+
+int main() { return 0; }
+)");
+  const bool invalidContract =
+      !invalid.canGenerateCode() &&
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2086") == 4 &&
+      hasDiagnostic(invalid.diagnostics, "expected<T, E>") &&
+      hasDiagnostic(invalid.diagnostics, "function or lambda") &&
+      hasDiagnostic(invalid.diagnostics, "exact enclosing error type") &&
+      hasDiagnosticHint(invalid.diagnostics, "std::move(result)");
+  if (!invalidContract) {
+    for (const lang::Diagnostic &diagnostic : invalid.diagnostics) {
+      std::cerr << "Unexpected invalid-propagation diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(invalidContract,
+         "invalid propagation operands, return contexts, error types, and "
+         "named move-only values should receive focused diagnostics");
 }
 
 void testPrintIsAnIdentifier() {
@@ -32030,6 +32288,7 @@ int main(int argc, char **argv) {
   testOwnedCallableTransport();
   testDefaultNodiscard();
   testExpectedValues();
+  testExpectedPropagationOperator();
   testPrintIsAnIdentifier();
   testTypeAliases();
   testNamespacesAndAliases();
