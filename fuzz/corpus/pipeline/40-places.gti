@@ -1,0 +1,47 @@
+// Storage roots crossed with projections. Every backend ICE found by QA on
+// this corpus lived here: #100, #104, #106, #115, #117.
+class leaf {
+public:
+  leaf() {}
+  mut int32_t v = 1;
+};
+
+class node {
+public:
+  node() {}
+  mut leaf inner = leaf();
+  mut int32_t direct = 2;
+};
+
+class holder {
+public:
+  holder() {}
+  static mut int32_t counter = 0;
+  static mut leaf shared = leaf();
+};
+
+mut node global_node = node();
+mut int32_t global_table[4] = {};
+
+int32_t through_reference(mut int32_t& slot) {
+  slot = slot + 1;
+  return slot;
+}
+
+int main() {
+  mut node local = node();
+  mut int32_t cells[3] = {};
+
+  holder::counter = 1;
+  mut int32_t total = int32_t(holder::counter) + int32_t(holder::shared.v);
+  total = total + local.direct + local.inner.v;
+  total = total + global_node.direct + global_node.inner.v;
+  total = total + cells[std::size_t(0)] + global_table[std::size_t(1)];
+
+  for (int32_t value : global_table) {
+    total = total + value;
+  }
+
+  total = through_reference(total);
+  return int(total) - int(total);
+}

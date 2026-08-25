@@ -1,0 +1,16 @@
+// #121: the direct call of an override ICEs; the same call through an
+// interface reference (`mut Shape& bound = s; bound.value()`) works.
+interface Shape {
+  int32_t value();
+};
+
+class square : public Shape {
+public:
+  square() {}
+  int32_t value() override { return 7; }
+};
+
+int main() {
+  mut square s = square();
+  return int(s.value()) - 7;
+}

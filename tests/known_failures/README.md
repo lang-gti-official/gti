@@ -11,7 +11,27 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-There are currently no quarantined compiler reproducers.
+These are the shapes left broken by an otherwise-landed fix — see
+[#117](https://github.com/LukeHHA/gti/issues/117). Each has a passing sibling
+that the same fix already handles, which is what makes them worth keeping.
+
+Every closed issue from this branch has now been probed around, not just the
+ones where a gap surfaced by accident. Six fixes covered their family — #109,
+#111, #112, #113, #114 and #116 — and the six below did not. The fixes that
+held are largely the ones whose issues enumerated the family explicitly, which
+is a lesson about how the issues were written as much as how they were fixed.
+
+| File | Left over from | Symptom |
+| --- | --- | --- |
+| `issue-121-direct-override-call.gti` | [#121](https://github.com/LukeHHA/gti/issues/121) | calling an `override` directly on the concrete object → `GTI-B0001`; the same call through the interface reference works, as does a non-override method |
+| `issue-120-generic-dtor-as-type-argument.gti` | [#120](https://github.com/LukeHHA/gti/issues/120) | a generic **with a destructor** used as a type argument; without the destructor, or instantiated directly, it compiles |
+| `issue-118-lambda-comma-operand.gti` | [#118](https://github.com/LukeHHA/gti/issues/118) | a lambda as the **discarded** operand of a comma; the same comma without a lambda compiles. Found by fuzzing, not a leftover |
+| `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
+| `issue-117-nested-capture-emission.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | capture-of-capture is now accepted by semantics but cannot be emitted, so `GTI-S2027` became `GTI-B0001` |
+| `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
+| `issue-117-global-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | `table[0].v = x` on a global array of class; the read and the plain write are fixed |
+| `issue-117-array-of-cleanup-owning-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | an array of a class **with a destructor**; without one it compiles. Reports the same gate #106 was filed with |
+| `issue-117-static-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | the same `[0].v = x` failure through a static class field rather than a global — one defect, two surfaces |
 
 ## Memory-safety reproducers
 
@@ -28,7 +48,9 @@ build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 \
 into the **current directory** by default, so reproducing one of these from
 the repository root litters the tree.
 
-There are currently no quarantined memory-safety reproducers.
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `asan/issue-117-loan-conflict-uaf.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | the #107 reproducer still reports a heap-use-after-free, now in `reportLoanPlaceConflict`; the freed `Symbol` and the scope-stack table are the same, so only the consumer changed |
 
 ## Wrongly rejected programs
 
@@ -36,7 +58,9 @@ There are currently no quarantined memory-safety reproducers.
 no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 (it sees an ordinary non-zero exit). Compile one and read the diagnostic.
 
-There are currently no quarantined wrongly rejected programs.
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `rejected/issue-119-concept-unspaced-equals.gti` | [#119](https://github.com/LukeHHA/gti/issues/119) | `concept c<T>= …` does not parse — `>=` is lexed greedily where `>>` in a nested generic close is handled |
 
 ## Confirmed root causes
 
@@ -87,6 +111,9 @@ minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
 the aggregate-shaped neighbours of the fixed array that produced #106, and
 generic cells cover instantiation identity, which is not a place problem but
 fails the same way — a program the frontend should accept and does not.
+`constexpr` cells sit at the bounded evaluator's documented limits, where
+the useful property is that exceeding one stays a clean `GTI-S2057` rather
+than becoming an ICE or a hang.
 
 ```sh
 python3 scripts/debug/place_shape_matrix.py
@@ -139,8 +166,16 @@ in a first-line comment. The generated programs are int32/bool arithmetic and
 cannot express the properties an optimizer is most likely to break, so those
 are written by hand: that a dynamically out-of-range index still produces its
 defined runtime failure, that an in-range one still reads what was written,
-and that a write through an aliasing mutable reference is observed across a
-loop.
+that a write through an aliasing mutable reference is observed across a loop,
+that `and`/`or` skip the operand they are supposed to skip, that destructors
+run in reverse construction order, and that signed overflow through `+`
+remains a defined failure rather than folding to a wrap.
+
+Those last three are specified runtime behaviour with no other guard across
+levels. `tests/evaluation_order_runtime_test.py` already covers strict
+left-to-right evaluation at O0 and O3, so that one is deliberately not
+duplicated here, and `tests/defined_integer_runtime_test.py` covers
+`std::checked_add` — the library form — rather than the operator.
 
 Two reasons it earns its place next to `local_language_audit.py`, which
 already builds at `O0` and `O3`:
@@ -204,6 +239,21 @@ concrete MIR lifecycle instance. [#116](https://github.com/LukeHHA/gti/issues/11
 made that absence an internal backend error. The sweep is now a primary CTest
 gate and all 19 shipped modules independently reach C++ emission.
 
+## Multi-file programs
+
+Nothing in this directory or in `place_shape_matrix.py` is multi-file — every
+cell is a single source. Probed by hand and currently clean:
+
+- an include cycle is refused with `GTI-I0001` naming the offending file
+- a diamond (`A` includes `B` and `C`, both include `D`) loads `D` once and
+  compiles, as the grammar's "loaded once" note promises
+- a generic instantiated in one unit satisfies the whole program, so #116
+  does not fire when the use is in a different file from the declaration
+
+Extending the matrix to emit multi-file cells would be a real change rather
+than a new entry; it is not worth it while this surface is clean, but the gap
+is worth knowing about.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
@@ -228,6 +278,28 @@ disappear.
 
 Both currently pass. The target is optional — configure with
 `-DGTI_BUILD_LSP=ON` if `build/gti_lsp` is missing.
+
+## Checking the QA tools themselves
+
+`scripts/debug/selftest.py` drives each tool's classifier with synthetic
+inputs and asserts it still separates pass from fail.
+
+```sh
+python3 scripts/debug/selftest.py
+```
+
+A QA tool that stops checking anything reports success, which turns an
+unexamined surface into a green tick. That happened three times while these
+tools were being written: `lsp_probe` looked for `selectionRange` while the
+server answers with `location.range`, so it skipped every symbol and passed
+having compared nothing; `corpus_differential` folded build failures into one
+`skipped` count, hiding two `GTI-B0001` fixtures behind a number; and a
+mutation test on the matrix changed the expectation *and* the generated
+source, so it could not fail.
+
+Each was caught by hand. This runs those checks every time instead, and it is
+fast — no build required, since it exercises the decision logic rather than
+compiling anything.
 
 ## Checking status
 
