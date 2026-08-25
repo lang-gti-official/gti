@@ -5956,6 +5956,141 @@ int32_t main() {
          "copying SSA local");
 }
 
+void testExpectedExtractionStateAdmissionFailsClosed() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-expected-extraction-state.gti", R"(
+expected<int32_t, int32_t>
+forward(expected<int32_t, int32_t> result) {
+  return ?result;
+}
+
+int32_t main() {
+  expected<int32_t, int32_t> result = int32_t(7);
+  expected<int32_t, int32_t> forwarded = forward(result);
+  return forwarded.has_value() ? forwarded.value() - int32_t(7) : int32_t(1);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected extraction-state fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto forwardHir =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &candidate) {
+                     return candidate.source != nullptr &&
+                            candidate.source->name().lexeme == "forward";
+                   });
+  const lang::MirFunctionInstance *forward =
+      forwardHir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(forwardHir->id);
+  const lang::MirBlock *stateBranch = nullptr;
+  const auto findInstruction = [](const lang::MirBody &body,
+                                  lang::MirInstructionId id) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  if (forward != nullptr) {
+    for (const lang::MirBlock &block : forward->body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Branch ||
+          !block.terminator.value ||
+          block.terminator.value->kind != lang::MirOperandKind::Value) {
+        continue;
+      }
+      const lang::MirValue *condition =
+          forward->body.findValue(block.terminator.value->value);
+      const lang::MirInstruction *definition =
+          condition == nullptr
+              ? nullptr
+              : findInstruction(forward->body, condition->definition);
+      if (definition != nullptr &&
+          definition->kind == lang::MirInstructionKind::Compute &&
+          definition->operation == lang::MirOperation::ExpectedHasValue) {
+        stateBranch = &block;
+        break;
+      }
+    }
+  }
+  bool zeroSiteExtractions = false;
+  if (forward != nullptr && stateBranch != nullptr) {
+    for (const lang::MirBlockId target :
+         {stateBranch->terminator.target, stateBranch->terminator.elseTarget}) {
+      const lang::MirBlock *extraction = forward->body.findBlock(target);
+      if (extraction == nullptr) {
+        continue;
+      }
+      zeroSiteExtractions =
+          zeroSiteExtractions ||
+          std::any_of(
+              extraction->instructions.begin(), extraction->instructions.end(),
+              [](const lang::MirInstruction &instruction) {
+                return instruction.kind == lang::MirInstructionKind::Call &&
+                       (instruction.intrinsic ==
+                            lang::IntrinsicKind::ExpectedValue ||
+                        instruction.intrinsic ==
+                            lang::IntrinsicKind::ExpectedError) &&
+                       instruction.localFailureSites.empty();
+              });
+    }
+  }
+  expect(forward != nullptr && stateBranch != nullptr && zeroSiteExtractions,
+         "propagation should lower zero-site Expected extractions behind one "
+         "matching state branch");
+  if (forward == nullptr || stateBranch == nullptr || !zeroSiteExtractions) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = forward->id};
+  const lang::CppMirBodyEmitter canonical(frontend.mir, map);
+  expect(canonical.supportsFailureBodyText(address),
+         "the canonical state-proven propagation body should remain admitted");
+
+  lang::MirProgram extraPredecessor = frontend.mir;
+  auto &extraFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      extraPredecessor.functionInstances());
+  lang::MirFunctionInstance &extraForward = extraFunctions.at(forward->id - 1);
+  extraForward.body.blocks.push_back(
+      {.id = static_cast<lang::MirBlockId>(extraForward.body.blocks.size() + 1),
+       .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                      .target = stateBranch->terminator.target},
+       .reachable = true});
+  const lang::CppMirBodyEmitter extraPredecessorEmitter(extraPredecessor, map);
+  expect(!extraPredecessorEmitter.supportsFailureBodyText(address),
+         "a zero-site Expected extraction with an unproven incoming edge "
+         "must fail backend admission");
+
+  lang::MirProgram reversedState = frontend.mir;
+  auto &reversedFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          reversedState.functionInstances());
+  lang::MirFunctionInstance &reversedForward =
+      reversedFunctions.at(forward->id - 1);
+  lang::MirBlock *reversedBranch =
+      reversedForward.body.findBlock(stateBranch->id);
+  expect(reversedBranch != nullptr,
+         "the propagation state branch should survive the forged copy");
+  if (reversedBranch != nullptr) {
+    std::swap(reversedBranch->terminator.target,
+              reversedBranch->terminator.elseTarget);
+    const lang::CppMirBodyEmitter reversedStateEmitter(reversedState, map);
+    expect(!reversedStateEmitter.supportsFailureBodyText(address),
+           "a zero-site Expected extraction without its matching state edge "
+           "must fail backend admission");
+  }
+}
+
 void testExpectedValueOrBorrowedReceiver() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-value-or.gti", R"(
@@ -7557,6 +7692,8 @@ constexpr NamedTest kTests[] = {
     {"testUniqueOwnerUpcastFailureBody", testUniqueOwnerUpcastFailureBody},
     {"testExpectedLifetimeSlotObserverFusion",
      testExpectedLifetimeSlotObserverFusion},
+    {"testExpectedExtractionStateAdmissionFailsClosed",
+     testExpectedExtractionStateAdmissionFailsClosed},
     {"testExpectedValueOrBorrowedReceiver",
      testExpectedValueOrBorrowedReceiver},
     {"testDeclarationOnlyCallBoundary", testDeclarationOnlyCallBoundary},

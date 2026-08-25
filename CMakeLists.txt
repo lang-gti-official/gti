@@ -748,7 +748,7 @@ if(BUILD_TESTING)
   # Python coordinator below reserves four CTest processors, runs both corpus
   # sweeps once per exact census source, and re-aggregates the original
   # whole-corpus assertions without one indivisible sanitizer test. Invoking
-  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 69 tests.
+  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 70 tests.
   if(Python3_Interpreter_FOUND)
     foreach(shard RANGE 1 4)
       add_test(NAME cpp_mir_body_emitter_${shard}of4

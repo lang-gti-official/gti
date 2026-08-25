@@ -1543,16 +1543,45 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   };
   const std::optional<MirValueId> leftValue = rootedValue(left);
   const std::optional<MirValueId> rightValue = rootedValue(right);
-  if (leftValue || rightValue) {
-    return leftValue && rightValue && *leftValue == *rightValue;
+  if (leftValue && rightValue && *leftValue == *rightValue) {
+    return true;
   }
-  if (left.place == 0 || right.place == 0) {
-    return false;
-  }
-  const MirPlace *leftPlace = body.findPlace(left.place);
-  const MirPlace *rightPlace = body.findPlace(right.place);
+  // A named Expected is read into one SSA value for ExpectedHasValue and then
+  // borrowed from the original place for ExpectedValue/ExpectedError. Relate
+  // that value back to its carrier only through the exact, same-typed Load;
+  // no other SSA producer is state evidence for a place extraction.
+  const auto carrierPlace = [&](const MirOperand &operand) -> const MirPlace * {
+    if (operand.place != 0) {
+      return body.findPlace(operand.place);
+    }
+    if (operand.kind != MirOperandKind::Value || operand.value == 0) {
+      return nullptr;
+    }
+    const MirValue *value = body.findValue(operand.value);
+    const MirInstruction *definition =
+        value == nullptr ? nullptr : findInstruction(body, value->definition);
+    if (value == nullptr || value->info.type != operand.type ||
+        definition == nullptr || definition->kind != MirInstructionKind::Load ||
+        !definition->result || *definition->result != value->id ||
+        definition->destination || definition->receiver ||
+        definition->operation != MirOperation::None ||
+        definition->operands.size() != 1 ||
+        definition->operands.front().kind != MirOperandKind::Copy ||
+        definition->operands.front().place == 0 ||
+        definition->operands.front().type != operand.type ||
+        definition->info.type != operand.type ||
+        !definition->localFailureSites.empty() ||
+        !definition->definedFailure.empty()) {
+      return nullptr;
+    }
+    const MirPlace *place = body.findPlace(definition->operands.front().place);
+    return place != nullptr && place->type == operand.type ? place : nullptr;
+  };
+  const MirPlace *leftPlace = carrierPlace(left);
+  const MirPlace *rightPlace = carrierPlace(right);
   return leftPlace != nullptr && rightPlace != nullptr &&
          leftPlace->root == rightPlace->root &&
+         leftPlace->value == rightPlace->value &&
          leftPlace->binding == rightPlace->binding &&
          leftPlace->temporary == rightPlace->temporary &&
          leftPlace->projections == rightPlace->projections;
@@ -1587,8 +1616,37 @@ stateProvenExpectedExtraction(const MirBody &body,
   if (extractionBlock == nullptr) {
     return false;
   }
+  std::size_t incomingEdges = 0;
+  std::size_t matchingStateEdges = 0;
   for (const MirBlock &predecessor : body.blocks) {
     const MirTerminator &branch = predecessor.terminator;
+    const auto countIncoming = [&](MirBlockId target) {
+      incomingEdges += target == extractionBlock->id;
+    };
+    switch (branch.kind) {
+    case MirTerminatorKind::Goto:
+      countIncoming(branch.target);
+      break;
+    case MirTerminatorKind::Branch:
+    case MirTerminatorKind::Invoke:
+      countIncoming(branch.target);
+      countIncoming(branch.elseTarget);
+      break;
+    case MirTerminatorKind::Switch:
+      countIncoming(branch.target);
+      for (const MirSwitchTarget &target : branch.switchTargets) {
+        countIncoming(target.target);
+      }
+      break;
+    case MirTerminatorKind::None:
+    case MirTerminatorKind::Return:
+    case MirTerminatorKind::PropagateFailure:
+    case MirTerminatorKind::Unreachable:
+    case MirTerminatorKind::Exit:
+    case MirTerminatorKind::ContainFailure:
+    case MirTerminatorKind::TerminateCleanupFailure:
+      break;
+    }
     const MirBlockId requiredTarget =
         instruction.intrinsic == IntrinsicKind::ExpectedValue
             ? branch.target
@@ -1610,10 +1668,10 @@ stateProvenExpectedExtraction(const MirBody &body,
         condition->operands.size() == 1 &&
         sameExpectedCarrier(body, condition->operands.front(),
                             *instruction.receiver)) {
-      return true;
+      ++matchingStateEdges;
     }
   }
-  return false;
+  return incomingEdges != 0 && incomingEdges == matchingStateEdges;
 }
 
 struct ConcretePackParameterLayout {
@@ -26386,6 +26444,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.operands.empty() ||
               instruction.localFailureSites.size() >
                   (expectedExtraction ? 1u : 0u) ||
+              (expectedExtraction && instruction.localFailureSites.empty() &&
+               !stateProvenExpectedExtraction(body, instruction)) ||
               instruction.dispatch != CallDispatch::Static ||
               !typeRow(instruction.info.type)) {
             {
