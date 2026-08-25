@@ -3397,6 +3397,53 @@ def test_managed_thread_tooling(executable, root):
     finally:
         session.close()
 
+    session = LspSession(
+        executable, ["--execution-profile", "single-threaded"]
+    )
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "rootUri": project.resolve().as_uri(),
+                    "capabilities": {},
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send(
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2084"
+            and "concurrent execution profile" in diagnostic["message"]
+            for diagnostic in diagnostics
+        )
+    finally:
+        session.close()
+
 
 def test_standalone_managed_thread_profile(executable, root):
     path = root / "standalone-managed-thread.gti"
