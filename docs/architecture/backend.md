@@ -155,6 +155,35 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+Before spelling a body, the backend derives a pointer-free
+`CppMirControlFlowPlan` solely from that body's sealed optimized MIR. The plan
+lists every block in canonical order, gives it a stable function-local C++
+label, and lists every successor by its canonical edge slot: zero for a
+`Goto`, switch default, or invoke success; one for branch/invoke failure; and
+one-based case slots for a `Switch`. A separate verifier exact-compares the
+plan with the MIR block and edge inventory. Missing, duplicate, reordered,
+relabelled, or retargeted rows fail emission; the backend has no dispatcher or
+other control-flow fallback.
+
+Persistent places, value slots, loan carriers, failure state, and lifecycle
+state are declared before the first label. Emission begins with a direct jump
+to the planned entry label, and every MIR block is a label followed by its own
+compound scope. Static transfers are direct `goto` statements. Branches and
+invokes use C++ conditionals whose arms publish the selected MIR edge and then
+jump; a MIR `Switch` may use an ordinary C++ `switch`, but each selected arm
+also jumps directly. Returns, exits, propagation, unreachable blocks, and
+cleanup-failure termination keep their existing terminal spellings. This
+scope shape prevents a jump from entering past a C++ initialization while
+preserving the old per-block scope exit. GTI destruction and failure cleanup
+remain explicit MIR instructions and terminators rather than native RAII.
+
+Direct labels and gotos are the complete production CFG representation,
+including reducible and irreducible graphs. The backend does not structure
+loops from source syntax or names, and it does not require a mutable block
+number plus `for (;;)`/dispatch `switch`. Native optimization is free to
+recover natural loops from the direct backedges, while retained checked exits
+and call boundaries remain visible consequences of MIR behavior.
+
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
 MIR, never as a backend analysis result. When all local overflow outcomes for a
