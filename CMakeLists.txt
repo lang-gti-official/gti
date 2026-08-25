@@ -1319,6 +1319,7 @@ if(BUILD_TESTING)
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
+        issues_117_120_regressions
         mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
