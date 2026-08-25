@@ -81,7 +81,7 @@ assertions.
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
-| `benchmark_harness` | strict benchmark descriptors, path containment, correctness records, deterministic interleaving, and threshold-free smoke execution |
+| `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors, path containment, correctness records, deterministic interleaving, and threshold-free vector plus managed-thread smoke execution |
 
 The emitter corpus coordinator deliberately adds no shorter per-source timing
 threshold: every worker remains inside the unchanged 1500-second aggregate
@@ -108,11 +108,14 @@ runtime/compiler header-coexistence gate from one staged include directory so
 neither public contract can overwrite the other.
 
 Performance measurements are never ordinary CI timing gates. The
-repository-owned `scripts/benchmark_compare.py` first validates schema-1
+repository-owned `scripts/benchmark_compare.py` first validates versioned
 descriptors, builds every declared variant beneath a controlled output root,
 and requires one matching `GTI-BENCH-1` correctness record before collecting
-raw interleaved samples. The `benchmark_harness` CTest exercises this in smoke
-mode, where build and result correctness are required but elapsed time is not
+raw interleaved samples. Schema 1 requires one GTI variant for GTI/C++
+comparison. Schema 2 admits multiple GTI variants and requires every one to
+name its exact execution profile; C++ rows carry no GTI profile. The
+`benchmark_harness` CTest exercises both descriptor families in smoke mode,
+where build and result correctness are required but elapsed time is not
 compared with a threshold. Full local runs retain their exact commands,
 compiler identity, source and emitted-code digests, randomized sample order,
 and every raw sample for later analysis.
