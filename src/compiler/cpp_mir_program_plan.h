@@ -73,6 +73,7 @@ enum class CppMirThunkKind {
   CallableAdapter,
   LifecycleCleanup,
   NativeInteropAdapter,
+  ThreadTaskAdapter,
   ConcreteInstanceAdapter,
   Count,
 };
@@ -158,6 +159,13 @@ struct CppMirNativeCallbackThunk {
                          const CppMirNativeCallbackThunk &) = default;
 };
 
+struct CppMirThreadTaskThunk {
+  MirThreadTaskAdapter adapter;
+
+  friend bool operator==(const CppMirThreadTaskThunk &,
+                         const CppMirThreadTaskThunk &) = default;
+};
+
 struct CppMirStructuralOperatorThunk {
   FunctionId function = 0;
   OverloadedOperator operation = OverloadedOperator::Dereference;
@@ -212,7 +220,8 @@ struct CppMirConcreteInstanceThunk {
 using CppMirGeneratedThunkPayload =
     std::variant<std::monostate, CppMirStructuralOperatorThunk,
                  CppMirCallableThunk, CppMirLifecycleCleanupThunk,
-                 CppMirConcreteInstanceThunk, CppMirNativeCallbackThunk>;
+                 CppMirConcreteInstanceThunk, CppMirNativeCallbackThunk,
+                 CppMirThreadTaskThunk>;
 
 enum class CppMirGeneratedThunkSourceKind {
   Body,

@@ -754,6 +754,8 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("target.arch", target.arch);
   identity.add("target.execution-profile",
                static_cast<std::uint64_t>(target.executionProfile));
+  identity.add("target.runtime.threads",
+               static_cast<std::uint64_t>(target.runtimeCapabilities.threads));
   identity.add("target.layout.supported",
                static_cast<std::uint64_t>(target.dataLayout.supported()));
   identity.add("target.layout.endianness",

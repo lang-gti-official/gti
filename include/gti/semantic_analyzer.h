@@ -706,6 +706,7 @@ enum class CallableBoundary {
 enum class CallableOwnedTransportKind {
   ExactReturn,
   ExactField,
+  ThreadTask,
 };
 
 struct CallableOwnedTransport {
@@ -782,6 +783,11 @@ enum class IntrinsicKind {
   ArrayRangeBegin,
   ArraySize,
   ExpectedHasValue,
+  ThreadHandleEmpty,
+  ThreadSpawn,
+  ThreadJoinable,
+  ThreadJoin,
+  ThreadAutoJoin,
   Count,
 };
 
@@ -802,6 +808,7 @@ enum class CompilerCapabilityTypeKind {
   TextView,
   CString,
   PrefixStorage,
+  ThreadHandle,
 };
 
 enum class ProgramEntryKind {
@@ -1663,7 +1670,8 @@ struct SemanticAnalysisSeal {
     return target.os == candidate.os && target.vendor == candidate.vendor &&
            target.arch == candidate.arch &&
            target.dataLayout == candidate.dataLayout &&
-           target.executionProfile == candidate.executionProfile;
+           target.executionProfile == candidate.executionProfile &&
+           target.runtimeCapabilities == candidate.runtimeCapabilities;
   }
 
   [[nodiscard]] bool matchesProgram(const Program &program,

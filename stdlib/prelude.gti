@@ -10,6 +10,11 @@ namespace gti_internal {
   class prefix_storage<T> {};
   class text_view {};
   class c_string {};
+  [[no_transfer, no_share]] class thread_handle {
+  public:
+    thread_handle(thread_handle& other) = delete;
+    ~thread_handle() = default;
+  };
 
   @compiler_constraint("numeric") concept numeric_capability<T>;
   @compiler_constraint("signed_numeric") concept signed_numeric_capability<T>;
@@ -57,6 +62,12 @@ namespace gti_internal {
   // operation, so no partially initialized slot is ever observable.
   void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
+
+  gti_internal::thread_handle thread_handle_empty();
+  bool thread_joinable(gti_internal::thread_handle& handle);
+  int32_t thread_spawn<Task>(mut gti_internal::thread_handle& handle, Task task);
+  int32_t thread_join(mut gti_internal::thread_handle& handle);
+  void thread_auto_join(mut gti_internal::thread_handle& handle);
 
   T integer_wrapping_add<T>(T left, T right);
   T integer_wrapping_sub<T>(T left, T right);

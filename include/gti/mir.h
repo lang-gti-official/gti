@@ -26,6 +26,7 @@ using MirDropObligationId = std::size_t;
 using MirFailureRecordId = std::size_t;
 using MirHostedStartupOperationId = std::size_t;
 using MirNativeCallbackAdapterId = std::size_t;
+using MirThreadTaskAdapterId = std::size_t;
 
 struct MirFullExpression {
   HirFullExpressionId id = 0;
@@ -577,6 +578,7 @@ struct MirInstruction {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
+  std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
@@ -1108,6 +1110,21 @@ struct MirNativeCallbackAdapter {
                          const MirNativeCallbackAdapter &) = default;
 };
 
+struct MirThreadTaskAdapter {
+  MirThreadTaskAdapterId id = 0;
+  SemanticType taskType = SemanticType::Unknown;
+  HirValueId spawnValue = 0;
+  MirBodyAddress sourceBody;
+  MirInstructionId spawnInstruction = 0;
+  CallableInvocationCapability invocation =
+      CallableInvocationCapability::Once;
+  bool catchesWorkerFailure = true;
+  bool catchesNativeExceptions = true;
+
+  friend bool operator==(const MirThreadTaskAdapter &,
+                         const MirThreadTaskAdapter &) = default;
+};
+
 struct MirConstructorInitializer {
   ConstructorInitializerTargetKind kind =
       ConstructorInitializerTargetKind::Field;
@@ -1390,6 +1407,11 @@ public:
     return nativeCallbacks;
   }
 
+  [[nodiscard]] const std::vector<MirThreadTaskAdapter> &
+  threadTaskAdapters() const {
+    return threadTasks;
+  }
+
   [[nodiscard]] const std::vector<MirConstructorInstance> &
   constructorInstances() const {
     return constructors;
@@ -1413,6 +1435,12 @@ public:
   findNativeCallbackAdapter(MirNativeCallbackAdapterId id) const {
     return id == 0 || id > nativeCallbacks.size() ? nullptr
                                                   : &nativeCallbacks[id - 1];
+  }
+
+  [[nodiscard]] const MirThreadTaskAdapter *
+  findThreadTaskAdapter(MirThreadTaskAdapterId id) const {
+    return id == 0 || id > threadTasks.size() ? nullptr
+                                              : &threadTasks[id - 1];
   }
 
   [[nodiscard]] const MirClassInstance *
@@ -1455,6 +1483,7 @@ private:
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;
+  std::vector<MirThreadTaskAdapter> threadTasks;
   std::vector<MirConstructorInstance> constructors;
   std::vector<MirDestructorInstance> destructors;
   std::vector<MirLambdaInstance> lambdas;

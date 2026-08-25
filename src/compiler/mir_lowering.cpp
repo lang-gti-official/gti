@@ -3219,6 +3219,7 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .threadTaskAdapter = value.threadTaskAdapter,
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
                         .lambdaTarget = value.lambdaTarget,
@@ -6935,6 +6936,49 @@ MirLowerer::lowerProgram(const HirProgram &source,
   if (includeProgramInitialization) {
     valid =
         lowerHostedStartup(source, failureMetadata, result.program) && valid;
+  }
+  result.program.threadTasks.reserve(source.threadTaskAdapters().size());
+  for (const HirThreadTaskAdapter &adapter : source.threadTaskAdapters()) {
+    MirBodyAddress sourceBody;
+    MirInstructionId spawnInstruction = 0;
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(result.program)) {
+      const MirBody *body = findMirBody(result.program, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (const MirBlock &block : body->blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const MirInstruction &instruction) {
+              return instruction.hirValue == adapter.spawnValue &&
+                     instruction.threadTaskAdapter == adapter.id &&
+                     instruction.intrinsic == IntrinsicKind::ThreadSpawn;
+            });
+        if (found != block.instructions.end()) {
+          if (spawnInstruction != 0) {
+            valid = false;
+          }
+          sourceBody = address;
+          spawnInstruction = found->id;
+        }
+      }
+    }
+    if (spawnInstruction == 0 || adapter.id == 0 ||
+        adapter.taskType == SemanticType::Unknown ||
+        adapter.invocation != CallableInvocationCapability::Once) {
+      valid = false;
+      continue;
+    }
+    result.program.threadTasks.push_back(
+        {.id = adapter.id,
+         .taskType = adapter.taskType,
+         .spawnValue = adapter.spawnValue,
+         .sourceBody = sourceBody,
+         .spawnInstruction = spawnInstruction,
+         .invocation = adapter.invocation,
+         .catchesWorkerFailure = true,
+         .catchesNativeExceptions = true});
   }
   result.program.valid_ = valid;
   const MirProgramEffectSummaries effectSummaries =

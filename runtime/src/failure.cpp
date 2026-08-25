@@ -1,4 +1,5 @@
 #include "gti/runtime_failure.h"
+#include "gti/runtime_thread.hpp"
 
 #include "failure_internal.h"
 
@@ -666,6 +667,11 @@ gti_rt_failure_terminate_v1(const gti_failure_record_v1 *record,
                             const gti_failure_artifact_descriptor_v1 *artifact,
                             gti_failure_observer_v1 observer,
                             void *observer_context) {
+  if (record != nullptr && gti_runtime_detail::managed_worker_active()) {
+    // Worker failures are observed only by join. The generated MIR path has
+    // already completed task cleanup before reaching this containment call.
+    gti_runtime_detail::handoff_managed_worker_failure(*record, artifact);
+  }
   claimTerminalWinner();
 
   const gti_failure_record_v1 invalidRecord{};

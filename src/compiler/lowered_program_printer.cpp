@@ -118,6 +118,8 @@ generatedItemKindName(LoweredGeneratedItemKind kind) {
     return "lifecycle-cleanup";
   case LoweredGeneratedItemKind::NativeInteropAdapter:
     return "native-interop-adapter";
+  case LoweredGeneratedItemKind::ThreadTaskAdapter:
+    return "thread-task-adapter";
   case LoweredGeneratedItemKind::ConcreteInstanceAdapter:
     return "concrete-instance-adapter";
   case LoweredGeneratedItemKind::Count:

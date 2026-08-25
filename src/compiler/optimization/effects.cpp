@@ -268,6 +268,16 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{},
     // ExpectedHasValue: a pure state observer.
     MirEffectTraits{},
+    // ThreadHandleEmpty: creates an empty private capability value.
+    MirEffectTraits{.initializesValue = true},
+    // ThreadSpawn: synchronization metadata supplies the full barrier facts.
+    MirEffectTraits{.movesValue = true, .initializesValue = true},
+    // ThreadJoinable: reads the opaque handle state without synchronizing.
+    MirEffectTraits{.readsUnknownMemory = true},
+    // ThreadJoin: synchronization metadata supplies the join barrier.
+    MirEffectTraits{},
+    // ThreadAutoJoin: synchronization metadata supplies the join barrier.
+    MirEffectTraits{},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -430,6 +440,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "array-range-begin",
     "array-size",
     "expected-has-value",
+    "thread-handle-empty",
+    "thread-spawn",
+    "thread-joinable",
+    "thread-join",
+    "thread-auto-join",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

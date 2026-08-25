@@ -378,6 +378,8 @@ cppBodyDefinition(LoweredBodyDefinitionKind definition) {
     return CppMirThunkKind::LifecycleCleanup;
   case LoweredGeneratedItemKind::NativeInteropAdapter:
     return CppMirThunkKind::NativeInteropAdapter;
+  case LoweredGeneratedItemKind::ThreadTaskAdapter:
+    return CppMirThunkKind::ThreadTaskAdapter;
   case LoweredGeneratedItemKind::ConcreteInstanceAdapter:
     return CppMirThunkKind::ConcreteInstanceAdapter;
   case LoweredGeneratedItemKind::Count:
@@ -670,6 +672,10 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
     } else if (const auto *callback =
                    std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};
+    } else if (const auto *threadTask =
+                   std::get_if<LoweredThreadTaskAdapterItem>(&item.payload)) {
+      thunk.payload =
+          CppMirThreadTaskThunk{.adapter = threadTask->adapter};
     }
     snapshot.thunks.push_back(std::move(thunk));
   }
@@ -778,6 +784,8 @@ namespace {
 
 struct RowClassFacts {
   std::string name;
+  CompilerCapabilityTypeKind compilerCapability =
+      CompilerCapabilityTypeKind::None;
   bool passiveCAbiRecord = false;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
@@ -833,6 +841,7 @@ public:
         .name = separator == std::string::npos
                     ? info->qualifiedName
                     : info->qualifiedName.substr(separator + 2),
+        .compilerCapability = info->compilerCapability,
         .passiveCAbiRecord = info->cAbiRecord && info->cAbiLayout &&
                              !info->cOpaqueHandle && !info->unionLayout,
         .defaultConstructor = info->defaultConstructor,
@@ -950,7 +959,9 @@ struct RowsBuilder {
             facts.classFacts(type.classId);
         boundaryConstructible =
             classInfo &&
-            (classInfo->passiveCAbiRecord ||
+            (classInfo->compilerCapability ==
+                 CompilerCapabilityTypeKind::ThreadHandle ||
+             classInfo->passiveCAbiRecord ||
              (classInfo->defaultConstructor != SpecialMemberStatus::Deleted &&
               classInfo->moveAssignment != SpecialMemberStatus::Deleted));
         copyable =
@@ -1281,6 +1292,12 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Intrinsic,
        .spelling = "gti_internal_backend_helpers_v1"});
+  // Synchronization names the managed-thread runtime boundary. The copied
+  // adapter inventory still proves each task thunk and spawn relationship;
+  // this row only admits the sealed spawn/join helper vocabulary.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Synchronization,
+       .spelling = "gti_managed_thread_runtime_v1"});
   // HostedEntry names the shipped program-entry adapter: every hosted
   // artifact carries the generated main() that marshals arguments,
   // forwards the entry call, and routes defined failure through the

@@ -13254,6 +13254,16 @@ public:
       }
       if (value.info.type.kind == SemanticType::Class) {
         if (valueDefinition != nullptr &&
+            valueDefinition->kind == MirInstructionKind::Call &&
+            valueDefinition->intrinsic == IntrinsicKind::ThreadHandleEmpty &&
+            valueDefinition->result &&
+            *valueDefinition->result == value.id) {
+          // The private empty-handle intrinsic creates its move-only value at
+          // the instruction. The generic class SSA prelude would instead
+          // default-construct a second handle identity before assignment.
+          continue;
+        }
+        if (valueDefinition != nullptr &&
             stagedClassResultForSource(facts.body, value.id).producer ==
                 valueDefinition) {
           // The prepared-parameter slot is also the source construction's
@@ -17268,6 +17278,104 @@ private:
       }
       return emitted;
     };
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {
+      output << "auto __gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::thread_handle{};\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::ThreadJoinable) {
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      emitCallArgument(instruction.operands.front(), false, false);
+      output << ".joinable();\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::ThreadSpawn) {
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::managed_thread_spawn<"
+             << *instruction.threadTaskAdapter << ">(";
+      emitCallArgument(instruction.operands[0], false, false);
+      output << ", ";
+      emitCallArgument(instruction.operands[1], false, false);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
+         instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)) {
+      const bool automatic =
+          instruction.intrinsic == IntrinsicKind::ThreadAutoJoin;
+      output << "const ::gti_thread_join_result_v1 "
+                "__gti_mir_thread_join_"
+             << instruction.id
+             << " = ::gti_internal::backend::managed_thread_join(";
+      emitCallArgument(instruction.operands.front(), false, false);
+      output << ");\n";
+      if (!automatic) {
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result
+               << " = __gti_mir_thread_join_" << instruction.id
+               << ".status == GTI_THREAD_JOIN_OK_V1 ? std::int32_t{0} : "
+                  "(__gti_mir_thread_join_"
+               << instruction.id
+               << ".status == GTI_THREAD_JOIN_NOT_JOINABLE_V1 ? "
+                  "std::int32_t{1} : std::int32_t{2});\n";
+      }
+      if (!failureForm) {
+        writeIndent();
+        output << "if (__gti_mir_thread_join_" << instruction.id
+               << ".status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {\n";
+        ++indentation;
+        writeIndent();
+        output << "::gti_rt_failure_terminate_v1(\n";
+        ++indentation;
+        writeIndent();
+        output << "&__gti_mir_thread_join_" << instruction.id
+               << ".failure,\n";
+        writeIndent();
+        output << "&::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1, nullptr, "
+                  "nullptr);\n";
+        --indentation;
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        if (automatic) {
+          writeIndent();
+          output << "if (__gti_mir_thread_join_" << instruction.id
+                 << ".status != GTI_THREAD_JOIN_OK_V1 && "
+                    "__gti_mir_thread_join_"
+                 << instruction.id
+                 << ".status != GTI_THREAD_JOIN_NOT_JOINABLE_V1) {\n";
+          ++indentation;
+          writeIndent();
+          output << "::gti_failure_record_v1 "
+                    "__gti_mir_thread_join_failure_"
+                 << instruction.id << "{};\n";
+          emitAutomaticJoinFailureRecord(
+              "__gti_mir_thread_join_failure_" +
+                  std::to_string(instruction.id),
+              instruction);
+          writeIndent();
+          output << "::gti_rt_failure_terminate_v1(\n";
+          ++indentation;
+          writeIndent();
+          output << "&__gti_mir_thread_join_failure_" << instruction.id
+                 << ",\n";
+          writeIndent();
+          output << "&::gti_internal::backend::"
+                    "__gti_failure_artifact_descriptor_v1, nullptr, "
+                    "nullptr);\n";
+          --indentation;
+          --indentation;
+          writeIndent();
+          output << "}\n";
+        }
+      }
+      return;
+    }
     if (storageReferenceReadCall(facts.body, instruction)) {
       // A call-result loan binds the element address here; otherwise the
       // element is published by the loan-producing Borrow and the call
@@ -18607,6 +18715,72 @@ private:
                                     std::to_string(producer->id));
         return;
       }
+      if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
+          (producer->intrinsic == IntrinsicKind::ThreadJoin ||
+           producer->intrinsic == IntrinsicKind::ThreadAutoJoin)) {
+        if (!failureForm) {
+          emitEdgeArguments(block, terminator.target,
+                            terminator.targetArguments, 0, facts);
+          writeIndent();
+          output << "__gti_mir_bb = " << terminator.target << ";\n";
+          writeIndent();
+          output << "continue;\n";
+          return;
+        }
+        const bool automatic =
+            producer->intrinsic == IntrinsicKind::ThreadAutoJoin;
+        writeIndent();
+        output << "if (";
+        if (automatic) {
+          output << "__gti_mir_thread_join_" << producer->id
+                 << ".status == GTI_THREAD_JOIN_OK_V1 || "
+                    "__gti_mir_thread_join_"
+                 << producer->id
+                 << ".status == GTI_THREAD_JOIN_NOT_JOINABLE_V1";
+        } else {
+          output << "__gti_mir_thread_join_" << producer->id
+                 << ".status != GTI_THREAD_JOIN_WORKER_FAILURE_V1";
+        }
+        output << ") {\n";
+        ++indentation;
+        emitEdgeArguments(block, terminator.target,
+                          terminator.targetArguments, 0, facts);
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.target << ";\n";
+        --indentation;
+        writeIndent();
+        output << "} else {\n";
+        ++indentation;
+        writeIndent();
+        output << "if (__gti_mir_thread_join_" << producer->id
+               << ".status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {\n";
+        ++indentation;
+        writeIndent();
+        output << "*__gti_mir_failure_record = "
+                  "__gti_mir_thread_join_"
+               << producer->id << ".failure;\n";
+        --indentation;
+        if (automatic) {
+          writeIndent();
+          output << "} else {\n";
+          ++indentation;
+          emitAutomaticJoinFailureRecord("*__gti_mir_failure_record",
+                                         *producer);
+          --indentation;
+        }
+        writeIndent();
+        output << "}\n";
+        emitEdgeArguments(block, terminator.elseTarget,
+                          terminator.elseArguments, 1, facts);
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.elseTarget << ";\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
       const bool elementDetector =
           producer != nullptr &&
           (producer->kind == MirInstructionKind::Load ||
@@ -19693,6 +19867,45 @@ private:
 
   // The record's contents are wholly MIR-owned: the detector's exact site
   // plus the program's artifact identity (ADR 017).
+  void emitAutomaticJoinFailureRecord(
+      std::string_view target, const MirInstruction &instruction) {
+    const DefinedFailureOutcome expected{
+        .code = DefinedFailureCode::InfallibleHostOperationFailed,
+        .detail = DefinedFailureDetail::AutomaticJoin};
+    const FailureSiteDescriptor *site =
+        instruction.localFailureSites.size() == 1
+            ? program.failureMetadata().findSite(
+                  instruction.localFailureSites.front())
+            : nullptr;
+    if (instruction.intrinsic != IntrinsicKind::ThreadAutoJoin ||
+        instruction.definedFailure.localOrigins.size() != 1 ||
+        instruction.definedFailure.localOrigins.front().outcomes !=
+            std::vector<DefinedFailureOutcome>{expected} ||
+        site == nullptr ||
+        site->outcomes != std::vector<DefinedFailureOutcome>{expected}) {
+      throw std::logic_error(
+          "automatic join lost its canonical defined-failure outcome");
+    }
+    writeIndent();
+    output << target << " = ::gti_failure_record_v1{\n";
+    ++indentation;
+    writeIndent();
+    output << "GTI_FAILURE_ABI_VERSION_V1, "
+              "GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1, "
+              "GTI_FAILURE_DETAIL_AUTOMATIC_JOIN_V1, UINT32_C("
+           << instruction.localFailureSites.front()
+           << "), UINT32_C(0), {";
+    const auto &bytes = program.failureMetadata().artifactIdentity().bytes;
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << static_cast<unsigned int>(bytes[index]);
+    }
+    output << "}};\n";
+    --indentation;
+  }
+
   void emitFailureRecordWrite(const MirInstruction &instruction) {
     if (instruction.localFailureSites.size() != 1 ||
         instruction.definedFailure.localOrigins.size() != 1 ||
@@ -22161,9 +22374,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           materializedClosureForType(program_, body, place.type));
       if ((slotPlace(place) && !typeRow(place.type) && !materialized) ||
           (callableTemplateBody && !typeRow(place.type) && !materialized)) {
-        {
-          return false;
-        }
+        return false;
       }
       continue;
     }
@@ -22348,6 +22559,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool noLocal =
           (definition != nullptr &&
            definition->kind == MirInstructionKind::CallInput) ||
+          (definition != nullptr &&
+           definition->kind == MirInstructionKind::Call &&
+           definition->intrinsic == IntrinsicKind::ThreadHandleEmpty &&
+           definition->result && *definition->result == value.id) ||
           isBorrowStagedResult(body, value) ||
           isStorageStagedResult(body, value) ||
           discardedAssignmentResult(body, value.id) ||
@@ -22439,9 +22654,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (definition != nullptr &&
            storageReferenceReadCall(body, *definition));
       if (!noLocal) {
-        {
-          return false;
-        }
+        return false;
       }
       continue;
     }
@@ -24565,6 +24778,104 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
         }
         if (instruction.intrinsic != IntrinsicKind::None) {
+          const auto threadHandleArgument =
+              [&](const MirOperand &operand, AccessMode access) {
+                const MirPlace *place =
+                    operand.place == 0 ? nullptr : body.findPlace(operand.place);
+                const MirOperandKind expected =
+                    access == AccessMode::Mutable
+                        ? MirOperandKind::BorrowWrite
+                        : MirOperandKind::BorrowRead;
+                return operand.kind == expected && place != nullptr &&
+                       operand.type.kind == SemanticType::Reference &&
+                       operand.type.referenceAccess == access &&
+                       operand.type.arguments.size() == 1 &&
+                       operand.type.arguments.front() == place->type &&
+                       place->type.kind == SemanticType::Class &&
+                       typeRow(operand.type) && typeRow(place->type);
+              };
+          if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {
+            if (instruction.receiver || instruction.functionTarget ||
+                !instruction.result || !instruction.operands.empty() ||
+                instruction.info.type.kind != SemanticType::Class ||
+                !instruction.localFailureSites.empty() ||
+                !typeRow(instruction.info.type)) {
+              return false;
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::ThreadJoinable) {
+            if (instruction.receiver || instruction.functionTarget ||
+                !instruction.result || instruction.operands.size() != 1 ||
+                instruction.info.type != SemanticType::Bool ||
+                !threadHandleArgument(instruction.operands.front(),
+                                      AccessMode::ReadOnly) ||
+                !instruction.localFailureSites.empty() ||
+                instruction.definedFailure.propagation !=
+                    FailurePropagationKind::None) {
+              return false;
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::ThreadSpawn) {
+            const MirThreadTaskAdapter *adapter =
+                instruction.threadTaskAdapter
+                    ? program_.findThreadTaskAdapter(
+                          *instruction.threadTaskAdapter)
+                    : nullptr;
+            if (instruction.receiver || instruction.functionTarget ||
+                !instruction.result || instruction.operands.size() != 2 ||
+                instruction.info.type != SemanticType::Int32 ||
+                !threadHandleArgument(instruction.operands.front(),
+                                      AccessMode::Mutable) ||
+                !valueOperand(instruction.operands[1]) || adapter == nullptr ||
+                adapter->taskType != instruction.operands[1].type ||
+                adapter->sourceBody != address ||
+                adapter->spawnInstruction != instruction.id ||
+                adapter->invocation != CallableInvocationCapability::Once ||
+                !adapter->catchesWorkerFailure ||
+                !adapter->catchesNativeExceptions ||
+                instruction.synchronization.kind !=
+                    SynchronizationOperationKind::ThreadSpawn ||
+                !instruction.localFailureSites.empty() ||
+                instruction.definedFailure.propagation !=
+                    FailurePropagationKind::None) {
+              return false;
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
+              instruction.intrinsic == IntrinsicKind::ThreadAutoJoin) {
+            const bool automatic = instruction.intrinsic ==
+                                   IntrinsicKind::ThreadAutoJoin;
+            const bool resultReady =
+                automatic
+                    ? (!instruction.result &&
+                       instruction.info.type == SemanticType::Void)
+                    : (instruction.result &&
+                       instruction.info.type == SemanticType::Int32);
+            const bool localFailureReady =
+                automatic
+                    ? instruction.localFailureSites.size() == 1 &&
+                          instruction.definedFailure.localOrigins.size() == 1 &&
+                          program_.failureMetadata().findSite(
+                              instruction.localFailureSites.front()) != nullptr
+                    : instruction.localFailureSites.empty() &&
+                          instruction.definedFailure.localOrigins.empty();
+            if (instruction.receiver || instruction.functionTarget ||
+                instruction.operands.size() != 1 || !resultReady ||
+                !threadHandleArgument(instruction.operands.front(),
+                                      AccessMode::Mutable) ||
+                instruction.synchronization.kind !=
+                    SynchronizationOperationKind::ThreadJoin ||
+                instruction.definedFailure.propagation !=
+                    FailurePropagationKind::TaskJoin ||
+                !localFailureReady ||
+                !invokePairedInstruction(body, instruction.id)) {
+              return false;
+            }
+            continue;
+          }
           // A numeric-conversion intrinsic spells as the shipped
           // numeric_cast helper over one staged operand.
           if ((instruction.intrinsic ==
@@ -24939,6 +25250,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         {
           return false;
         }
+      }
+      if (producer->kind == MirInstructionKind::Call &&
+          (producer->intrinsic == IntrinsicKind::ThreadJoin ||
+           producer->intrinsic == IntrinsicKind::ThreadAutoJoin) &&
+          producer->definedFailure.propagation ==
+              FailurePropagationKind::TaskJoin) {
+        // The instruction probe established the exact managed join shape.
+        // The emitted runtime result distinguishes an exact worker record
+        // from the recoverable native status before this edge branches.
+        continue;
       }
       if (producer->kind == MirInstructionKind::Drop) {
         if (!failureForm ||

@@ -1125,6 +1125,9 @@ private:
          declaration->callableParameters) {
       if (parameter.parameterIndex >= snapshot.parameterTypes.size() ||
           (parameter.boundary == CallableBoundary::Owned &&
+           (!parameter.ownedTransport ||
+            parameter.ownedTransport->kind !=
+                CallableOwnedTransportKind::ThreadTask) &&
            !containsLambdaType(
                snapshot.parameterTypes[parameter.parameterIndex]))) {
         continue;
@@ -1135,7 +1138,9 @@ private:
           .access = parameter.access,
           .boundary = parameter.boundary,
           .ownedTransport = parameter.ownedTransport};
-      if (lowered.ownedTransport) {
+      if (lowered.ownedTransport &&
+          lowered.ownedTransport->kind !=
+              CallableOwnedTransportKind::ThreadTask) {
         lowered.ownedTransport->destinationType = snapshot.returnType;
       }
       lowered.signatures.reserve(parameter.signatures.size());
@@ -2888,6 +2893,7 @@ private:
     std::optional<HirValueId> receiver;
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
+    std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
     std::optional<HirFunctionInstanceId> contextualBoolTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
@@ -3301,6 +3307,7 @@ private:
                        model.isProgramConstantSubstitution(*raw),
                    .receiver = receiver,
                    .nativeCallbackAdapter = nativeCallbackAdapter,
+                   .threadTaskAdapter = threadTaskAdapter,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
                    .enumValue = enumValue,
@@ -3394,6 +3401,26 @@ private:
               qualifyBorrowPlace(*value.borrowPlace, body.placeDomain);
         }
         value.callableArguments = resolved->callableArguments;
+        if (resolved->intrinsic == IntrinsicKind::ThreadSpawn &&
+            resolved->parameterTypes.size() == 2 &&
+            resolved->parameterTypes[1] != SemanticType::Unknown) {
+          const HirThreadTaskAdapterId adapter =
+              output.program.threadTasks.size() + 1;
+          value.threadTaskAdapter = adapter;
+          output.program.threadTasks.push_back(
+              {.id = adapter,
+               .taskType = resolved->parameterTypes[1],
+               .spawnValue = value.id,
+               .invocation = CallableInvocationCapability::Once});
+        }
+        if (resolved->intrinsic == IntrinsicKind::ThreadSpawn) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::ThreadSpawn;
+        } else if (resolved->intrinsic == IntrinsicKind::ThreadJoin ||
+                   resolved->intrinsic == IntrinsicKind::ThreadAutoJoin) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::ThreadJoin;
+        }
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =

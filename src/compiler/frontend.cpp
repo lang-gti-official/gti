@@ -31,6 +31,9 @@ std::string cacheContext(const FrontendOptions &options) {
       options.target.os + '\n' +
       std::string(executionProfileName(options.target.executionProfile)) +
       '\n' +
+      (options.target.runtimeCapabilities.threads ? "threads:1"
+                                                  : "threads:0") +
+      '\n' +
       std::string(
           targetEndiannessName(options.target.dataLayout.endianness())) +
       '\n' + std::to_string(options.target.dataLayout.pointerWidthBits());

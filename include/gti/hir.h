@@ -30,6 +30,7 @@ using HirLambdaId = std::size_t;
 using HirFullExpressionId = std::size_t;
 using HirDropObligationId = std::size_t;
 using HirNativeCallbackAdapterId = std::size_t;
+using HirThreadTaskAdapterId = std::size_t;
 
 enum class HirDropObligationKind {
   Binding,
@@ -209,6 +210,7 @@ struct HirValue {
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
+  std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
@@ -483,6 +485,17 @@ struct HirNativeCallbackAdapter {
   SemanticType type = SemanticType::Unknown;
 };
 
+struct HirThreadTaskAdapter {
+  HirThreadTaskAdapterId id = 0;
+  SemanticType taskType = SemanticType::Unknown;
+  HirValueId spawnValue = 0;
+  CallableInvocationCapability invocation =
+      CallableInvocationCapability::Once;
+
+  friend bool operator==(const HirThreadTaskAdapter &,
+                         const HirThreadTaskAdapter &) = default;
+};
+
 struct HirConstructorInitializer {
   const ConstructorInitializer *source = nullptr;
   ConstructorInitializerTargetKind kind =
@@ -601,6 +614,11 @@ public:
     return nativeCallbacks;
   }
 
+  [[nodiscard]] const std::vector<HirThreadTaskAdapter> &
+  threadTaskAdapters() const {
+    return threadTasks;
+  }
+
   [[nodiscard]] const std::vector<HirConstructorInstance> &
   constructorInstances() const {
     return constructors;
@@ -642,6 +660,12 @@ public:
                                                   : &nativeCallbacks[id - 1];
   }
 
+  [[nodiscard]] const HirThreadTaskAdapter *
+  findThreadTaskAdapter(HirThreadTaskAdapterId id) const {
+    return id == 0 || id > threadTasks.size() ? nullptr
+                                              : &threadTasks[id - 1];
+  }
+
   [[nodiscard]] const HirConstructorInstance *
   findConstructorInstance(HirConstructorInstanceId id) const {
     return id == 0 || id > constructors.size() ? nullptr
@@ -670,6 +694,7 @@ private:
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirNativeCallbackAdapter> nativeCallbacks;
+  std::vector<HirThreadTaskAdapter> threadTasks;
   std::vector<HirConstructorInstance> constructors;
   std::vector<HirDestructorInstance> destructors;
   std::vector<HirLambda> lambdas;

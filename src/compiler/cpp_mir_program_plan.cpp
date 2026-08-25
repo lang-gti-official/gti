@@ -48,7 +48,8 @@ template <typename Enum>
   if (identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
       identity.kind == CppMirThunkKind::CallableAdapter ||
       identity.kind == CppMirThunkKind::LifecycleCleanup ||
-      identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+      identity.kind == CppMirThunkKind::NativeInteropAdapter ||
+      identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
@@ -129,6 +130,13 @@ nativeCallbackThunkIdentity(MirNativeCallbackAdapterId adapter) {
           .ordinal = 0};
 }
 
+[[nodiscard]] CppMirThunkIdentity
+threadTaskThunkIdentity(MirThreadTaskAdapterId adapter) {
+  return {.kind = CppMirThunkKind::ThreadTaskAdapter,
+          .owner = adapter,
+          .ordinal = 0};
+}
+
 [[nodiscard]] std::vector<CppMirThunkIdentity>
 nativeCallbackRequirements(const MirBody &body) {
   std::vector<CppMirThunkIdentity> result;
@@ -147,6 +155,24 @@ nativeCallbackRequirements(const MirBody &body) {
   return result;
 }
 
+[[nodiscard]] std::vector<CppMirThunkIdentity>
+threadTaskRequirements(const MirBody &body) {
+  std::vector<CppMirThunkIdentity> result;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.intrinsic != IntrinsicKind::ThreadSpawn ||
+          !instruction.threadTaskAdapter) {
+        continue;
+      }
+      result.push_back(
+          threadTaskThunkIdentity(*instruction.threadTaskAdapter));
+    }
+  }
+  std::sort(result.begin(), result.end(), thunkLess);
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
 [[nodiscard]] bool isContractedThunkKind(CppMirThunkKind kind) {
   return kind == CppMirThunkKind::HostedEntry ||
          kind == CppMirThunkKind::ProgramInitialization ||
@@ -154,6 +180,7 @@ nativeCallbackRequirements(const MirBody &body) {
          kind == CppMirThunkKind::CallableAdapter ||
          kind == CppMirThunkKind::LifecycleCleanup ||
          kind == CppMirThunkKind::NativeInteropAdapter ||
+         kind == CppMirThunkKind::ThreadTaskAdapter ||
          kind == CppMirThunkKind::ConcreteInstanceAdapter;
 }
 
@@ -596,6 +623,28 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
              "order");
   }
 
+  std::vector<CppMirThunkIdentity> expectedThreadTasks;
+  expectedThreadTasks.reserve(program.threadTaskAdapters().size());
+  for (const MirThreadTaskAdapter &adapter : program.threadTaskAdapters()) {
+    expectedThreadTasks.push_back(threadTaskThunkIdentity(adapter.id));
+  }
+  std::vector<CppMirThunkIdentity> suppliedThreadTasks;
+  for (const CppMirGeneratedThunk &thunk : plan.thunks) {
+    if (thunk.identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
+      suppliedThreadTasks.push_back(thunk.identity);
+    }
+  }
+  std::vector<CppMirThunkIdentity> sortedSuppliedThreadTasks =
+      suppliedThreadTasks;
+  std::sort(sortedSuppliedThreadTasks.begin(),
+            sortedSuppliedThreadTasks.end(), thunkLess);
+  if (sortedSuppliedThreadTasks == expectedThreadTasks &&
+      suppliedThreadTasks != expectedThreadTasks) {
+    addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkOrder,
+             "thread task thunk rows do not preserve verified MIR adapter "
+             "order");
+  }
+
   std::sort(
       plan.thunks.begin(), plan.thunks.end(),
       [](const CppMirGeneratedThunk &left, const CppMirGeneratedThunk &right) {
@@ -630,6 +679,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
 
     const CppMirNativeCallbackThunk *nativeCallback =
         std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+    const CppMirThreadTaskThunk *threadTask =
+        std::get_if<CppMirThreadTaskThunk>(&thunk.payload);
     const CppMirStructuralOperatorThunk *structural =
         std::get_if<CppMirStructuralOperatorThunk>(&thunk.payload);
     const CppMirCallableThunk *callable =
@@ -732,6 +783,18 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                  "payload",
                  std::nullopt, std::nullopt, thunk.identity);
       }
+    } else if (thunk.identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
+      const MirThreadTaskAdapter *adapter =
+          threadTask == nullptr
+              ? nullptr
+              : program.findThreadTaskAdapter(threadTask->adapter.id);
+      if (threadTask == nullptr || adapter == nullptr ||
+          thunk.identity.owner != threadTask->adapter.id ||
+          threadTask->adapter != *adapter) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "thread task thunk has no exact verified adapter payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
     } else if (!std::holds_alternative<std::monostate>(thunk.payload)) {
       addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
                "generated thunk carries a payload for a different family",
@@ -806,6 +869,17 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                                          .owner = callback->adapter.target} &&
                       source->role == CppMirBodyRole::SourceExecutable &&
                       target->definitionKind == MirDefinitionKind::Source;
+      } else if (validSource &&
+                 thunk.identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
+        const CppMirThreadTaskThunk *thread =
+            std::get_if<CppMirThreadTaskThunk>(&thunk.payload);
+        const MirThreadTaskAdapter *adapter =
+            thread == nullptr
+                ? nullptr
+                : program.findThreadTaskAdapter(thread->adapter.id);
+        validSource = adapter != nullptr &&
+                      thunk.sourceBody == adapter->sourceBody &&
+                      source->role == CppMirBodyRole::SourceExecutable;
       } else if (validSource) {
         validSource = source->role == CppMirBodyRole::SourceExecutable;
       }
@@ -1076,6 +1150,69 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
     }
   }
 
+  for (const CppMirThunkIdentity &expected : expectedThreadTasks) {
+    const std::size_t count = static_cast<std::size_t>(
+        std::count_if(plan.thunks.begin(), plan.thunks.end(),
+                      [&](const CppMirGeneratedThunk &thunk) {
+                        return thunk.identity == expected;
+                      }));
+    if (count == 0) {
+      addIssue(plan, CppMirPlanIssueKind::MissingContractedThunk,
+               "verified MIR thread task adapter requires its exact "
+               "generated thunk",
+               std::nullopt, std::nullopt, expected);
+    }
+  }
+  for (const CppMirGeneratedThunk &thunk : plan.thunks) {
+    if (thunk.identity.kind != CppMirThunkKind::ThreadTaskAdapter) {
+      continue;
+    }
+    const MirThreadTaskAdapter *expected =
+        program.findThreadTaskAdapter(thunk.identity.owner);
+    const CppMirThreadTaskThunk *thread =
+        std::get_if<CppMirThreadTaskThunk>(&thunk.payload);
+    if (expected == nullptr ||
+        !containsThunk(expectedThreadTasks, thunk.identity)) {
+      addIssue(plan, CppMirPlanIssueKind::UnexpectedContractedThunk,
+               "thread task thunk has no exact verified MIR adapter",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+      continue;
+    }
+    if (thread == nullptr || thread->adapter != *expected) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+               "thread task thunk payload differs from its exact verified "
+               "MIR adapter",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+    }
+    if (thunk.sourceBody != expected->sourceBody ||
+        thunk.support != CppMirSurfaceSupport::Supported ||
+        !thunk.dependencies.empty()) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+               "thread task thunk must name its exact spawning body, "
+               "supported state, and empty dependency set",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+    }
+  }
+
+  for (const CppMirBodyRepresentation &body : plan.bodies) {
+    const MirBody *mirBody = findMirBody(program, body.identity.address);
+    const std::vector<CppMirThunkIdentity> expected =
+        mirBody == nullptr ? std::vector<CppMirThunkIdentity>{}
+                           : threadTaskRequirements(*mirBody);
+    std::vector<CppMirThunkIdentity> supplied;
+    std::copy_if(
+        body.requiredThunks.begin(), body.requiredThunks.end(),
+        std::back_inserter(supplied), [](const CppMirThunkIdentity &identity) {
+          return identity.kind == CppMirThunkKind::ThreadTaskAdapter;
+        });
+    if (supplied != expected) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+               "body thread task roots differ from its exact verified MIR "
+               "spawn operations",
+               body.identity.address);
+    }
+  }
+
   for (const CppMirBodyRepresentation &body : plan.bodies) {
     for (const CppMirThunkIdentity &required : body.requiredThunks) {
       const CppMirGeneratedThunk *thunk = findThunk(plan.thunks, required);
@@ -1101,6 +1238,12 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
         addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
                  "program-initialization thunk must be rooted by exact "
                  "executable Module/0 plan authority",
+                 body.identity.address, std::nullopt, required);
+      } else if (required.kind == CppMirThunkKind::ThreadTaskAdapter &&
+                 body.identity.address != thunk->sourceBody) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
+                 "thread task thunk must be rooted by its exact spawning "
+                 "body",
                  body.identity.address, std::nullopt, required);
       }
     }
