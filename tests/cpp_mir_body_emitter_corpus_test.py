@@ -39,6 +39,13 @@ AGREEMENT_FIELDS = {
     "loan",
     "direct",
 }
+BOOLEAN_EVIDENCE_FIELDS = {
+    "deterministic",
+    "intrinsic",
+    "checked_intrinsic",
+    "loan",
+    "direct",
+}
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,12 @@ def parse_record(output: str, prefix: str,
             f"{prefix} fields differ: expected={sorted(expected_fields)}, "
             f"actual={sorted(fields)}"
         )
+    for name in sorted(BOOLEAN_EVIDENCE_FIELDS & fields.keys()):
+        if fields[name] not in (0, 1):
+            raise ValueError(
+                f"{prefix} field {name!r} must be exactly 0 or 1, "
+                f"got {fields[name]}"
+            )
     return fields
 
 

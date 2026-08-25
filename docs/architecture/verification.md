@@ -82,6 +82,13 @@ assertions.
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
 | `benchmark_harness` | strict benchmark descriptors, path containment, correctness records, deterministic interleaving, and threshold-free smoke execution |
 
+The emitter corpus coordinator deliberately adds no shorter per-source timing
+threshold: every worker remains inside the unchanged 1500-second aggregate
+CTest boundary. A hung source is therefore identified only as an aggregate
+timeout rather than by a calibrated worker deadline. This residual
+observability risk avoids replacing the corrected topology with an
+unsubstantiated per-example timing gate.
+
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.
 
