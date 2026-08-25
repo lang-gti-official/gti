@@ -97,6 +97,18 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             "scalar CFG MIR bodies plus the initializer and module markers\n"
         )
         return False
+    if (
+        "switch (__gti_mir_bb)" in generated
+        or "std::size_t __gti_mir_bb" in generated
+        or "__gti_mir_bb =" in generated
+        or "goto __gti_mir_bb_" not in generated
+        or "__gti_mir_bb_1: {" not in generated
+    ):
+        sys.stderr.write(
+            f"{optimization}/{standard} did not use the complete direct-label "
+            "MIR CFG representation\n"
+        )
+        return False
     for name in SELECTED + STDLIB_SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(

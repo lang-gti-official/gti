@@ -12956,12 +12956,13 @@ int main() {
          "break and continue should be valid in nested loop bodies");
 
   const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("switch (__gti_mir_bb)") != std::string::npos &&
-             generated.find("__gti_mir_bb =") != std::string::npos &&
-             generated.find("continue;") != std::string::npos &&
+  expect(generated.find("switch (__gti_mir_bb)") == std::string::npos &&
+             generated.find("__gti_mir_bb =") == std::string::npos &&
+             generated.find("goto __gti_mir_bb_") != std::string::npos &&
+             generated.find("__gti_mir_bb_1: {") != std::string::npos &&
              generated.find("// GTI verified-MIR body:") != std::string::npos,
-         "the C++ backend should lower loop control through the verified MIR "
-         "CFG");
+         "the C++ backend should lower loop control through direct verified "
+         "MIR CFG edges");
 
   auto invalidTokens = lexer.scan(R"(
 void stop() {
@@ -13291,7 +13292,13 @@ int main() {
   expect(
       generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
               std::string::npos &&
-          generated.contents.find("__gti_mir_bb = __gti_mir_v_1 ? 2 : 3;") !=
+          generated.contents.find("if (__gti_mir_v_1) {") !=
+              std::string::npos &&
+          generated.contents.find("goto __gti_mir_bb_2;") !=
+              std::string::npos &&
+          generated.contents.find("goto __gti_mir_bb_3;") !=
+              std::string::npos &&
+          generated.contents.find("switch (__gti_mir_bb)") ==
               std::string::npos &&
           generated.contents.find(
               "__gti_mir_p_4.construct(std::move(__gti_mir_p_2.get()));") !=
@@ -13493,8 +13500,9 @@ int main() {
                  std::string::npos &&
              generated.find("case static_cast<std::uint64_t>(7):") !=
                  std::string::npos &&
-             generated.find("__gti_mir_bb =") != std::string::npos &&
-             generated.find("case 1: {") != std::string::npos &&
+             generated.find("goto __gti_mir_bb_") != std::string::npos &&
+             generated.find("switch (__gti_mir_bb)") == std::string::npos &&
+             generated.find("__gti_mir_bb_1: {") != std::string::npos &&
              generated.find("// GTI verified-MIR body:") != std::string::npos,
          "the C++ backend should emit normalized labels through arm-local MIR "
          "CFG blocks");

@@ -312,6 +312,7 @@ add_library(
   "gti_cpp_backend" STATIC
   "src/compiler/cpp_backend.cpp"
   "src/compiler/cpp_emitter.cpp"
+  "src/compiler/cpp_mir_control_flow.cpp"
   "src/compiler/cpp_representation.cpp"
   "src/compiler/cpp_mir_body_emitter.cpp"
   "src/compiler/cpp_mir_program_plan.cpp"
@@ -695,11 +696,17 @@ if(BUILD_TESTING)
                         PRIVATE gti_cpp_backend)
   add_test(NAME cpp_mir_program_plan COMMAND gti_cpp_mir_program_plan_tests)
 
+  add_executable("gti_cpp_mir_control_flow_tests"
+                 "tests/cpp_mir_control_flow_tests.cpp")
+  target_link_libraries("gti_cpp_mir_control_flow_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME cpp_mir_control_flow COMMAND gti_cpp_mir_control_flow_tests)
+
   add_executable("gti_cpp_mir_body_emitter_tests"
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  # Sharded: the binary runs 63 independent tests whose serial time under
+  # Sharded: the binary runs 69 independent tests whose serial time under
   # sanitizers (~14 minutes) was the CI wall-time long pole. Four interleaved
   # shards keep every test running exactly once while ctest --parallel packs
   # them onto idle cores. `gti_cpp_mir_body_emitter_tests` with no arguments

@@ -2852,9 +2852,10 @@ void testExampleCorpusEmissionReadiness() {
 
 // ADR 016 phases 4-5 agreement gate: the production rows builder plus the
 // general text step must reproduce, byte for byte, every plain and
-// failure-propagating scalar-cfg body the transitional emitter publishes, for
-// every shipped example. The artifact's own markers select the bodies, so
-// this gate tracks production admission without modeling the selectors.
+// failure-propagating scalar-cfg body production publishes, for every shipped
+// example. The artifact's own markers select the bodies, so this gate tracks
+// production admission without modeling the selectors. It also pins the
+// complete direct-CFG representation across that corpus.
 void testGeneralTextStepMatchesProductionEmission() {
   const std::filesystem::path repository =
       std::filesystem::path(__FILE__).parent_path().parent_path();
@@ -2878,6 +2879,7 @@ void testGeneralTextStepMatchesProductionEmission() {
   bool intrinsicBodies = false;
   bool checkedIntrinsicBodies = false;
   bool loanBodies = false;
+  bool directControlFlowBodies = true;
   for (const std::filesystem::path &source : sources) {
     std::ifstream input(source);
     std::stringstream buffer;
@@ -2962,6 +2964,13 @@ void testGeneralTextStepMatchesProductionEmission() {
           emission.text.find("checked_mul") != std::string::npos) {
         checkedIntrinsicBodies = true;
       }
+      directControlFlowBodies =
+          directControlFlowBodies &&
+          emission.text.find("switch (__gti_mir_bb)") == std::string::npos &&
+          emission.text.find("std::size_t __gti_mir_bb") == std::string::npos &&
+          emission.text.find("__gti_mir_bb =") == std::string::npos &&
+          emission.text.find("goto __gti_mir_bb_") != std::string::npos &&
+          emission.text.find("__gti_mir_bb_1: {") != std::string::npos;
       if (emission.emitted() &&
           generated.find(emission.text) != std::string::npos) {
         ++matchedBodies;
@@ -2988,6 +2997,9 @@ void testGeneralTextStepMatchesProductionEmission() {
          "signature boundary (0.183.0)");
   expect(deterministic,
          "the production rows builder should be run-to-run deterministic");
+  expect(directControlFlowBodies,
+         "every production MIR body should use verified direct labels and "
+         "gotos without a mutable block dispatcher");
   expect(generalBodies >= 30,
          "the corpus should keep exercising the migrated per-body families");
   expect(matchedBodies == generalBodies,
@@ -3660,8 +3672,10 @@ int main() {
              contains("__gti_mir_failure_record"),
          "the invocation should stage the callable parameter place "
          "directly through the transformed channel");
-  expect(contains("std::abort();"),
-         "the unreachable propagate block should spell abort");
+  expect(contains("GTI MIR propagate failure-record") &&
+             contains("return false;"),
+         "the callable failure continuation should propagate its exact "
+         "record through the failure-form ABI");
 }
 
 // An explicitly moved callable receiver may resolve to a mutable operator()

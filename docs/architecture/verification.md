@@ -40,11 +40,12 @@ assertions.
 | `lowered_program_contract` | deterministic independent construction; complete declaration, symbol, body, instance, and generated-family inventory; standalone contract-client printing; and missing, duplicate, stale, reordered, unrooted, cyclic, or forged-record rejection |
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
+| `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
 | `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts across the complete shipped corpus |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
-| `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
-| `mir_backend_scalar_cfg_runtime` | scalar CFG and defined-failure execution through the general route at O0/O1/O3 under C++20/C++23, including exact body markers and optimized-MIR artifact differences |
+| `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
+| `mir_backend_scalar_cfg_runtime` | scalar CFG and defined-failure execution through the direct-label general route at O0/O1/O3 under C++20/C++23, including dispatcher-absence checks, exact body markers, and optimized-MIR artifact differences |
 | `mir_backend_scalar_direct_call` | exact `scalar-direct-call-v1` selection over closed acyclic scalar/static-call graphs; MIR v20 definition/failure summaries; ordered call-input, target, operation, branch, and IdentityFold coherence; checked, recursive, member, internal, `constexpr`, and HIR-`for` near-miss fallback; and fail-closed verifier/backend mutations |
 | `mir_backend_scalar_direct_call_runtime` | direct-call and failure-propagating bodies through the general route at O0/O1/O3 under C++20/C++23, including marker counts, optimized-literal evidence, and qualified cross-namespace target identity |
 | `mir_backend_class_default_cleanup` | function/destructor provenance and failure effects; strict lifetime-slot construction/destruction; declared constructors, fields, nested scopes, branches, and checked destructors through the general route; and fail-closed literal, obligation, cleanup-timing, summary, missing-drop, and reordered-drop mutations |
@@ -56,7 +57,7 @@ assertions.
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
 | `mir_census_regression` | exact reviewed per-example MIR body ownership for all 3,433 identities across 64 examples |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
-| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and a corpus sweep requiring every frontend-produced body to be coherent and text-ready; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 68 tests) |
+| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and a corpus sweep requiring every emitted body to use direct planned labels/gotos, remain coherent, and byte-match production text; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 69 tests) |
 | `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
@@ -426,8 +427,22 @@ switch, short-circuit, and loop CFG; checked arithmetic; calls; and references
 through the general emitter. Same-domain operation substitution and branch-
 target swaps remain valid generic MIR in adversarial fixtures but are rejected
 as unauthorized drift from the retained source schedule. The runtime gate
-executes all fixture bodies at O0/O1/O3 under C++20/C++23 and proves the
-identity-fold artifact change remains under MIR authority.
+executes all fixture bodies at O0/O1/O3 under C++20/C++23, rejects the retired
+mutable block variable and CFG-dispatch switch in every generated artifact,
+requires direct entry/edge jumps and scoped labels, and proves the identity-
+fold artifact change remains under MIR authority.
+
+`cpp_mir_control_flow` independently verifies the backend representation
+between MIR admission and text spelling. Its representative graph covers
+`Goto`, `Branch`, `Switch`, `Invoke`, and the complete terminal vocabulary,
+including two switch slots that share one target. Mutations change the entry,
+remove or reorder blocks, alter labels, remove or duplicate edges, retarget an
+invoke failure, collapse a repeated-target switch ordinal, remove a
+terminator, and point outside the block inventory. Every mutation must fail
+the exact-cover verifier. The body-emitter corpus sweep then checks that every
+production general body has no runtime dispatcher and byte-matches the same
+direct-label text step, so the plan is neither an unused proof object nor a
+second operation emitter.
 
 The `mir_backend_scalar_direct_call` gates prove exact `CallInput` ordering and
 target identity across static call graphs, including multi-level, nested,
@@ -472,8 +487,9 @@ drift, call retargeting, and definition provenance drift. The runtime gate
 executes safe results and each
 signed/unsigned checked-operation failure at O0/O1/O3 under C++20/C++23 and
 requires the exact original report and exit 70. The lifetime-slot wrong-state/
-escaped-active guards and invalid CFG block-state default are separately
-audited as verifier-unreachable integrity guards, not defined-failure routes.
+escaped-active guards and the direct-CFG plan's exact edge/label lookups are
+separately audited as verifier-unreachable integrity guards, not
+defined-failure routes.
 
 Owned hosted-entry coverage is also split by authority. `compiler_pipeline`
 checks the exact semantic signature, canonical standard-library identities,
