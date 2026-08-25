@@ -151,7 +151,6 @@ def protocol_cases() -> tuple[ProtocolCase, ...]:
                 general=10,
                 matched=10,
                 checked_intrinsic=0,
-                loan=0,
             ),
         ),
         (
@@ -160,6 +159,7 @@ def protocol_cases() -> tuple[ProtocolCase, ...]:
                 BASE_AGREEMENT,
                 general=20,
                 matched=20,
+                intrinsic=0,
             ),
         ),
     )
