@@ -23,6 +23,7 @@ const ReferencePageMetadataSchema = z
     title: z.string().trim().min(1),
     description: z.string().trim().min(1),
     kind: z.enum([
+      "index",
       "language",
       "library-header",
       "type",
@@ -323,6 +324,7 @@ function loadExample(
     title: parsed.data.title,
     description: parsed.data.description,
     sourcePath: stablePath(projectRoot, sourcePath),
+    sourceText: readFileSync(sourcePath, "utf8"),
   };
   if (parsed.data.mode === "compile") {
     return { ...common, mode: "compile" };
@@ -346,7 +348,10 @@ function loadExample(
     mode: "run",
     ...(stdoutPath === undefined
       ? {}
-      : { stdoutPath: stablePath(projectRoot, stdoutPath) }),
+      : {
+          stdoutPath: stablePath(projectRoot, stdoutPath),
+          expectedStdout: readFileSync(stdoutPath, "utf8"),
+        }),
   };
 }
 

@@ -1,0 +1,28 @@
+---
+title: Standard library
+description: Source-defined containers, algorithms, I/O, utilities, and host-facing facilities shipped with GTI.
+kind: index
+api: []
+examples: []
+---
+
+GTI's public standard library lives in `std`. Optional units are imported with
+an include such as `#include <std/vector>`; the prelude supplies the small set
+of names available to every program.
+
+## Library design
+
+Public library types are ordinary GTI source. They own API policy, cleanup,
+logical state, and error behavior. Narrow compiler-private capabilities support
+storage or host boundaries, but application code does not use those
+capabilities directly.
+
+## Available reference pages
+
+- [`<std/vector>`](/std/vector/) — the dynamic sequence header.
+- [`std::vector`](/std/vector/vector/) — move-only contiguous ownership,
+  checked access, capacity management, and iteration.
+
+This reference grows one verified facility at a time. A missing page means the
+documentation has not yet reached the same confidence level as the compiler;
+it does not necessarily mean the library unit is absent.

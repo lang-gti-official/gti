@@ -1,7 +1,6 @@
 import {
   existsSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
 } from "node:fs";
 import os from "node:os";
@@ -130,10 +129,12 @@ function verifyExample(
       executionOutput,
     );
     if (example.stdoutPath !== undefined) {
-      const expected = readFileSync(
-        path.resolve(projectRoot, example.stdoutPath),
-        "utf8",
-      );
+      const expected = example.expectedStdout;
+      if (expected === undefined) {
+        throw new Error(
+          `${example.stdoutPath}: expected output was not projected into the content graph.`,
+        );
+      }
       const mismatch =
         `${example.sourcePath}: stdout did not match ${example.stdoutPath}.\n` +
         `expected: ${JSON.stringify(expected)}\n` +

@@ -2,8 +2,8 @@
 
 Each publishable page is one directory whose path is its URL and whose
 `page.mdx` frontmatter satisfies the schema in
-`src/content/contract.ts`. For example, the future page for
-`std::vector` belongs at:
+`src/content/contract.ts`. The implemented `std::vector` page has this
+layout:
 
 ```text
 content/

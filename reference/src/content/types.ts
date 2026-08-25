@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 
 export type ReferencePageKind =
+  | "index"
   | "language"
   | "library-header"
   | "type"
@@ -76,6 +77,7 @@ export type ReferenceExample =
       description: string;
       mode: "compile";
       sourcePath: string;
+      sourceText: string;
     }
   | {
       id: string;
@@ -83,7 +85,9 @@ export type ReferenceExample =
       description: string;
       mode: "run";
       sourcePath: string;
+      sourceText: string;
       stdoutPath?: string;
+      expectedStdout?: string;
     }
   | {
       id: string;
@@ -91,8 +95,16 @@ export type ReferenceExample =
       description: string;
       mode: "diagnostic";
       sourcePath: string;
+      sourceText: string;
       diagnostics: string[];
     };
+
+export interface ReferenceNavigationEntry {
+  route: string;
+  title: string;
+  description: string;
+  kind: ReferencePageKind;
+}
 
 export interface ReferencePageRecord {
   route: string;

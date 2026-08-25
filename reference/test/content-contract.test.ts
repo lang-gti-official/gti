@@ -42,6 +42,13 @@ test("a page owns its dedicated examples and compiler bindings", () => {
     pages[0].examples[0].sourcePath,
     "content/std/vector/vector/examples/construction-and-iteration/main.gti",
   );
+  assert.match(pages[0].examples[0].sourceText, /std::vector<int32_t>/);
+  assert.equal(
+    pages[0].examples[0].mode === "run"
+      ? pages[0].examples[0].expectedStdout
+      : undefined,
+    "2\n",
+  );
 });
 
 test("API-bound pages fail closed without a compiler index", () => {
