@@ -15091,6 +15091,16 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
+            !instruction.threadTaskAdapter) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "thread spawn instruction has no task adapter "
+                          "reference"});
+        }
         if (instruction.nativeCallbackAdapter) {
           const MirNativeCallbackAdapter *adapter =
               program.findNativeCallbackAdapter(

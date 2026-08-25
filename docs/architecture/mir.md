@@ -89,6 +89,12 @@ marker on every body header. Program v46 added the ordered managed-thread
 task-adapter inventory. Each row
 binds one exact task type and once-invocation contract to its HIR spawn value,
 MIR body/instruction, and mandatory worker-failure/native-exception firewall.
+Verification requires every concrete private thread-spawn intrinsic to retain
+its adapter reference, so deleting both that reference and its inventory row
+cannot create a self-consistent forged program. Synchronization records remain
+backend-independent operation identities rather than private-intrinsic tags.
+Missing, duplicate, reordered, retargeted, or inexact adapter rows are rejected
+before backend entry.
 Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without

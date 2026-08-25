@@ -24,7 +24,9 @@ enum class thread_errc {
 /// A move-only managed thread. Destruction joins an outstanding worker.
 ///
 /// The worker owns its task and all transfer-safe captures. A worker defined
-/// failure is re-raised by `join()` or by the mandatory destructor join.
+/// failure is re-raised by `join()` or by the mandatory destructor join. Move
+/// construction transfers the join obligation; move assignment is not part of
+/// this first surface.
 class jthread {
   mut gti_internal::thread_handle handle;
 

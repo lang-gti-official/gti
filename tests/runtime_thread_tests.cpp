@@ -3,6 +3,7 @@
 
 #include "thread_internal.h"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -66,11 +67,35 @@ void testSpawnJoinAndConsumption() {
          "joining a consumed state should report not_joinable");
 }
 
+struct PublicationContext {
+  int *published = nullptr;
+};
+
+void publishTask(void *opaque) {
+  *static_cast<PublicationContext *>(opaque)->published = 42;
+}
+
+void destroyPublicationTask(void *opaque) {
+  delete static_cast<PublicationContext *>(opaque);
+}
+
+void testJoinPublishesWorkerWrites() {
+  int published = 0;
+  gti_thread_spawn_result_v1 spawn = gti_rt_thread_spawn_v1(
+      publishTask, new PublicationContext{.published = &published},
+      destroyPublicationTask);
+  expect(spawn.status == GTI_THREAD_SPAWN_OK_V1,
+         "publication setup should spawn successfully");
+  const gti_thread_join_result_v1 join = gti_rt_thread_join_v1(&spawn.state);
+  expect(join.status == GTI_THREAD_JOIN_OK_V1 && published == 42,
+         "successful join should publish ordinary worker writes");
+}
+
 void testCreationFailureDestroysExactlyOnce() {
   using gti::runtime::detail::setThreadTestFault;
   using gti::runtime::detail::ThreadTestFault;
 
-  for (const auto [fault, expected] : {
+  for (const auto &[fault, expected] : {
            std::pair{ThreadTestFault::SpawnResourceUnavailable,
                      GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1},
            std::pair{ThreadTestFault::SpawnOperationNotPermitted,
@@ -356,6 +381,62 @@ void testRepeatedSpawnJoin() {
          "stress creation should preserve exact entry and cleanup counts");
 }
 
+struct GatedTaskContext {
+  std::atomic<bool> *release = nullptr;
+  std::atomic<int> *entries = nullptr;
+  std::atomic<int> *destructions = nullptr;
+};
+
+void runGatedTask(void *opaque) {
+  auto &context = *static_cast<GatedTaskContext *>(opaque);
+  context.release->wait(false, std::memory_order_acquire);
+  context.entries->fetch_add(1, std::memory_order_relaxed);
+}
+
+void destroyGatedTask(void *opaque) {
+  auto *context = static_cast<GatedTaskContext *>(opaque);
+  context->destructions->fetch_add(1, std::memory_order_relaxed);
+  delete context;
+}
+
+void testSimultaneousWorkers() {
+  constexpr std::size_t workerCount = 32;
+  std::atomic<bool> release{false};
+  std::atomic<int> entries{0};
+  std::atomic<int> destructions{0};
+  std::array<gti_thread_state_v1 *, workerCount> states{};
+  std::size_t spawned = 0;
+
+  for (; spawned < workerCount; ++spawned) {
+    const gti_thread_spawn_result_v1 result = gti_rt_thread_spawn_v1(
+        runGatedTask,
+        new GatedTaskContext{.release = &release,
+                             .entries = &entries,
+                             .destructions = &destructions},
+        destroyGatedTask);
+    if (result.status != GTI_THREAD_SPAWN_OK_V1) {
+      expect(false, "simultaneous worker creation should succeed");
+      break;
+    }
+    states[spawned] = result.state;
+  }
+
+  release.store(true, std::memory_order_release);
+  release.notify_all();
+  for (std::size_t index = 0; index < spawned; ++index) {
+    const gti_thread_join_result_v1 join =
+        gti_rt_thread_join_v1(&states[index]);
+    expect(join.status == GTI_THREAD_JOIN_OK_V1 && states[index] == nullptr,
+           "every simultaneous worker should join and consume its state");
+  }
+  expect(spawned == workerCount &&
+             entries.load(std::memory_order_relaxed) ==
+                 static_cast<int>(workerCount) &&
+             destructions.load(std::memory_order_relaxed) ==
+                 static_cast<int>(workerCount),
+         "simultaneous workers should each enter and destroy exactly once");
+}
+
 } // namespace
 
 static_assert(std::is_standard_layout_v<gti_thread_spawn_result_v1> &&
@@ -368,11 +449,13 @@ static_assert(offsetof(gti_thread_join_result_v1, failure) == 16);
 
 int main() {
   testSpawnJoinAndConsumption();
+  testJoinPublishesWorkerWrites();
   testCreationFailureDestroysExactlyOnce();
   testRecoverableJoinFailurePreservesOwnership();
   testWorkerFailureHandoff();
   testWorkerCleanupFailureHandoff();
   testTaskObjectCleanupFailureHandoff();
   testRepeatedSpawnJoin();
+  testSimultaneousWorkers();
   return failures == 0 ? 0 : 1;
 }
