@@ -53,10 +53,10 @@ checks exact exit status, stdout, and stderr. Unsupported entries may name one
 bounded expected-diagnostic case; scaffolds never masquerade as executable
 coverage. `stdlib_surface_manifest` additionally injects missing source,
 stale fingerprint, missing executable evidence, and wrong evidence-kind
-mutations. The initial complete census covers 20 source units, 34 classified
-entries, and 21 executable or diagnostic cases, including concrete
-`std::pair` construction/field access and the `std::forward_list` empty,
-front, push, pop, and clear operations.
+mutations. The checked-in manifest exhaustively classifies every shipped
+standard-library source unit and its executable, diagnostic, or scaffold
+evidence, including concrete `std::pair` construction/field access and the
+`std::forward_list` empty, front, push, pop, and clear operations.
 
 ## Compiler-Private Capabilities
 
@@ -69,13 +69,14 @@ quoted application file, an override-only path beneath that root, or a source
 spelling cannot mint that role.
 
 Semantic analysis grants intrinsic behavior by trusted declaration identity in
-the implicit prelude. The private `unique_owner<T>`, `storage<T>`, and
-`text_view` type declarations likewise receive compiler-capability identities
-only when the exact trusted prelude declarations are selected. Aliases preserve
-the selected semantic type; reusing a declaration or qualified spelling in
-application source creates no capability. HIR/MIR retain selected intrinsic
-identity, and the backend queries semantic capability facts rather than
-recognizing a source name before choosing its representation.
+the implicit prelude. The private `unique_owner<T>`, `storage<T>`,
+`prefix_storage<T>`, and `text_view` type declarations likewise receive
+compiler-capability identities only when the exact trusted prelude declarations
+are selected. Aliases preserve the selected semantic type; reusing a
+declaration or qualified spelling in application source creates no capability.
+HIR/MIR retain selected intrinsic identity, and the backend queries semantic
+capability facts rather than recognizing a source name before choosing its
+representation.
 
 Capabilities should expose only an irreducible invariant. Public engagement,
 size, capacity, allocation policy, or container behavior belongs in ordinary

@@ -297,7 +297,7 @@ include/gti/optimization/
 
 Declarations remain under `include/gti/`, but optimization implementations
 should move into the compiled `gti_compiler` target as described by
-[the compiler library migration plan](compiler-library-migration.md).
+[the compiler library migration record](archive/compiler-library-migration.md).
 The focused layout is an ownership boundary and must not become another
 monolithic implementation header.
 

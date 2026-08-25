@@ -55,10 +55,10 @@ validity together, which keeps AST-address semantic side tables alive.
   assembly are backend policy. Their resolved language and target-independent
   inputs come from lowered declarations, symbols, instances, MIR, and
   generated-item payloads.
-- The post-cutover example corpus contains 2,962 reviewed MIR body identities
-  across 63 examples. An exact census and two native endpoint builds guard the
-  cutover; focused structural and runtime fixtures cover shapes outside that
-  corpus.
+- The post-cutover example corpus is guarded by the exact body census in
+  `tests/mir_census_baseline.json`, the declaration/body/generated-item census
+  in `tests/lowered_program_census_baseline.json`, and native endpoint builds.
+  Focused structural and runtime fixtures cover shapes outside that corpus.
 - Substantial compiler algorithms compile behind public declarations.
   `gti_compiler` owns source loading through optimization and compiler support;
   the separate `gti_cpp_backend` archive owns C++ representation and emission.
@@ -93,6 +93,8 @@ must store durable summaries rather than pointers into a discarded snapshot.
   `src/compiler/{semantic_analyzer,semantic_model,semantic_type_printer}.cpp`:
   semantic records/query contract plus compiled analysis, snapshot operations,
   place/type policy, and type presentation.
+- `include/gti/optimization/`, `src/compiler/optimization/`: MIR analyses,
+  passes, proof replay, and optimizer observability support.
 - `include/gti/{hir,mir}.h`,
   `src/compiler/{hir_model,hir_lowering,mir_lowering,mir}.cpp`: public IR records
   plus compiled query operations, HIR/MIR lowering, and MIR verification.

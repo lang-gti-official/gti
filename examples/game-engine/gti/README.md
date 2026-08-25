@@ -1,8 +1,8 @@
 # Psych core architecture in GTI
 
-This directory is a deliberately watered-down port of the core/application
-architecture in [`../cpp/`](../cpp/). It is a complete GTI manifest project,
-not a replacement for the C++ renderer or its native dependencies.
+This directory is a deliberately bounded port of a game-engine
+core/application architecture. It is a complete GTI manifest project, not a
+replacement for a C++ renderer or its native dependencies.
 
 The port retains the user-facing architecture that current GTI can express:
 
@@ -32,11 +32,12 @@ access performs lifecycle dispatch without raw pointers or `unsafe` blocks.
 Erasure and clear destroy every owned layer deterministically after its detach
 hook runs.
 
-GTI still lacks mutable vector iteration, so this example uses checked indexes
-for update, render, detach, and lookup. The entrypoint retains an exact
+The example uses checked indexes for update, render, detach, and lookup even
+though GTI now supports bounded mutable range iteration; stable application IDs
+still make indexed removal explicit. The entrypoint retains an exact
 `unique_ptr<App>` because final validation is specific to `App`, then borrows it
-as `Application&` for virtual lifecycle dispatch. An explicit base-owner
-upcast is available when the caller no longer needs the concrete API.
+as `Application&` for virtual lifecycle dispatch. An explicit base-owner upcast
+is available when the caller no longer needs the concrete API.
 
 `Application::Layers` is public only because GTI has no `protected` access tier
 yet. This example treats it as a derived-class implementation seam. Push

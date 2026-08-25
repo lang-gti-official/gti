@@ -2,7 +2,7 @@
 
 > **Plan status:** Implemented. Current compiled/header boundaries are
 > documented in
-> [`docs/architecture/overview.md`](../architecture/overview.md).
+> [`docs/architecture/overview.md`](../../architecture/overview.md).
 
 Status: implemented; phases 1 through 7 are complete
 
@@ -12,7 +12,7 @@ contract. The separate `gti_cpp_backend` library boundary remains; its
 production API no longer exposes frontend representations.
 
 Prompt-sized migration ordering is maintained in
-[`implementation-sequence.md`](implementation-sequence.md). The phases below
+[`implementation-sequence.md`](../implementation-sequence.md). The phases below
 own the mechanical subsystem design; they must not be combined with semantic
 behavior changes in one task.
 

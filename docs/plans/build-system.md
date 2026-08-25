@@ -4,8 +4,8 @@
 > behavior is summarized in
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
-Status: implementation in progress; Milestones 0 through 6 are complete for
-local packages, including native dependency composition
+Status: implementation in progress; Milestones 0 through 7 are complete for
+their bounded local/path/native and pinned-Git dependency scopes
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
@@ -193,7 +193,7 @@ native linking, workspaces, and eventual package acquisition.
 
 The project system should internally use a target DAG, but users should not
 normally write that graph. GTI source dependencies already form a graph through
-`include`; the manifest should describe package-level intent and native inputs,
+`#include`; the manifest should describe package-level intent and native inputs,
 not duplicate every source edge.
 
 ## Motivation
@@ -605,7 +605,7 @@ The compiled static `gti_compiler` target remains focused on language
 compilation. Its declarations and reusable data models live under
 `include/gti/`, while non-template implementation migrates incrementally to
 `src/compiler/` according to
-[the compiler library migration plan](compiler-library-migration.md).
+[the compiler library migration record](archive/compiler-library-migration.md).
 The LSP continues to use `Frontend` directly and must not depend on project
 execution, native linking, or cache mutation merely to analyze a document.
 

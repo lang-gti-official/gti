@@ -40,6 +40,10 @@ for the current implementation when a document is stale or ambiguous.
 
 - [Language index](language/index.md) — status, authority, reading order, and
   specification maintenance.
+- [Scope and conformance](language/scope-and-conformance.md),
+  [lexical and syntax rules](language/lexical-and-syntax.md), and
+  [programs and targets](language/programs-and-targets.md) — source contract,
+  compilation units, entry points, target selection, and configuration.
 - [Grammar](language/grammar.ebnf) — implemented source grammar with focused
   semantic notes.
 - [Static semantics](language/static-semantics.md) and
@@ -98,63 +102,44 @@ description of the implementation.
 
 ## Plans
 
+The active plans below describe incomplete work or maintain cross-cutting
+delivery state. Completed delivery records are retained in the archive rather
+than mixed into the active queue.
+
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates
+- [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
+  and the soft, revisable path to a full-featured 1.0
+- [Language restriction ledger](plans/language-alignment.md) — current
+  restrictions classified by reason, readiness role, owner, and evidence
 - [Concurrency and memory-model proposal](plans/concurrency-memory-model.md)
-  — D-MEM-01 design evidence superseded normatively by accepted ADR 008
+  — remaining implementation work under the policy accepted by ADR 008
 - [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
-  — the completed D-CALL-01 identity/capability contract, implemented local
-  move-capture environment, and remaining owned-escape boundary
+  — implemented local move capture and the remaining owned-escape boundary
 - [Place identity and ownership-state authority](plans/place-and-ownership-state.md)
-  — the completed M-OWN-01 key, relation, phase-ownership, and invalidation
-  contract that precedes indexed-place implementation
-- [Systems-readiness roadmap](plans/roadmap-to-1.0.md) and
-  [current roadmap checkpoint](plans/compiler-roadmap-status.md) — capability
-  outcomes and the soft, revisable path to a full-featured 1.0.
-- [Compiler library migration](plans/compiler-library-migration.md)
+  — implemented identity/state foundations and remaining aggregate, failure,
+  and provenance work
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [Native bindings import](plans/native-bindings-import.md) — the
   `gti bindgen` foundation: bounded C17 header import into GTI declarations,
   its four-phase architecture, and the C++/build-integration growth seams
-- [Mutable field groups](plans/mutable-field-groups.md) — records the bounded
-  `mut { ... }` shorthand for consecutive mutable class and struct fields while
-  preserving immutable defaults and existing receiver/write rules
-- [Static assertions](plans/static-assertions.md) — records the implemented
-  frontend-owned exact-`bool` `static_assert`, including per-concrete-instance
-  generic evaluation and erasure before HIR
-- [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — records
-  the implemented bounded ephemeral receiver capability for fresh,
-  self-contained class-value temporaries and the implemented fallback-only
-  one-call read-only argument-borrow capability, without making temporaries
-  general places
-- [Read-only receiver diagnostic precision](plans/read-only-receiver-diagnostics.md)
-  — records the implemented cause-specific assignment and mutable-reference
-  diagnostics when a method lacks the trailing `mut` receiver qualifier
-- [Constructor-local type generics and constraints](plans/constructor-local-type-generics.md)
-  — proposes inferred constructor type parameters, bounded constructor
-  requirements, and the iterator/sentinel `std::string` construction client
 - [LSP evolution](plans/lsp-evolution.md)
-- [C interop target surface](plans/c-interop-target-surface.md) — the
-  completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
-  F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
-- [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
-  — failure bundles/replay and opt-in compiler fuzzers are implemented as
-  `Q-FUZZ-01A/B`, resumable bundle reduction is implemented as
-  `Q-FUZZ-01C`, and the bounded real-compiler typed differential gate,
-  strengthened invariants, and source-loader harness implement
-  `Q-FUZZ-01D` plus the scoped `Q-FUZZ-01B` follow-up
-- [Conditional compilation and configuration flags](plans/conditional-compilation.md)
-  — implemented `#define`/`#ifdef` flag axis over target conditionals, its
-  design rationale, and LSP inactive-region rendering
-- [Language restriction ledger](plans/language-alignment.md) — current
-  restrictions classified by reason, readiness role, owner, and evidence
+- [Archived plan records](plans/archive/README.md) — completed delivery plans,
+  migrations, and historical checkpoints retained without presenting them as
+  active work
 
-Everything under `docs/plans/` is future or incomplete unless a section
-explicitly identifies a verified current baseline. Implemented behavior must be
-documented in `docs/architecture/` or `docs/language/` as it lands.
+Active plans are proposals or work ledgers, not evidence that behavior exists.
+Implemented behavior must be documented in `docs/architecture/` or
+`docs/language/` as it lands.
+
+## Historical Audits
+
+- [Historical third-party audits](third-party-audit/README.md) — a preserved
+  2026-08-22 evidence snapshot from before the current LLVM support-library
+  boundary; intentionally non-canonical for current implementation status
 
 ## Maintenance
 

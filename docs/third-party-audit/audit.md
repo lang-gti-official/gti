@@ -25,7 +25,7 @@ measured cost, a structural property of the code, or a documented boundary
 that the implementation does not hold.
 
 Where this review disagrees with a document, the code was traced and the
-measurement repeated. `docs/plans/compiler-roadmap-status.md` is unusually
+measurement repeated. `docs/plans/archive/compiler-roadmap-status.md` is unusually
 honest about the compiler's transitional state, and this audit deliberately
 does **not** restate what that ledger already tracks (MIR-controlled emission,
 reborrow graphs, temporary lifetimes, pass management). It concentrates on
@@ -974,7 +974,7 @@ them:
 - **Splitting `semantic_analyzer.h` into many headers as an end in itself.**
   The 19.7 s TU in §3.6 is a real tax, but the fix that matters is moving
   implementation into `.cpp` files behind narrower interfaces (which
-  `docs/plans/compiler-library-migration.md` already proposes), not
+  `docs/plans/archive/compiler-library-migration.md` already proposes), not
   redistributing a 21k-line header into ten 2k-line headers that are all still
   included together.
 
