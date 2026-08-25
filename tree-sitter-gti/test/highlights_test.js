@@ -62,6 +62,18 @@ function requireCapture(row, text, name) {
   }
 }
 
+function requireCaptureCount(row, text, name, count) {
+  const actual = captures.filter(
+    (capture) =>
+      capture.row === row && capture.text === text && capture.name === name,
+  ).length;
+  if (actual !== count) {
+    throw new Error(
+      `Expected ${count} @${name} capture(s) for ${JSON.stringify(text)} on row ${row + 1}, found ${actual}`,
+    );
+  }
+}
+
 requireCapture(0, "left", "variable.parameter");
 requireCapture(1, "if", "keyword.conditional");
 requireCapture(1, "left", "variable");
@@ -146,7 +158,7 @@ requireCapture(107, "movable", "type");
 requireCapture(109, "sortable", "type");
 requireCapture(114, "do", "keyword.repeat");
 requireCapture(116, "while", "keyword.repeat");
-requireCapture(120, "?", "operator");
+requireCaptureCount(120, "?", "operator", 1);
 requireCapture(120, ":", "operator");
 requireCapture(120, "condition", "variable");
 requireCapture(124, "*=", "operator");
@@ -260,7 +272,7 @@ requireCapture(ifndefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 const expectedPropagationRow = fixtureLines.findIndex((line) =>
   line.includes("return ?result;"),
 );
-requireCapture(expectedPropagationRow, "?", "operator");
+requireCaptureCount(expectedPropagationRow, "?", "operator", 1);
 
 const groupedFieldRow = fixtureLines.findIndex((line) =>
   line.includes("grouped_value"),
