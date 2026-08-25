@@ -125,6 +125,7 @@ struct HirBinding {
 
 struct HirLoan {
   SemanticLoanId semanticLoan = 0;
+  SemanticLoanKind kind = SemanticLoanKind::Reference;
   SemanticLoanId parent = 0;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;

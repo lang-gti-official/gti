@@ -462,6 +462,31 @@ public:
                                 functionValueArguments)) {
       return scope.finish();
     }
+    FunctionInfo concreteFunction = *function;
+    const GenericSubstitution substitution{.types = instanceTypeSubstitution,
+                                           .values = instanceValueSubstitution};
+    concreteFunction.returnType =
+        substituteType(concreteFunction.returnType, substitution);
+    for (SemanticType &parameter : concreteFunction.parameterTypes) {
+      parameter = substituteType(parameter, substitution);
+    }
+    for (AppliedConceptRequirement &requirement :
+         concreteFunction.requirements) {
+      for (SemanticType &argument : requirement.arguments) {
+        argument = substituteType(argument, substitution);
+      }
+    }
+    if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+      const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
+          concreteFunction.returnType, concreteFunction.parameterTypes,
+          concreteFunction.ownerClass, concreteFunction.staticMember,
+          concreteFunction.intrinsic);
+      concreteFunction.returnBorrowOrigin = borrow.origin;
+      concreteFunction.returnBorrowParameter = borrow.parameter;
+      concreteFunction.returnBorrowAccess = borrow.access;
+      concreteFunction.returnBorrowPlace = borrow.place;
+    }
+    semanticModel.record(*function->declaration, std::move(concreteFunction));
     function->declaration->accept(*this);
     validateDefaultArgumentCycles();
     semanticModel.finalizeCallableArguments();
@@ -1725,7 +1750,8 @@ public:
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
               ? SemanticType::typePack(declaredType.genericParameterId)
               : declaredType;
-      if (nestsBorrowedState(parameterType)) {
+      if (nestsBorrowedState(parameterType) &&
+          !isReadOnlyBorrowedCarrierParameter(parameterType)) {
         report(parameter.name,
                "Function parameters cannot nest borrowed state in the "
                "current lifetime model.",
@@ -9343,7 +9369,12 @@ private:
       traits.ownership = traits.ownership == OwnershipKind::Value
                              ? OwnershipKind::Borrowed
                              : traits.ownership;
-      traits.copyable = false;
+      // A direct read-only stored reference may be copied safely: the copy
+      // retains the same semantic owner loan while its ordinary value fields
+      // (for example an iterator cursor) remain independent. Mutable stored
+      // references still carry an exclusive capability and remain move-only.
+      traits.copyable = traits.copyable &&
+                        owner.storedReference->access == AccessMode::ReadOnly;
       traits.copyAssignable = false;
       traits.moveAssignable = false;
       traits.containsBorrowedState = true;
@@ -9583,7 +9614,6 @@ private:
   [[nodiscard]] FunctionReturnBorrowSummary
   functionReturnBorrowSummary(const SemanticType &returnType,
                               const std::vector<SemanticType> &parameterTypes,
-                              const FunctionDecl *declaration,
                               ClassId ownerClass, bool staticMember,
                               IntrinsicKind intrinsic) const {
     FunctionReturnBorrowSummary summary;
@@ -9600,10 +9630,6 @@ private:
 
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const SemanticType &parameter = parameterTypes[index];
-      const Parameter *syntax =
-          declaration != nullptr && index < declaration->parameters().size()
-              ? &declaration->parameters()[index]
-              : nullptr;
       const bool readOnlyReference =
           parameter.kind == SemanticType::Reference &&
           parameter.referenceAccess == AccessMode::ReadOnly &&
@@ -9611,7 +9637,7 @@ private:
            !typeTraits(parameter.arguments.front()).containsBorrowedState);
       const bool readOnlyBorrowedValue =
           isDirectStoredReferenceType(parameter) &&
-          (syntax == nullptr || syntax->mutability == Mutability::Immutable);
+          borrowAccess(parameter) == AccessMode::ReadOnly;
       if (readOnlyReference || readOnlyBorrowedValue) {
         if (summary.eligibleParameters == 0) {
           summary.parameter = index;
@@ -9619,8 +9645,8 @@ private:
         ++summary.eligibleParameters;
       } else if ((parameter.kind == SemanticType::Reference &&
                   parameter.referenceAccess == AccessMode::Mutable) ||
-                 (isDirectStoredReferenceType(parameter) && syntax != nullptr &&
-                  syntax->mutability == Mutability::Mutable)) {
+                 (isDirectStoredReferenceType(parameter) &&
+                  borrowAccess(parameter) == AccessMode::Mutable)) {
         summary.hasMutableCandidate = true;
       }
     }
@@ -9633,8 +9659,8 @@ private:
 
   void applyFunctionReturnBorrowSummary(FunctionCandidate &function) const {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-        function.returnType, function.parameterTypes, function.declaration,
-        function.ownerClass, function.staticMember, function.intrinsic);
+        function.returnType, function.parameterTypes, function.ownerClass,
+        function.staticMember, function.intrinsic);
     function.returnBorrowOrigin = summary.origin;
     function.returnBorrowParameter = summary.parameter;
     function.returnBorrowAccess = summary.access;
@@ -9644,7 +9670,7 @@ private:
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
                                                 const FunctionInfo &info) {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-        info.returnType, info.parameterTypes, &function, info.ownerClass,
+        info.returnType, info.parameterTypes, info.ownerClass,
         info.staticMember, info.intrinsic);
     const std::string code = info.returnType.kind == SemanticType::Reference
                                  ? "GTI-S2017"
@@ -9667,7 +9693,7 @@ private:
               !typeTraits(parameter.arguments.front())
                    .containsBorrowedState)) ||
             (isDirectStoredReferenceType(parameter) &&
-             function.parameters()[index].mutability == Mutability::Immutable);
+             borrowAccess(parameter) == AccessMode::ReadOnly);
         if (eligible) {
           diagnostic.related.push_back(
               {tokenSpan(function.parameters()[index].name),
@@ -9716,6 +9742,17 @@ private:
     }
     return typeTraits(type).containsBorrowedState &&
            !isDirectStoredReferenceType(type);
+  }
+
+  [[nodiscard]] bool
+  isReadOnlyBorrowedCarrierParameter(const SemanticType &type) const {
+    if (type.kind != SemanticType::Reference ||
+        type.referenceAccess != AccessMode::ReadOnly ||
+        type.arguments.size() != 1 ||
+        !isDirectStoredReferenceType(type.arguments.front())) {
+      return false;
+    }
+    return borrowAccess(type.arguments.front()) == AccessMode::ReadOnly;
   }
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
@@ -11075,12 +11112,19 @@ private:
 
   void recordParameterEntryLoan(const Parameter &parameter) {
     Symbol *carrier = resolveMutable(parameter.name);
-    if (carrier == nullptr || carrier->type.kind != SemanticType::Reference ||
-        carrier->type.arguments.size() != 1) {
+    if (carrier == nullptr) {
+      return;
+    }
+    const bool referenceCarrier =
+        carrier->type.kind == SemanticType::Reference &&
+        carrier->type.arguments.size() == 1;
+    const bool storedValueCarrier = isDirectStoredReferenceType(carrier->type);
+    if (!referenceCarrier && !storedValueCarrier) {
       return;
     }
     const FunctionInfo *function = currentFunctionInfo();
     const bool summarizedReadOnlySource =
+        referenceCarrier &&
         carrier->type.referenceAccess == AccessMode::ReadOnly &&
         function != nullptr && function->declaration != nullptr &&
         function->returnBorrowOrigin == BorrowOriginKind::Argument &&
@@ -11088,15 +11132,27 @@ private:
             function->declaration->parameters().size() &&
         &function->declaration->parameters()[function->returnBorrowParameter] ==
             &parameter;
-    if (carrier->type.referenceAccess != AccessMode::Mutable &&
+    if (referenceCarrier &&
+        carrier->type.referenceAccess != AccessMode::Mutable &&
         !summarizedReadOnlySource) {
       return;
     }
     const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
     const SemanticLoanPlace place{.root = carrierSymbol};
+    const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
+                                               : borrowAccess(carrier->type);
     const SemanticLoanId id = createRetainedLoan(
-        *carrier, carrierSymbol, SemanticLoanKind::Reference, nullptr, place,
-        carrierSymbol, false, carrier->type.referenceAccess, true, 0, true);
+        *carrier, carrierSymbol,
+        storedValueCarrier ? SemanticLoanKind::StoredValue
+                           : SemanticLoanKind::Reference,
+        nullptr, place, carrierSymbol, false, access,
+        // A by-value stored-reference parameter carries an owner dependency,
+        // but its own binding is the cursor/carrier object rather than the
+        // unnameable caller-side owner storage.  Protecting the carrier as if
+        // it were that owner would incorrectly reject increment, copy, and
+        // move of the iterator itself.  The caller's retained loan continues
+        // to protect the actual owner for the duration of the call.
+        referenceCarrier, 0, true);
     semanticModel.recordBindingLoan(parameter, id);
   }
 
@@ -14067,6 +14123,8 @@ private:
       return isUnsignedInteger(argument);
     case GenericConstraintKind::FloatingPoint:
       return semanticFloatFormat(argument).has_value();
+    case GenericConstraintKind::CopyConstructible:
+      return typeTraits(argument).copyable;
     case GenericConstraintKind::Copyable: {
       const SemanticTypeTraits traits = typeTraits(argument);
       return traits.copyable && traits.copyAssignable;
@@ -17044,18 +17102,35 @@ private:
     if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
       declarationInfo = instanceBaseModel->findFunction(function.id);
     }
+    const FunctionReturnBorrowSummary concreteBorrow =
+        functionReturnBorrowSummary(
+            function.returnType, function.parameterTypes, function.ownerClass,
+            function.staticMember, function.intrinsic);
+    const bool declarationOwnsBorrow =
+        declarationInfo != nullptr &&
+        declarationInfo->returnBorrowOrigin != BorrowOriginKind::None;
+    const bool candidateOwnsBorrow =
+        function.returnBorrowOrigin != BorrowOriginKind::None;
     const BorrowOriginKind returnBorrowOrigin =
-        declarationInfo == nullptr ? function.returnBorrowOrigin
-                                   : declarationInfo->returnBorrowOrigin;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowOrigin
+            : (candidateOwnsBorrow ? function.returnBorrowOrigin
+                                   : concreteBorrow.origin);
     const std::size_t returnBorrowParameter =
-        declarationInfo == nullptr ? function.returnBorrowParameter
-                                   : declarationInfo->returnBorrowParameter;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowParameter
+            : (candidateOwnsBorrow ? function.returnBorrowParameter
+                                   : concreteBorrow.parameter);
     const AccessMode returnBorrowAccess =
-        declarationInfo == nullptr ? function.returnBorrowAccess
-                                   : declarationInfo->returnBorrowAccess;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowAccess
+            : (candidateOwnsBorrow ? function.returnBorrowAccess
+                                   : concreteBorrow.access);
     const std::optional<BorrowOriginPlace> returnBorrowPlace =
-        declarationInfo == nullptr ? function.returnBorrowPlace
-                                   : declarationInfo->returnBorrowPlace;
+        declarationOwnsBorrow
+            ? declarationInfo->returnBorrowPlace
+            : (candidateOwnsBorrow ? function.returnBorrowPlace
+                                   : concreteBorrow.place);
     std::vector<const Expr *> defaultArguments =
         function.declaration == nullptr
             ? std::vector<const Expr *>{}
@@ -19780,12 +19855,18 @@ private:
     if (isParameterDerivedBorrow(value, source)) {
       return;
     }
+    const bool storedValueSource =
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        isDirectStoredReferenceType(
+            function->parameterTypes[function->returnBorrowParameter]);
     Diagnostic diagnostic = makeDiagnostic(
         std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
         "Returned " + std::string(description) +
-            " must derive from read-only "
-            "parameter '" +
-            source.name.lexeme + "'.");
+            (storedValueSource
+                 ? " must derive from parameter '" + source.name.lexeme +
+                       "', whose owner dependency is read-only."
+                 : " must derive from read-only parameter '" +
+                       source.name.lexeme + "'."));
     diagnostic.related.push_back(
         {tokenSpan(source.name), "Required owner dependency source is here."});
     diagnostic.hints.emplace_back(
@@ -25710,8 +25791,8 @@ private:
       }
       FunctionInfo updated = *existing;
       FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-          updated.returnType, updated.parameterTypes, declaration,
-          updated.ownerClass, updated.staticMember, updated.intrinsic);
+          updated.returnType, updated.parameterTypes, updated.ownerClass,
+          updated.staticMember, updated.intrinsic);
       if (isBorrowReturningType(updated.returnType) &&
           updated.intrinsic == IntrinsicKind::None) {
         if (std::optional<BorrowOriginPlace> place =
@@ -26338,6 +26419,12 @@ private:
     if (ownerClass != 0) {
       qualifiedScope.emplace_back(classInfo(ownerClass).name.lexeme);
     }
+    const FunctionReturnBorrowSummary concreteBorrow =
+        functionReturnBorrowSummary(
+            candidate.returnType, candidate.parameterTypes, ownerClass,
+            registered->staticMember, registered->intrinsic);
+    const bool candidateOwnsBorrow =
+        candidate.returnBorrowOrigin != BorrowOriginKind::None;
     semanticModel.record(
         function,
         FunctionInfo{.id = registered->id,
@@ -26369,10 +26456,18 @@ private:
                      .pureVirtual = candidate.pureVirtual,
                      .overrideMethod = candidate.overrideMethod,
                      .intrinsic = registered->intrinsic,
-                     .returnBorrowOrigin = candidate.returnBorrowOrigin,
-                     .returnBorrowParameter = candidate.returnBorrowParameter,
-                     .returnBorrowAccess = candidate.returnBorrowAccess,
-                     .returnBorrowPlace = candidate.returnBorrowPlace,
+                     .returnBorrowOrigin = candidateOwnsBorrow
+                                               ? candidate.returnBorrowOrigin
+                                               : concreteBorrow.origin,
+                     .returnBorrowParameter =
+                         candidateOwnsBorrow ? candidate.returnBorrowParameter
+                                             : concreteBorrow.parameter,
+                     .returnBorrowAccess = candidateOwnsBorrow
+                                               ? candidate.returnBorrowAccess
+                                               : concreteBorrow.access,
+                     .returnBorrowPlace = candidateOwnsBorrow
+                                              ? candidate.returnBorrowPlace
+                                              : concreteBorrow.place,
                      .virtualRoots = candidate.virtualRoots,
                      .compilerPrivate = candidate.compilerPrivate});
   }

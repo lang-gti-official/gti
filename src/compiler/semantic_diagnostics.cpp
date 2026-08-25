@@ -166,6 +166,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "Class types must provide exact public, read-only bool overloads "
         "for <, <=, >, and >=.");
     break;
+  case GenericConstraintKind::CopyConstructible:
+    diagnostic.hints.emplace_back(
+        "The required concept needs an available copy constructor; copy "
+        "assignment is not required.");
+    break;
   case GenericConstraintKind::Copyable:
     diagnostic.hints.emplace_back(
         "The required concept needs available copy construction and "

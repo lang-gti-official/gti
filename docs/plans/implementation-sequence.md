@@ -2341,18 +2341,21 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/role:** blocked for the remaining range-first suite; prerequisites
-  are `L-RANGE-03` and `L-CALL-01`; systems-readiness implementation. A bounded
-  iterator/sentinel sub-slice is implemented: multi-parameter concepts,
-  validity-only trailing `requires`, exact input-iterator/sentinel/accumulator
-  capabilities, ordinary source-defined default and operation-based
-  `std::accumulate`, homogeneous `std::inner_product`, and unary
-  `std::transform_reduce`.
-- **Scope:** Add the remaining exact complete-range/callable concepts and
-  implement `find`, `find_if`, `count`, `all_of`, `for_each`, `transform`, and
-  `sort` in ordinary GTI source. Further iterator/sentinel overloads require a
-  demonstrated subrange client; the accumulate slice does not authorize a
-  parallel C++ iterator-category hierarchy.
+- **State/role:** partially implemented; blocked for the remaining range-first
+  suite on `L-RANGE-03` and the remaining `L-CALL-01` work. The implemented
+  iterator/sentinel slices include multi-parameter concepts, validity-only
+  trailing `requires`, exact input-iterator/sentinel/dereference/accumulator
+  capabilities, distinct copy-construction capability,
+  `std::forward_iterator`, source-defined `std::binary_search`, default and
+  operation-based `std::accumulate`, homogeneous `std::inner_product`, unary
+  `std::transform_reduce`, and the predicate algorithms whose callable shapes
+  are already confined.
+- **Remaining scope:** Add the exact complete-range/callable concepts and
+  implement the remaining `find`, `count`, `for_each`, `transform`, and `sort`
+  families in ordinary GTI source. Further iterator/sentinel overloads require
+  a demonstrated subrange client. The forward-iterator slice does not
+  authorize random access, iterator assignment, implicit conversions,
+  overload ranking, or a parallel C++ iterator-category hierarchy.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -2890,7 +2893,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, input-iterator/sentinel/exact-dereference relations, confined exact-result numeric operations, and exact qualified class specialization are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward-iterator, sentinel, and exact-dereference relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

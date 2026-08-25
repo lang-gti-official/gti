@@ -37,6 +37,10 @@ namespace std {
       bool operator!=(storage_sentinel& sentinel) {
         return this.current_position != sentinel.position();
       }
+
+      bool operator!=(storage_iterator<T>& other) {
+        return this.current_position != other.current_position;
+      }
     };
   }
 

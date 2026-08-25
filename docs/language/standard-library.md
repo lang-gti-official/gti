@@ -53,6 +53,8 @@ public surface includes:
 | `std::upcast_unique<Base, Derived>` | Explicit consuming conversion to a public polymorphic base owner |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
+| `std::copy_constructible<T>` | Copy construction is available; copy assignment is not implied |
+| `std::copyable<T>` | Copy construction and copy assignment are both available |
 
 `expected<T, E>` and `unexpected(error)` currently have language-level syntax
 and semantics rather than being ordinary prelude templates.
@@ -83,12 +85,14 @@ The current implemented foundation includes:
 - `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
   clear, and constant-time front push/pop operations; and
 - `<std/iterator>` public `std::input_iterator<I>`,
-  `std::sentinel_for<S, I>`, and `std::dereferences_to<I, T>` concepts over
-  exact private structural
-  capabilities, plus forward-only `advance`, `distance`, and `next`; and
+  `std::sentinel_for<S, I>`, `std::dereferences_to<I, T>`, and
+  `std::forward_iterator<I>` concepts over exact private structural and
+  lifecycle capabilities, plus forward-only `advance`, `distance`, and
+  `next`; and
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
-  `count_if`; the predicate algorithms retain a confined mutable local and
+  `count_if`, plus `binary_search` over an exact ordered forward-iterator
+  subrange; the predicate algorithms retain a confined mutable local and
   therefore accept read-callable or mut-callable predicates but not consuming
   once-callables; and
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
@@ -195,10 +199,13 @@ retains logical size, capacity growth, and API policy. Invalid indices take the
 defined storage failure path rather than performing unchecked memory access.
 
 The ordinary vector iterator is read-only and retains one checked borrow of its
-owner. `begin_mut()` supplies the separate ephemeral mutable iterator used by
-range `for`; its exclusive parent loan prevents overlapping owner operations
-and each iteration carries one mutable element child loan. Multiple retained
-cursors, container-specific invalidation precision, and general
+owner. It is copy-constructible: copies retain the same shared owner dependency
+but carry independent positions, which is sufficient for the source-defined
+`std::forward_iterator` contract. It is not copy-assignable or reseatable.
+`begin_mut()` supplies the separate ephemeral mutable iterator used by range
+`for`; its exclusive parent loan prevents overlapping owner operations and each
+iteration carries one mutable element child loan. The mutable iterator remains
+non-copyable. Container-specific invalidation precision and general
 owner-dependent views remain outside this slice.
 
 `std::forward_list<T>` implements its front operations as ordinary GTI over a
@@ -292,8 +299,8 @@ The following component families remain planned or incomplete:
 - shared and weak ownership;
 - optional and general sum types;
 - owner-tied spans and dynamic string views;
-- complete vector copy, allocator, iterator-position mutation, and iterator
-  support;
+- complete vector copy, allocator, iterator reassignment, and precise iterator
+  invalidation support;
 - the remaining callable, complete-range, heterogeneous accumulation, and hash
   generic-capability families;
 - indexed/named/specifier-based and floating-point formatting, formatter

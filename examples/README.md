@@ -72,6 +72,7 @@ own `main` function.
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
 | `66-managed-threads.gti` | move-only `std::jthread`, owned task transfer, explicit join, and mandatory autojoin |
+| `67-forward-iterators.gti` | copied owner-tied read cursors, `std::next`, and forward-iterator binary search |
 
 Build and run an example from the repository root:
 
@@ -190,6 +191,12 @@ It transfers fresh and explicitly moved `void()` tasks into move-only
 cleanup. Worker-defined failures are re-raised by that explicit or automatic
 join boundary. The initial public slice deliberately has no detached handle or
 stop-token API.
+
+`67-forward-iterators.gti` copies a read-only `std::vector` cursor to create an
+independent position while retaining one owner dependency. `std::next` advances
+the moved copy, and `std::binary_search` accepts the vector's distinct end
+sentinel while using forward traversal internally; neither operation assumes
+iterator subtraction or mutable reassignment.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

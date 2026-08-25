@@ -112,6 +112,9 @@ iterator units likewise define public concepts over private structural facts:
 
 ```gti
 namespace std {
+concept copy_constructible<T> =
+    gti_internal::copy_constructible_capability<T>;
+
 concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
 
 concept sentinel_for<Sentinel, Iterator> =
@@ -119,11 +122,18 @@ concept sentinel_for<Sentinel, Iterator> =
 
 concept dereferences_to<Iterator, T> =
     gti_internal::dereferences_to_capability<Iterator, T>;
+
+concept forward_iterator<Iterator> =
+    std::input_iterator<Iterator> &&
+    std::copy_constructible<Iterator> &&
+    std::sentinel_for<Iterator, Iterator>;
 }
 ```
 
 The current structural capability set is intentionally small:
 
+- `copy_constructible<T>` requires an ordinary GTI copy construction to be
+  available; unlike `copyable<T>`, it does not require copy assignment;
 - `input_iterator<I>` requires public read-only `operator*()` returning a
   checked reference and public `void operator++() mut`; transferring an
   iterator into an algorithm is checked separately by ordinary parameter
@@ -131,9 +141,18 @@ The current structural capability set is intentionally small:
 - `sentinel_for<S, I>` requires an exact public read-only
   `bool I::operator!=(S&)`; and
 - `dereferences_to<I, T>` requires public read-only `I::operator*()` to return
-  a checked reference whose referent is exactly `T`; and
+  a checked reference whose referent is exactly `T`;
+- `forward_iterator<I>` is the source-defined conjunction of input iteration,
+  copy construction, and use of `I` as its own sentinel; and
 - `accumulates_into<I, T>` is the numeric-library composition of that same
   exact relationship.
+
+Copy construction is deliberately a separate lifecycle fact. A read-only
+owner-tied cursor may be copied into another independently positioned cursor
+while both values retain the same owner dependency. It is not thereby
+copy-assignable: replacing a live borrow-carrying carrier would require a
+separate reseating and invalidation design. Mutable owner-tied cursors remain
+non-copyable and therefore do not satisfy `std::forward_iterator`.
 
 The exact-referent rule is a deliberate first version. It supports homogeneous numeric
 accumulation but not an iterator element type that merely converts to, or can
@@ -203,6 +222,14 @@ public names `std::accumulate`, `std::input_iterator`, `std::sentinel_for`, or
 iterator/sentinel constructor. `std::string(source.begin(), source.end())`
 copies characters into independent owning storage and retains neither the
 iterators nor the source loan after construction.
+
+`<std/algorithm>` supplies the first multi-pass client,
+`std::binary_search`. Its iterator must satisfy `std::forward_iterator`, its
+possibly distinct end value must satisfy `std::sentinel_for`, and dereference
+must produce the exact ordered value type. The implementation copies a cursor
+and advances that copy to each midpoint; it neither subtracts iterators nor
+mutates the end sentinel. This yields logarithmic comparisons and linear total
+iterator increments for forward iterators.
 
 ## Deliberate exclusions and extension rule
 

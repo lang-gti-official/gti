@@ -1,8 +1,8 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "964870a3cad69dc9a3564280e7aa0468b09730e5530bf544e9566d0020ea83ac",
-    "stdlib/std/algorithm.gti": "c9461e8f0cb4d2e651863ccb06898823b64a03408702da743757d3ab8b22fca0",
+    "stdlib/prelude.gti": "2d007b1a2844cc5ac199384bf24e80b1266e8625d9551d9245c4409beddef976",
+    "stdlib/std/algorithm.gti": "895d12a1ee4c2f951aa0da4f0e15410768cea111831eef6fcde6650c20b3432b",
     "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
@@ -10,18 +10,18 @@
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
     "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
-    "stdlib/std/iterator.gti": "c1b27a7dfbcb5dd60048049f61cc9caafa637d8b2f36d8ddd7a44c06bf93cb30",
+    "stdlib/std/iterator.gti": "023260ec12c328b581752a25a760e9697e4a42d32919ce2cf24b96c3d1630f84",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "caf67131d2756d28c8f99507f374ecbe86ecea7ef68d24e2b92fe31ce99cc4e5",
     "stdlib/std/numeric.gti": "0ce4f0056bc9d79823c8371fc2838181a40aabbd62e9636e65a4bdd0eeee93fc",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
-    "stdlib/std/string.gti": "70e0a61fa362352950c2131903ec302c50fa2e879dd971c4795e09c84386316b",
+    "stdlib/std/string.gti": "c445e1c2a90e6b5f28ec4f1dc5c172593862e13031f645f39bc3f1e3402055ff",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "a5e99020dfdadb32d4383bd4ecebc412b8a23d97e8fc92d933f3795a09c54ca7",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "6115ac17db61843b1edaf815e79dd360b2bfc7da9e658b7988f3bf3acd1482e1"
+    "stdlib/std/vector.gti": "82ddb21b72ab51c53c665b6628cef320582cd2a671df8d9547969554a19281c3"
   },
   "cases": [
     {
@@ -216,6 +216,7 @@
       "operations": [
         "std::all_of",
         "std::any_of",
+        "std::binary_search",
         "std::clamp",
         "std::count_if",
         "std::find_if",
@@ -225,7 +226,7 @@
         "std::none_of"
       ],
       "case_ids": ["algorithm"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates"],
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates", "std::vector<int32_t>::iterator/sentinel/int32_t"],
       "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "stdlib/std/algorithm.gti"]
     },
     {
@@ -456,7 +457,7 @@
       "status": "executable",
       "operations": ["std::advance(Iterator&,size_t)", "std::distance", "std::next(Iterator)", "std::next(Iterator,size_t)"],
       "case_ids": ["iterator"],
-      "required_instantiations": ["audit_iterator/audit_iterator"],
+      "required_instantiations": ["audit_iterator/audit_iterator", "std::vector<int32_t>::iterator/sentinel"],
       "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "stdlib/std/iterator.gti"]
     },
     {

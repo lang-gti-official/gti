@@ -32,6 +32,10 @@ public:
   bool operator!=(vector_sentinel& sentinel) {
     return this.current_position != sentinel.position();
   }
+
+  bool operator!=(vector_iterator<T>& other) {
+    return this.current_position != other.current_position;
+  }
 };
 
 // This mutable storage dependency is an ephemeral standard-library carrier.
