@@ -74,6 +74,7 @@ enum class HirValueKind {
   Conversion,
   DirectInitializer,
   DereferenceSet,
+  ExpectedPropagation,
   MemberAccess,
   Grouping,
   Index,
@@ -179,6 +180,16 @@ struct HirPackExpansionElement {
   HirCallInputKind kind = HirCallInputKind::Value;
 };
 
+struct HirExpectedPropagationPlan {
+  HirValueId operand = 0;
+  HirValueId successExtraction = 0;
+  HirValueId successValue = 0;
+  HirValueId errorExtraction = 0;
+  HirValueId errorValue = 0;
+  HirValueId unexpected = 0;
+  bool moves = false;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -204,6 +215,7 @@ struct HirValue {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
+  std::optional<HirExpectedPropagationPlan> expectedPropagation;
   SymbolId packFoldSymbol = 0;
   GenericParameterId packFoldParameter = 0;
   FunctionId packFoldFunction = 0;

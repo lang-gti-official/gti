@@ -3,7 +3,7 @@
 GTI uses `expected<T, E>` for recoverable failures. Ordinary function return
 types carry no recoverable error alternative, although execution may still
 raise a defined runtime failure. GTI does not provide exception handling or
-implicit propagation syntax.
+implicit error conversion.
 
 ```gti
 expected<int, std::string_view> load(bool fail) {
@@ -50,6 +50,37 @@ expected object's lifetime and does not itself move the contained object.
 Expected-returning calls are non-discardable like every other non-`void`
 function call. Use `[[discard]]` only when ignoring the entire result is
 intentional.
+
+Prefix `?` explicitly propagates an error from one expected value into the
+enclosing expected-returning function or lambda:
+
+```gti
+expected<int, std::string_view> adjusted(bool fail) {
+  return ?load(fail) + 1;
+}
+
+expected<void, std::string_view> initialise_all(bool fail) {
+  ?initialise(fail);
+  return;
+}
+```
+
+For an operand of type `expected<T, E>`, the enclosing callable must return
+`expected<U, E>` with the exact same `E`. The operand is evaluated once. On
+success, `?operand` produces its `T` value (or completes as `void`); on error,
+the callable immediately returns `unexpected(error)` after cleaning up the
+live full-expression and lexical obligations on that path. Propagation never
+performs an implicit error conversion.
+
+A temporary expected is consumed and its active alternative is moved. Applying
+`?` to a named expected place copies the active alternative, so both `T` and
+`E` must be copyable. Consume a named move-only result explicitly:
+
+```gti
+expected<Payload, Error> forward(expected<Payload, Error> result) {
+  return ?std::move(result);
+}
+```
 
 `<std/numeric>` uses this ordinary result form for fixed-width
 `checked_add`, `checked_sub`, and `checked_mul`. Success contains the exact

@@ -7,15 +7,21 @@ expected<int, std::string_view> load_score(bool should_fail) {
   return 42;
 }
 
+// Prefix `?` returns the exact error immediately and yields the success value.
+expected<int, std::string_view> adjusted_score(bool should_fail) {
+  int score = ?load_score(should_fail);
+  return score + 1;
+}
+
 int main() {
-  expected<int, std::string_view> score = load_score(false);
+  expected<int, std::string_view> score = adjusted_score(false);
   if (!score) {
     std::println(score.error());
     return 1;
   }
 
   int value = score.value();
-  if (value == 42) {
+  if (value == 43) {
     std::println("expected values make failure handling explicit");
     return 0;
   }

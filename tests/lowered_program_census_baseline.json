@@ -106,8 +106,8 @@
       }
     },
     "08-expected.gti": {
-      "declarations": 126,
-      "bodies": 31,
+      "declarations": 127,
+      "bodies": 32,
       "generated_items": 2,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1097,8 +1097,8 @@
     }
   },
   "totals": {
-    "declarations": 12197,
-    "bodies": 4171,
+    "declarations": 12198,
+    "bodies": 4172,
     "generated_items": 588
   }
 }

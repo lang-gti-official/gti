@@ -293,6 +293,9 @@
   "->"
 ] @operator
 
+(unary_expression
+  operator: "?" @operator)
+
 (conditional_expression
   [
     "?"

@@ -364,6 +364,7 @@ public:
           state.trimSpaces();
           state.append(lexeme.text);
         } else if (lexeme.text == "!" || lexeme.text == "~" ||
+                   (lexeme.text == "?" && isUnaryContext(previous)) ||
                    ((lexeme.text == "*" || lexeme.text == "&") &&
                     isUnaryContext(previous)) ||
                    ((lexeme.text == "+" || lexeme.text == "-") &&

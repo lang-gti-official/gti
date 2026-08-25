@@ -7,7 +7,7 @@
     "05-objects.gti": 38,
     "06-namespaces.gti": 31,
     "07-generics.gti": 41,
-    "08-expected.gti": 31,
+    "08-expected.gti": 32,
     "09-target-selection.gti": 31,
     "11-overloads.gti": 36,
     "12-fixed-arrays.gti": 35,
@@ -74,5 +74,5 @@
     "73-constructor-local-generics.gti": 188,
     "74-read-only-range-loans.gti": 45
   },
-  "total": 4171
+  "total": 4172
 }

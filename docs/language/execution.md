@@ -559,8 +559,29 @@ Recoverable failure is represented with `expected<T, E>` and
 function creates success; returning `unexpected(error)` creates failure. A bare
 return creates success only for `expected<void, E>`.
 
-GTI does not currently provide language exceptions or implicit error
-propagation.
+Prefix `?` is explicit propagation. For `?operand`, the operand is evaluated
+exactly once before its state is inspected. If the result contains a value,
+the expression produces that value and evaluation continues; an
+`expected<void, E>` success produces no value. If the result contains an
+error, the error is wrapped as `unexpected(error)` and returned immediately
+from the enclosing callable. The operand's error type and the enclosing
+`expected<U, E>` error type are exact; no conversion is selected.
+
+The error edge ends the same source full-expression as the ordinary
+continuation. It first destroys every full-expression temporary created before
+the failed propagation in reverse construction order, then performs the
+ordinary lexical return cleanup. Values that would only be created after the
+operator are never evaluated or activated. Multiple propagation operators in
+one expression therefore execute left to right and each error edge cleans only
+the obligations active at that point.
+
+An expected prvalue, including `std::move(result)`, transfers its active
+alternative by move. A named expected place is observed without consuming the
+object and copies the selected alternative. `void` needs no value transport.
+The success and error alternatives must support the selected transport even
+though only one is active at runtime.
+
+GTI does not provide language exceptions.
 
 ## 4.9 Concurrency Boundary
 
