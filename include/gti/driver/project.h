@@ -1,7 +1,7 @@
 #pragma once
 
+#include "gti/driver/compilation.h"
 #include "gti/driver/workspace.h"
-#include "gti/target.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -26,7 +26,8 @@ public:
                       std::string profileName, TargetInfo target,
                       ProjectBuildOverrides overrides = {},
                       std::optional<std::string> packageName = std::nullopt,
-                      WorkspaceDependencyPolicy dependencyPolicy = {});
+                      WorkspaceDependencyPolicy dependencyPolicy = {},
+                      RuntimeProfile runtimeProfile = RuntimeProfile::None);
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -35,6 +36,7 @@ public:
   [[nodiscard]] const ProjectBuildOverrides &overrides() const;
   [[nodiscard]] const std::optional<std::string> &packageName() const;
   [[nodiscard]] const WorkspaceDependencyPolicy &dependencyPolicy() const;
+  [[nodiscard]] RuntimeProfile runtimeProfile() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -44,6 +46,7 @@ private:
   ProjectBuildOverrides cliOverrides;
   std::optional<std::string> selectedPackage;
   WorkspaceDependencyPolicy workspaceDependencyPolicy;
+  RuntimeProfile selectedRuntimeProfile;
 };
 
 class ProjectBuildPlan final {
@@ -272,7 +275,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request);
 [[nodiscard]] ProjectMetadataResult
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
                        TargetInfo target,
-                       std::optional<std::string> packageName = std::nullopt);
+                       std::optional<std::string> packageName = std::nullopt,
+                       RuntimeProfile runtimeProfile = RuntimeProfile::None);
 
 [[nodiscard]] ProjectCleanResult
 cleanProject(const std::filesystem::path &startDirectory);

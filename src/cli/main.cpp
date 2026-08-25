@@ -1340,13 +1340,15 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
 int runDirect(const Options &options, const char *driver) {
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
-  lang::TargetInfo target = lang::TargetInfo::host();
-  target.executionProfile = options.executionProfile;
+  const lang::driver::AnalysisConfiguration configuration(
+      lang::TargetInfo::host(), options.executionProfile,
+      lang::driver::RuntimeProfile::Hosted, options.configurationFlags);
+  const lang::TargetInfo &target = configuration.target();
 
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
     const lang::driver::CompilationRequest request(
         options.input, toolchain.standardLibrary, target, options.optimization,
-        options.standard, {}, options.configurationFlags,
+        options.standard, {}, configuration.configurationFlags(),
         optimizationOutputRequest(options));
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
@@ -1392,7 +1394,8 @@ int runDirect(const Options &options, const char *driver) {
           lang::driver::CompilationRequest(
               options.input, toolchain.standardLibrary, target,
               options.optimization, options.standard, {},
-              options.configurationFlags, optimizationOutputRequest(options)),
+              configuration.configurationFlags(),
+              optimizationOutputRequest(options)),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
           std::move(nativeInputs), options.keepCpp, false, options.verbose));
@@ -1520,7 +1523,8 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   const lang::driver::ProjectTargetSetResolutionResult resolution =
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
           *currentDirectory, std::nullopt, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package));
+          lang::TargetInfo::host(), std::move(overrides), options.package, {},
+          lang::driver::RuntimeProfile::Hosted));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1643,7 +1647,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
           *currentDirectory, options.target, options.profile,
           lang::TargetInfo::host(), std::move(overrides), options.package,
           {.requireLock = true,
-           .allowAcquisition = !(options.offline || options.locked)}));
+           .allowAcquisition = !(options.offline || options.locked)},
+          lang::driver::RuntimeProfile::Hosted));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1759,7 +1764,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
           *currentDirectory, options.target, options.profile,
           lang::TargetInfo::host(), std::move(overrides), options.package,
           {.requireLock = true,
-           .allowAcquisition = !(options.offline || options.locked)}));
+           .allowAcquisition = !(options.offline || options.locked)},
+          lang::driver::RuntimeProfile::Hosted));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1909,7 +1915,8 @@ int runMetadata(const MetadataOptions &options) {
   }
   const lang::driver::ProjectMetadataResult result =
       lang::driver::resolveProjectMetadata(
-          *currentDirectory, lang::TargetInfo::host(), options.package);
+          *currentDirectory, lang::TargetInfo::host(), options.package,
+          lang::driver::RuntimeProfile::Hosted);
   if (!result.succeeded()) {
     reportDiagnostics(result.diagnostics, result.sources);
     return exitCode(ExitStatus::Compilation);

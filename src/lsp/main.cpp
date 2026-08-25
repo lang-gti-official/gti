@@ -1,3 +1,4 @@
+#include "gti/driver/compilation.h"
 #include "gti/driver/manifest.h"
 #include "gti/format_config.h"
 #include "gti/formatter.h"
@@ -1490,8 +1491,11 @@ struct DiagnosticPublication {
 
 class LanguageServer {
 public:
-  explicit LanguageServer(lang::StandardLibraryLayout standardLibrary)
+  explicit LanguageServer(lang::StandardLibraryLayout standardLibrary,
+                          std::optional<lang::ExecutionProfile>
+                              executionProfileOverride = std::nullopt)
       : standardLibrary(std::move(standardLibrary)),
+        executionProfileOverride(executionProfileOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
         analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
                        [this] { runAnalysisWorker(); }),
@@ -2635,19 +2639,28 @@ private:
     frontendOptions.cache = request.frontendSources.cache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
+    lang::ExecutionProfile executionProfile =
+        lang::ExecutionProfile::SingleThreaded;
+    lang::ConfigurationFlags configurationFlags;
     const lang::driver::ManifestDiscoveryResult discovery =
         lang::driver::discoverProjectManifest(filePath->parent_path());
     if (discovery.succeeded()) {
       const lang::driver::ManifestLoadResult manifest =
           lang::driver::loadProjectManifest(*discovery.path);
       if (manifest.succeeded()) {
-        frontendOptions.configurationFlags = manifest.manifest->build().defines;
+        configurationFlags = manifest.manifest->build().defines;
         if (const lang::driver::ProjectProfile *profile =
                 manifest.manifest->findProfile("dev")) {
-          frontendOptions.target.executionProfile = profile->executionProfile;
+          executionProfile = profile->executionProfile;
         }
       }
     }
+    const lang::driver::AnalysisConfiguration configuration(
+        lang::TargetInfo::host(),
+        executionProfileOverride.value_or(executionProfile),
+        lang::driver::RuntimeProfile::Hosted, std::move(configurationFlags));
+    frontendOptions.target = configuration.target();
+    frontendOptions.configurationFlags = configuration.configurationFlags();
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
@@ -3429,6 +3442,7 @@ private:
   }
 
   lang::StandardLibraryLayout standardLibrary;
+  std::optional<lang::ExecutionProfile> executionProfileOverride;
   std::optional<std::filesystem::path> frontendTracePath;
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;
@@ -3480,8 +3494,33 @@ int main(int argc, char *argv[]) {
     std::cout << "gti_lsp " << GTI_VERSION << '\n';
     return 0;
   }
+  std::optional<lang::ExecutionProfile> executionProfile;
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view argument = argv[index];
+    if (argument == "--execution-profile") {
+      if (++index >= argc) {
+        std::cerr << "gti_lsp: missing name after --execution-profile\n";
+        return 64;
+      }
+      if (executionProfile) {
+        std::cerr
+            << "gti_lsp: --execution-profile may be specified only once\n";
+        return 64;
+      }
+      executionProfile = lang::parseExecutionProfile(argv[index]);
+      if (!executionProfile) {
+        std::cerr << "gti_lsp: --execution-profile must be single-threaded or "
+                     "concurrent\n";
+        return 64;
+      }
+      continue;
+    }
+    std::cerr << "gti_lsp: unknown option '" << argument << "'\n";
+    return 64;
+  }
   return LanguageServer(
              lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
-                                           GTI_BUILD_STDLIB_ROOT))
+                                           GTI_BUILD_STDLIB_ROOT),
+             executionProfile)
       .run();
 }

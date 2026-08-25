@@ -17,6 +17,32 @@
 
 namespace lang::driver {
 
+enum class RuntimeProfile {
+  None,
+  Hosted,
+};
+
+// Immutable frontend-facing configuration resolved by driver adapters before
+// source loading. Runtime capabilities are derived from the selected runtime
+// profile and target; compiler phases only consume the resulting TargetInfo.
+class AnalysisConfiguration final {
+public:
+  AnalysisConfiguration(
+      TargetInfo target = TargetInfo::host(),
+      ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded,
+      RuntimeProfile runtimeProfile = RuntimeProfile::None,
+      ConfigurationFlags configurationFlags = {});
+
+  [[nodiscard]] const TargetInfo &target() const;
+  [[nodiscard]] RuntimeProfile runtimeProfile() const;
+  [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+
+private:
+  TargetInfo targetInfo;
+  RuntimeProfile selectedRuntimeProfile;
+  ConfigurationFlags configuredFlags;
+};
+
 struct OptimizationOutputRequest {
   bool capturePreMir = false;
   bool capturePostMir = false;
