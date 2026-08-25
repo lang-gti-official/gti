@@ -169,6 +169,7 @@ public:
     contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
+    contextualNativeOutPointerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
@@ -332,6 +333,7 @@ public:
     contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
+    contextualNativeOutPointerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
@@ -1713,7 +1715,7 @@ public:
     for (const Parameter &parameter : stmt.parameters()) {
       const bool enclosingParameterPackTypeReference = allowPackTypeReference;
       allowPackTypeReference = true;
-      validateType(parameter.type);
+      validateType(parameter.type, stmt.hasCLinkage());
       allowPackTypeReference = enclosingParameterPackTypeReference;
       if (!intrinsicDeclaration) {
         validateReferencePlacement(parameter.type, true, "function parameter");
@@ -5031,6 +5033,8 @@ public:
         contextualInitializerExpression;
     const std::optional<ContextualCallableResult> enclosingCallableResult =
         contextualCallableResult;
+    const std::optional<SemanticType> enclosingNativeOutPointerType =
+        contextualNativeOutPointerType;
     scopes.clear();
     scopes.push_back(std::move(captureScope));
     currentReturnType = returnType;
@@ -5041,6 +5045,7 @@ public:
     contextualInitializerType.reset();
     contextualInitializerExpression = nullptr;
     contextualCallableResult.reset();
+    contextualNativeOutPointerType.reset();
     loopDepth = 0;
     switchDepth = 0;
     constructorDepth = 0;
@@ -5085,6 +5090,7 @@ public:
     contextualInitializerType = enclosingInitializerType;
     contextualInitializerExpression = enclosingInitializerExpression;
     contextualCallableResult = enclosingCallableResult;
+    contextualNativeOutPointerType = enclosingNativeOutPointerType;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
     loanFlow = std::move(enclosingLoanFlow);
     valueControlFlow = std::move(enclosingValueControlFlow);
@@ -6108,26 +6114,35 @@ public:
         currentType = SemanticType::Unknown;
         return;
       }
-      if (rightType.kind == SemanticType::RawPointer) {
-        report(expr.oper(),
-               "Pointer-to-pointer values are not supported in the initial "
-               "raw-pointer model.",
-               "GTI-S2056");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-      requireUnsafe(expr, UnsafeOperationKind::AddressOf, expr.oper(),
-                    "Taking a raw address");
       SemanticType pointee = rightType;
       if (pointee.kind == SemanticType::Reference &&
           pointee.arguments.size() == 1) {
         SemanticType referent = pointee.arguments.front();
         pointee = std::move(referent);
       }
-      currentType = SemanticType::rawPointerTo(
+      SemanticType addressType = SemanticType::rawPointerTo(
           std::move(pointee), info->access == AccessMode::Mutable
                                   ? AccessMode::Mutable
                                   : AccessMode::ReadOnly);
+      if (addressType.arguments.front().kind == SemanticType::RawPointer &&
+          (!contextualNativeOutPointerType ||
+           *contextualNativeOutPointerType != addressType ||
+           !isCAbiOpaqueHandleOutPointer(addressType))) {
+        report(expr.oper(),
+               contextualNativeOutPointerType
+                   ? "An opaque C handle out argument requires the address "
+                     "of a mutable handle-pointer binding with the exact "
+                     "parameter type."
+                   : "Pointer-to-pointer values are available only as the "
+                     "direct argument to an exact opaque C handle out "
+                     "parameter.",
+               "GTI-S2056");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      requireUnsafe(expr, UnsafeOperationKind::AddressOf, expr.oper(),
+                    "Taking a raw address");
+      currentType = std::move(addressType);
       return;
     }
 
@@ -16841,6 +16856,18 @@ private:
     return symbol != nullptr && symbol->type == SemanticType::Function;
   }
 
+  [[nodiscard]] bool
+  isContextualNativeOutPointerArgument(const ExprPtr &expression) const {
+    const auto *address =
+        expression == nullptr ? nullptr : exprAs<Unary>(expression.get());
+    if (address == nullptr || address->oper().kind != TokenKind::AMPERSAND) {
+      return false;
+    }
+    const std::optional<Symbol> symbol =
+        resolveExpressionSymbol(address->right());
+    return symbol && symbol->type.kind == SemanticType::RawPointer;
+  }
+
   [[nodiscard]] ContextualCallArguments
   analyzeContextualCallArguments(const ExprList &arguments) {
     ContextualCallArguments result;
@@ -16849,7 +16876,8 @@ private:
     bool deferred = false;
     for (const ExprPtr &argument : arguments) {
       deferred = deferred || isContextualArrayArgument(argument) ||
-                 isContextualNativeFunctionArgument(argument);
+                 isContextualNativeFunctionArgument(argument) ||
+                 isContextualNativeOutPointerArgument(argument);
       result.deferred.emplace_back(deferred);
       result.types.emplace_back(deferred ? SemanticType::Unknown
                                          : analyze(argument));
@@ -16877,6 +16905,14 @@ private:
       const std::optional<Symbol> symbol = resolveExpressionSymbol(expression);
       return symbol &&
              matchingNativeFunctionCandidates(*symbol, parameter).size() == 1;
+    }
+    if (isContextualNativeOutPointerArgument(expression)) {
+      const auto *address = exprAs<Unary>(expression.get());
+      const std::optional<Symbol> symbol =
+          address == nullptr ? std::nullopt
+                             : resolveExpressionSymbol(address->right());
+      return symbol && symbol->type.kind == SemanticType::RawPointer &&
+             isCAbiOpaqueHandleOutPointer(parameter);
     }
     return true;
   }
@@ -16919,6 +16955,12 @@ private:
           continue;
         }
         analysis.types[index] = analyzeInitializer(arguments[index], parameter);
+      } else if (isContextualNativeOutPointerArgument(arguments[index])) {
+        const std::optional<SemanticType> enclosingType =
+            contextualNativeOutPointerType;
+        contextualNativeOutPointerType = parameter;
+        analysis.types[index] = analyze(arguments[index]);
+        contextualNativeOutPointerType = enclosingType;
       } else {
         analysis.types[index] = analyze(arguments[index]);
       }
@@ -18466,8 +18508,7 @@ private:
     }
   }
 
-  void validateType(const TypeRef &type,
-                    bool allowNativeCArrayOuterPointer = false,
+  void validateType(const TypeRef &type, bool allowNativeCOuterPointer = false,
                     bool allowNativeFunctionType = false) {
     if (type.isNativeFunction()) {
       const Token &location = type.name.last();
@@ -18564,10 +18605,11 @@ private:
                "GTI-S2056");
       }
     }
-    if (type.outerPointer && !allowNativeCArrayOuterPointer) {
+    if (type.outerPointer && !allowNativeCOuterPointer) {
       report(*type.outerPointer,
-             "A two-level pointer is available only on a "
-             "[[c_array(count)]] extern \"C\" return type.",
+             "A two-level pointer is available only as an opaque C handle "
+             "out parameter or on a [[c_array(count)]] extern \"C\" return "
+             "type.",
              "GTI-S2074");
     }
     if (!type.pointer) {
@@ -19979,6 +20021,7 @@ private:
     contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
+    contextualNativeOutPointerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
@@ -20639,6 +20682,20 @@ private:
   }
 
   [[nodiscard]] bool
+  isCAbiOpaqueHandleOutPointer(const SemanticType &type) const {
+    if (type.kind != SemanticType::RawPointer ||
+        type.pointerAccess != AccessMode::Mutable ||
+        type.arguments.size() != 1) {
+      return false;
+    }
+    const SemanticType &inner = type.arguments.front();
+    return inner.kind == SemanticType::RawPointer &&
+           inner.pointerAccess == AccessMode::Mutable &&
+           inner.arguments.size() == 1 &&
+           isCOpaqueHandleType(inner.arguments.front());
+  }
+
+  [[nodiscard]] bool
   nativeFunctionBoundaryTypeAllowed(const SemanticType &type,
                                     bool returnPosition) const {
     if (returnPosition && type == SemanticType::Void) {
@@ -20833,6 +20890,7 @@ private:
            parameterType != SemanticType::StringView &&
            parameterType != SemanticType::CString &&
            !isCAbiRawPointer(parameterType) &&
+           !isCAbiOpaqueHandleOutPointer(parameterType) &&
            !isCAbiRecordType(parameterType) &&
            !isCAbiNativeFunction(parameterType))) {
         const Token &location = parameter.name.lexeme.empty()
@@ -20843,7 +20901,8 @@ private:
              "fixed-width scalars, valid [[c_abi]] records, std::string_view "
              "counted buffers, c_string NUL-terminated pointers, and "
              "one-level raw pointers to those record or scalar types, opaque "
-             "C handles, void, or exact named native function types.");
+             "C handles, void, exact opaque-handle out pointers, or exact "
+             "named native function types.");
       }
     }
 
@@ -32615,6 +32674,7 @@ private:
   const Expr *contextualInitializerExpression = nullptr;
   std::optional<SemanticType> contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> contextualCallableResult;
+  std::optional<SemanticType> contextualNativeOutPointerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
   std::size_t destructorDepth = 0;

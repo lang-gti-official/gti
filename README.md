@@ -304,7 +304,12 @@ bounded importable surface and the skip report are described in
 
 ```sh
 gti bindgen vendor/engine.h -o src/engine_bindings.gti --namespace engine
+gti bindgen vendor/engine.h --target x86_64-pc-windows-msvc
 ```
+
+The host target is used by default. Select `--target` when generating for a
+different supported 64-bit target so C implementation-defined widths such as
+`long` use the correct LP64 or LLP64 model.
 
 ## Neovim and LazyVim
 

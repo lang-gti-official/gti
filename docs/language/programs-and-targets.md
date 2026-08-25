@@ -263,6 +263,11 @@ with an immutable writable fixed-width integer out pointer. A namespace-scope
 `using` declaration may name one exact native function type whose parameter
 and result shape recursively uses this ABI family. Scalar, record,
 raw-pointer, and callback parameters are immutable bindings passed by value.
+One direct bodyless C parameter may use the exact `OpaqueHandle**` out form;
+its call argument is only the contextual address of an exact mutable
+`OpaqueHandle*` binding in `unsafe`, and that nested address cannot be retained
+or forwarded.
+
 `bool`, `char`, enums, references, arrays,
 ordinary classes and structs, generics, owners, recoverable-result types,
 general pointer-to-pointer types, and anonymous/general function-pointer
@@ -314,8 +319,9 @@ userdata callbacks, foreign-thread GTI callback entry, array parameters at the
 C boundary, C enums, alternate calling conventions, casts, native error
 conventions, allocation, packing, C ABI unions, bit-fields, and manual lifetime
 remain to be designed. The
-returned pointer-plus-count idiom is the one implemented bounded nested-pointer
-form; it is not a general pointer-to-pointer facility.
+returned pointer-plus-count idiom and direct opaque-handle out parameter are
+the implemented bounded nested-pointer forms; neither is a general
+pointer-to-pointer facility.
 
 ## 6.6 Hosted And Future Execution Environments
 

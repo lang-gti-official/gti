@@ -26,6 +26,10 @@ findLoadedSourceCollision(const std::filesystem::path &artifact,
 temporaryCppPath(const std::filesystem::path &input);
 
 [[nodiscard]] std::filesystem::path
+temporaryArtifactPath(const std::filesystem::path &input,
+                      std::string_view extension);
+
+[[nodiscard]] std::filesystem::path
 stagedArtifactPath(const std::filesystem::path &output);
 
 struct ArtifactPublishResult {

@@ -76,6 +76,8 @@ identifierProblem(std::string_view name, bool fileScope) {
 
 enum class RecordBinding { CAbi, Opaque };
 
+enum class TypeUse { Ordinary, DirectFunctionParameter };
+
 struct MappedType {
   bool supported = false;
   std::string spelling;
@@ -174,6 +176,7 @@ private:
   // Maps one native type use to its GTI spelling under the bounded C ABI.
   // `pointerDepth` tracks how many pointer levels wrap this use.
   [[nodiscard]] MappedType mapType(NativeTypeId id, bool allowVoid,
+                                   TypeUse use = TypeUse::Ordinary,
                                    std::size_t pointerDepth = 0) const {
     const NativeType *direct = model_.findType(id);
     if (direct == nullptr) {
@@ -197,7 +200,7 @@ private:
         return supportedType(alias->name);
       }
       const MappedType canonicalMapping =
-          mapType(alias->aliased, allowVoid, pointerDepth);
+          mapType(alias->aliased, allowVoid, use, pointerDepth);
       if (!canonicalMapping.supported) {
         return canonicalMapping;
       }
@@ -225,7 +228,7 @@ private:
       }
       return supportedType(scalarSpelling(*direct));
     case NativeTypeKind::Pointer:
-      return mapPointer(*direct, pointerDepth);
+      return mapPointer(*direct, use, pointerDepth);
     case NativeTypeKind::Record: {
       const NativeDeclaration *record =
           model_.findDeclaration(direct->declaration);
@@ -264,19 +267,42 @@ private:
     return unsupportedType("unhandled native type");
   }
 
-  [[nodiscard]] MappedType mapPointer(const NativeType &pointer,
+  [[nodiscard]] MappedType mapPointer(const NativeType &pointer, TypeUse use,
                                       std::size_t pointerDepth) const {
     if (pointerDepth >= 1) {
-      return unsupportedType("multi-level pointers are outside the bounded "
-                             "GTI C ABI");
+      return unsupportedType("pointers deeper than the bounded C out-parameter "
+                             "surface are not supported");
     }
     const NativeType *pointee = canonical(pointer.pointee);
     if (pointee == nullptr) {
       return unsupportedType("the pointee type is invalid");
     }
     if (pointee->kind == NativeTypeKind::Pointer) {
-      return unsupportedType("multi-level pointers are outside the bounded "
-                             "GTI C ABI");
+      if (pointer.constPointee) {
+        return unsupportedType(
+            "a const-qualified inner pointer has no bounded GTI C ABI "
+            "out-parameter spelling");
+      }
+      const NativeType *innerPointee = canonical(pointee->pointee);
+      if (innerPointee == nullptr) {
+        return unsupportedType("the nested pointee type is invalid");
+      }
+      if (innerPointee->kind == NativeTypeKind::Char && pointee->constPointee) {
+        return supportedType("c_string*");
+      }
+      if (use == TypeUse::DirectFunctionParameter && !pointee->constPointee &&
+          innerPointee->kind == NativeTypeKind::Record) {
+        const NativeDeclaration *record =
+            model_.findDeclaration(innerPointee->declaration);
+        const auto binding = recordBindings_.find(innerPointee->declaration);
+        if (record != nullptr && binding != recordBindings_.end() &&
+            binding->second == RecordBinding::Opaque) {
+          return supportedType(record->name + "**");
+        }
+      }
+      return unsupportedType(
+          "two-level pointers are limited to const char** and exact opaque "
+          "C handle out parameters");
     }
     if (pointee->kind == NativeTypeKind::Char) {
       if (pointer.constPointee) {
@@ -518,7 +544,8 @@ private:
     }
     item.resultSpelling = result.spelling;
     for (std::size_t index = 0; index < type->parameters.size(); ++index) {
-      const MappedType parameter = mapType(type->parameters[index], false);
+      const MappedType parameter = mapType(type->parameters[index], false,
+                                           TypeUse::DirectFunctionParameter);
       if (!parameter.supported) {
         return skipped(declaration, "parameter " + std::to_string(index + 1) +
                                         ": " + parameter.reason);

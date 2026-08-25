@@ -18,8 +18,10 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
-lang::bindgen::ReadResult readC(std::string_view header) {
-  lang::bindgen::BoundedCReader reader;
+lang::bindgen::ReadResult
+readC(std::string_view header,
+      lang::bindgen::CTargetProfile profile = lang::bindgen::CTargetProfile{}) {
+  lang::bindgen::BoundedCReader reader(profile);
   return reader.read(header);
 }
 
@@ -163,9 +165,12 @@ typedef struct Item Item;
 int scalars(signed char a, unsigned short b, long c, unsigned long long d);
 float floats(float a, double b);
 void *pointers(const char *name, void *user, const double *values);
+int open_item(Item **out_item);
+int find_tail(const char **out_tail);
 int rejected_bool(_Bool flag);
 int rejected_char(char letter);
 int rejected_two_level(int **matrix);
+int rejected_const_handle(const Item **out_item);
 int rejected_unknown(some_unknown_t value);
 void template(int value);
 int _Reserved(int value);
@@ -189,6 +194,15 @@ int _Reserved(int value);
              pointers->parameters[1].spelling == "void*" &&
              pointers->parameters[2].spelling == "const double*",
          "pointer spellings should map c_string, void*, and const pointees");
+  const lang::bindgen::BindingItem *openItem = findItem(plan, "open_item");
+  const lang::bindgen::BindingItem *findTail = findItem(plan, "find_tail");
+  expect(openItem != nullptr && findTail != nullptr &&
+             openItem->kind == lang::bindgen::BindingItemKind::Function &&
+             findTail->kind == lang::bindgen::BindingItemKind::Function &&
+             openItem->parameters[0].spelling == "Item**" &&
+             findTail->parameters[0].spelling == "c_string*",
+         "the importer should retain exact opaque-handle and C-string out "
+         "parameters without enabling general nested pointers");
   const auto expectSkip = [&](std::string_view name,
                               std::string_view fragment) {
     const lang::bindgen::BindingItem *item = findItem(plan, name);
@@ -200,10 +214,36 @@ int _Reserved(int value);
   };
   expectSkip("rejected_bool", "not a GTI C ABI scalar");
   expectSkip("rejected_char", "plain 'char'");
-  expectSkip("rejected_two_level", "multi-level");
+  expectSkip("rejected_two_level", "two-level pointers are limited");
+  expectSkip("rejected_const_handle", "two-level pointers are limited");
   expectSkip("rejected_unknown", "outside the bounded surface");
   expectSkip("template", "reserved GTI spelling");
   expectSkip("_Reserved", "implementation-reserved");
+}
+
+void testTargetDataModels() {
+  constexpr std::string_view header = R"(
+typedef long NativeLong;
+typedef unsigned long NativeUnsignedLong;
+typedef size_t NativeSize;
+long transform(long value, size_t count);
+)";
+  const lang::bindgen::ReadResult lp64 = readC(
+      header, lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Lp64));
+  const lang::bindgen::ReadResult llp64 = readC(
+      header, lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
+  const std::string lp64Model = lang::bindgen::printNativeModel(lp64.model);
+  const std::string llp64Model = lang::bindgen::printNativeModel(llp64.model);
+  expect(contains(lp64Model, "typedef NativeLong = i64") &&
+             contains(lp64Model, "typedef NativeUnsignedLong = u64") &&
+             contains(lp64Model, "function transform(value: i64, count: u64) "
+                                 "-> i64"),
+         "LP64 should model long as 64 bits and size_t as 64 bits");
+  expect(contains(llp64Model, "typedef NativeLong = i32") &&
+             contains(llp64Model, "typedef NativeUnsignedLong = u32") &&
+             contains(llp64Model, "function transform(value: i32, count: u64) "
+                                  "-> i32"),
+         "LLP64 should model long as 32 bits and size_t as 64 bits");
 }
 
 void testEnumAndTypedefPlanning() {
@@ -326,6 +366,7 @@ int main() {
   testReaderRecovery();
   testRecordDegradation();
   testTypeMappingMatrix();
+  testTargetDataModels();
   testEnumAndTypedefPlanning();
   testWriterShapeAndDeterminism();
   testGeneratedBindingsCompile();

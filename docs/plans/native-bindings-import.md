@@ -1,8 +1,11 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: Foundation implemented (bounded C17 declaration import). C++ import,
-preprocessor integration, and build-manifest integration are future phases
-with their seams defined here.
+Status: C-01 through C-03 implemented (bounded C17 declaration import,
+target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
+translation-unit inputs, and exact opaque-handle out parameters sufficient for
+an end-to-end SQLite open/prepare/step/finalize/close client). A libclang
+declaration reader, build-manifest integration, and C++ import remain bounded
+future milestones below.
 
 ## Problem
 
@@ -29,8 +32,8 @@ The tool is a *source generator*, not a compiler phase:
   can later invoke the same library from a manifest-declared import (the
   planned `gti.toml` integration point). It links no compiler internals; the
   generated text is its only coupling to the language.
-- Determinism is a contract: identical input text and options produce
-  byte-identical output, in header declaration order.
+- Determinism is a contract: identical input text, selected target, and
+  options produce byte-identical output, in header declaration order.
 
 ## Architecture
 
@@ -38,7 +41,9 @@ Four phases, each behind its own interface so the C++ growth path replaces
 implementations, not the pipeline:
 
 ```text
-header text
+root C header + ordered translation-unit inputs
+  -> Clang preprocessor     (includes, macros, conditionals, target)
+  -> preprocessed C text
   -> NativeHeaderReader   (parse: produces the native declaration model)
   -> NativeModel          (language-neutral IR: scopes, types, declarations)
   -> BindingPlanner       (policy: maps each entity to a GTI binding or a
@@ -64,13 +69,13 @@ tests exactly like the lowered-program printer does.
 
 ### The reader seam (`header_reader.h`, `c_reader.cpp`)
 
-`NativeHeaderReader` is the virtual boundary; `BoundedCReader` is the first
-implementation: a hand-written lexer and declaration parser for a bounded C17
-subset, chosen over libclang for the foundation because the repository
-vendors only LLVM support libraries and the bounded-subset/fail-soft
-philosophy matches the rest of the toolchain. A future `ClangReader` behind
-the same interface is the expected C++ implementation; nothing downstream
-changes when it arrives.
+`NativeHeaderReader` is the virtual boundary; `BoundedCReader` is the
+bootstrap implementation: a hand-written lexer and declaration parser for a
+bounded C17 subset. It established the model, planner, writer, recovery, and
+end-to-end ABI validation without expanding the toolchain dependency. It is
+not the scalable parser strategy. Milestone C-04 replaces it with a private
+libclang reader for C and removes the hand-written implementation after
+equivalence gates pass; it does not preserve two selectable readers.
 
 Bounded C17 surface read today: `struct`/`union` definitions and forward
 declarations (including `typedef struct { ... } Name;` and implicit forward
@@ -78,16 +83,19 @@ references from pointer uses), `enum` definitions with literal or
 previous+1 values, object and function-pointer `typedef`s, and function
 prototypes (named or unnamed parameters, `void` lists, `...` recorded as
 variadic, multi-level pointers and `const` qualifiers parsed faithfully).
-`<stdint.h>`/`<stddef.h>` names resolve through a `CTargetProfile` table
-(LP64 today; the profile struct is the platform seam).
+`<stdint.h>`/`<stddef.h>` names resolve through a `CTargetProfile`. The CLI
+selects LP64 for supported macOS/Linux targets and LLP64 for supported Windows
+targets, either from the host or an explicit target triple. This is the
+bounded target seam until Clang becomes the source of C target facts.
 
-Preprocessing policy is deliberately minimal and honest: comments are
-stripped; `#pragma once` and a whole-file include guard are recognized;
-`#include` lines produce a note that the include is not resolved; any other
-conditional block or macro definition is skipped as a unit with a warning
-naming its location. Real preprocessing (running the native toolchain's
-`-E` before the reader) is a future phase that slots in front of the reader
-without changing it.
+Direct library callers may still pass unpreprocessed text, where the bootstrap
+reader's deliberately minimal policy strips comments, recognizes `#pragma
+once` and a whole-file include guard, and reports unsupported directives. The
+CLI does not use that policy: C-03 runs the Clang driver in C17 preprocessing
+mode with ordered `-I`, `-D`, `-U`, and target inputs before invoking the
+reader. `-fkeep-system-includes` keeps platform implementation declarations
+out of generated GTI while Clang still evaluates their preprocessing effects.
+This is a bounded bridge to the libclang reader, not a second preprocessor.
 
 Per-declaration failures are diagnostics plus a skip, never an abort: one
 unparseable declaration must not cost the rest of the header.
@@ -108,9 +116,12 @@ methods, overloads) lands without touching the reader. Two passes:
    shared type-mapping authority implementing the documented ABI allowlist:
    fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
    admitted pointees, `const char*` as `c_string`, by-value bindable
-   records, and named callback shapes. Everything else — variadics, plain
-   `char`/`bool`, multi-level pointers, native variables, reserved or
-   GTI-invalid identifiers — becomes a `SkippedItem{origin, name, reason}`.
+   records, named callback shapes, `const char**` as `c_string*`, and one exact
+   `OpaqueHandle**` direct function-parameter form. The latter is position
+   aware: callback shapes, fields, aliases, and returns do not inherit it.
+   Everything else — variadics, plain `char`/`bool`, other multi-level
+   pointers, native variables, reserved or GTI-invalid identifiers — becomes a
+   `SkippedItem{origin, name, reason}`.
 
 The plan is an ordered value type: inspectable, testable, and the future
 driver integration surface (a manifest import produces a plan the build can
@@ -127,19 +138,80 @@ for native declarations.
 
 ### The pipeline facade (`bindgen.h`)
 
-`runCBindgen(headerText, headerName, options)` returns the generated source,
-the plan, and all diagnostics. The CLI subcommand and the future driver
-integration are both thin callers of this one entry point.
+`runCBindgen(headerText, headerName, options, targetProfile)` returns the
+generated source, the plan, and all diagnostics. The CLI subcommand and the
+future driver integration are both thin callers of this one entry point.
+
+## Scalability Contract
+
+The C importer must become production-capable before C++ import starts. Its
+growth is constrained by these rules:
+
+1. `NativeModel` is the only reader/planner interchange. Clang cursors,
+   strings, source managers, and pointer identities never cross the private
+   reader translation unit or enter installed GTI headers.
+2. Parsing, target layout, preprocessing, include discovery, and native
+   diagnostics come from one Clang translation unit. GTI does not independently
+   reimplement those facts.
+3. The planner remains the sole native-to-GTI policy authority. A reader
+   records native facts; it does not decide that a declaration is safe GTI.
+4. Declaration order and source origins remain explicit model data. No hash or
+   Clang traversal order may directly define emitted output.
+5. A build cache key must include the canonical root header, transitive input
+   digests, normalized target triple, ordered compile arguments, Clang version,
+   planner policy version, and writer schema version.
+6. Each migration has one active implementation when complete. The bootstrap
+   parser is deleted after the Clang C reader reaches equivalence; it is not a
+   compatibility fallback.
+
+### Clang/LLVM Tool Selection
+
+The selected C/C++ parsing API is the
+[libclang C interface](https://clang.llvm.org/docs/LibClang.html), privately
+wrapped by a GTI-owned reader. Clang documents libclang as a relatively stable
+high-level API for parsing and traversing translation units, while its
+[tooling selection guide](https://clang.llvm.org/docs/Tooling.html) recommends
+it when full control over the C++ AST is not required. That fits C-first
+declaration import and limits version-sensitive C++ coupling across GTI's
+supported LLVM range.
+
+[LibTooling](https://clang.llvm.org/docs/LibTooling.html) is not selected for
+the first migration: its C++ API and wider Clang library surface add release,
+link, and version-coupling cost that the bounded C importer does not need.
+`clang -Xclang -ast-dump=json` is also not an interchange contract; it is a
+debug representation rather than the stable embedding API. When C++ import
+has a concrete policy, the missing facts must be listed first. LibTooling may
+replace libclang only if those facts cannot be obtained faithfully through
+libclang and the dependency cost is accepted deliberately.
+
+The C-03 bridge invokes a Clang executable and links no new library. It uses
+the native compiler driver's argument-vector/process infrastructure, captures
+Clang diagnostics, and owns temporary preprocessed/dependency artifacts in the
+driver layer. This is a planned extension of, not an exception to,
+[ADR 006](../decisions/006-llvm-support-adoption.md). The current build still
+links only LLVM support libraries. C-04 must add a separate dependency ADR,
+private wrapper, bundled-release acquisition, license/package checks, and
+link-surface gates before libclang becomes mandatory. Until then, new grammar
+surface is not added to `BoundedCReader` unless it fixes recovery or an
+already-supported C declaration.
 
 ## CLI Surface
 
 ```sh
-gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]
+gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] \
+  [--target <triple>] [--clang <path>] \
+  [-I <directory>]... [-D <macro[=value]>]... [-U <macro>]...
 ```
 
-Exit status follows the existing CLI conventions; reader/planner diagnostics
-print with file:line origins. Without `-o` the generated source prints to
-stdout.
+Exit status follows the existing CLI conventions. Native preprocessing
+diagnostics retain Clang's source locations; bootstrap reader/planner notes are
+explicitly labeled as preprocessed-line locations until libclang owns source
+provenance. Without `-o` the generated source prints to stdout. Clang is the
+default preprocessing executable and `--clang` selects another compatible
+binary. Without `--target`, the host target is selected. `--target` accepts
+the same normalized 64-bit macOS, Linux, and Windows triples as GTI's target
+parser, is forwarded to Clang, and controls implementation-defined C widths
+such as `long`.
 
 ## Verification
 
@@ -150,18 +222,44 @@ gate — feeding generated bindings through the real `lang::Frontend` and
 requiring the generated GTI to be accepted, so the language's own interop
 validation certifies the output. `cli_workflow` runs the subcommand
 end-to-end: generate bindings from a header, compile a GTI program against a
-real C implementation of that header, and run it.
+real C implementation of that header, mutate an opaque handle through an exact
+C out parameter, and run it. It also verifies explicit LP64/LLP64 target
+selection and invalid-target rejection. The external acceptance client is
+SQLite: generated bindings must admit the ordinary open/prepare/step/column/
+finalize/close workflow without a SQLite-specific parser or planner rule.
 
-## Future Phases
+## Numbered Delivery Milestones
 
-1. **Preprocessing**: drive the discovered native toolchain's preprocessor
-   before the reader; teach the driver to locate headers via include paths.
-2. **Constants**: object-like integer macros to `constexpr` bindings.
-3. **Build integration**: a `gti.toml` import table; the driver invokes the
-   library, caches by header digest, and feeds generated sources into the
-   ordinary compilation set.
-4. **C++ headers**: a `ClangReader` implementation, namespace/class scope
-   kinds in the model, and planner policy for the C++-only surface the
-   language grows (this phase is gated on GTI's own C++-interop decisions).
-5. **Richer C**: `[[c_array]]` recognition heuristics, ownership-transfer
-   annotations, allow/deny/rename policy files.
+1. **C-01: bounded C foundation (complete).** GTI-owned model, planner,
+   writer, bootstrap C17 reader, CLI, diagnostics, deterministic output, and
+   generated-source frontend/runtime validation, including exact
+   opaque-handle out parameters and direct contextual address arguments.
+2. **C-02: target-correct C widths (complete).** Host/explicit target
+   selection and exact LP64/LLP64 mapping for supported GTI targets.
+3. **C-03: Clang preprocessing bridge (complete).** Driver-owned Clang C17
+   preprocessing with ordered `-I`, `-D`, `-U`, explicit target forwarding,
+   system-include preservation, dependency output, deterministic command
+   construction, and captured native diagnostics.
+4. **C-04: libclang C reader.** Adopt and package libclang behind a private
+   `NativeHeaderReader`; pass a deterministic C corpus through both readers,
+   close model/diagnostic gaps, switch the pipeline, and remove
+   `BoundedCReader`.
+5. **C-05: source provenance and import policy.** Populate model source IDs
+   from Clang, collect the complete transitive dependency set, retain only
+   declarations selected by the requested import policy, and use original
+   source locations for every planner diagnostic.
+6. **C-06: constants and C metadata.** Import bounded object-like integer
+   macros as `constexpr`; preserve calling convention and ABI attributes as
+   model facts; reject unsupported ABI-affecting attributes explicitly.
+7. **BUILD-01: manifest and cache integration.** Add a `gti.toml` import table;
+   make the driver own discovery and immutable requests; cache generated
+   source by the complete key in the scalability contract.
+8. **CPP-01: C++ interop policy.** Decide the GTI surface for namespaces,
+   overloads, methods, constructors, layouts, templates, ownership, and
+   exceptions before importing any C++ declaration.
+9. **CPP-02: C++ reader/planner extension.** Add only the accepted C++ scope
+   and declaration facts to `NativeModel`, then extend planner policy. Revisit
+   LibTooling only against a concrete libclang gap from CPP-01.
+10. **C-07: richer opt-in policy.** Add bounded `[[c_array]]` recognition,
+   ownership-transfer annotations, and allow/deny/rename configuration after
+   manifest authority exists.

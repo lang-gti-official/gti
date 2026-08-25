@@ -189,6 +189,15 @@ safe to retain; calls and element access stay lexical `unsafe`. See
 [`native-c-interop.md`](native-c-interop.md#native-pointer-plus-count-arrays)
 for the complete pair contract.
 
+A bodyless `extern "C"` function may also take one exact
+`OpaqueHandle**` parameter. This is an out-parameter boundary form, not a
+general pointer-to-pointer type. Its call argument must be the direct
+`&binding` expression for a mutable binding of exact type `OpaqueHandle*`, and
+the call must be inside `unsafe`. The contextual address cannot be retained,
+returned, forwarded, or used outside that full expression. The native
+function may replace the pointer value; GTI infers no non-null, ownership,
+lifetime, allocation, or cleanup guarantee from that write.
+
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
 retention, nullability, ownership transfer, or aliasing requirements. A C call
@@ -246,7 +255,8 @@ exposing it has a separately documented contract.
 
 This feature does not add:
 
-- general pointer-to-pointer types beyond the bounded annotated C-array return;
+- general pointer-to-pointer types beyond the bounded annotated C-array return
+  and direct opaque-handle C out parameter;
 - anonymous/general function pointers, captured callbacks, or foreign-thread
   GTI callback entry beyond the named exact native callback family;
 - implicit fixed-array decay;
