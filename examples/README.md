@@ -73,6 +73,13 @@ own `main` function.
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
 | `66-managed-threads.gti` | move-only `std::jthread`, owned task transfer, explicit join, and mandatory autojoin |
 | `67-forward-iterators.gti` | copied owner-tied read cursors, `std::next`, and forward-iterator binary search |
+| `68-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
+| `69-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
+| `70-qualified-specializations.gti` | coherent exact specialization of a qualified generic class such as `std::hash<T>` |
+| `71-fresh-temporary-borrows.gti` | mutable calls on fresh receivers and read-only temporary arguments restricted to one call |
+| `72-filesystem-paths.gti` | pathname assignment and direct output of fresh owned strings |
+| `73-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
+| `74-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
 
 Build and run an example from the repository root:
 
@@ -197,6 +204,30 @@ independent position while retaining one owner dependency. `std::next` advances
 the moved copy, and `std::binary_search` accepts the vector's distinct end
 sentinel while using forward traversal internally; neither operation assumes
 iterator subtraction or mutable reassignment.
+
+`70-qualified-specializations.gti` shows exact, package-coherent
+customization rather than C++ partial specialization or SFINAE. The application
+may specialize `std::hash` for its own `Widget`, but it could not specialize it
+for an unrelated builtin or foreign type.
+
+`71-fresh-temporary-borrows.gti` keeps both temporary capabilities bounded to
+one full expression. A fresh receiver can call a mutable method, while an exact
+read-only reference parameter can observe a fresh self-contained result only
+for the duration of one call; neither rule creates a storable reference.
+
+`72-filesystem-paths.gti` performs pathname manipulation only. Assigning or
+observing a `std::filesystem::path` does not access the host filesystem, and
+`string()` returns a fresh owned `std::string` that output may consume directly.
+
+`73-constructor-local-generics.gti` demonstrates inference-only constructor
+parameters. They do not add class-template argument deduction or explicit
+constructor type arguments. The standard string iterator/sentinel constructor
+copies characters and retains no borrow of the source.
+
+`74-read-only-range-loans.gti` evaluates each range once and limits `auto&` to
+one read-only element loan per iteration. The temporary vector is owned by
+hidden loop storage until cleanup; mutable element iteration remains a separate
+language slice.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

@@ -1,0 +1,24 @@
+class Position {
+  // Every direct field in this group is mutable. Fields outside it keep
+  // GTI's immutable-by-default behavior.
+  mut {
+    int x = 0;
+    int y = 0;
+  }
+
+  int dimensions = 2;
+
+public:
+  void translate(int horizontal, int vertical) mut {
+    this.x += horizontal;
+    this.y += vertical;
+  }
+
+  int checksum() { return this.x * 10 + this.y + this.dimensions; }
+};
+
+int main() {
+  mut Position position{};
+  position.translate(3, 4);
+  return position.checksum() == 36 ? 0 : 1;
+}
