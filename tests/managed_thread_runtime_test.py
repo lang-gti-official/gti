@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -595,7 +596,15 @@ execution-profile = "concurrent"
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: managed_thread_runtime_test.py /path/to/gti")
-    compiler = pathlib.Path(sys.argv[1]).resolve()
+    requested_compiler = pathlib.Path(sys.argv[1])
+    resolved_compiler = (
+        requested_compiler.resolve()
+        if requested_compiler.exists()
+        else shutil.which(sys.argv[1])
+    )
+    if resolved_compiler is None:
+        raise AssertionError(f"could not resolve GTI executable: {sys.argv[1]}")
+    compiler = pathlib.Path(resolved_compiler).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-managed-thread-") as scratch:
         root = pathlib.Path(scratch)
         test_success_matrix(compiler, root)
