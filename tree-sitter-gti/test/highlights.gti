@@ -275,3 +275,7 @@ public:
   DefaultedLifecycleHighlight() = default;
   ~DefaultedLifecycleHighlight() = default;
 };
+
+expected<int, int> propagate_highlight(expected<int, int> result) {
+  return ?result;
+}

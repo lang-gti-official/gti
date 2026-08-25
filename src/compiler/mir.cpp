@@ -5265,6 +5265,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !instruction.closureCaptureModes.empty())) ||
         ((instruction.operation == MirOperation::NativeCallback) !=
          instruction.nativeCallbackAdapter.has_value()) ||
+        (instruction.earlyExitFullExpressionEnd &&
+         (instruction.kind != MirInstructionKind::Lifecycle ||
+          instruction.fullExpressionEnd == 0 ||
+          instruction.cleanupBoundaryEnd != 0)) ||
         (instruction.operation != MirOperation::Literal &&
          instruction.literal.has_value()) ||
         (instruction.operation != MirOperation::Literal &&
@@ -6357,6 +6361,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   std::unordered_map<MirInstructionId, const MirInstruction *> instructionsById;
   std::vector<std::size_t> fullExpressionMarkers(body.fullExpressions.size(),
                                                  0);
+  std::vector<std::size_t> primaryFullExpressionMarkers(
+      body.fullExpressions.size(), 0);
+  std::vector<std::vector<const MirInstruction *>> fullExpressionMarkerRows(
+      body.fullExpressions.size());
   std::vector<std::size_t> cleanupBoundaryMarkers(body.cleanupBoundaries.size(),
                                                   0);
   std::vector<std::size_t> failureParameterCounts(body.failureRecords.size(),
@@ -6579,6 +6587,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          block.id, instruction.id);
         }
         ++fullExpressionMarkers[instruction.fullExpressionEnd - 1];
+        if (!instruction.earlyExitFullExpressionEnd) {
+          ++primaryFullExpressionMarkers[instruction.fullExpressionEnd - 1];
+        }
+        fullExpressionMarkerRows[instruction.fullExpressionEnd - 1].push_back(
+            &instruction);
         const MirFullExpression &expression =
             body.fullExpressions[instruction.fullExpressionEnd - 1];
         const bool statementBoundary = expression.statement != 0;
@@ -7374,10 +7387,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "parameter, and terminal endpoint");
     }
   }
-  if (std::any_of(fullExpressionMarkers.begin(), fullExpressionMarkers.end(),
-                  [](std::size_t count) { return count != 1; })) {
+  if (std::any_of(primaryFullExpressionMarkers.begin(),
+                  primaryFullExpressionMarkers.end(),
+                  [](std::size_t count) { return count != 1; }) ||
+      std::any_of(fullExpressionMarkers.begin(), fullExpressionMarkers.end(),
+                  [](std::size_t count) { return count == 0; })) {
     return failure(body, owner,
-                   "full-expression must have exactly one boundary marker");
+                   "full-expression must have exactly one primary boundary "
+                   "marker");
   }
   if (std::any_of(cleanupBoundaryMarkers.begin(), cleanupBoundaryMarkers.end(),
                   [](std::size_t count) { return count != 1; })) {
@@ -8379,6 +8396,100 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
     }
   }
+
+  const auto markerCanReach = [&](const MirInstruction &from,
+                                  const MirInstruction &to) {
+    const MirBlockId fromBlock = instructionBlocks.at(from.id);
+    const MirBlockId toBlock = instructionBlocks.at(to.id);
+    if (fromBlock == toBlock) {
+      return instructionOrders.at(from.id) < instructionOrders.at(to.id);
+    }
+    std::queue<MirBlockId> pendingBlocks;
+    std::unordered_set<MirBlockId> visitedBlocks;
+    const MirBlock *origin = body.findBlock(fromBlock);
+    if (origin != nullptr) {
+      for (const MirBlockId successor : successors(origin->terminator)) {
+        pendingBlocks.push(successor);
+      }
+    }
+    while (!pendingBlocks.empty()) {
+      const MirBlockId candidate = pendingBlocks.front();
+      pendingBlocks.pop();
+      if (!visitedBlocks.insert(candidate).second) {
+        continue;
+      }
+      if (candidate == toBlock) {
+        return true;
+      }
+      const MirBlock *block = body.findBlock(candidate);
+      if (block == nullptr) {
+        continue;
+      }
+      for (const MirBlockId successor : successors(block->terminator)) {
+        pendingBlocks.push(successor);
+      }
+    }
+    return false;
+  };
+  for (const std::vector<const MirInstruction *> &markers :
+       fullExpressionMarkerRows) {
+    for (std::size_t left = 0; left < markers.size(); ++left) {
+      for (std::size_t right = left + 1; right < markers.size(); ++right) {
+        if (markerCanReach(*markers[left], *markers[right]) ||
+            markerCanReach(*markers[right], *markers[left])) {
+          return failure(body, owner,
+                         "full-expression boundary markers are not on mutually "
+                         "exclusive control-flow paths",
+                         instructionBlocks.at(markers[right]->id),
+                         markers[right]->id);
+        }
+      }
+    }
+  }
+
+  const auto precedingFullExpressionDrops = [&](const MirBlock &markerBlock,
+                                                std::size_t markerIndex) {
+    std::vector<const MirInstruction *> reversed;
+    const MirBlock *cursor = &markerBlock;
+    std::size_t cursorIndex = markerIndex;
+    std::unordered_set<MirBlockId> visited;
+    while (visited.insert(cursor->id).second) {
+      while (cursorIndex != 0) {
+        const MirInstruction &candidate = cursor->instructions[cursorIndex - 1];
+        if (candidate.kind != MirInstructionKind::Drop) {
+          std::reverse(reversed.begin(), reversed.end());
+          return reversed;
+        }
+        reversed.push_back(&candidate);
+        --cursorIndex;
+      }
+      const MirBlock *predecessor = nullptr;
+      std::size_t predecessorCount = 0;
+      for (const MirBlock &candidate : body.blocks) {
+        const std::vector<MirBlockId> outgoing =
+            successors(candidate.terminator);
+        if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
+            outgoing.end()) {
+          continue;
+        }
+        ++predecessorCount;
+        if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
+            candidate.terminator.target == cursor->id &&
+            candidate.activeFailure == cursor->activeFailure) {
+          predecessor = &candidate;
+        }
+      }
+      if (predecessorCount != 1 || predecessor == nullptr) {
+        break;
+      }
+      cursor = predecessor;
+      cursorIndex = cursor->instructions.size();
+    }
+    std::reverse(reversed.begin(), reversed.end());
+    return reversed;
+  };
+
+  std::unordered_map<MirInstructionId, std::size_t> fullExpressionDropCoverage;
   for (const MirBlock &block : body.blocks) {
     for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
          ++markerIndex) {
@@ -8388,32 +8499,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const MirFullExpression &expression =
           body.fullExpressions[marker.fullExpressionEnd - 1];
-      std::unordered_set<MirInstructionId> expressionDropIds;
-      for (const MirBlock &candidateBlock : body.blocks) {
-        for (const MirInstruction &instruction : candidateBlock.instructions) {
-          for (const MirLifecycleEvent &event : instruction.lifecycle) {
-            const MirDropObligation *obligation =
-                event.kind == MirLifecycleEventKind::Drop &&
-                        !event.failureCleanup
-                    ? body.findDropObligation(event.source)
-                    : nullptr;
-            if (obligation != nullptr &&
-                obligation->fullExpression == expression.id) {
-              expressionDropIds.insert(instruction.id);
-            }
-          }
-        }
-      }
-      const auto drops =
-          precedingDropSequence(block, markerIndex, expressionDropIds.size());
-      if (!drops || drops->size() != expressionDropIds.size()) {
-        return failure(body, owner,
-                       "full-expression cleanup is not connected to its "
-                       "boundary marker",
-                       block.id, marker.id);
-      }
+      const std::vector<const MirInstruction *> drops =
+          precedingFullExpressionDrops(block, markerIndex);
       std::size_t previousDrop = std::numeric_limits<std::size_t>::max();
-      for (const MirInstruction *drop : *drops) {
+      std::unordered_set<MirDropObligationId> pathObligations;
+      for (const MirInstruction *drop : drops) {
         const MirDropObligationId obligation =
             drop->lifecycle.size() == 1 ? drop->lifecycle.front().source : 0;
         const MirDropObligation *dropDescriptor =
@@ -8422,9 +8512,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             drop->lifecycle.size() != 1 ||
             drop->lifecycle.front().kind != MirLifecycleEventKind::Drop ||
             drop->lifecycle.front().failureCleanup ||
-            !expressionDropIds.contains(drop->id) ||
             dropDescriptor == nullptr ||
             dropDescriptor->fullExpression != expression.id ||
+            !pathObligations.insert(obligation).second ||
             dropDescriptor->constructionOrder >= previousDrop) {
           return failure(
               body, owner,
@@ -8433,9 +8523,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               block.id, drop->id);
         }
         previousDrop = dropDescriptor->constructionOrder;
+        ++fullExpressionDropCoverage[drop->id];
       }
       const MirInstruction &firstBoundary =
-          drops->empty() ? marker : *drops->front();
+          drops.empty() ? marker : *drops.front();
+      if (marker.earlyExitFullExpressionEnd) {
+        continue;
+      }
       for (const HirValueId root : expression.roots) {
         bool rootBeforeBoundary = false;
         bool hasConcreteValue = false;
@@ -8474,6 +8568,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          "roots",
                          block.id, marker.id);
         }
+      }
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Drop ||
+          instruction.lifecycle.size() != 1 ||
+          instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+          instruction.lifecycle.front().failureCleanup) {
+        continue;
+      }
+      const MirDropObligation *obligation =
+          body.findDropObligation(instruction.lifecycle.front().source);
+      if (obligation != nullptr && obligation->fullExpression != 0 &&
+          fullExpressionDropCoverage[instruction.id] != 1) {
+        return failure(body, owner,
+                       "full-expression cleanup is not connected to exactly "
+                       "one boundary marker",
+                       block.id, instruction.id);
       }
     }
   }

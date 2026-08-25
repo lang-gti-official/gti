@@ -641,6 +641,22 @@ Contextual `operator bool` participates only in the contexts enumerated by the
 language contract. Logical `and`/`or` and `&&`/`||` are equivalent spellings
 with identical short-circuit semantics.
 
+### 3.9.1 Expected Propagation
+
+For a prefix expression `?operand`, `operand` must have type `expected<T, E>`
+and the immediately enclosing function or lambda must return
+`expected<U, E>`. The error types are identical semantic types; propagation
+does not consider conversions or overloads. The expression has type `T`, or
+`void` when `T` is `void`.
+
+An operand whose expression category is a value selects move transport for
+both alternatives. A named place selects copy transport for both alternatives.
+The selected move or copy must be available for every non-`void` alternative.
+Consequently a named expected with a move-only value or error is rejected;
+`?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid
+operand types, enclosing return contexts, mismatched error types, and
+unavailable alternative transport.
+
 ## 3.10 Well-Formed Control Flow
 
 Every reachable path through a non-`void` function, method, operator, or lambda

@@ -3,12 +3,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const executable = path.join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tree-sitter.cmd" : "tree-sitter",
-);
+const executable =
+  process.env.TREE_SITTER_CLI ??
+  path.join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tree-sitter.cmd" : "tree-sitter",
+  );
 const fixture = path.join(__dirname, "highlights.gti");
 const capturePattern =
   /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: \((\d+), (\d+)\), text: `(.*)$/;
@@ -254,6 +256,11 @@ requireCapture(undefFlagRow, "#undef", "keyword.directive");
 requireCapture(undefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifdefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifndefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+
+const expectedPropagationRow = fixtureLines.findIndex((line) =>
+  line.includes("return ?result;"),
+);
+requireCapture(expectedPropagationRow, "?", "operator");
 
 const groupedFieldRow = fixtureLines.findIndex((line) =>
   line.includes("grouped_value"),

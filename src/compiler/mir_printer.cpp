@@ -1292,6 +1292,8 @@ private:
       lifecycleEvent(value.lifecycle[index]);
     }
     output << "] full-expression-end=" << value.fullExpressionEnd
+           << " early-exit-full-expression-end="
+           << value.earlyExitFullExpressionEnd
            << " cleanup-boundary-end=" << value.cleanupBoundaryEnd;
     output << ' ';
     info(value.info);

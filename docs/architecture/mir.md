@@ -88,7 +88,11 @@ Program v48 and body v44 serialize the exact designated stored-reference field
 on a by-value carrier's `Stored` entry loan. Verification binds that field to
 the unprojected formal-parameter source and uses it to prove the exact runtime
 referent or returned carrier transfer without backend reconstruction. Program
-v47 and body v43 exposed the lowering-owned dormant trusted-wrapper
+v48 and body v44 also add the explicit early-exit full-expression marker role
+used by expected propagation. Each propagation failure edge retains a
+path-exclusive boundary alongside the one ordinary continuation boundary, so
+verification can prove exact temporary and lexical cleanup without reopening
+HIR. Program v47 and body v43 exposed the lowering-owned dormant trusted-wrapper
 marker on every body header. Program v46 added the ordered managed-thread
 task-adapter inventory. Each row
 binds one exact task type and once-invocation contract to its HIR spawn value,
@@ -714,17 +718,20 @@ only by a logical or conditional branch retains a path-conditional obligation
 through the merge and is dropped at the enclosing full-expression boundary.
 Its cleanup place is body-local rather than a branch-local SSA root. MIR
 publishes only reached HIR boundaries, retains their source identities and
-ordered obligation membership, and emits one standalone boundary marker after
-the reverse-order cleanup sequence. Verification rejects an absent, duplicate,
-misplaced, or forged marker; cleanup before a completed root; active state at a
-boundary; a swapped cleanup sequence; double or missing drops; forged cleanup
-metadata; use of a non-consuming operand as an ownership transfer; and
+ordered obligation membership, and emits one primary standalone boundary
+marker on the ordinary continuation plus an explicitly marked boundary on
+each mutually exclusive early-return endpoint. Every marker follows that
+path's reverse-order cleanup sequence. Verification rejects an absent or
+duplicate primary marker, an unmarked extra endpoint, a misplaced or forged
+marker, cleanup before a completed ordinary-path root, active state at a
+boundary, a swapped cleanup sequence, double or missing drops, forged cleanup
+metadata, use of a non-consuming operand as an ownership transfer, and
 predecessor states that cannot justify an event's conditionality. Lifecycle
 instructions and boundary markers are observable effects and cannot be erased
 merely because they produce no SSA result.
 
 Each drop obligation retains a stable HIR construction ordinal. Reached
-full-expression drops are a contiguous suffix immediately before their sole
+full-expression drops are a contiguous suffix immediately before their path's
 boundary marker in reverse ordinal order. Each emitted lexical cleanup sequence
 has its own table entry and marker, and every binding-kind `Drop` instruction is
 covered by exactly one such sequence. Resolved `Call` and `Construct`

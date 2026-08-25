@@ -281,6 +281,14 @@ diagnostics or letting a backend message choose either identity.
   intent. Ordinary reference value-type/addressability errors remain
   `GTI-S2017`. The LSP publishes `GTI-S2085` unchanged, including its source
   range, phase data, and related parameter.
+- `GTI-S2086` owns an invalid prefix `?` propagation expression. Point at the
+  operator and distinguish a non-`expected<T, E>` operand, a callable that does
+  not return `expected<U, E>`, a non-identical enclosing error type, and an
+  unavailable copy or move for either active alternative. Suggest explicit
+  error handling or conversion for type/context failures, and
+  `?std::move(result)` only for a named move-only expected. Do not offer a
+  mechanical fix-it because consuming a named result changes its subsequent
+  ownership state.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or
