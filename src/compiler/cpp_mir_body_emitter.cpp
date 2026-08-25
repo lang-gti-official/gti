@@ -1523,6 +1523,30 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   return observers != 0;
 }
 
+[[nodiscard]] bool sameMirPlaceRoot(const MirPlace &left,
+                                    const MirPlace &right) {
+  if (left.root != right.root ||
+      left.hostedStartupOperation != right.hostedStartupOperation) {
+    return false;
+  }
+  switch (left.root) {
+  case MirPlaceRootKind::Binding:
+    return left.binding != 0 && left.binding == right.binding;
+  case MirPlaceRootKind::Symbol:
+    return left.symbol != 0 && left.symbol == right.symbol &&
+           left.capture == right.capture;
+  case MirPlaceRootKind::This:
+    return true;
+  case MirPlaceRootKind::Temporary:
+    return left.temporary != 0 && left.temporary == right.temporary;
+  case MirPlaceRootKind::Value:
+    return left.value != 0 && left.value == right.value;
+  case MirPlaceRootKind::Loan:
+    return left.loan != 0 && left.loan == right.loan;
+  }
+  return false;
+}
+
 [[nodiscard]] bool sameExpectedCarrier(const MirBody &body,
                                        const MirOperand &left,
                                        const MirOperand &right) {
@@ -1532,12 +1556,18 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   const auto rootedValue =
       [&](const MirOperand &operand) -> std::optional<MirValueId> {
     if (operand.kind == MirOperandKind::Value && operand.value != 0) {
-      return operand.value;
+      const MirValue *value = body.findValue(operand.value);
+      return value != nullptr && value->info.type == operand.type
+                 ? std::optional<MirValueId>{operand.value}
+                 : std::nullopt;
     }
     const MirPlace *place =
         operand.place == 0 ? nullptr : body.findPlace(operand.place);
     return place != nullptr && place->root == MirPlaceRootKind::Value &&
-                   place->value != 0
+                   place->value != 0 && place->projections.empty() &&
+                   place->type == operand.type &&
+                   body.findValue(place->value) != nullptr &&
+                   body.findValue(place->value)->info.type == operand.type
                ? std::optional<MirValueId>{place->value}
                : std::nullopt;
   };
@@ -1579,11 +1609,13 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   };
   const MirPlace *leftPlace = carrierPlace(left);
   const MirPlace *rightPlace = carrierPlace(right);
-  return leftPlace != nullptr && rightPlace != nullptr &&
-         leftPlace->root == rightPlace->root &&
-         leftPlace->value == rightPlace->value &&
-         leftPlace->binding == rightPlace->binding &&
-         leftPlace->temporary == rightPlace->temporary &&
+  if (leftPlace == nullptr || rightPlace == nullptr) {
+    return false;
+  }
+  if (leftPlace->id == rightPlace->id) {
+    return true;
+  }
+  return sameMirPlaceRoot(*leftPlace, *rightPlace) &&
          leftPlace->projections == rightPlace->projections;
 }
 
@@ -10968,24 +11000,7 @@ private:
 
   [[nodiscard]] static bool sameRoot(const MirPlace &left,
                                      const MirPlace &right) {
-    if (left.root != right.root) {
-      return false;
-    }
-    switch (left.root) {
-    case MirPlaceRootKind::Binding:
-      return left.binding == right.binding;
-    case MirPlaceRootKind::Symbol:
-      return left.symbol == right.symbol && left.capture == right.capture;
-    case MirPlaceRootKind::This:
-      return true;
-    case MirPlaceRootKind::Temporary:
-      return left.temporary == right.temporary;
-    case MirPlaceRootKind::Value:
-      return left.value == right.value;
-    case MirPlaceRootKind::Loan:
-      return left.loan == right.loan;
-    }
-    return false;
+    return sameMirPlaceRoot(left, right);
   }
 
   [[nodiscard]] std::optional<SemanticType>

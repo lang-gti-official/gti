@@ -5959,15 +5959,26 @@ int32_t main() {
 void testExpectedExtractionStateAdmissionFailsClosed() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-extraction-state.gti", R"(
+expected<int32_t, int32_t> first_state = int32_t(7);
+expected<int32_t, int32_t> second_state = int32_t(8);
+
 expected<int32_t, int32_t>
 forward(expected<int32_t, int32_t> result) {
   return ?result;
 }
 
+expected<int32_t, int32_t> forward_globals() {
+  bool ignored = second_state.has_value();
+  return ?first_state;
+}
+
 int32_t main() {
   expected<int32_t, int32_t> result = int32_t(7);
   expected<int32_t, int32_t> forwarded = forward(result);
-  return forwarded.has_value() ? forwarded.value() - int32_t(7) : int32_t(1);
+  expected<int32_t, int32_t> global_forwarded = forward_globals();
+  return forwarded.has_value() && global_forwarded.has_value()
+             ? forwarded.value() + global_forwarded.value() - int32_t(14)
+             : int32_t(1);
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -5987,6 +5998,17 @@ int32_t main() {
       forwardHir == frontend.hir.functionInstances().end()
           ? nullptr
           : frontend.mir.findFunctionInstance(forwardHir->id);
+  const auto globalForwardHir = std::find_if(
+      frontend.hir.functionInstances().begin(),
+      frontend.hir.functionInstances().end(),
+      [](const lang::HirFunctionInstance &candidate) {
+        return candidate.source != nullptr &&
+               candidate.source->name().lexeme == "forward_globals";
+      });
+  const lang::MirFunctionInstance *globalForward =
+      globalForwardHir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(globalForwardHir->id);
   const lang::MirBlock *stateBranch = nullptr;
   const auto findInstruction = [](const lang::MirBody &body,
                                   lang::MirInstructionId id) {
@@ -5998,6 +6020,17 @@ int32_t main() {
       }
     }
     return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const auto findMutableInstruction = [](lang::MirBody &body,
+                                         lang::MirInstructionId id) {
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
   };
   if (forward != nullptr) {
     for (const lang::MirBlock &block : forward->body.blocks) {
@@ -6088,6 +6121,225 @@ int32_t main() {
     expect(!reversedStateEmitter.supportsFailureBodyText(address),
            "a zero-site Expected extraction without its matching state edge "
            "must fail backend admission");
+  }
+
+  const lang::MirValue *stateConditionValue =
+      stateBranch->terminator.value
+          ? forward->body.findValue(stateBranch->terminator.value->value)
+          : nullptr;
+  const lang::MirInstruction *stateCondition =
+      stateConditionValue == nullptr
+          ? nullptr
+          : findInstruction(forward->body, stateConditionValue->definition);
+  const lang::MirValue *carrierValue =
+      stateCondition != nullptr && stateCondition->operands.size() == 1 &&
+              stateCondition->operands.front().kind ==
+                  lang::MirOperandKind::Value
+          ? forward->body.findValue(stateCondition->operands.front().value)
+          : nullptr;
+  const lang::MirInstruction *carrierLoad =
+      carrierValue != nullptr
+          ? findInstruction(forward->body, carrierValue->definition)
+          : nullptr;
+  const lang::MirBlock *successStateBlock =
+      forward->body.findBlock(stateBranch->terminator.target);
+  const lang::MirBlock *errorStateBlock =
+      forward->body.findBlock(stateBranch->terminator.elseTarget);
+  const auto findExtraction = [](const lang::MirBlock *block,
+                                 lang::IntrinsicKind intrinsic) {
+    if (block == nullptr) {
+      return static_cast<const lang::MirInstruction *>(nullptr);
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.intrinsic == intrinsic &&
+                              instruction.localFailureSites.empty();
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+  const lang::MirInstruction *successStateExtraction =
+      findExtraction(successStateBlock, lang::IntrinsicKind::ExpectedValue);
+  const lang::MirInstruction *errorStateExtraction =
+      findExtraction(errorStateBlock, lang::IntrinsicKind::ExpectedError);
+  const lang::MirPlace *carrierSource =
+      carrierLoad != nullptr && carrierLoad->operands.size() == 1
+          ? forward->body.findPlace(carrierLoad->operands.front().place)
+          : nullptr;
+  expect(carrierLoad != nullptr && carrierSource != nullptr &&
+             successStateExtraction != nullptr &&
+             successStateExtraction->receiver &&
+             errorStateExtraction != nullptr && errorStateExtraction->receiver,
+         "the named propagation fixture should expose its exact checked and "
+         "extracted carrier schedule");
+  if (carrierLoad != nullptr && carrierSource != nullptr &&
+      successStateExtraction != nullptr && successStateExtraction->receiver &&
+      errorStateExtraction != nullptr && errorStateExtraction->receiver) {
+    const auto forgeLoanCarriers =
+        [&](std::optional<lang::IntrinsicKind> mismatchedExtraction) {
+          lang::MirProgram forged = frontend.mir;
+          auto &functions =
+              const_cast<std::vector<lang::MirFunctionInstance> &>(
+                  forged.functionInstances());
+          lang::MirBody &body = functions.at(forward->id - 1).body;
+          lang::MirInstruction *load =
+              findMutableInstruction(body, carrierLoad->id);
+          lang::MirInstruction *success =
+              findMutableInstruction(body, successStateExtraction->id);
+          lang::MirInstruction *error =
+              findMutableInstruction(body, errorStateExtraction->id);
+
+          const lang::MirLoanId firstLoan =
+              body.loans.empty() ? 1 : body.loans.back().id + 1;
+          const lang::MirLoanId secondLoan = firstLoan + 1;
+          body.loans.push_back({.id = firstLoan,
+                                .kind = lang::MirLoanKind::Local,
+                                .source = carrierSource->id,
+                                .access = lang::AccessMode::ReadOnly});
+          body.loans.push_back({.id = secondLoan,
+                                .kind = lang::MirLoanKind::Local,
+                                .source = carrierSource->id,
+                                .access = lang::AccessMode::ReadOnly});
+
+          const lang::MirPlaceId firstPlace =
+              body.places.empty() ? 1 : body.places.back().id + 1;
+          const lang::MirPlaceId secondPlace = firstPlace + 1;
+          const auto loanPlace = [&](lang::MirPlaceId id,
+                                     lang::MirLoanId loan) {
+            lang::MirPlace place = *carrierSource;
+            place.id = id;
+            place.root = lang::MirPlaceRootKind::Loan;
+            place.binding = 0;
+            place.symbol = 0;
+            place.capture = 0;
+            place.temporary = 0;
+            place.value = 0;
+            place.loan = loan;
+            place.projections.clear();
+            place.key.reset();
+            return place;
+          };
+          body.places.push_back(loanPlace(firstPlace, firstLoan));
+          body.places.push_back(loanPlace(secondPlace, secondLoan));
+
+          load->operands.front().place = firstPlace;
+          success->receiver->place =
+              mismatchedExtraction == lang::IntrinsicKind::ExpectedValue
+                  ? secondPlace
+                  : firstPlace;
+          error->receiver->place =
+              mismatchedExtraction == lang::IntrinsicKind::ExpectedError
+                  ? secondPlace
+                  : firstPlace;
+          return forged;
+        };
+
+    const lang::MirProgram matchingLoanCarrier =
+        forgeLoanCarriers(std::nullopt);
+    expect(lang::CppMirBodyEmitter(matchingLoanCarrier, map)
+               .supportsFailureBodyText(address),
+           "matching loan-root carriers should preserve propagation "
+           "admission");
+    const lang::MirProgram distinctValueLoan =
+        forgeLoanCarriers(lang::IntrinsicKind::ExpectedValue);
+    expect(!lang::CppMirBodyEmitter(distinctValueLoan, map)
+                .supportsFailureBodyText(address),
+           "a state proof for one loan must not admit ExpectedValue from a "
+           "different loan root");
+    const lang::MirProgram distinctErrorLoan =
+        forgeLoanCarriers(lang::IntrinsicKind::ExpectedError);
+    expect(!lang::CppMirBodyEmitter(distinctErrorLoan, map)
+                .supportsFailureBodyText(address),
+           "a state proof for one loan must not admit ExpectedError from a "
+           "different loan root");
+  }
+
+  expect(globalForward != nullptr,
+         "the symbol-carrier propagation fixture should lower to MIR");
+  if (globalForward == nullptr) {
+    return;
+  }
+  const lang::MirBodyAddress globalAddress{.kind = lang::MirBodyKind::Function,
+                                           .owner = globalForward->id};
+  const lang::CppMirBodyEmitter globalCanonical(frontend.mir, map);
+  expect(globalCanonical.supportsFailureBodyText(globalAddress),
+         "canonical propagation from a global Expected should be admitted");
+
+  lang::MirProgram distinctSymbols = frontend.mir;
+  auto &symbolFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      distinctSymbols.functionInstances());
+  lang::MirBody &symbolBody = symbolFunctions.at(globalForward->id - 1).body;
+  lang::MirInstruction *successExtraction = nullptr;
+  lang::MirInstruction *errorExtraction = nullptr;
+  for (lang::MirBlock &block : symbolBody.blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Branch) {
+      continue;
+    }
+    lang::MirBlock *success = symbolBody.findBlock(block.terminator.target);
+    lang::MirBlock *error = symbolBody.findBlock(block.terminator.elseTarget);
+    if (success == nullptr || error == nullptr) {
+      continue;
+    }
+    const auto findExtraction = [](lang::MirBlock &candidate,
+                                   lang::IntrinsicKind intrinsic) {
+      const auto found = std::find_if(
+          candidate.instructions.begin(), candidate.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.intrinsic == intrinsic &&
+                   instruction.localFailureSites.empty();
+          });
+      return found == candidate.instructions.end() ? nullptr : &*found;
+    };
+    successExtraction =
+        findExtraction(*success, lang::IntrinsicKind::ExpectedValue);
+    errorExtraction =
+        findExtraction(*error, lang::IntrinsicKind::ExpectedError);
+    if (successExtraction != nullptr && errorExtraction != nullptr) {
+      break;
+    }
+  }
+  const lang::MirPlace *provenPlace =
+      successExtraction != nullptr && successExtraction->receiver
+          ? symbolBody.findPlace(successExtraction->receiver->place)
+          : nullptr;
+  const auto alternate =
+      provenPlace == nullptr
+          ? symbolBody.places.end()
+          : std::find_if(symbolBody.places.begin(), symbolBody.places.end(),
+                         [&](const lang::MirPlace &place) {
+                           return place.root ==
+                                      lang::MirPlaceRootKind::Symbol &&
+                                  place.type == provenPlace->type &&
+                                  place.symbol != provenPlace->symbol;
+                         });
+  expect(successExtraction != nullptr && errorExtraction != nullptr &&
+             provenPlace != nullptr && alternate != symbolBody.places.end(),
+         "the global propagation fixture should retain two distinct symbol "
+         "carriers and both zero-site extractions");
+  if (successExtraction != nullptr && errorExtraction != nullptr &&
+      provenPlace != nullptr && alternate != symbolBody.places.end()) {
+    successExtraction->receiver->place = alternate->id;
+    const lang::CppMirBodyEmitter distinctSymbolEmitter(distinctSymbols, map);
+    expect(!distinctSymbolEmitter.supportsFailureBodyText(globalAddress),
+           "a has-value proof for one symbol must not admit extraction from "
+           "a distinct symbol-root Expected carrier");
+
+    lang::MirProgram distinctErrorSymbols = frontend.mir;
+    auto &errorFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        distinctErrorSymbols.functionInstances());
+    lang::MirBody &errorBody = errorFunctions.at(globalForward->id - 1).body;
+    lang::MirInstruction *forgedError =
+        findMutableInstruction(errorBody, errorExtraction->id);
+    expect(forgedError != nullptr && forgedError->receiver,
+           "the copied global propagation body should retain ExpectedError");
+    if (forgedError != nullptr && forgedError->receiver) {
+      forgedError->receiver->place = alternate->id;
+      const lang::CppMirBodyEmitter distinctErrorEmitter(distinctErrorSymbols,
+                                                         map);
+      expect(!distinctErrorEmitter.supportsFailureBodyText(globalAddress),
+             "a has-value proof for one symbol must not admit ExpectedError "
+             "from a distinct symbol-root carrier");
+    }
   }
 }
 
