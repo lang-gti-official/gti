@@ -743,15 +743,24 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  # Sharded: the binary runs 69 independent tests whose serial time under
-  # sanitizers (~14 minutes) was the CI wall-time long pole. Four interleaved
-  # shards keep every test running exactly once while ctest --parallel packs
-  # them onto idle cores. `gti_cpp_mir_body_emitter_tests` with no arguments
-  # still runs everything for local use.
-  foreach(shard RANGE 1 4)
-    add_test(NAME cpp_mir_body_emitter_${shard}of4
-             COMMAND gti_cpp_mir_body_emitter_tests --shard ${shard}/4)
-  endforeach()
+  # The binary owns 67 lightweight tests and two aggregate corpus sweeps. Four
+  # interleaved shards keep every lightweight test running exactly once. The
+  # Python coordinator below reserves four CTest processors, runs both corpus
+  # sweeps once per exact census source, and re-aggregates the original
+  # whole-corpus assertions without one indivisible sanitizer test. Invoking
+  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 69 tests.
+  if(Python3_Interpreter_FOUND)
+    foreach(shard RANGE 1 4)
+      add_test(NAME cpp_mir_body_emitter_${shard}of4
+               COMMAND gti_cpp_mir_body_emitter_tests --shard ${shard}/4)
+    endforeach()
+  else()
+    # Fail closed when the corpus coordinator cannot run: the no-argument
+    # binary executes all 69 tests, including both aggregate corpus sweeps.
+    add_test(NAME cpp_mir_body_emitter
+             COMMAND gti_cpp_mir_body_emitter_tests)
+    set_tests_properties(cpp_mir_body_emitter PROPERTIES PROCESSORS 4)
+  endif()
 
   add_executable(
     "gti_cpp_mir_representation_snapshot_tests"
@@ -871,6 +880,22 @@ if(BUILD_TESTING)
   )
 
   if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME cpp_mir_body_emitter_corpus
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
+              "$<TARGET_FILE:gti_cpp_mir_body_emitter_tests>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
+              --jobs=4
+    )
+    set_tests_properties(cpp_mir_body_emitter_corpus PROPERTIES PROCESSORS 4)
+    add_test(
+      NAME cpp_mir_body_emitter_corpus_protocol
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_coordinator_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
+    )
     add_test(
       NAME backend_lowered_program_boundary
       COMMAND "${Python3_EXECUTABLE}"
