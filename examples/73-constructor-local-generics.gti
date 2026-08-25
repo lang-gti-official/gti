@@ -1,0 +1,26 @@
+#include <std/string>
+
+class Capture {
+  int tag;
+
+public:
+  // T belongs to this constructor and is inferred from the written argument.
+  Capture<T>(T value, int tag) : tag(tag) {}
+
+  int read() { return this.tag; }
+};
+
+int main() {
+  Capture integer = Capture(42, 1);
+  Capture boolean = Capture(true, 2);
+
+  mut std::string source = std::string("hello");
+  std::string copy = std::string(source.begin(), source.end());
+  source.push_back('!');
+
+  if (integer.read() != 1 or boolean.read() != 2 or copy != "hello" or
+      source != "hello!") {
+    return 1;
+  }
+  return 0;
+}

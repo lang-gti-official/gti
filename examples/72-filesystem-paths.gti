@@ -1,0 +1,12 @@
+#include <std/filesystem>
+#include <std/string>
+
+int main() {
+  mut std::filesystem::path path = std::filesystem::path();
+  path.assign("/hello/world.txt");
+
+  // string() creates an owned std::string. Output functions may consume that
+  // fresh result directly without an intermediate local.
+  std::println(path.string());
+  return 0;
+}

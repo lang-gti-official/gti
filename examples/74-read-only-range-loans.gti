@@ -1,0 +1,18 @@
+#include <std/vector>
+
+int main() {
+  int fixed[3] = {1, 2, 3};
+  mut int total = 0;
+
+  // auto& is a read-only element loan whose lifetime is one iteration.
+  for (auto& value : fixed) {
+    total += value;
+  }
+
+  // An owned temporary range is kept alive once for the complete loop.
+  for (auto& value : std::vector<int>({4, 5, 6})) {
+    total += value;
+  }
+
+  return total == 21 ? 0 : 1;
+}
