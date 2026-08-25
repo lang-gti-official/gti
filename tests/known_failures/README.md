@@ -56,7 +56,9 @@ the repository root litters the tree.
 no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 (it sees an ordinary non-zero exit). Compile one and read the diagnostic.
 
-There are currently no quarantined wrongly rejected programs.
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `rejected/issue-119-concept-unspaced-equals.gti` | [#119](https://github.com/LukeHHA/gti/issues/119) | `concept c<T>= …` does not parse — `>=` is lexed greedily where `>>` in a nested generic close is handled |
 
 ## Confirmed root causes
 
