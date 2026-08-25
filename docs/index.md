@@ -115,6 +115,9 @@ description of the implementation.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
+- [Native bindings import](plans/native-bindings-import.md) — the
+  `gti bindgen` foundation: bounded C17 header import into GTI declarations,
+  its four-phase architecture, and the C++/build-integration growth seams
 - [Mutable field groups](plans/mutable-field-groups.md) — records the bounded
   `mut { ... }` shorthand for consecutive mutable class and struct fields while
   preserving immutable defaults and existing receiver/write rules
