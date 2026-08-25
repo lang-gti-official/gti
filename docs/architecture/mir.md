@@ -83,16 +83,16 @@ rejects represented synchronization in the single-threaded profile. Thus an
 unused `<std/thread>` import remains valid without granting a backend or
 transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v48`/`mir-body-v44`.
-Program v48 and body v44 serialize the exact designated stored-reference field
-on a by-value carrier's `Stored` entry loan. Verification binds that field to
-the unprojected formal-parameter source and uses it to prove the exact runtime
-referent or returned carrier transfer without backend reconstruction. Program
-v48 and body v44 also add the explicit early-exit full-expression marker role
-used by expected propagation. Each propagation failure edge retains a
+The deterministic serialization is currently `mir-v49`/`mir-body-v45`.
+Program v49 and body v45 add the explicit early-exit full-expression marker
+role used by expected propagation. Each propagation failure edge retains a
 path-exclusive boundary alongside the one ordinary continuation boundary, so
 verification can prove exact temporary and lexical cleanup without reopening
-HIR. Program v47 and body v43 exposed the lowering-owned dormant trusted-wrapper
+HIR. Program v48 and body v44 serialize the exact designated stored-reference
+field on a by-value carrier's `Stored` entry loan. Verification binds that
+field to the unprojected formal-parameter source and uses it to prove the exact
+runtime referent or returned carrier transfer without backend reconstruction.
+Program v47 and body v43 exposed the lowering-owned dormant trusted-wrapper
 marker on every body header. Program v46 added the ordered managed-thread
 task-adapter inventory. Each row
 binds one exact task type and once-invocation contract to its HIR spawn value,
