@@ -258,6 +258,92 @@ public:
 """
 
 
+def lifecycle_placement_shapes() -> list[Shape]:
+    """Type kind crossed with where the value is placed.
+
+    #120 lived at the intersection of two axes that had each been swept
+    alone: a generic with a destructor (type kind) used as a type argument
+    (placement). Neither axis reaches it by itself, so the product is
+    enumerated rather than sampled.
+
+    Two facts these cells pin down, both easy to get wrong when checking a
+    fix:
+
+      * an *empty* destructor is treated as trivial by the array path, so
+        `~subject() {}` compiles in an array while a destructor with a body
+        does not (#117 item 5);
+      * the type-argument path disagrees — it fails even with an empty
+        destructor (#120).
+    """
+    def build(decls: str, body: str) -> str:
+        return decls + "\n" + body
+
+    plain_dtor = ("class subject {\n"
+                  "public:\n"
+                  "  subject() {}\n"
+                  "  ~subject() {}\n"
+                  "  mut int32_t v = 1;\n"
+                  "};\n")
+    generic_dtor = ("class subject<std::default_initializable T> {\n"
+                    "public:\n"
+                    "  subject() {}\n"
+                    "  ~subject() {}\n"
+                    "  mut T v = T();\n"
+                    "};\n")
+    wrapper = ("class wrapper<std::default_initializable T> {\n"
+               "public:\n"
+               "  wrapper() {}\n"
+               "  mut T v = T();\n"
+               "};\n")
+    speaking_dtor = ("mut int32_t witness = 0;\n"
+                     "class subject {\n"
+                     "public:\n"
+                     "  subject() {}\n"
+                     "  ~subject() { witness = witness + 1; }\n"
+                     "  mut int32_t v = 1;\n"
+                     "};\n")
+
+    return [
+        Shape("lifecycle", "plain dtor in array (empty)", "", "", "raw",
+              body=build(plain_dtor,
+                         "int main() {\n  mut subject a[2] = {};\n"
+                         "  return 0;\n}")),
+        # #117 item 5: the same array fails once the destructor does anything.
+        Shape("lifecycle", "plain dtor in array (body)", "", "", "raw",
+              body=build(speaking_dtor,
+                         "int main() {\n  mut subject a[2] = {};\n"
+                         "  return int(witness) - int(witness);\n}")),
+        # #120: the type-argument path fails even with an empty destructor.
+        Shape("lifecycle", "generic dtor as type argument", "", "", "raw",
+              body=build(generic_dtor + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject<int32_t>> w =\n"
+                         "      wrapper<subject<int32_t>>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "generic no dtor as type argument", "", "", "raw",
+              body=build(("class subject<std::default_initializable T> {\n"
+                          "public:\n"
+                          "  subject() {}\n"
+                          "  mut T v = T();\n"
+                          "};\n") + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject<int32_t>> w =\n"
+                         "      wrapper<subject<int32_t>>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "plain dtor as type argument", "", "", "raw",
+              body=build(plain_dtor + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject> w = wrapper<subject>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "generic dtor returned", "", "", "raw",
+              body=build(generic_dtor,
+                         "subject<int32_t> make() { return subject<int32_t>(); }\n"
+                         "int main() {\n"
+                         "  mut subject<int32_t> s = make();\n"
+                         "  return 0;\n}")),
+    ]
+
+
 def constexpr_limit_shapes() -> list[Shape]:
     """Programs that exceed the bounded constexpr evaluator's limits.
 
@@ -762,7 +848,8 @@ def main() -> int:
                          + enum_shapes() + generic_shapes()
                          + inheritance_shapes() + static_shapes()
                          + language_surface_shapes() + declaration_shapes()
-                         + constexpr_limit_shapes())
+                         + constexpr_limit_shapes()
+                         + lifecycle_placement_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
