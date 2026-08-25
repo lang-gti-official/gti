@@ -46,7 +46,10 @@ fact. The direct option is
 `[profiles.<name>]` tables use the optional `execution-profile` string and the
 CLI may override it. The default is single-threaded. This is C-GLOBAL-01
 language-policy selection, not a native thread flag or a public runtime
-capability.
+capability. The driver-owned immutable analysis configuration separately
+selects the safe `None` or installed `Hosted` runtime profile; the latter
+derives thread support only for a supported target and is shared by CLI and
+LSP adapters.
 
 Manifest schema version 1 also accepts `[workspace].members`, optional
 `[package].source-root`, and source-only `[dependencies]` path tables.
@@ -1311,8 +1314,10 @@ the release workflow already produces artifacts. Filesystem tests must avoid
 assuming case sensitivity, POSIX separators, executable suffixes, or symlink
 behavior without an explicit platform branch.
 
-The LSP should initially discover a project only to obtain source roots, target
-information, and configuration. It must retain immutable document overlays and
+The LSP now shares the driver-owned execution/runtime analysis configuration
+and default-manifest profile resolution. It should extend project discovery
+only to obtain source roots, target information, and richer configuration. It
+must retain immutable document overlays and
 must not fetch dependencies, invoke build hooks, clean outputs, or mutate a
 lockfile as a side effect of opening an editor.
 

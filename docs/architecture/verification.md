@@ -62,7 +62,7 @@ assertions.
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
 | `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
-| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and a corpus sweep requiring every emitted body to use direct planned labels/gotos, remain coherent, and byte-match production text; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 69 tests) |
+| `cpp_mir_body_emitter_1of4`..`4of4` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and corpus sweeps requiring every emitted body to use direct planned labels/gotos, remain coherent, and byte-match production text; with Python, 67 lightweight tests are interleaved across four CTest entries while a four-processor coordinator runs both aggregate sweeps once per exact lowered-program census source, re-aggregates the same readiness floors, feature witnesses, determinism, and byte-match assertions, and fail-closed protocol tests reject malformed or mismatched worker evidence; without Python, CTest registers the no-argument binary so all 69 tests still run in-process rather than silently omitting the corpus sweeps |
 | `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
@@ -71,16 +71,23 @@ assertions.
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
-| `driver_pipeline` / `driver_library_boundary` | requests, artifacts, resources, native tools, driver archive |
+| `driver_pipeline` / `driver_library_boundary` | fail-closed target/runtime analysis configuration, requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
-| `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits, bounded-depth analysis/completion worker survival, default-project-profile thread analysis, public thread hover/definition/completion/tokens, and private capability filtering |
+| `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits, bounded-depth analysis/completion worker survival, default-project-profile and standalone-startup thread analysis, public thread hover/definition/completion/tokens, and private capability filtering |
 | `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, cancellation/supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
 | `benchmark_harness` | strict benchmark descriptors, path containment, correctness records, deterministic interleaving, and threshold-free smoke execution |
+
+The emitter corpus coordinator deliberately adds no shorter per-source timing
+threshold: every worker remains inside the unchanged 1500-second aggregate
+CTest boundary. A hung source is therefore identified only as an aggregate
+timeout rather than by a calibrated worker deadline. This residual
+observability risk avoids replacing the corrected topology with an
+unsubstantiated per-example timing gate.
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.

@@ -138,7 +138,7 @@ struct TargetInfo {
   TargetDataLayout dataLayout{};
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   struct RuntimeCapabilities {
-    bool threads = true;
+    bool threads = false;
 
     friend bool operator==(const RuntimeCapabilities &,
                            const RuntimeCapabilities &) = default;

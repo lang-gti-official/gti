@@ -193,6 +193,45 @@ std::vector<std::string> activeSanitizerArguments() {
   return arguments;
 }
 
+void testAnalysisConfigurationResolution() {
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  expect(!host.runtimeCapabilities.threads,
+         "raw target values should default to no runtime capabilities");
+
+  const lang::driver::AnalysisConfiguration safeDefault(host);
+  expect(safeDefault.target().executionProfile ==
+                 lang::ExecutionProfile::SingleThreaded &&
+             !safeDefault.target().runtimeCapabilities.threads &&
+             safeDefault.runtimeProfile() == lang::driver::RuntimeProfile::None,
+         "analysis configuration should fail closed without an explicit "
+         "runtime profile");
+
+  const lang::driver::AnalysisConfiguration unavailableConcurrent(
+      host, lang::ExecutionProfile::Concurrent);
+  expect(unavailableConcurrent.target().executionProfile ==
+                 lang::ExecutionProfile::Concurrent &&
+             !unavailableConcurrent.target().runtimeCapabilities.threads,
+         "a concurrent execution profile must not synthesize runtime thread "
+         "support");
+
+  const lang::driver::AnalysisConfiguration hostedConcurrent(
+      host, lang::ExecutionProfile::Concurrent,
+      lang::driver::RuntimeProfile::Hosted, {"ZETA", "ALPHA", "ZETA"});
+  expect(hostedConcurrent.target().runtimeCapabilities.threads &&
+             hostedConcurrent.configurationFlags() ==
+                 lang::ConfigurationFlags({"ALPHA", "ZETA"}),
+         "the supported hosted runtime profile should derive threads and "
+         "normalize frontend flags once");
+
+  const lang::driver::AnalysisConfiguration unsupportedHosted(
+      lang::TargetInfo{
+          .os = "unsupported", .vendor = "unknown", .arch = "x86_64"},
+      lang::ExecutionProfile::Concurrent, lang::driver::RuntimeProfile::Hosted);
+  expect(!unsupportedHosted.target().runtimeCapabilities.threads,
+         "the hosted runtime profile must not advertise threads for an "
+         "unsupported target");
+}
+
 void testCompilationRequestAndTargetPropagation() {
   TemporaryDirectory temporary;
   const std::filesystem::path prelude = temporary.root() / "prelude.gti";
@@ -1774,6 +1813,7 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
+  testAnalysisConfigurationResolution();
   testCompilationRequestAndTargetPropagation();
   testBackendExceptionBoundary();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
