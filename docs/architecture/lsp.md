@@ -53,6 +53,9 @@ LSP `macro` classification. Other unresolved identifiers in inactive branches
 receive lexical variable classification only, so an inactive branch can fade
 without being semantically analysed or fabricating hover/definition results.
 Clients that do not consume semantic-token modifiers remain unaffected.
+The Neovim integration links GTI's language-specific macro token to the
+client's generic `@lsp.type.macro` group, matching other LSP languages and
+leaving the selected colorscheme in control of its color.
 
 The `sizeof` and `alignof` reserved words use the compiler's operator token
 classification, while invalid operands publish the shared `GTI-S2063`
