@@ -1,0 +1,7 @@
+.next/
+.cache/
+out/
+node_modules/
+src/generated/
+coverage/
+*.tsbuildinfo

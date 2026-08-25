@@ -1,4 +1,5 @@
 #include "gti/ast_printer.h"
+#include "gti/documentation.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
@@ -108,6 +109,13 @@ int main() {
     return 6;
   }
 
+  const std::string documentation =
+      lang::serializeDocumentationIndexJson(lang::DocumentationIndex{});
+  if (documentation.find("\"schema\": \"gti.documentation-index\"") ==
+      std::string::npos) {
+    return 7;
+  }
+
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("installed-optimizer-smoke.gti", R"(
 int choose() {
@@ -122,7 +130,7 @@ int main() {
 }
 )");
   if (!frontend.canGenerateCode()) {
-    return 7;
+    return 8;
   }
   const lang::OptimizedProgram optimized =
       lang::OptimizationPipeline().run({.hir = frontend.hir,
@@ -135,7 +143,7 @@ int main() {
       report.find("\"schema\":\"gti-optimization-report\"") ==
           std::string::npos ||
       analyses.revision({}) != 0) {
-    return 8;
+    return 9;
   }
 
   return 0;
