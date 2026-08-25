@@ -258,6 +258,266 @@ public:
 """
 
 
+def dispatch_shapes() -> list[Shape]:
+    """Direct versus dispatched calls of an override method.
+
+    #121's inversion: the virtual dispatch through a base or interface
+    reference works, and the *direct* call of the same override on the
+    concrete object does not. A non-override method on the same class is
+    fine, so the trigger is the override flag on the callee, not the class.
+
+    The array cell records a side observation from the same sweep: inheriting
+    from an interface makes a type cleanup-owning by itself, so an array of
+    implementors hits the #117 item 5 gate even with no destructor declared.
+    """
+    iface = ("interface Shape {\n"
+             "  int32_t value();\n"
+             "};\n"
+             "\n"
+             "class square : public Shape {\n"
+             "public:\n"
+             "  square() {}\n"
+             "  int32_t value() override { return 7; }\n"
+             "  int32_t plain() { return 7; }\n"
+             "};\n")
+    return [
+        # #121 itself.
+        Shape("dispatch", "direct override call", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  return int(s.value()) - 7;\n"
+                           "}"),
+        # The passing control: identical object, dispatched call.
+        Shape("dispatch", "via interface reference", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  mut Shape& bound = s;\n"
+                           "  return int(bound.value()) - 7;\n"
+                           "}"),
+        # The other control: a non-override method called directly is fine.
+        Shape("dispatch", "direct non-override call", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  return int(s.plain()) - 7;\n"
+                           "}"),
+        # Side observation: interface inheritance alone makes the array path
+        # treat the type as cleanup-owning.
+        Shape("dispatch", "array of implementors", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square a[2] = {};\n"
+                           "  return 0;\n"
+                           "}"),
+    ]
+
+
+def lifecycle_placement_shapes() -> list[Shape]:
+    """Type kind crossed with where the value is placed.
+
+    #120 lived at the intersection of two axes that had each been swept
+    alone: a generic with a destructor (type kind) used as a type argument
+    (placement). Neither axis reaches it by itself, so the product is
+    enumerated rather than sampled.
+
+    Two facts these cells pin down, both easy to get wrong when checking a
+    fix:
+
+      * an *empty* destructor is treated as trivial by the array path, so
+        `~subject() {}` compiles in an array while a destructor with a body
+        does not (#117 item 5);
+      * the type-argument path disagrees — it fails even with an empty
+        destructor (#120).
+    """
+    def build(decls: str, body: str) -> str:
+        return decls + "\n" + body
+
+    plain_dtor = ("class subject {\n"
+                  "public:\n"
+                  "  subject() {}\n"
+                  "  ~subject() {}\n"
+                  "  mut int32_t v = 1;\n"
+                  "};\n")
+    generic_dtor = ("class subject<std::default_initializable T> {\n"
+                    "public:\n"
+                    "  subject() {}\n"
+                    "  ~subject() {}\n"
+                    "  mut T v = T();\n"
+                    "};\n")
+    wrapper = ("class wrapper<std::default_initializable T> {\n"
+               "public:\n"
+               "  wrapper() {}\n"
+               "  mut T v = T();\n"
+               "};\n")
+    speaking_dtor = ("mut int32_t witness = 0;\n"
+                     "class subject {\n"
+                     "public:\n"
+                     "  subject() {}\n"
+                     "  ~subject() { witness = witness + 1; }\n"
+                     "  mut int32_t v = 1;\n"
+                     "};\n")
+
+    return [
+        Shape("lifecycle", "plain dtor in array (empty)", "", "", "raw",
+              body=build(plain_dtor,
+                         "int main() {\n  mut subject a[2] = {};\n"
+                         "  return 0;\n}")),
+        # #117 item 5: the same array fails once the destructor does anything.
+        Shape("lifecycle", "plain dtor in array (body)", "", "", "raw",
+              body=build(speaking_dtor,
+                         "int main() {\n  mut subject a[2] = {};\n"
+                         "  return int(witness) - int(witness);\n}")),
+        # #120: the type-argument path fails even with an empty destructor.
+        Shape("lifecycle", "generic dtor as type argument", "", "", "raw",
+              body=build(generic_dtor + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject<int32_t>> w =\n"
+                         "      wrapper<subject<int32_t>>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "generic no dtor as type argument", "", "", "raw",
+              body=build(("class subject<std::default_initializable T> {\n"
+                          "public:\n"
+                          "  subject() {}\n"
+                          "  mut T v = T();\n"
+                          "};\n") + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject<int32_t>> w =\n"
+                         "      wrapper<subject<int32_t>>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "plain dtor as type argument", "", "", "raw",
+              body=build(plain_dtor + wrapper,
+                         "int main() {\n"
+                         "  mut wrapper<subject> w = wrapper<subject>();\n"
+                         "  return 0;\n}")),
+        Shape("lifecycle", "generic dtor returned", "", "", "raw",
+              body=build(generic_dtor,
+                         "subject<int32_t> make() { return subject<int32_t>(); }\n"
+                         "int main() {\n"
+                         "  mut subject<int32_t> s = make();\n"
+                         "  return 0;\n}")),
+    ]
+
+
+def constexpr_limit_shapes() -> list[Shape]:
+    """Programs that exceed the bounded constexpr evaluator's limits.
+
+    `docs/language/grammar.ebnf` gives the evaluator "one 4096-step budget and
+    a 64-call-depth limit". Both currently report `GTI-S2057` cleanly, and the
+    depth boundary is exactly where documented — 63 nested calls evaluate, 64
+    do not. These are `error` cells rather than `ok` ones, and that is the
+    point: a limit that starts reporting `ICE`, or that stops firing and hangs
+    instead, changes the cell.
+    """
+    recurse = ("constexpr int32_t deep(int32_t n) {{\n"
+               "  if (n <= 0) {{\n"
+               "    return 0;\n"
+               "  }}\n"
+               "  return deep(n - 1) + 1;\n"
+               "}}\n"
+               "static constexpr int32_t value = deep({n});\n"
+               "int main() {{ return int(value) - int(value); }}")
+    return [
+        Shape("constexpr", "depth 63 (under)", "", "", "raw",
+              body=recurse.format(n=63)),
+        Shape("constexpr", "depth 64 (over)", "", "", "raw",
+              body=recurse.format(n=64)),
+        Shape("constexpr", "step budget", "", "", "raw",
+              body=("constexpr int32_t spin(int32_t n) {\n"
+                    "  mut int32_t total = 0;\n"
+                    "  for (mut int32_t i = 0; i < n; i++) {\n"
+                    "    total = total + 1;\n"
+                    "  }\n"
+                    "  return total;\n"
+                    "}\n"
+                    "static constexpr int32_t value = spin(1000);\n"
+                    "int main() { return int(value) - int(value); }")),
+    ]
+
+
+def declaration_shapes() -> list[Shape]:
+    """Declarations that are never used.
+
+    Every other cell in this file uses what it declares, which is why #116
+    survived: the defect is in the *absence* of a use. A generic class that
+    declares a destructor and is never instantiated cannot be compiled, while
+    the same class instantiated once is fine.
+    """
+    return [
+        # #116, reduced from three stdlib headers to eight lines.
+        Shape("declaration", "generic dtor unused", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        # The controls that isolate it: each ingredient alone is fine.
+        Shape("declaration", "generic dtor used", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  mut boxed<int32_t> used = boxed<int32_t>();\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("declaration", "generic no dtor", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "plain dtor unused", "", "", "raw",
+              body=("class boxed {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        # #116's boundary. Each of these is an uninstantiated declaration and
+        # each compiles, so the defect is narrower than "unused declarations
+        # break": it needs a generic class with a destructor and no reference
+        # anywhere. A fix must keep all of these passing.
+        Shape("declaration", "generic operator unused", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  bool operator==(boxed<T>& other) { return true; }\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "interface unimplemented", "", "", "raw",
+              body=("interface Shape {\n"
+                    "  int32_t value();\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "payload enum unused", "", "", "raw",
+              body=("enum class shape { circle(int32_t r), square };\n"
+                    "int main() { return 0; }")),
+        # Naming the generic in a signature counts as instantiation, even
+        # though the function is never called.
+        Shape("declaration", "generic in unused signature", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int32_t never_called(boxed<int32_t>& held) { return 1; }\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "unused function", "", "", "raw",
+              body=("int32_t never_called(int32_t x) { return x + 1; }\n"
+                    "T identity<T>(T x) { return x; }\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "unreachable statement", "", "", "raw",
+              body=("int32_t pick() {\n"
+                    "  return 7;\n"
+                    "  return 9;\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  mut int32_t unused_local = 11;\n"
+                    "  return int(pick()) - 7;\n"
+                    "}")),
+    ]
+
+
 def language_surface_shapes() -> list[Shape]:
     """Constructs with no place-projection angle, kept as controls.
 
@@ -639,7 +899,10 @@ def main() -> int:
                          + pointer_shapes() + nested_capture_shapes()
                          + enum_shapes() + generic_shapes()
                          + inheritance_shapes() + static_shapes()
-                         + language_surface_shapes())
+                         + language_surface_shapes() + declaration_shapes()
+                         + constexpr_limit_shapes()
+                         + lifecycle_placement_shapes()
+                         + dispatch_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:

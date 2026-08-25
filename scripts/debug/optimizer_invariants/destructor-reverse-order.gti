@@ -1,0 +1,24 @@
+// expected exit status: 7
+// Destruction runs in reverse order of construction. Each destructor appends
+// its id to a decimal trace, so three markers built 1,2,3 must destroy 3,2,1
+// and leave 321.
+mut int32_t trace = 0;
+
+class marker {
+public:
+  marker(int32_t slot) : id(slot) {}
+  ~marker() {
+    trace = trace * 10 + this.id;
+  }
+
+  mut int32_t id;
+};
+
+int main() {
+  {
+    mut marker first = marker(1);
+    mut marker second = marker(2);
+    mut marker third = marker(3);
+  }
+  return int(trace) - 314;
+}

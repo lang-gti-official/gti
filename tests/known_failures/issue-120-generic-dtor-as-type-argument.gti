@@ -1,0 +1,17 @@
+class cell<std::default_initializable T> {
+public:
+  cell() {}
+  ~cell() {}
+  mut T v = T();
+};
+
+class box<std::default_initializable T> {
+public:
+  box() {}
+  mut T v = T();
+};
+
+int main() {
+  mut box<cell<int32_t>> nested = box<cell<int32_t>>();
+  return int(nested.v.v);
+}
