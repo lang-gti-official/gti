@@ -2,8 +2,8 @@
   "schema": 2,
   "name": "managed-thread-parallelism",
   "description": "Four deterministic Mandelbrot partitions run sequentially or through managed jthreads",
-  "work_units": 700000,
-  "minimum_sample_seconds": 0.04,
+  "work_units": 2800000,
+  "minimum_sample_seconds": 0.10,
   "variants": [
     {
       "name": "gti-sequential",

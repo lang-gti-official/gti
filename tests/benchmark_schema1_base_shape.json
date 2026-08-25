@@ -1,0 +1,30 @@
+{
+  "base_commit": "90b32f0ffec221e7e357ac1748592e2fe598e807",
+  "base_runner_sha256": "55c11eeb1f89beec5160233f6050313262b30730a709e6c8a3dfe72d946ef6aa",
+  "generation": {
+    "method": "executed-local-git-object",
+    "materialization": "git clone --no-hardlinks <local-repository> <temporary-repository>; git -C <temporary-repository> checkout 90b32f0ffec221e7e357ac1748592e2fe598e807",
+    "environment": "GTI_STDLIB_PATH, GTI_RUNTIME_INCLUDE, GTI_RUNTIME_LIBRARY, and GTI_VENDOR_INCLUDE set to nonempty current-toolchain paths, matching the branch regression",
+    "runner_arguments": "--optimization 3 --cpp-standard c++23 --warmup 7 --runs 5 --seed 29 --timeout 120 --workload vector-checked-loop --smoke",
+    "normalization_validation": "the normalized digest was confirmed against immutable-parent reports from both a clean local clone with Git metadata and a Git-unavailable source archive",
+    "normalization": {
+      "structure": "recursive JSON paths with array indices replaced by [*]; keys, arrays, and objects remain exact",
+      "scalars": "non-nullable values retain their observed JSON scalar type; known optional fields use the declared union below after validating the observed value belongs to it",
+      "nullable_scalar_types": {
+        "$.environment.cpu_model": "string|null",
+        "$.environment.gti_toolchain_overrides.GTI_RUNTIME_INCLUDE": "string|null",
+        "$.environment.gti_toolchain_overrides.GTI_RUNTIME_LIBRARY": "string|null",
+        "$.environment.gti_toolchain_overrides.GTI_STDLIB_PATH": "string|null",
+        "$.environment.gti_toolchain_overrides.GTI_VENDOR_INCLUDE": "string|null",
+        "$.environment.logical_cpu_count": "number|null",
+        "$.repository.commit": "string|null",
+        "$.repository.dirty": "boolean|null",
+        "$.repository.reason": "string|null",
+        "$.repository.root": "string|null"
+      }
+    },
+    "workload": "vector-checked-loop"
+  },
+  "structural_path_count": 142,
+  "structural_paths_sha256": "26acd2277b4f7ce23cb3eec09fe95afa46531cf574986b8a4e9a216006bad196"
+}

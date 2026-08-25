@@ -193,6 +193,11 @@ bool isReservedNativeBuildArgument(std::string_view argument) {
          (lower.starts_with("/fo") && !isMsvcForceLinkerArgument(lower)) ||
          lower.starts_with("/out:") || argument == "-c" || argument == "-E" ||
          argument == "-S" || argument == "-M" || argument == "-MM" ||
+         argument == "-MD" || argument == "-MMD" || argument == "-MF" ||
+         argument.starts_with("-MF") || argument == "-MT" ||
+         argument.starts_with("-MT") || argument == "-MQ" ||
+         argument.starts_with("-MQ") || argument == "-MP" ||
+         argument == "-MJ" || argument.starts_with("-MJ") ||
          argument == "-fsyntax-only" || argument == "--precompile" ||
          argument == "-emit-llvm" || argument == "-emit-ast" ||
          argument == "-analyze" || argument == "--analyze" ||
@@ -323,11 +328,13 @@ std::string_view cStandardName(CStandard standard) {
 NativeCompileRequest::NativeCompileRequest(
     std::string compiler, std::filesystem::path generatedSource,
     std::filesystem::path output, CppStandard standard,
-    OptimizationLevel optimization, NativeInputs inputs)
+    OptimizationLevel optimization, NativeInputs inputs,
+    std::optional<std::filesystem::path> dependencyFile)
     : compilerExecutable(std::move(compiler)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)), cppStandard(standard),
-      optimizationLevel(optimization), nativeInputs(std::move(inputs)) {}
+      optimizationLevel(optimization), nativeInputs(std::move(inputs)),
+      nativeDependencyFile(std::move(dependencyFile)) {}
 
 const std::string &NativeCompileRequest::compiler() const {
   return compilerExecutable;
@@ -349,6 +356,11 @@ OptimizationLevel NativeCompileRequest::optimization() const {
 
 const NativeInputs &NativeCompileRequest::inputs() const {
   return nativeInputs;
+}
+
+const std::optional<std::filesystem::path> &
+NativeCompileRequest::dependencyFile() const {
+  return nativeDependencyFile;
 }
 
 NativeCCompileRequest::NativeCCompileRequest(
@@ -442,6 +454,11 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   }
   command.insert(command.end(), inputs.compilerArguments.begin(),
                  inputs.compilerArguments.end());
+  if (request.dependencyFile()) {
+    command.emplace_back("-MD");
+    command.emplace_back("-MF");
+    command.push_back(request.dependencyFile()->string());
+  }
   command.push_back(request.generatedSource().string());
   for (const std::filesystem::path &directory : inputs.libraryDirectories) {
     command.emplace_back("-L" + directory.string());

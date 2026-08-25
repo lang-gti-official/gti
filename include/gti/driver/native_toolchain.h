@@ -110,10 +110,11 @@ struct NativeInputs {
 
 class NativeCompileRequest final {
 public:
-  NativeCompileRequest(std::string compiler,
-                       std::filesystem::path generatedSource,
-                       std::filesystem::path output, CppStandard standard,
-                       OptimizationLevel optimization, NativeInputs inputs);
+  NativeCompileRequest(
+      std::string compiler, std::filesystem::path generatedSource,
+      std::filesystem::path output, CppStandard standard,
+      OptimizationLevel optimization, NativeInputs inputs,
+      std::optional<std::filesystem::path> dependencyFile = std::nullopt);
 
   [[nodiscard]] const std::string &compiler() const;
   [[nodiscard]] const std::filesystem::path &generatedSource() const;
@@ -121,6 +122,8 @@ public:
   [[nodiscard]] CppStandard standard() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] const NativeInputs &inputs() const;
+  [[nodiscard]] const std::optional<std::filesystem::path> &
+  dependencyFile() const;
 
 private:
   std::string compilerExecutable;
@@ -129,6 +132,7 @@ private:
   CppStandard cppStandard;
   OptimizationLevel optimizationLevel;
   NativeInputs nativeInputs;
+  std::optional<std::filesystem::path> nativeDependencyFile;
 };
 
 class NativeCCompileRequest final {

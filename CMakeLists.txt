@@ -10,6 +10,22 @@ endif()
 
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
+find_program(GTI_GIT_EXECUTABLE git)
+set(GTI_BUILD_IDENTITY_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/build_identity_config.h")
+add_custom_target(
+  gti_build_identity_refresh
+  COMMAND
+    "${CMAKE_COMMAND}"
+    "-DGTI_BUILD_IDENTITY_OUTPUT=${GTI_BUILD_IDENTITY_HEADER}"
+    "-DGTI_SOURCE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DGTI_GIT_EXECUTABLE=${GTI_GIT_EXECUTABLE}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateBuildIdentity.cmake"
+  BYPRODUCTS "${GTI_BUILD_IDENTITY_HEADER}"
+  COMMENT "Refreshing compiler source identity"
+  VERBATIM
+)
+
 find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -368,11 +384,14 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_include_directories(
+  "gti_driver" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+target_include_directories(
   "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
 target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend)
-add_dependencies("gti_driver" "gti_runtime")
+add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
   PRIVATE

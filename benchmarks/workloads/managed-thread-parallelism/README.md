@@ -1,20 +1,21 @@
 # Managed-thread parallelism
 
-This workload compares the same 700,000-pixel Mandelbrot computation in two
-GTI binaries built at the same optimization level, C++ standard, native
+This workload compares the same 2,800,000-pixel-visit Mandelbrot computation
+in two GTI binaries built at the same optimization level, C++ standard, native
 compiler, and `concurrent` execution profile:
 
-- `gti-sequential` evaluates four interleaved 175-row partitions one after
-  another;
+- `gti-sequential` evaluates four interleaved 175-row partitions, four passes
+  each, one after another;
 - `gti-four-jthreads` starts four owned `std::jthread` tasks, then joins them.
 
 One work unit is one pixel whose escape count contributes to its partition
-checksum. Rows are distributed by `row % 4`, which keeps the two
-iteration-heavy center bands balanced across workers. Both variants validate
-the same four checked-in partition checksums and publish exactly:
+checksum in one of four complete passes. Rows are distributed by `row % 4`,
+which keeps the two iteration-heavy center bands balanced across workers. Both
+variants validate the same four checked-in repeated-partition checksums and
+publish exactly:
 
 ```text
-GTI-BENCH-1 digest:000000025efeed0b work-units:700000
+GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
 ```
 
 The first managed-thread slice has no shared mutable state and no task-result
@@ -23,6 +24,12 @@ A mismatch raises a defined failure inside that worker, and `join()` re-raises
 it in the parent. The parent adds a partition checksum to the published digest
 only after that worker joins successfully. This keeps the benchmark in safe
 GTI and prevents a successful record from hiding missing or incorrect work.
+
+The descriptor declares a conservative `minimum_sample_seconds` of `0.10`.
+Work was increased by four complete deterministic passes; an exploratory run
+measured the fastest threaded variant at about 225 ms, leaving more than twice
+the declared floor. That exploratory timing only validates workload size and
+is not exact-head campaign evidence.
 
 The sequential variant is the report reference, so the threaded variant's
 `median_ratio_to_reference` is elapsed threaded time divided by elapsed
