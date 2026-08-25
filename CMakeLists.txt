@@ -379,6 +379,22 @@ target_compile_definitions(
     GTI_BUILD_VENDOR_INCLUDE_DIR="${GTI_BUILD_VENDOR_INCLUDE_DIR}"
 )
 
+add_library(
+  "gti_bindgen" STATIC
+  "src/bindgen/bindgen.cpp"
+  "src/bindgen/binding_planner.cpp"
+  "src/bindgen/c_reader.cpp"
+  "src/bindgen/gti_writer.cpp"
+  "src/bindgen/native_model.cpp"
+)
+target_include_directories(
+  "gti_bindgen"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_compile_features("gti_bindgen" PUBLIC cxx_std_20)
+
 add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
 target_include_directories(
   "gti_tree_sitter" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tree-sitter-gti/src"
@@ -395,7 +411,7 @@ set_target_properties(
 )
 
 add_executable("gti" "src/cli/main.cpp" "src/cli/project_presentation.cpp")
-target_link_libraries("gti" PRIVATE gti_driver)
+target_link_libraries("gti" PRIVATE gti_driver gti_bindgen)
 target_compile_definitions(
   "gti"
   PRIVATE
@@ -641,6 +657,10 @@ if(BUILD_TESTING)
   add_executable("gti_layout_query_tests" "tests/layout_query_tests.cpp")
   target_link_libraries("gti_layout_query_tests" PRIVATE gti_cpp_backend)
   add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
+
+  add_executable("gti_bindgen_tests" "tests/bindgen_tests.cpp")
+  target_link_libraries("gti_bindgen_tests" PRIVATE gti_bindgen gti_compiler)
+  add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
 
   add_executable("gti_native_record_tests" "tests/native_record_tests.cpp")
   target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)

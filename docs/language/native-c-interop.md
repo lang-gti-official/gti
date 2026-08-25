@@ -138,6 +138,21 @@ Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
 portable, available on every target, or linked into the executable.
 
+## Importing Existing C Headers
+
+`gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]` generates the
+GTI declarations for a C header's bounded-ABI-compatible surface: complete
+passive records become `[[c_abi]]` structs, incomplete or inexpressible
+records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
+enums become an `int32_t` alias plus `constexpr` constants, function-pointer
+typedefs become named callback aliases, and prototypes fill one `extern "C"`
+block. Everything the bounded surface cannot express is reported with its
+reason and listed in the generated file's skip report rather than silently
+dropped. The generated source has no special status: this language contract
+remains the sole ABI authority when it is compiled. The tool's architecture
+and growth phases are recorded in
+[the native-bindings-import plan](../plans/native-bindings-import.md).
+
 ## Native Callback Types
 
 A native callback type is named by a namespace-scope alias:

@@ -298,6 +298,14 @@ gti format init
 gti format init path/to/project
 ```
 
+Generate GTI bindings for an existing C header with `gti bindgen`; the
+bounded importable surface and the skip report are described in
+[docs/language/native-c-interop.md](docs/language/native-c-interop.md):
+
+```sh
+gti bindgen vendor/engine.h -o src/engine_bindings.gti --namespace engine
+```
+
 ## Neovim and LazyVim
 
 GTI is a standard Lazy plugin. It downloads the matching released compiler,
