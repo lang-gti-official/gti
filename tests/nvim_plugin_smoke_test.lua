@@ -420,6 +420,13 @@ local ok, problem = xpcall(function()
   if enum_member_hl.link ~= "@constant" then
     fail("GTI semantic enum-member highlighting was not linked")
   end
+  local macro_hl = vim.api.nvim_get_hl(0, {
+    name = "@lsp.type.macro.gti",
+    link = true,
+  })
+  if macro_hl.link ~= "@lsp.type.macro" then
+    fail("GTI semantic macro highlighting did not inherit the client theme")
+  end
   local function_scope_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.typemod.parameter.functionScope.gti",
     link = true,
