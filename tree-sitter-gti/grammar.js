@@ -1047,7 +1047,7 @@ module.exports = grammar({
         seq(
           field(
             "operator",
-            choice("!", "+", "-", "*", "&", "~", "++", "--"),
+            choice("!", "+", "-", "*", "&", "~", "++", "--", "?"),
           ),
           field(
             "argument",

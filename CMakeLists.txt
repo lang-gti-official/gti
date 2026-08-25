@@ -1054,6 +1054,12 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
     )
     add_test(
+      NAME expected_propagation_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/expected_propagation_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
       NAME returned_class_field_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/returned_class_field_runtime_test.py"
@@ -1333,7 +1339,8 @@ if(BUILD_TESTING)
         stdlib_include_sweep
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
         defined_integer_runtime_3of4 defined_integer_runtime_4of4
-        expected_wrong_state_runtime returned_class_field_runtime
+        expected_wrong_state_runtime expected_propagation_runtime
+        returned_class_field_runtime
         reference_parameter_range_runtime mutable_range_runtime
         evaluation_order_runtime optimizer_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle

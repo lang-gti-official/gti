@@ -1395,6 +1395,41 @@ public:
     (empty_declaration)))
 
 ==================
+Expected propagation expression
+==================
+
+expected<int, int> forward(expected<int, int> result) {
+  return ?result;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (expected_type
+        (type
+          (primitive_type))
+        (type
+          (primitive_type))))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (expected_type
+            (type
+              (primitive_type))
+            (type
+              (primitive_type))))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (unary_expression
+            (primary_expression
+              (identifier))))))))
+
+==================
 Static assertions in declaration and block scopes
 ==================
 

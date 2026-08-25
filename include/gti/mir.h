@@ -594,6 +594,11 @@ struct MirInstruction {
   std::optional<OwnershipEvent> ownership;
   std::vector<MirLifecycleEvent> lifecycle;
   HirFullExpressionId fullExpressionEnd = 0;
+  // A control-flow expression may end the same source full expression on a
+  // mutually exclusive early-return edge. The ordinary continuation retains
+  // the one primary boundary; every early endpoint is marked explicitly so
+  // verification can prove path separation and exact cleanup independently.
+  bool earlyExitFullExpressionEnd = false;
   std::size_t cleanupBoundaryEnd = 0;
 
   friend bool operator==(const MirInstruction &,

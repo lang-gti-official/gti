@@ -2420,14 +2420,29 @@ name recognition.
 
 ### L-ERR-01: Error Propagation Operator
 
-- **State/role:** ready; `M-LIFE-01`, `D-LANG-01`, and `D-EXEC-01` are done;
-  systems-readiness work for fallible pipelines.
+- **State/role:** complete in 0.311.0; `M-LIFE-01`, `D-LANG-01`, and
+  `D-EXEC-01` provide the cleanup and evaluation substrate.
 - **Scope:** Define one explicit propagation form over `expected`, including
   conversion prohibition, early-return cleanup, source spans, HIR/MIR control
   flow, formatter, Tree-sitter, and LSP behavior.
-- **Exit gate:** success and propagation paths preserve exact result/error
-  types, drop every live obligation once, retain source-facing spans through
-  HIR/MIR, and pass formatter/parser/LSP/runtime coverage.
+- **Implemented slice:** Prefix `?expr` evaluates one `expected<T, E>` once,
+  produces `T`/`void` on success, and returns `unexpected(E)` on failure only
+  from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
+  explicit `std::move` operands move. HIR retains the selected extraction and
+  transport plan; `mir-v48`/`mir-body-v44` carry explicit mutually exclusive
+  early full-expression endpoints, cleanup, and return control flow; C++20 and
+  C++23 spell the same verified behavior.
+- **Completion evidence:** Positive and negative compiler tests cover exact
+  types, invalid contexts, copy/move selection, lambdas, multiple ordered
+  propagations, formatter stability, MIR verification, and both backend
+  spellings. The runtime matrix covers scalar, `void`, owning temporary, named
+  move-only, named copyable, and move-only error alternatives at C++20/C++23
+  and O0/O3; Tree-sitter and LSP fixtures cover parsing, highlighting,
+  formatting, and the `GTI-S2086` source range.
+- **Exit gate (met):** success and propagation paths preserve exact
+  result/error types, drop every live obligation once, retain source-facing
+  spans through HIR/MIR, and pass formatter/parser/LSP/runtime plus full
+  repository validation.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
@@ -2892,7 +2907,7 @@ owned by the rows and domain plans above.
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
-| Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
+| Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
 | Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward-iterator, sentinel, and exact-dereference relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |

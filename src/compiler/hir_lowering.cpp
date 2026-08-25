@@ -1653,6 +1653,7 @@ private:
     case HirValueKind::NativeCallback:
     case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
+    case HirValueKind::ExpectedPropagation:
     case HirValueKind::Grouping:
     case HirValueKind::Lambda:
     case HirValueKind::Literal:
@@ -2893,12 +2894,121 @@ private:
                            classValueArguments, body);
   }
 
+  [[nodiscard]] std::optional<HirValueId> lowerExpectedPropagation(
+      const Unary &expression, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    const std::optional<HirValueId> operand = lowerExpression(
+        expression.right(), model, classArguments, classValueArguments, body);
+    const HirValue *operandValue = operand ? body.findValue(*operand) : nullptr;
+    const ExpressionInfo *resultInfo = model.findExpression(expression);
+    if (!operand || operandValue == nullptr || resultInfo == nullptr ||
+        operandValue->info.type.kind != SemanticType::Expected ||
+        operandValue->info.type.arguments.size() != 2) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+
+    const SemanticType expectedType = operandValue->info.type;
+    const SemanticType valueType = expectedType.arguments[0];
+    const SemanticType errorType = expectedType.arguments[1];
+    const bool moves = operandValue->info.category == ValueCategory::Value;
+    const AccessMode extractionAccess =
+        moves ? AccessMode::Mutable : AccessMode::ReadOnly;
+    const auto appendExtraction = [&](IntrinsicKind intrinsic,
+                                      const SemanticType &type) {
+      const HirValueId id = nextValueId++;
+      HirValue extraction{
+          .id = id,
+          .kind = HirValueKind::Call,
+          .info = {.type = type,
+                   .category = ValueCategory::Place,
+                   .access = extractionAccess,
+                   .traits = analyzer->traitsFor(type)},
+          .operands = {*operand},
+          .intrinsic = intrinsic,
+          .receiver = *operand,
+      };
+      body.values.push_back(std::move(extraction));
+      return id;
+    };
+
+    const auto appendTransport = [&](HirValueId extraction,
+                                     const SemanticType &type) {
+      if (!moves) {
+        return extraction;
+      }
+      const HirValueId id = nextValueId++;
+      body.values.push_back({.id = id,
+                             .kind = HirValueKind::Move,
+                             .info = {.type = type,
+                                      .category = ValueCategory::Value,
+                                      .access = AccessMode::ReadOnly,
+                                      .traits = analyzer->traitsFor(type)},
+                             .operands = {extraction},
+                             .intrinsic = IntrinsicKind::Move});
+      return id;
+    };
+
+    const HirValueId successExtraction =
+        appendExtraction(IntrinsicKind::ExpectedValue, valueType);
+    const HirValueId successValue =
+        valueType == SemanticType::Void
+            ? HirValueId{0}
+            : appendTransport(successExtraction, valueType);
+    const HirValueId errorExtraction =
+        appendExtraction(IntrinsicKind::ExpectedError, errorType);
+    const HirValueId errorValue = appendTransport(errorExtraction, errorType);
+
+    const SemanticType unexpectedType(SemanticType::Unexpected, {errorType});
+    const HirValueId unexpected = nextValueId++;
+    body.values.push_back(
+        {.id = unexpected,
+         .kind = HirValueKind::Unexpected,
+         .info = {.type = unexpectedType,
+                  .category = ValueCategory::Value,
+                  .access = AccessMode::ReadOnly,
+                  .traits = analyzer->traitsFor(unexpectedType)},
+         .operands = {errorValue}});
+
+    std::vector<HirValueId> operands{*operand, successExtraction};
+    if (successValue != 0) {
+      operands.push_back(successValue);
+    }
+    operands.push_back(errorExtraction);
+    operands.push_back(errorValue);
+    operands.push_back(unexpected);
+
+    const HirValueId id = nextValueId++;
+    body.values.push_back({.id = id,
+                           .kind = HirValueKind::ExpectedPropagation,
+                           .source = &expression,
+                           .info = *resultInfo,
+                           .operands = std::move(operands),
+                           .operation = TokenKind::QUESTION,
+                           .expectedPropagation = HirExpectedPropagationPlan{
+                               .operand = *operand,
+                               .successExtraction = successExtraction,
+                               .successValue = successValue,
+                               .errorExtraction = errorExtraction,
+                               .errorValue = errorValue,
+                               .unexpected = unexpected,
+                               .moves = moves}});
+    output.program.sourceValueIds[&expression].push_back(id);
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const Expr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const auto *unary = dynamic_cast<const Unary *>(&expression);
+        unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+      return lowerExpectedPropagation(*unary, model, classArguments,
+                                      classValueArguments, body);
+    }
     const Expr *raw = &expression;
     HirValueKind kind = HirValueKind::Literal;
     std::vector<HirValueId> operands;
