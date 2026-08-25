@@ -74,11 +74,27 @@ successfully constructed `LoweredProgram` is the backend frontier.
 `MirProgram` copies the selected execution profile from `HirProgram` as
 immutable program metadata. Body lowering and optimization do not rediscover
 it from host/backend flags. The current profile fact constrains frontend
-global/static validity. MIR verification also rejects represented
-synchronization operations in the single-threaded profile, so a backend or
-transform cannot introduce concurrent behavior after semantic checks.
+global/static validity. The MIR declaration inventory includes unused,
+non-generic standard-library method bodies. When one of those compiler-trusted
+bodies contains an exact private thread intrinsic, lowering marks that body as
+a dormant synchronization wrapper. MIR verification exact-checks the marker,
+rejects it on module/hosted bodies or non-thread synchronization, and otherwise
+rejects represented synchronization in the single-threaded profile. Thus an
+unused `<std/thread>` import remains valid without granting a backend or
+transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v45`/`mir-body-v42`.
+The deterministic serialization is currently `mir-v47`/`mir-body-v43`.
+Program v47 and body v43 expose the lowering-owned dormant trusted-wrapper
+marker on every body header. Program v46 added the ordered managed-thread
+task-adapter inventory. Each row
+binds one exact task type and once-invocation contract to its HIR spawn value,
+MIR body/instruction, and mandatory worker-failure/native-exception firewall.
+Verification requires every concrete private thread-spawn intrinsic to retain
+its adapter reference, so deleting both that reference and its inventory row
+cannot create a self-consistent forged program. Synchronization records remain
+backend-independent operation identities rather than private-intrinsic tags.
+Missing, duplicate, reordered, retargeted, or inexact adapter rows are rejected
+before backend entry.
 Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without
@@ -389,7 +405,7 @@ A `MirBody` owns:
   `SourceUnitId` plus line/offset anchor and has one parallel artifact-local
   `FailureSiteId`. `MirProgram` owns the immutable canonical descriptor, source
   mapping, origin assignments, and SHA-256 artifact identity. Direct, virtual,
-  constructor, callable, and future task-join propagation are separate
+  constructor, callable, and managed task-join propagation are separate
   channels and never copy a callee's possible category set. The verifier
   rejects invalid vocabulary, anchors, duplicates, instruction placement, or
   propagation that disagrees with the exact target and dispatch. For scalar
@@ -424,6 +440,14 @@ A `MirBody` owns:
   compare-exchange. Release loads, acquire stores, release/acquire-release
   failure orders, and a failure order stronger than success are rejected.
   Synchronization metadata on a non-call instruction is invalid;
+- one ordered `MirThreadTaskAdapter` for every HIR thread-task adapter. The row
+  retains the task type, HIR spawn value, exact MIR spawning body/instruction,
+  exactly one concrete function or lambda entry, its selected receiver
+  capability, outer `Once` invocation, worker-failure catch, and native-
+  exception firewall. Program verification requires a one-to-one HIR/MIR
+  inventory, an entry whose type/signature/body match that row, and an exact
+  `ThreadSpawn` instruction/synchronization pair; duplicate, reordered,
+  retargeted, unrooted, capability-forged, or non-firewalled rows are invalid;
 - exact confined invocation and confined/owned argument-boundary records. The
   verifier permits this metadata only on calls; requires descriptors to be
   ordered, unique, within the call's operand list, and identical to the
@@ -569,12 +593,16 @@ roots and index projections. Current MIR has no block-parameter values: every
 `MirValue` has one instruction definition, while constants, parameter
 bindings, and entry loans use their own representations.
 
-The program verifier additionally rejects every synchronization operation
-when `MirProgram` selects the default single-threaded profile. The concurrent
-profile permits the records but does not by itself make a public concurrency
-API available. Public wrapper semantics, trusted capability selection,
-task-transfer proof, runtime support, and backend lowering remain separate
-prerequisites.
+The program verifier additionally rejects synchronization operations when
+`MirProgram` selects the default single-threaded profile, except for an exact
+compiler-trusted private thread intrinsic in a body carrying the lowering-owned
+dormant-wrapper marker. Such a body exists because MIR retains the complete
+source-defined standard-library declaration inventory; it has no task adapter
+and public use remains rejected by semantics. A thread-spawn operation still
+requires the concurrent profile and one exact task adapter. Target `threads`
+capability and public wrapper availability remain semantic/source-library
+authority. Atomic and mutex records remain internal foundation until their own
+public/runtime/backend slices ship.
 
 The owned-entry append target is a module-root call edge for reachability and
 dead-code decisions even though it is not represented by an instruction in the
@@ -996,13 +1024,18 @@ implemented scalar block-parameter vocabulary does not change owning result
 publication.
 
 Cleanup blocks forward the same record through supported initialized and
-partially initialized shapes to the hosted-program boundary. The future
-double-failure extension must construct the fixed emergency envelope when a
-second origin occurs during primary-record cleanup; current MIR does not yet
-represent that path.
-The same representation supplies reusable boundary primitives consumed by the
-same-thread native callback adapter. Later task, foreign-thread callback, and
-E-EMBED-01 rows can integrate without changing the failure effect. The
+partially initialized shapes to the selected hosted, callback, or managed-task
+boundary. A second origin during primary-record cleanup routes the fixed
+emergency envelope through `TerminateCleanupFailure`. The generated managed-
+task adapter hands ordinary or emergency records to worker-owned runtime state
+only after that verified cleanup. Destruction of the transferred callable and
+its captures is the final task-entry cleanup phase: one failure becomes the
+worker result, a failure after an existing worker record completes the
+`GTI-R0014` envelope, and a third failure is an integrity termination. Explicit
+or automatic join re-raises the resulting record on the joining thread. The
+same representation supplies reusable boundary
+primitives consumed by the same-thread native callback adapter. Foreign-thread
+callback and E-EMBED-01 rows can integrate without changing the failure effect. The
 verifier must reject missing/forged sites, origin-incompatible
 categories, a propagating edge that re-sites or rewrites the record, a normal
 result used on the failure edge, and cleanup/control-flow joins with mismatched

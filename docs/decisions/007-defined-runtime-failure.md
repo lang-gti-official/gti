@@ -117,9 +117,11 @@ The operation that detects failure must first restore or discard its own
 unpublished partial state. Cleanup does not roll back completed assignment,
 completed output operations, native calls, or other observable effects that
 preceded the failure; a containment boundary is not a transaction. Output
-completion means bytes were accepted by the runtime service. Immediate
-termination does not implicitly flush host or C library buffers; a later
-GTI-owned buffered abstraction must define any stronger failure-boundary flush.
+completion means bytes were accepted by the runtime service. The hosted
+terminal path flushes the GTI stdout service after verified language cleanup
+and before reporting/exit. It does not promise to flush arbitrary host or C
+library buffers; a later GTI-owned buffered abstraction must define any
+stronger failure-boundary flush.
 
 If cleanup itself raises a second defined failure, further language cleanup is
 not trustworthy. The runtime takes the emergency `GTI-R0014` path, retains
@@ -150,15 +152,18 @@ environment action:
   resumable and does not undo earlier effects. Re-entry is permitted only when
   retained context state remains structurally valid; otherwise the generated
   ABI must expose a poisoned context.
-- A future managed-task entry boundary cleans task-owned and thread-owned GTI
-  state and stores the original record without invoking the observer. Explicit
-  join re-raises that record on the joining thread, distinct from returning a
-  recoverable native join error, so the eventual hosted or embedding boundary
-  observes it exactly once. ADR 008 adopts automatic join, and that path also
-  re-raises the same record. A worker failure is never silently discarded or
-  replaced with a generic thread category. Detach is absent from the first task
-  model; a later detach design must choose an explicit observation/escalation
-  rule before it becomes safe.
+- The generated managed-task entry boundary cleans task-owned GTI state and
+  stores the original record without invoking the observer. Explicit join re-
+  raises that record on the joining thread, distinct from returning a
+  recoverable native join error, so the eventual hosted boundary observes it
+  exactly once. Automatic join re-raises the same record. A worker failure is
+  never silently discarded or replaced with a generic thread category. A
+  failure raised while destroying the transferred callable or captures is
+  still task-entry cleanup: it becomes the ordinary worker result or the exact
+  second record of `GTI-R0014`. A third failure is not representable and is an
+  integrity termination. The emergency envelope is terminal when joined.
+  Detach is absent from the first task model; a later detach design must choose
+  an explicit observation/escalation rule before it becomes safe.
 
 The current generated callback wrapper entered from C under the single-threaded
 profile is a terminating containment boundary. It completes the selected GTI
@@ -230,7 +235,7 @@ this emergency line terminates immediately with status 70.
 
 `expected<T, E>` remains the only ordinary recoverable failure path. An API
 uses `expected` when a caller can continue safely and the condition is part of
-normal environmental or resource handling: files, sockets, future thread
+normal environmental or resource handling: files, sockets, managed-thread
 creation and recoverable join errors, and future `try_make_*` allocation
 factories are examples.
 
@@ -256,6 +261,11 @@ A compiler/runtime integrity fault that cannot preserve ownership invariants,
 such as genuinely indeterminate native join state, is also not a containable
 record. The runtime terminates the process immediately because returning to an
 embedder could leave live code accessing state that cleanup has destroyed.
+For a coherent recoverable join failure, explicit join preserves the handle.
+Automatic join has no such return channel: generated containment transfers the
+state to a private terminal quarantine and raises `GTI-R0012`, after which the
+hosted boundary exits without running native teardown. This quarantine is not
+detach and cannot resume program execution.
 `GTI-R0013` is only for detected hosted contract input/state that is still safe
 to clean; it is not a catch-all internal-error category.
 
@@ -288,11 +298,13 @@ to clean; it is not a catch-all internal-error category.
 M-FAIL-01 and its co-delivered Q-FAIL-01 runtime/reporting slice implement the
 current hosted-program portion of this decision over ordered MIR evaluation,
 active-drop authority, failure-aware calls, rollback for supported partial
-initialization, and reusable record/firewall machinery. The bounded
-same-thread callback row integrates its verified failure sibling and
-terminating firewall with that machinery. Future task, foreign-thread callback,
-and E-EMBED-01 rows must test their own concrete boundaries against it; a
-runtime-call replacement alone does not pass this decision.
+initialization, and reusable record/firewall machinery. The bounded same-thread
+callback row integrates its verified failure sibling and terminating firewall
+with that machinery. The managed-task row integrates verified worker cleanup,
+exact ordinary/emergency record handoff, and explicit or automatic join re-
+raise. Foreign-thread callback and E-EMBED-01 rows must test their own concrete
+boundaries against it; a runtime-call replacement alone does not pass this
+decision.
 
 ## Alternatives
 

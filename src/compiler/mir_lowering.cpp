@@ -84,6 +84,24 @@ lowerUnionLayout(const HirClassInstance &instance) {
   return result;
 }
 
+[[nodiscard]] bool compilerTrustedSourceUnit(const HirProgram &program,
+                                             SourceUnitId sourceUnit) {
+  const auto &units = program.analysisSeal().sourceGraph.units;
+  const auto found =
+      std::find_if(units.begin(), units.end(),
+                   [&](const auto &unit) { return unit.id == sourceUnit; });
+  return found != units.end() && found->role != SourceUnitRole::Application;
+}
+
+[[nodiscard]] bool compilerTrustedSourcePath(const HirProgram &program,
+                                             std::string_view sourcePath) {
+  const auto &units = program.analysisSeal().sourceGraph.units;
+  const auto found =
+      std::find_if(units.begin(), units.end(),
+                   [&](const auto &unit) { return unit.path == sourcePath; });
+  return found != units.end() && found->role != SourceUnitRole::Application;
+}
+
 } // namespace
 
 class MirBodyLowerer {
@@ -3219,6 +3237,7 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .threadTaskAdapter = value.threadTaskAdapter,
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
                         .lambdaTarget = value.lambdaTarget,
@@ -6724,11 +6743,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
     lowered.fieldInitializers =
         lowerBody(source, failureMetadata, instance.fieldInitializers,
                   MirBodyKind::FieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, valid);
+                  definedFailureEffects, valid, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
+                  compilerTrustedSourceUnit(source, instance.sourceUnit));
     lowered.staticFieldInitializers =
         lowerBody(source, failureMetadata, instance.staticFieldInitializers,
                   MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, valid);
+                  definedFailureEffects, valid, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
+                  compilerTrustedSourceUnit(source, instance.sourceUnit));
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
          ++field) {
       if (field->info.traits.drop == DropKind::Lexical) {
@@ -6816,10 +6839,11 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.functions.empty() || instance.id == 0 ||
              instance.id > definedFailureEffects.functions.size() ||
              definedFailureEffects.functions[instance.id - 1],
-         .body = lowerBody(source, failureMetadata, instance.body,
-                           MirBodyKind::Function, instance.returnType, {},
-                           definedFailureEffects, valid, implicitZeroReturn,
-                           nullptr, &instance, nullptr)});
+         .body = lowerBody(
+             source, failureMetadata, instance.body, MirBodyKind::Function,
+             instance.returnType, {}, definedFailureEffects, valid,
+             implicitZeroReturn, nullptr, &instance, nullptr, nullptr, nullptr,
+             nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit))});
   }
 
   result.program.nativeCallbacks.reserve(
@@ -6878,11 +6902,12 @@ MirLowerer::lowerProgram(const HirProgram &source,
              instance.id > definedFailureEffects.constructors.size() ||
              definedFailureEffects.constructors[instance.id - 1],
          .initializers = std::move(initializers),
-         .body =
-             lowerBody(source, failureMetadata, instance.body,
-                       MirBodyKind::Constructor, SemanticType::Void,
-                       instance.initializerValues, definedFailureEffects, valid,
-                       false, &instance.initializers, nullptr, &instance)});
+         .body = lowerBody(
+             source, failureMetadata, instance.body, MirBodyKind::Constructor,
+             SemanticType::Void, instance.initializerValues,
+             definedFailureEffects, valid, false, &instance.initializers,
+             nullptr, &instance, nullptr, nullptr, nullptr,
+             compilerTrustedSourceUnit(source, instance.sourceUnit))});
   }
 
   result.program.destructors.reserve(source.destructorInstances().size());
@@ -6898,9 +6923,11 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.destructors.empty() || instance.id == 0 ||
              instance.id > definedFailureEffects.destructors.size() ||
              definedFailureEffects.destructors[instance.id - 1],
-         .body = lowerBody(source, failureMetadata, instance.body,
-                           MirBodyKind::Destructor, SemanticType::Void, {},
-                           definedFailureEffects, valid)});
+         .body = lowerBody(
+             source, failureMetadata, instance.body, MirBodyKind::Destructor,
+             SemanticType::Void, {}, definedFailureEffects, valid, false,
+             nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+             compilerTrustedSourceUnit(source, instance.sourceUnit))});
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());
@@ -6929,12 +6956,63 @@ MirLowerer::lowerProgram(const HirProgram &source,
     lowered.body =
         lowerBody(source, failureMetadata, instance.body, MirBodyKind::Lambda,
                   instance.returnType, {}, definedFailureEffects, valid, false,
-                  nullptr, nullptr, nullptr, &instance);
+                  nullptr, nullptr, nullptr, &instance, nullptr, nullptr,
+                  instance.source != nullptr &&
+                      compilerTrustedSourcePath(
+                          source, instance.source->bracket().source));
     result.program.lambdas.push_back(std::move(lowered));
   }
   if (includeProgramInitialization) {
     valid =
         lowerHostedStartup(source, failureMetadata, result.program) && valid;
+  }
+  result.program.threadTasks.reserve(source.threadTaskAdapters().size());
+  for (const HirThreadTaskAdapter &adapter : source.threadTaskAdapters()) {
+    MirBodyAddress sourceBody;
+    MirInstructionId spawnInstruction = 0;
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(result.program)) {
+      const MirBody *body = findMirBody(result.program, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (const MirBlock &block : body->blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const MirInstruction &instruction) {
+              return instruction.hirValue == adapter.spawnValue &&
+                     instruction.threadTaskAdapter == adapter.id &&
+                     instruction.intrinsic == IntrinsicKind::ThreadSpawn;
+            });
+        if (found != block.instructions.end()) {
+          if (spawnInstruction != 0) {
+            valid = false;
+          }
+          sourceBody = address;
+          spawnInstruction = found->id;
+        }
+      }
+    }
+    if (spawnInstruction == 0 || adapter.id == 0 ||
+        adapter.taskType == SemanticType::Unknown ||
+        adapter.functionTarget.has_value() ==
+            adapter.lambdaTarget.has_value() ||
+        adapter.invocation != CallableInvocationCapability::Once) {
+      valid = false;
+      continue;
+    }
+    result.program.threadTasks.push_back(
+        {.id = adapter.id,
+         .taskType = adapter.taskType,
+         .spawnValue = adapter.spawnValue,
+         .sourceBody = sourceBody,
+         .spawnInstruction = spawnInstruction,
+         .functionTarget = adapter.functionTarget,
+         .lambdaTarget = adapter.lambdaTarget,
+         .targetInvocation = adapter.targetInvocation,
+         .invocation = adapter.invocation,
+         .catchesWorkerFailure = true,
+         .catchesNativeExceptions = true});
   }
   result.program.valid_ = valid;
   const MirProgramEffectSummaries effectSummaries =
@@ -7894,12 +7972,24 @@ MirBody MirLowerer::lowerBody(
     const HirFunctionInstance *function,
     const HirConstructorInstance *constructor, const HirLambda *lambda,
     const HirProgramInitializationPlan *programInitialization,
-    MirProgramInitializationPlan *loweredProgramInitialization) {
+    MirProgramInitializationPlan *loweredProgramInitialization,
+    bool compilerTrusted) {
   MirBodyLowerer lowerer(program, failureMetadata, body, kind,
                          std::move(returnType), definedFailureEffects,
                          implicitZeroReturn, function, constructor, lambda,
                          programInitialization, loweredProgramInitialization);
   MirBody result = lowerer.lower(prologueValues, initializers);
+  result.compilerTrustedSynchronization =
+      compilerTrusted &&
+      std::any_of(result.blocks.begin(), result.blocks.end(),
+                  [](const MirBlock &block) {
+                    return std::any_of(
+                        block.instructions.begin(), block.instructions.end(),
+                        [](const MirInstruction &instruction) {
+                          return instruction.synchronization.kind !=
+                                 SynchronizationOperationKind::None;
+                        });
+                  });
   valid = valid && lowerer.isValid();
   return result;
 }

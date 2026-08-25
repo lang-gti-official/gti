@@ -16,9 +16,11 @@ binary modules, and separate compilation are not currently specified.
 The single-threaded profile is the default executable profile. The reference
 toolchain also resolves an explicit concurrent-profile selection before
 semantic analysis and applies its global/static storage policy during semantic
-analysis. That selection does not expose threads, atomics, mutexes, or
-foreign-thread entry; those target/runtime capabilities remain unavailable
-until their separate runtime and conformance gates are complete.
+analysis. Together with an independently advertised target/runtime `threads`
+capability, that selection exposes the bounded source-defined `std::jthread`
+surface. It does not expose atomics, mutexes, detach, scoped borrows, or
+foreign-thread entry; those facilities retain separate runtime and conformance
+gates.
 
 ## 1.2 Conforming Programs
 

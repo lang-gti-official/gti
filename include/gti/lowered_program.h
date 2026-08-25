@@ -59,6 +59,7 @@ enum class LoweredGeneratedItemKind {
   CallableAdapter,
   LifecycleCleanup,
   NativeInteropAdapter,
+  ThreadTaskAdapter,
   ConcreteInstanceAdapter,
   Count,
 };
@@ -489,6 +490,13 @@ struct LoweredNativeCallbackItem {
                          const LoweredNativeCallbackItem &) = default;
 };
 
+struct LoweredThreadTaskAdapterItem {
+  MirThreadTaskAdapter adapter;
+
+  friend bool operator==(const LoweredThreadTaskAdapterItem &,
+                         const LoweredThreadTaskAdapterItem &) = default;
+};
+
 struct LoweredStructuralOperatorAdapterItem {
   FunctionId function = 0;
   OverloadedOperator operation = OverloadedOperator::Dereference;
@@ -551,7 +559,8 @@ struct LoweredConcreteInstanceAdapterItem {
 using LoweredGeneratedItemPayload =
     std::variant<std::monostate, LoweredStructuralOperatorAdapterItem,
                  LoweredCallableAdapterItem, LoweredLifecycleCleanupItem,
-                 LoweredConcreteInstanceAdapterItem, LoweredNativeCallbackItem>;
+                 LoweredConcreteInstanceAdapterItem, LoweredNativeCallbackItem,
+                 LoweredThreadTaskAdapterItem>;
 
 enum class LoweredGeneratedItemSourceKind {
   Body,

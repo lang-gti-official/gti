@@ -88,6 +88,11 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
     command = [
         str(gti),
         str(source),
+        *(
+            ["--execution-profile", "concurrent"]
+            if source.name == "66-managed-threads.gti"
+            else []
+        ),
         f"-{optimization}",
         "--std",
         standard,

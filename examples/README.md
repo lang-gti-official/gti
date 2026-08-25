@@ -71,6 +71,7 @@ own `main` function.
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
+| `66-managed-threads.gti` | move-only `std::jthread`, owned task transfer, explicit join, and mandatory autojoin |
 
 Build and run an example from the repository root:
 
@@ -174,6 +175,21 @@ is declared independently rather than synthesized by the compiler.
 `mut auto&` to update fixed arrays and `std::vector` elements in place. The
 range owner is exclusively borrowed for the loop, while each element receives
 one child mutable loan limited to its iteration.
+
+`66-managed-threads.gti` requires the concurrent execution profile:
+
+```sh
+./build/gti --execution-profile concurrent examples/66-managed-threads.gti \
+  -o /tmp/gti-managed-threads
+/tmp/gti-managed-threads
+```
+
+It transfers fresh and explicitly moved `void()` tasks into move-only
+`std::jthread` handles. Explicit `join()` reports native creation/join errors as
+`std::expected`; a still-joinable handle autojoins during deterministic scope
+cleanup. Worker-defined failures are re-raised by that explicit or automatic
+join boundary. The initial public slice deliberately has no detached handle or
+stop-token API.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

@@ -76,6 +76,7 @@ jobs:
           python3 "${{ github.workspace }}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${{ github.workspace }}/tests/cli_smoke_test.py" gti
           python3 "${{ github.workspace }}/tests/project_cli_smoke_test.py" gti
+          python3 "${{ github.workspace }}/tests/managed_thread_runtime_test.py" gti
           cmake \
             -S "${{ github.workspace }}/tests/installed_library_smoke" \
             -B "${{ runner.temp }}/gti-installed-library-smoke" \

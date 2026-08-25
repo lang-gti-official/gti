@@ -1125,6 +1125,9 @@ private:
          declaration->callableParameters) {
       if (parameter.parameterIndex >= snapshot.parameterTypes.size() ||
           (parameter.boundary == CallableBoundary::Owned &&
+           (!parameter.ownedTransport ||
+            parameter.ownedTransport->kind !=
+                CallableOwnedTransportKind::ThreadTask) &&
            !containsLambdaType(
                snapshot.parameterTypes[parameter.parameterIndex]))) {
         continue;
@@ -1135,7 +1138,9 @@ private:
           .access = parameter.access,
           .boundary = parameter.boundary,
           .ownedTransport = parameter.ownedTransport};
-      if (lowered.ownedTransport) {
+      if (lowered.ownedTransport &&
+          lowered.ownedTransport->kind !=
+              CallableOwnedTransportKind::ThreadTask) {
         lowered.ownedTransport->destinationType = snapshot.returnType;
       }
       lowered.signatures.reserve(parameter.signatures.size());
@@ -2888,6 +2893,7 @@ private:
     std::optional<HirValueId> receiver;
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
+    std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
     std::optional<HirFunctionInstanceId> contextualBoolTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
@@ -3301,6 +3307,7 @@ private:
                        model.isProgramConstantSubstitution(*raw),
                    .receiver = receiver,
                    .nativeCallbackAdapter = nativeCallbackAdapter,
+                   .threadTaskAdapter = threadTaskAdapter,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
                    .enumValue = enumValue,
@@ -3394,6 +3401,60 @@ private:
               qualifyBorrowPlace(*value.borrowPlace, body.placeDomain);
         }
         value.callableArguments = resolved->callableArguments;
+        if (resolved->intrinsic == IntrinsicKind::ThreadSpawn &&
+            resolved->parameterTypes.size() == 2 &&
+            resolved->parameterTypes[1] != SemanticType::Unknown &&
+            resolved->threadTaskEntry) {
+          const SemanticType &taskType = resolved->parameterTypes[1];
+          const ResolvedThreadTaskEntry &entry = *resolved->threadTaskEntry;
+          std::optional<HirFunctionInstanceId> functionTarget;
+          std::optional<HirLambdaId> lambdaTarget;
+          if (entry.function != 0 && entry.lambda == 0 &&
+              taskType.kind == SemanticType::Class) {
+            if (const FunctionInfo *target =
+                    baseModel->findFunction(entry.function)) {
+              const HirFunctionInstanceId instance = enqueueFunction(
+                  *target, taskType.arguments, taskType.valueArguments, {}, {},
+                  SemanticType::Void, {});
+              if (instance != 0) {
+                functionTarget = instance;
+              }
+            }
+          } else if (entry.lambda != 0 && entry.function == 0 &&
+                     taskType.hasLambdaShape()) {
+            if (const auto target = lambdaTargets.find(entry.lambda);
+                target != lambdaTargets.end()) {
+              lambdaTarget = target->second;
+            }
+          }
+          if (functionTarget.has_value() == lambdaTarget.has_value()) {
+            lifecycleValid = false;
+          } else {
+            const HirThreadTaskAdapterId adapter =
+                output.program.threadTasks.size() + 1;
+            value.threadTaskAdapter = adapter;
+            output.program.threadTasks.push_back(
+                {.id = adapter,
+                 .taskType = taskType,
+                 .spawnValue = value.id,
+                 .functionTarget = functionTarget,
+                 .lambdaTarget = lambdaTarget,
+                 .targetInvocation = entry.capability,
+                 .invocation = CallableInvocationCapability::Once});
+          }
+        } else if (resolved->intrinsic == IntrinsicKind::ThreadSpawn &&
+                   resolved->parameterTypes.size() == 2 &&
+                   resolved->parameterTypes[1].kind !=
+                       SemanticType::TypeParameter) {
+          lifecycleValid = false;
+        }
+        if (resolved->intrinsic == IntrinsicKind::ThreadSpawn) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::ThreadSpawn;
+        } else if (resolved->intrinsic == IntrinsicKind::ThreadJoin ||
+                   resolved->intrinsic == IntrinsicKind::ThreadAutoJoin) {
+          value.synchronization.kind = SynchronizationOperationKind::ThreadJoin;
+        }
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =

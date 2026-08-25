@@ -10,6 +10,8 @@ endif()
 
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -332,6 +334,7 @@ add_library(
   "runtime/src/failure.cpp"
   "runtime/src/io.cpp"
   "runtime/src/random.cpp"
+  "runtime/src/thread.cpp"
 )
 target_include_directories(
   "gti_runtime"
@@ -340,6 +343,7 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+target_link_libraries("gti_runtime" PRIVATE Threads::Threads)
 if(WIN32)
   # gti_rt_random_bytes calls BCryptGenRandom.
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")
@@ -561,6 +565,15 @@ if(BUILD_TESTING)
   target_link_libraries("gti_runtime_failure_tests" PRIVATE gti_runtime)
   add_test(NAME runtime_failure_boundary COMMAND gti_runtime_failure_tests)
 
+  add_executable("gti_runtime_thread_tests" "tests/runtime_thread_tests.cpp")
+  target_include_directories(
+    "gti_runtime_thread_tests"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/src"
+  )
+  target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
+  target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
+  add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
+
   add_executable("gti_runtime_failure_header_smoke"
                  "tests/runtime_failure_header_smoke.cpp")
   target_compile_features("gti_runtime_failure_header_smoke" PRIVATE cxx_std_20)
@@ -569,7 +582,6 @@ if(BUILD_TESTING)
   add_test(NAME runtime_failure_header_coexistence
            COMMAND gti_runtime_failure_header_smoke)
 
-  find_package(Threads REQUIRED)
   add_executable("gti_runtime_failure_helper"
                  "tests/runtime_failure_helper.cpp")
   target_link_libraries("gti_runtime_failure_helper"
@@ -674,6 +686,11 @@ if(BUILD_TESTING)
                  "tests/native_callback_tests.cpp")
   target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
   add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
+
+  add_executable("gti_managed_thread_tests"
+                 "tests/managed_thread_tests.cpp")
+  target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
+  add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
   add_executable("gti_defined_integer_tests"
                  "tests/defined_integer_tests.cpp")
@@ -1272,6 +1289,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/string_owned_output.gti"
     )
+    add_test(
+      NAME managed_thread_end_to_end
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/managed_thread_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
 
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
@@ -1302,7 +1326,7 @@ if(BUILD_TESTING)
         mir_backend_scalar_failure_callgraph_runtime_3of3
         random_engine_runtime default_parameters_runtime
         compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
-        string_owned_output_runtime
+        string_owned_output_runtime managed_thread_end_to_end
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

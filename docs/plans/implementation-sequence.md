@@ -2082,16 +2082,20 @@ or MIR prerequisite.
 - **Evidence:** `SynchronizationOperation` is carried from HIR calls into MIR
   v14 with thread spawn/join, atomic load/store/RMW/compare-exchange, and mutex
   lock/unlock identities. The MIR verifier enforces operation-specific order
-  legality and rejects every represented operation under the single-threaded
-  profile. Exhaustive names/effects and mutation tests cover propagation,
+  legality and rejects represented operations under the single-threaded
+  profile. The completed public thread slice later added the narrow dormant
+  trusted-wrapper exception required by the complete source-library inventory;
+  it accepts only exact private thread intrinsics and never a task adapter.
+  Exhaustive names/effects and mutation tests cover propagation,
   malformed orders, misplaced metadata, profile rejection, and optimizer
   barriers. No public wrapper or backend lowering was introduced.
 
 ### C-ATOM-01: Sequentially Consistent Atomic Scalars
 
-- **State/role:** blocked; `C-MIR-01` and `C-GLOBAL-01` are done. Remaining
-  prerequisites are `C-RUNTIME-01` and an `M-EXEC-01` sub-slice covering
-  ordered atomic operations; systems-readiness implementation.
+- **State/role:** blocked; `C-MIR-01`, `C-GLOBAL-01`, and the target thread
+  capability substrate in `C-RUNTIME-01` are done. Remaining prerequisites are
+  an `M-EXEC-01` sub-slice and matching backend/runtime lowering for ordered
+  atomic operations; systems-readiness implementation.
 - **Scope:** Introduce an ordinary GTI standard-library atomic wrapper over a
   closed scalar allowlist with construction, load, store, exchange, and one
   compare-exchange shape. The first executable contract is sequentially
@@ -2105,9 +2109,7 @@ or MIR prerequisite.
 
 ### C-CALL-01: Thread-Task Transfer Contract
 
-- **State/role:** blocked; `D-CALL-01`, `D-FAIL-01`, `M-LIFE-01`, and
-  `C-TYPE-01` are done; the remaining prerequisite is `M-FAIL-01`;
-  systems-readiness implementation.
+- **State/role:** done in 0.309.0; exact consumed managed-thread task slice.
 - **Scope:** Bind the GTI-owned callable representation to one consumed task
   shape. Prove transfer/share capabilities for the callable and every capture,
   record exactly-one invocation and task-entry metadata in HIR/MIR, and define
@@ -2121,14 +2123,18 @@ or MIR prerequisite.
 - **Exit gate:** accepted task values transfer and drop exactly once; borrowed
   or non-transferable captures cannot enter a task; generic invocation retains
   exact calls and conservative effects.
+- **Completion evidence:** `CallableOwnedTransportKind::ThreadTask` extends the
+  existing owned-callable contract only for an exact private spawn identity.
+  Fresh or explicitly moved `void()` lambdas and nominal callables are accepted;
+  borrowed, raw-pointer, non-transferable, non-void, parameterized, copied
+  named, and repeated-use tasks fail with `GTI-S2084` or ordinary move
+  diagnostics. HIR/MIR retain one exact once-invocation adapter and optimizer
+  synchronization barrier per spawn.
 
 ### C-THREAD-01: Joined Owned Thread With Owned Arguments
 
-- **State/role:** blocked; `M-LIFE-01`, `C-TYPE-01`, `C-GLOBAL-01`, and
-  `C-MIR-01` are done. Remaining prerequisites are `M-FAIL-01`, the required
-  `M-EXEC-01` slice, `C-RUNTIME-01`, and `C-CALL-01`, plus the matching
-  closed-call-graph `M-BACK-02` slice;
-  systems-readiness implementation.
+- **State/role:** done in 0.309.0 for the first source-defined
+  `std::jthread` vertical slice.
 - **Scope:** Start with a join-required thread handle. Move a transfer-capable
   callable and arguments into the thread, define join result/failure, and make
   handle destruction follow the adopted contract. Do not detach in the first
@@ -2140,12 +2146,19 @@ or MIR prerequisite.
   Initialization sequenced before spawn must happen-before task entry, and task
   completion must happen-before a successful join.
 - **Unlocks:** owned thread convenience APIs and later scoped borrowing.
+- **Completion evidence:** `<std/thread>` owns move-only handle policy,
+  recoverable `start`/`join`, `joinable`, and destructor autojoin in ordinary
+  GTI source. Exact HIR/MIR/Lowered task adapters and verified-MIR C++ lowering
+  preserve spawn/join synchronization, once invocation, creation cleanup,
+  reverse worker cleanup, exact ordinary failure re-raise, and `GTI-R0014`.
+  Direct/project and C++20/C++23 O0/O3 matrices cover noncapturing lambdas,
+  owned move capture, nominal callables, handle movement, explicit/automatic
+  join, deterministic failure output, and repeated spawn/join stress.
 
 ### C-RUNTIME-01: Target And Runtime Thread Capability
 
-- **State/role:** blocked on `M-FAIL-01`; `D-MEM-02` and `I-CAP-01` are
-  done. It may run in parallel with `C-CALL-01` after its API contract is
-  fixed; systems-readiness runtime implementation.
+- **State/role:** done in 0.309.0 for managed threads; atomics/mutexes retain
+  their own operation/runtime rows.
 - **Scope:** Add an explicit target/runtime `threads` capability, private
   owning handle, generated task-entry thunk contract, thread-safe runtime
   diagnostics/allocation, fixed failure-record handoff, platform linkage, and
@@ -2159,6 +2172,14 @@ or MIR prerequisite.
   platform that advertises the capability, captured worker records survive
   handoff without allocation or native unwinding, and unsupported targets fail
   before backend invocation.
+- **Completion evidence:** `TargetInfo::RuntimeCapabilities::threads`, the
+  concurrent profile check, identity-bound private handle operations, the
+  version-one opaque C runtime ABI, native platform thread linkage, and exact
+  ordinary/emergency worker record handoff are implemented. Runtime fault seams
+  prove creation cleanup exactly once and recoverable join-state preservation;
+  stdout calls are serialized, task capture never observes/reports on the
+  worker, and installed nightly/release workflows run the public end-to-end
+  matrix.
 
 ### C-SYNC-01: Mutex And Guard-Tied Mutable Access
 
@@ -2183,9 +2204,9 @@ or MIR prerequisite.
 
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/role:** blocked; prerequisite is the public subset selected by
-  `D-MEM-02`, minimally validated `C-ATOM-01` or `C-THREAD-01`;
-  systems-readiness conformance gate.
+- **State/role:** complete for the public `std::jthread` subset; active again
+  when atomics, mutexes, scoped threads, or another public concurrency family
+  is added.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -2193,6 +2214,10 @@ or MIR prerequisite.
   deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-
   toolchain coverage on each advertised target, sanitizer coverage where
   supported, and no unexplained reliance on native C++ ordering.
+- **Current evidence:** `managed_thread_semantic_ir`,
+  `managed_thread_runtime`, `managed_thread_end_to_end`, `lsp_protocol`, the
+  stdlib surface/corpus gates, installed workflows, and sanitizer runs cover
+  the shipped jthread surface. Timing is never a correctness oracle.
 
 The following remain blocked beyond the initial concurrency profile: detached
 threads; scoped borrowed captures; mutex/RW-lock guards before stored/escaping
@@ -2825,7 +2850,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
-| `Q-FAIL-01` | bounded hosted consumer and same-thread native-callback firewall complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, and callback termination adapter are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/foreign-thread-callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
+| `Q-FAIL-01` | hosted consumer, same-thread native-callback firewall, and managed-task handoff/re-raise complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, callback termination adapter, and worker ordinary/`GTI-R0014` containment are implemented and focused tests pass. Embedding, foreign-thread callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and a semantics-aware reducer are explicitly deferred by [the tooling record](archive/compiler-bug-finding-and-triage.md). |
 
@@ -2844,7 +2869,7 @@ owned by the rows and domain plans above.
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
-| Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
+| Public threads/atomics/mutex | source-defined owned `std::jthread` **complete in 0.309.0**; atomics and mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, and the jthread `C-CONFORM-01` slice done; `C-ATOM-01`/`C-SYNC-01` remain |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **hover contract/tooling complete; broader consumers remain** | `///` retention and hover are complete in `T-LSP-01`; completion, signature help, broader library coverage, and generated API documentation remain |
@@ -2855,7 +2880,7 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | L-RANGE-01/02 complete; dynamic-view systems-readiness work remains | `L-RANGE-03` |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, one-field generic owner, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work shared by algorithms and tasks | `D-CALL-01` and `S-CALL-01` done -> remaining `L-CALL-01`; thread-task extension is `C-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, one-field generic owner, exact consumed managed-thread tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |

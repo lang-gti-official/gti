@@ -263,6 +263,10 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard) {
                                         error) ||
       !std::filesystem::is_regular_file(
           layout.runtimeInclude / "gti/runtime_failure.h", error) ||
+      !std::filesystem::is_regular_file(
+          layout.runtimeInclude / "gti/runtime_thread.h", error) ||
+      !std::filesystem::is_regular_file(
+          layout.runtimeInclude / "gti/runtime_thread.hpp", error) ||
       !std::filesystem::is_regular_file(layout.runtimeLibrary, error)) {
     return ToolchainResourceError::RuntimeFilesMissing;
   }
