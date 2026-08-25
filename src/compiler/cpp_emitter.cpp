@@ -300,6 +300,27 @@ public:
     return !engaged_ || destroy_with_failure(failure_record);
   }
 
+  // MIR supplies the exact fixed-array extents. This slot validates those
+  // extents against its C++ representation, then completes each leaf lifetime
+  // in reverse order without invoking std::array's recursive destructor.
+  template <std::size_t... Extents>
+  [[nodiscard]] bool destroy_fixed_array_with_failure(
+      ::gti_failure_record_v1 *failure_record, bool cleanup_failure,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    static_assert(sizeof...(Extents) != 0);
+    if (!engaged_) {
+      storage_error("verified MIR lifetime slot was dropped while empty");
+    }
+    engaged_ = false;
+    bool success = true;
+    if (!destroy_fixed_array_level<Extents...>(
+            *std::launder(slot()), failure_record, cleanup_failure, artifact,
+            success)) {
+      return false;
+    }
+    return success;
+  }
+
   void destroy_if_engaged() {
     if (engaged_) {
       destroy();
@@ -314,6 +335,43 @@ public:
   }
 
 private:
+  template <std::size_t Extent, std::size_t... Rest, typename Array>
+  [[nodiscard]] static bool destroy_fixed_array_level(
+      Array &array, ::gti_failure_record_v1 *failure_record,
+      bool cleanup_failure,
+      const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
+    static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
+    for (std::size_t index = Extent; index != 0; --index) {
+      auto &element = array[index - 1];
+      if constexpr (sizeof...(Rest) != 0) {
+        if (!destroy_fixed_array_level<Rest...>(
+                element, failure_record, cleanup_failure, artifact, success)) {
+          return false;
+        }
+        continue;
+      }
+
+      ::gti_failure_record_v1 secondary{};
+      const bool already_cleaning = !success;
+      ::gti_failure_record_v1 *element_record =
+          already_cleaning ? &secondary : failure_record;
+      const bool element_success =
+          element.__gti_mir_destruct_failure(element_record);
+      std::destroy_at(&element);
+      if (!element_success && cleanup_failure) {
+        return false;
+      }
+      if (!element_success && already_cleaning) {
+        const ::gti_failure_emergency_v1 emergency{
+            GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *failure_record,
+            secondary};
+        ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact, artifact);
+      }
+      success = success && element_success;
+    }
+    return true;
+  }
+
   [[nodiscard]] T *slot() {
     return reinterpret_cast<T *>(storage_);
   }
@@ -3823,6 +3881,30 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         loweredCollectRepresentationDependencies(storage->type, result);
       }
     }
+    // A generic definition is scheduled from its dependent source fields.
+    // Folding every concrete instantiation back to the primary declaration
+    // invents cycles such as box -> cell -> box for an acyclic nested type.
+    if (declaration.genericParameters.empty()) {
+      for (const MirClassInstance &instance : mir.classInstances()) {
+        if (instance.declaration != declaration.id) {
+          continue;
+        }
+        for (const MirClassFieldInfo &field : instance.declaredFields) {
+          loweredCollectRepresentationDependencies(field.type, result);
+        }
+        loweredCollectInitializerDependencies(instance.fieldInitializers,
+                                              result);
+      }
+    }
+    std::erase(result, declaration.id);
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+  }
+
+  [[nodiscard]] std::vector<ClassId> loweredConcreteSpecializationDependencies(
+      const LoweredClassDeclaration &declaration) const {
+    std::vector<ClassId> result;
     for (const MirClassInstance &instance : mir.classInstances()) {
       if (instance.declaration != declaration.id) {
         continue;
@@ -3830,7 +3912,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       for (const MirClassFieldInfo &field : instance.declaredFields) {
         loweredCollectRepresentationDependencies(field.type, result);
       }
-      loweredCollectInitializerDependencies(instance.fieldInitializers, result);
     }
     std::erase(result, declaration.id);
     std::sort(result.begin(), result.end());
@@ -3925,9 +4006,39 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const std::size_t firstDeferredLifecycleClass =
           loweredDeferredLifecycleClasses.size();
       emitLoweredScheduledTypeDefinition(row);
-      emitLoweredMemberSpecializationDeclarations(firstDeferredMember,
-                                                  firstDeferredLifecycleClass);
+      const std::size_t lastDeferredMember = loweredDeferredMembers.size();
+      const std::size_t lastDeferredLifecycleClass =
+          loweredDeferredLifecycleClasses.size();
       state[index] = 2;
+
+      // A concrete member specialization can instantiate its complete owner
+      // even though the primary definition only depends on source-level field
+      // types. Complete any concrete field dependencies first. Marking this
+      // primary complete above makes mutually nested generic arguments
+      // converge without treating them as recursive by-value source layouts.
+      std::vector<ClassId> specializationDependencies =
+          loweredConcreteSpecializationDependencies(*declaration);
+      std::sort(specializationDependencies.begin(),
+                specializationDependencies.end(),
+                [&](ClassId left, ClassId right) {
+                  const auto leftAt = classSchedule.find(left);
+                  const auto rightAt = classSchedule.find(right);
+                  return (leftAt == classSchedule.end()
+                              ? std::numeric_limits<std::size_t>::max()
+                              : leftAt->second) <
+                         (rightAt == classSchedule.end()
+                              ? std::numeric_limits<std::size_t>::max()
+                              : rightAt->second);
+                });
+      for (const ClassId dependency : specializationDependencies) {
+        if (const auto found = classSchedule.find(dependency);
+            found != classSchedule.end()) {
+          self(self, found->second);
+        }
+      }
+      emitLoweredMemberSpecializationDeclarations(
+          firstDeferredMember, lastDeferredMember, firstDeferredLifecycleClass,
+          lastDeferredLifecycleClass);
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
       emitClass(emitClass, index);
@@ -4333,10 +4444,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void emitLoweredMemberSpecializationDeclarations(
-      std::size_t firstDeferredMember,
-      std::size_t firstDeferredLifecycleClass) {
-    for (std::size_t index = firstDeferredMember;
-         index < loweredDeferredMembers.size(); ++index) {
+      std::size_t firstDeferredMember, std::size_t lastDeferredMember,
+      std::size_t firstDeferredLifecycleClass,
+      std::size_t lastDeferredLifecycleClass) {
+    for (std::size_t index = firstDeferredMember; index < lastDeferredMember;
+         ++index) {
       const LoweredDeclaration *row = loweredDeferredMembers[index];
       const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
       if (owner == nullptr ||
@@ -4443,7 +4555,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
 
     for (std::size_t index = firstDeferredLifecycleClass;
-         index < loweredDeferredLifecycleClasses.size(); ++index) {
+         index < lastDeferredLifecycleClass; ++index) {
       const LoweredDeclaration *classRow =
           loweredDeferredLifecycleClasses[index];
       const auto *declaration =

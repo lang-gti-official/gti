@@ -5858,8 +5858,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          !obligation.dropType.classInstance) ||
         (obligation.dropType.classInstance &&
          obligation.dropType.type.kind != SemanticType::Class) ||
-        (obligation.dropType.destructor &&
-         !obligation.dropType.classInstance)) {
+        (obligation.dropType.destructor && !obligation.dropType.classInstance &&
+         (!obligation.dropType.fixedArray ||
+          !obligation.dropType.fixedArray->leafClassInstance))) {
       return failure(body, owner,
                      "drop obligation " + std::to_string(obligation.id) +
                          " has an invalid identity, place, or type");
@@ -10018,13 +10019,71 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
                      "drop obligation " + std::to_string(obligation.id) +
                          " does not name its exact active-cleanup descriptor");
     }
+    if (obligation.dropType.type.kind == SemanticType::Array) {
+      const MirFixedArrayDropSchedule *schedule =
+          obligation.dropType.fixedArray ? &*obligation.dropType.fixedArray
+                                         : nullptr;
+      SemanticType leaf = obligation.dropType.type;
+      std::vector<std::size_t> extents;
+      while (leaf.kind == SemanticType::Array && leaf.arguments.size() == 1 &&
+             leaf.arrayLengthParameterId == 0 && leaf.arrayLength != 0) {
+        extents.push_back(leaf.arrayLength);
+        leaf = leaf.arguments.front();
+      }
+      const MirClassInstance *leafClass =
+          schedule != nullptr && schedule->leafClassInstance
+              ? program.findClassInstance(*schedule->leafClassInstance)
+              : nullptr;
+      const bool exactSpecializationLeaf =
+          leaf.kind == SemanticType::Class && leafClass != nullptr &&
+          leafClass->type.kind == SemanticType::Class &&
+          leafClass->type.classId == leaf.classId &&
+          leafClass->type.arguments.empty() &&
+          leafClass->type.valueArguments.empty();
+      const bool exactLeafClass =
+          leaf.kind != SemanticType::Class
+              ? leafClass == nullptr && !obligation.dropType.destructor
+              : leafClass != nullptr &&
+                    (leafClass->type == leaf || exactSpecializationLeaf) &&
+                    leafClass->destructor == obligation.dropType.destructor;
+      if (obligation.dropType.classInstance ||
+          obligation.dropType.lambdaInstance) {
+        return failure(body, owner,
+                       "fixed-array drop obligation names direct class or "
+                       "lambda cleanup metadata");
+      }
+      if (schedule == nullptr || schedule->extents != extents ||
+          schedule->leafType != leaf) {
+        return failure(body, owner,
+                       "fixed-array drop obligation does not retain its exact "
+                       "concrete shape and leaf type");
+      }
+      if (leaf.kind == SemanticType::Class && leafClass == nullptr) {
+        return failure(body, owner,
+                       "fixed-array drop obligation does not retain its exact "
+                       "leaf class instance");
+      }
+      if (leaf.kind == SemanticType::Class && leafClass->type != leaf &&
+          !exactSpecializationLeaf) {
+        return failure(body, owner,
+                       "fixed-array drop obligation leaf class instance has "
+                       "a different concrete type");
+      }
+      if (!exactLeafClass) {
+        return failure(body, owner,
+                       "fixed-array drop obligation does not retain its exact "
+                       "leaf destructor identity");
+      }
+      continue;
+    }
     if (obligation.dropType.type.kind == SemanticType::Lambda) {
       const MirLambdaInstance *lambda =
           obligation.dropType.lambdaInstance
               ? program.findLambda(*obligation.dropType.lambdaInstance)
               : nullptr;
       if (lambda == nullptr || lambda->type != obligation.dropType.type ||
-          obligation.dropType.classInstance || obligation.dropType.destructor) {
+          obligation.dropType.classInstance || obligation.dropType.destructor ||
+          obligation.dropType.fixedArray) {
         return failure(body, owner,
                        "lambda drop obligation does not name its exact "
                        "concrete cleanup descriptor");
@@ -10034,7 +10093,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
     if (obligation.dropType.type.kind != SemanticType::Class) {
       if (obligation.dropType.classInstance ||
           obligation.dropType.lambdaInstance ||
-          obligation.dropType.destructor) {
+          obligation.dropType.destructor || obligation.dropType.fixedArray) {
         return failure(
             body, owner,
             "non-class drop obligation names class cleanup metadata");
@@ -10046,6 +10105,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
             ? program.findClassInstance(*obligation.dropType.classInstance)
             : nullptr;
     if (classInstance == nullptr || obligation.dropType.lambdaInstance ||
+        obligation.dropType.fixedArray ||
         classInstance->type != obligation.dropType.type ||
         classInstance->destructor != obligation.dropType.destructor) {
       return failure(body, owner,

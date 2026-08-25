@@ -4422,9 +4422,10 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
 // frozen after the Closure: their only writes are entry-block Initializes
 // that precede it, nothing loans or drops them, and the entry block is
 // never re-entered, so a literal spelled at any later invocation captures
-// the same values the Closure saw. Move captures collapse to exactly one
-// direct same-block invocation because a duplicated or delayed literal
-// would move a captured place twice or after an interleaved failure edge.
+// the same values the Closure saw. Move captures and copied class captures
+// collapse to exactly one direct same-block consumer because a duplicated or
+// delayed literal would transfer ownership twice or change class-temporary
+// lifetime relative to the MIR closure value.
 [[nodiscard]] bool closureChainAdmits(const MirProgram &program,
                                       const MirBody &body,
                                       const MirInstruction &closure) {
@@ -4439,7 +4440,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       closure.operands.size() != lambda->captureTypes.size()) {
     return false;
   }
-  bool movesCapture = false;
+  bool requiresDirectUse = false;
   for (std::size_t index = 0; index < closure.operands.size(); ++index) {
     const MirOperand &operand = closure.operands[index];
     const LambdaCaptureMode mode = lambda->captureModes[index];
@@ -4447,16 +4448,25 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                               operand.kind == MirOperandKind::Copy) ||
                              (mode == LambdaCaptureMode::Move &&
                               operand.kind == MirOperandKind::Move);
-    movesCapture = movesCapture || mode == LambdaCaptureMode::Move;
+    requiresDirectUse = requiresDirectUse || mode == LambdaCaptureMode::Move ||
+                        operand.type.kind == SemanticType::Class;
+    const bool copiedClassCapture = mode == LambdaCaptureMode::Copy &&
+                                    operand.type.kind == SemanticType::Class;
     const MirPlace *captured =
         operand.place == 0 ? nullptr : body.findPlace(operand.place);
-    // A captured lambda or owned object would itself need the unnameable
-    // or slot-managed local this chain exists to avoid; both decline.
+    const bool bindingCapture =
+        captured != nullptr && captured->root == MirPlaceRootKind::Binding;
+    const bool enclosingLambdaCapture =
+        captured != nullptr && body.kind == MirBodyKind::Lambda &&
+        captured->root == MirPlaceRootKind::Symbol && captured->capture != 0 &&
+        mode == LambdaCaptureMode::Copy;
+    // A captured lambda or compiler-managed storage object would itself need
+    // the unnameable or slot-managed local this chain exists to avoid. A class
+    // copy is admitted only by the direct-use proof below.
     if (!modeMatches || captured == nullptr ||
-        captured->root != MirPlaceRootKind::Binding ||
+        (!bindingCapture && !enclosingLambdaCapture) ||
         !captured->projections.empty() ||
         captured->type.kind == SemanticType::Lambda ||
-        captured->type.kind == SemanticType::Class ||
         captured->type.kind == SemanticType::Storage ||
         captured->type.kind == SemanticType::PrefixStorage) {
       return false;
@@ -4471,8 +4481,18 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
         if (!writer.destination || *writer.destination != captured->id) {
           continue;
         }
+        // A copied class capture observes the source before its ordinary
+        // lexical drop. The direct-use proof below keeps that capture in the
+        // same block and prevents the literal from outliving the source.
+        if (copiedClassCapture && writer.kind == MirInstructionKind::Drop) {
+          continue;
+        }
+        const bool validInitializationBlock =
+            copiedClassCapture ? block.id == result->definitionBlock
+                               : block.id == body.entry &&
+                                     result->definitionBlock == body.entry;
         if (writer.kind != MirInstructionKind::Initialize ||
-            block.id != body.entry || result->definitionBlock != body.entry) {
+            !validInitializationBlock) {
           return false;
         }
         bool writerPrecedes = false;
@@ -4506,8 +4526,9 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
     }
   }
   // Forward walk: every transitive consumer is an Initialize into a fresh
-  // single-write lambda local or the receiver of an invocation.
+  // single-write lambda local, an invocation, or a passive comma discard.
   std::size_t invocations = 0;
+  std::size_t discards = 0;
   bool directOnly = true;
   std::vector<MirPlaceId> visitedCarriers;
   std::vector<MirValueId> pending{*closure.result};
@@ -4530,6 +4551,20 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
         // The literal spells inline as the template call's deduced
         // callable argument, exactly like the compatibility call.
         ++invocations;
+        directOnly = directOnly && current == *closure.result &&
+                     use.block == result->definitionBlock;
+        continue;
+      }
+      if (use.kind == MirValueUseKind::InstructionOperand && user != nullptr &&
+          user->kind == MirInstructionKind::Compute &&
+          user->operation == MirOperation::Comma && use.operandIndex == 0 &&
+          user->operands.size() == 2 &&
+          user->operands.front().kind == MirOperandKind::Value &&
+          user->operands.front().value == current && user->result &&
+          user->info.traits.drop == DropKind::Trivial &&
+          !user->info.traits.containsBorrowedState &&
+          user->definedFailure.empty() && user->localFailureSites.empty()) {
+        ++discards;
         directOnly = directOnly && current == *closure.result &&
                      use.block == result->definitionBlock;
         continue;
@@ -4578,7 +4613,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       }
     }
   }
-  if (movesCapture && (invocations != 1 || !directOnly)) {
+  if (requiresDirectUse && (invocations + discards != 1 || !directOnly)) {
     return false;
   }
   return true;
@@ -6565,13 +6600,37 @@ failureDestructorTarget(const MirProgram &program, const MirBody &body,
           : program.findDestructorInstance(*drop->dropType.destructor);
   const MirClassInstance *owner =
       target == nullptr ? nullptr : program.findClassInstance(target->owner);
+  const bool directClass = drop != nullptr && owner != nullptr &&
+                           drop->dropType.type == owner->type &&
+                           drop->dropType.classInstance == owner->id &&
+                           !drop->dropType.fixedArray;
+  const bool fixedArray =
+      drop != nullptr && owner != nullptr && drop->dropType.fixedArray &&
+      drop->dropType.type.kind == SemanticType::Array &&
+      drop->dropType.fixedArray->leafClassInstance == owner->id &&
+      owner->bases.empty() && owner->structuralBases.empty() &&
+      std::none_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                   [](const MirClassFieldInfo &field) {
+                     return field.requiresActiveCleanup;
+                   });
   return target != nullptr && owner != nullptr &&
                  target->definitionKind == MirDefinitionKind::Source &&
                  target->mayRaiseDefinedFailure &&
-                 drop->dropType.classInstance == owner->id &&
-                 drop->dropType.type == owner->type &&
+                 (directClass || fixedArray) &&
                  owner->requiresActiveDropState && owner->requiresActiveCleanup
              ? target
+             : nullptr;
+}
+
+[[nodiscard]] const MirFixedArrayDropSchedule *
+failureFixedArrayDropSchedule(const MirProgram &program, const MirBody &body,
+                              const MirInstruction &instruction) {
+  if (failureDestructorTarget(program, body, instruction) == nullptr) {
+    return nullptr;
+  }
+  const MirDropObligation *drop = failureDestructorDrop(body, instruction);
+  return drop != nullptr && drop->dropType.fixedArray
+             ? &*drop->dropType.fixedArray
              : nullptr;
 }
 
@@ -6624,24 +6683,14 @@ lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
   return lifecycleGuardedGeneratedMoveClass(program, type) != nullptr;
 }
 
-// std::array owns element destruction in the current sealed C++
-// representation. It may therefore use the lifecycle-guarded generated move
-// proof only when ordinary C++ scope destruction is also the exact GTI
-// behavior. Failure-capable element destructors stay outside this bounded
-// representation until MIR carries an explicit aggregate-drop schedule.
+// Aggregate construction only needs a failure-free element transfer. A
+// failure-capable destructor is governed later by MIR's fixed-array drop
+// schedule rather than native std::array scope destruction.
 [[nodiscard]] bool
 fixedArrayElementTransferIsDefinedFailureFree(const MirProgram &program,
                                               const SemanticType &type) {
-  if (mirTypeMoveIsDefinedFailureFree(program, type)) {
-    return true;
-  }
-  const MirClassInstance *instance =
-      lifecycleGuardedGeneratedMoveClass(program, type);
-  const MirDestructorInstance *destructor =
-      instance == nullptr || !instance->destructor
-          ? nullptr
-          : program.findDestructorInstance(*instance->destructor);
-  return destructor != nullptr && !destructor->mayRaiseDefinedFailure;
+  return mirTypeMoveIsDefinedFailureFree(program, type) ||
+         lifecycleGuardedGeneratedMoveIsDefinedFailureFree(program, type);
 }
 
 struct ResolvedMirField {
@@ -7220,8 +7269,8 @@ generatedSpecialMemberConstruction(const MirProgram &program,
 // element move can fail. This bounded form proves the opposite from MIR:
 // every staged element has an exact owning drop identity, every identity
 // transfers out in operand order, the result receives one exact identity, and
-// the element type's move and representation-owned destruction are
-// structurally defined-failure-free.
+// the element type's move is structurally defined-failure-free. Destruction
+// is independently governed by the result obligation's aggregate schedule.
 [[nodiscard]] bool
 failureFreeFixedArrayAggregateMove(const MirProgram &program,
                                    const MirBody &body,
@@ -14507,7 +14556,17 @@ private:
       // the left use explicit, then publish the comma expression's right-hand
       // value without asking C++ to recover source evaluation order.
       output << "static_cast<void>(";
-      emitOperand(instruction.operands.front());
+      const MirOperand &discarded = instruction.operands.front();
+      const MirInstruction *closure =
+          discarded.kind == MirOperandKind::Value
+              ? closureChainDefinition(facts.body, discarded.value)
+              : nullptr;
+      if (closure != nullptr &&
+          closureChainAdmits(program, facts.body, *closure)) {
+        emitClosureLiteral(facts, discarded.value);
+      } else {
+        emitOperand(discarded);
+      }
       output << ");\n";
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = ";
@@ -14798,6 +14857,56 @@ private:
         return rawMemoryPlaceSpelling(*access) +
                fieldProjectionChainSpelling(access->pointeeType,
                                             place->projections, 1);
+      }
+    }
+    if (place != nullptr) {
+      if (const std::optional<ConstantArrayElementFieldAccess> access =
+              constantArrayElementFieldAccess(facts.body, *place)) {
+        const MirPlace *array = facts.body.findPlace(access->element.array);
+        if (array == nullptr) {
+          throw std::logic_error(
+              "verified array-element field store lost its array place");
+        }
+        std::string spelling;
+        if (array->root == MirPlaceRootKind::Symbol && array->capture != 0 &&
+            facts.instanceLabel == std::string_view("lambda-instance")) {
+          spelling = captureSpelling(facts.id, array->symbol, array->capture);
+        } else if (array->root == MirPlaceRootKind::Symbol) {
+          const CppMirSymbolRepresentation *storage =
+              storageRepresentationForBody(program, representations,
+                                           facts.owner, array->symbol);
+          if (storage == nullptr || storage->spelling.empty()) {
+            throw std::logic_error(
+                "verified array-element field store lost its storage row");
+          }
+          spelling = storage->spelling;
+          if (storage->runtimeLifetimeSlot) {
+            spelling += ".get()";
+          }
+        } else if (array->root == MirPlaceRootKind::Binding) {
+          const MirPlaceId base =
+              slotPlace(facts.body, *array)
+                  ? canonicalSlotPlaceId(facts.body, *array)
+                  : canonicalBindingPlaceId(facts.body, *array);
+          spelling = "__gti_mir_p_" + std::to_string(base);
+          if (slotPlace(facts.body, *array)) {
+            spelling += ".get()";
+          }
+        } else {
+          throw std::logic_error(
+              "verified array-element field store changed root kind");
+        }
+        for (const MirPlaceProjection &index : access->element.indices) {
+          if (!index.constantIndex) {
+            throw std::logic_error(
+                "verified array-element field store lost its constant index");
+          }
+          spelling += "[static_cast<std::size_t>(" +
+                      std::to_string(*index.constantIndex) + ")]";
+        }
+        spelling += fieldProjectionChainSpelling(access->elementType,
+                                                 access->fields, 0);
+        return spelling;
       }
     }
     if (place != nullptr && place->root == MirPlaceRootKind::Loan) {
@@ -15171,6 +15280,39 @@ private:
       output << "// GTI MIR trivial drop of place " << *instruction.destination
              << "\n";
       return;
+    }
+    if (failureForm && instruction.kind == MirInstructionKind::Drop) {
+      if (const MirFixedArrayDropSchedule *schedule =
+              failureFixedArrayDropSchedule(program, facts.body, instruction)) {
+        const MirPlace *slot =
+            instruction.destination
+                ? facts.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (slot == nullptr || !slotPlace(facts.body, *slot) ||
+            schedule->extents.empty()) {
+          throw std::logic_error(
+              "verified MIR fixed-array drop lost its schedule or slot");
+        }
+        output << "__gti_mir_drop_success_" << instruction.id
+               << " = __gti_mir_p_" << *instruction.destination
+               << ".destroy_fixed_array_with_failure<";
+        for (std::size_t index = 0; index < schedule->extents.size(); ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          output << schedule->extents[index];
+        }
+        output << ">(";
+        if (block.activeFailure != 0) {
+          output << "&__gti_mir_cleanup_failure_record_" << instruction.id;
+        } else {
+          output << "__gti_mir_failure_record";
+        }
+        output << ", " << (block.activeFailure != 0 ? "true" : "false")
+               << ", &::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1);\n";
+        return;
+      }
     }
     if (failureForm && instruction.kind == MirInstructionKind::Drop &&
         failureDestructorTarget(program, facts.body, instruction) != nullptr) {

@@ -1086,6 +1086,7 @@ struct RowsBuilder {
         if (constructor == nullptr || owner == nullptr ||
             constructor->definitionKind != MirDefinitionKind::Source ||
             !constructor->mayRaiseDefinedFailure ||
+            cppMirConstructorStatusCannotFail(mir, constructor->id) ||
             std::any_of(
                 rows.containedConstructors.begin(),
                 rows.containedConstructors.end(),

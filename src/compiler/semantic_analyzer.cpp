@@ -3132,6 +3132,13 @@ public:
                       ? analyzeInitializer(expr.value(), targetType)
                       : analyze(expr.value());
     }
+    // Recursive RHS analysis can merge short-circuit branch scopes and move
+    // their Symbol storage. Re-resolve the assignment place before retaining
+    // or comparing any pointer-backed SemanticPlace state.
+    placeTarget = qualified ? resolveQualifiedPlaceSymbol(expr.path())
+                            : resolvePlaceSymbol(expr.name());
+    targetPlace =
+        placeTarget == nullptr ? SemanticPlace{} : placeForSymbol(*placeTarget);
     const auto *moveCall = exprAs<Call>(expr.value().get());
     const Variable *movedSource =
         moveCall != nullptr &&

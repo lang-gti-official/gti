@@ -1,0 +1,17 @@
+class cell<std::default_initializable T> {
+public:
+  cell() {}
+  mut T value = T();
+};
+
+class box<std::default_initializable T> {
+public:
+  box() {}
+  mut T value = T();
+};
+
+int main() {
+  mut cell<cell<int32_t>> direct = cell<cell<int32_t>>();
+  mut box<cell<box<int32_t>>> indirect = box<cell<box<int32_t>>>();
+  return int(direct.value.value) + int(indirect.value.value.value);
+}

@@ -253,7 +253,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v44 valid=" << program.valid() << '\n';
+    output << "mir-v45 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -974,6 +974,18 @@ private:
     optional(value.dropType.lambdaInstance);
     output << " destructor=";
     optional(value.dropType.destructor);
+    output << " fixed-array=";
+    if (!value.dropType.fixedArray) {
+      output << '-';
+    } else {
+      output << "schedule(extents=[";
+      list(value.dropType.fixedArray->extents);
+      output << "];leaf=";
+      type(value.dropType.fixedArray->leafType);
+      output << ";class=";
+      optional(value.dropType.fixedArray->leafClassInstance);
+      output << ')';
+    }
     output << " active-cleanup=" << value.dropType.requiresActiveCleanup
            << " initially-active=" << value.initiallyActive << '\n';
   }

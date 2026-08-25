@@ -1110,6 +1110,14 @@ if(BUILD_TESTING)
     set_tests_properties(fixed_array_class_lifecycle_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME issues_117_120_regressions
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(issues_117_120_regressions PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"

@@ -1,5 +1,3 @@
-// #117 item 1. Binding the lambda first compiles; invoking it immediately
-// does not. Same class, same capture, same field read.
 class holder {
 public:
   holder() {}
