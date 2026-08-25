@@ -585,6 +585,10 @@ struct SemanticLoanInfo {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
+  // For a StoredValue loan carried by a direct stored-reference parameter,
+  // this is the exact semantic field that designates the external referent.
+  // Zero for ordinary reference loans and non-entry retained loans.
+  SymbolId designatedField = 0;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };

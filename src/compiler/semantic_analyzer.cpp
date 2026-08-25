@@ -11105,7 +11105,8 @@ private:
                                     bool receiverOrigin, AccessMode access,
                                     bool protectsStorage,
                                     SemanticLoanId parent = 0,
-                                    bool entry = false) {
+                                    bool entry = false,
+                                    SymbolId designatedField = 0) {
     const SemanticLoanId id = nextSemanticLoanId++;
     semanticModel.recordLoan({.id = id,
                               .kind = kind,
@@ -11117,6 +11118,7 @@ private:
                               .place = std::move(place),
                               .access = access,
                               .protectsStorage = protectsStorage,
+                              .designatedField = designatedField,
                               .carriers = {carrierSymbol}});
     loanFlow.records.emplace(
         id, LoanFlowRecord{.id = id,
@@ -11164,6 +11166,20 @@ private:
     const SemanticLoanPlace place{.root = carrierSymbol};
     const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
                                                : borrowAccess(carrier->type);
+    SymbolId designatedField = 0;
+    if (storedValueCarrier) {
+      const ClassInfo *owner = classInfo(carrier->type);
+      if (owner != nullptr && owner->storedReference) {
+        const auto member =
+            owner->members.find(owner->storedReference->field->name().lexeme);
+        if (member != owner->members.end()) {
+          designatedField = toolingSymbolFor(member->second.symbol);
+        }
+      }
+      if (designatedField == 0) {
+        return;
+      }
+    }
     const SemanticLoanId id = createRetainedLoan(
         *carrier, carrierSymbol,
         storedValueCarrier ? SemanticLoanKind::StoredValue
@@ -11175,7 +11191,7 @@ private:
         // it were that owner would incorrectly reject increment, copy, and
         // move of the iterator itself.  The caller's retained loan continues
         // to protect the actual owner for the duration of the call.
-        referenceCarrier, 0, true);
+        referenceCarrier, 0, true, designatedField);
     semanticModel.recordBindingLoan(parameter, id);
   }
 

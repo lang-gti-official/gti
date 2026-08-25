@@ -129,6 +129,7 @@ struct HirLoan {
   SemanticLoanId parent = 0;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
+  SymbolId designatedField = 0;
   std::vector<HirBindingId> carriers;
   bool entry = false;
 };

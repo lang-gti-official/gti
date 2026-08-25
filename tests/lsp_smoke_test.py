@@ -2030,6 +2030,75 @@ def test_copy_constructible_carrier_provenance_tooling(executable, root):
             related["message"] == "Stored owner dependency enters here."
             for related in diagnostic["relatedInformation"]
         ), diagnostic
+
+        laundered_source = valid_source.replace(
+            "int& exact_relay(ReadCarrier carrier) {\n"
+            "  return carrier.referent;\n"
+            "}\n",
+            "int& relay_reference(int& source) { return source; }\n"
+            "int& exact_relay(ReadCarrier carrier) {\n"
+            "  return relay_reference(carrier.referent);\n"
+            "}\n",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": laundered_source}],
+                },
+            }
+        )
+        laundered_publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and any(
+                diagnostic.get("code") == "GTI-S2085"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        laundered = next(
+            item
+            for item in laundered_publication["diagnostics"]
+            if item.get("code") == "GTI-S2085"
+        )
+        call = laundered_source.index(
+            "relay_reference(carrier.referent)"
+        )
+        terminal = laundered_source.index(")", call)
+        assert laundered["range"] == {
+            "start": lsp_position(laundered_source, terminal),
+            "end": lsp_position(laundered_source, terminal + 1),
+        }, laundered
+        assert (
+            "does not relay the exact external owner dependency"
+            in laundered["message"]
+        ), laundered
+        assert any(
+            related["message"] == "Stored owner dependency enters here."
+            for related in laundered["relatedInformation"]
+        ), laundered
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+            and not message["params"]["diagnostics"]
+        )
     finally:
         session.close()
 
