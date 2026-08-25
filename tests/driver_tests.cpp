@@ -1693,6 +1693,19 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
       .runtimeLibrary = runtimeLibrary,
       .vendorInclude = discovered.vendorInclude,
   };
+  lang::driver::NativeInputs nestedNativeInputs;
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+  nestedNativeInputs.compilerArguments = {"-fsanitize=address,undefined",
+                                          "-fno-omit-frame-pointer"};
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+  if (nestedNativeInputs.compilerArguments.empty()) {
+    nestedNativeInputs.compilerArguments = {"-fsanitize=address,undefined",
+                                            "-fno-omit-frame-pointer"};
+  }
+#endif
   const auto build = [&](std::string_view suffix,
                          const std::filesystem::path &buildEntry,
                          const lang::driver::ToolchainLayout &buildToolchain,
@@ -1710,8 +1723,8 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
             lang::TargetInfo::host(), lang::OptimizationLevel::O0, standard, {},
             std::move(flags)),
         buildToolchain, generated, output,
-        lang::driver::discoverNativeCompiler(), {}, false, true, false,
-        std::nullopt, std::nullopt, std::nullopt,
+        lang::driver::discoverNativeCompiler(), nestedNativeInputs, false, true,
+        false, std::nullopt, std::nullopt, std::nullopt,
         lang::driver::BuildReportRequest{
             .output = report,
             .producerExecutable = testExecutable,
@@ -1721,7 +1734,12 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
   const lang::driver::ExecutableBuildResult first =
       build("first", entry, toolchain, lang::CppStandard::Cpp23);
   expect(first.succeeded() && first.provenance.has_value(),
-         "an opted-in executable build should capture structured provenance");
+         "an opted-in executable build should capture structured provenance "
+         "(status=" +
+             std::to_string(static_cast<int>(first.status)) + ", detail=" +
+             first.driverDiagnostic.value_or("none") + ", native output=" +
+             (first.nativeProcess ? first.nativeProcess->output : "none") +
+             ")");
   if (!first.provenance) {
     return;
   }
