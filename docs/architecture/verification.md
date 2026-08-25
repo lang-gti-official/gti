@@ -16,7 +16,8 @@ assertions.
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
-| `native_header_pipeline` | deterministic compiler-owned C/C++ header shape, canonical record definitions, namespaces, flattened C names, and layout assertions |
+| `native_header_pipeline` | deterministic compiler-owned C/C++ header shape, canonical record definitions, namespaces, flattened C names, layout assertions, and the exact direct opaque-handle out-parameter semantic boundary |
+| `native_header_c_cpp_oracle` | generated C17/C++20/C++23 declarations and real calls, including mutation of a GTI handle binding through an exact C `OpaqueHandle**` out parameter at O0/O3 |
 | `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23 |
 | `native_callback_pipeline` | named callback syntax and exact conversion, null state, passive-record/C-boundary admission, HIR/MIR adapter identity and containment, formatter, diagnostics, generated thunk/header shape, and malformed-adapter rejection |
 | `glfw_3_4_c_oracle` | exact 124-function GLFW 3.4 inventory, all five records and callback/Vulkan types, generated C17/C++20/C++23 header checks, linked representative calls at O0/O3, and failing-callback containment |
@@ -204,7 +205,10 @@ record proves that C++ identity is preserved while the C branch remains valid.
 The same oracle privately completes a root opaque C struct and a namespaced
 opaque C++ struct wrapping RAII/class state, exercises their create/use/destroy
 functions, and proves that neither public header branch needs the pointee
-layout. `native_record_pipeline` owns `GTI-S2065`, pointer-only semantic
+layout. It also has C allocate and write a root handle through `OpaqueHandle**`,
+proving that the contextual GTI `&binding` argument reaches the exact native
+declarator without enabling a retained nested pointer. `native_record_pipeline`
+owns `GTI-S2065`, pointer-only semantic
 identity, formatter shape, and the absence of an emitted GTI body.
 The installed-library smoke compiles `NativeHeaderBackend` from the exported
 compiler package.

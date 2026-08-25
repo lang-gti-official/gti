@@ -110,7 +110,8 @@ follows the same rule as its canonical allowed type:
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
   `std::string_view` as the counted input-buffer case and `c_string` as the
-  NUL-terminated input-pointer case, and exact named native function types; and
+  NUL-terminated input-pointer case, exact named native function types, and
+  the exact `OpaqueHandle**` out-parameter form described below; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -128,11 +129,19 @@ general pointer-to-pointer types, anonymous or general function-pointer
 declarators, and pointers to non-ABI pointees are also rejected. The bounded
 exceptions do not create general
 nested pointer types: `c_string*` spells `const char**` for a C out parameter,
-and a `[[c_array(count)]]` return may add one outer pointer to an otherwise
-admitted one-level C pointer. A named native function type recursively uses the
-same ABI-safe parameter/result family. The allowlist does not define array
-parameters, captured callbacks, opaque ownership transfer, or direct C++
-linkage.
+an immutable direct `extern "C"` parameter may be `OpaqueHandle**`, and a
+`[[c_array(count)]]` return may add one outer pointer to an otherwise admitted
+one-level C pointer. At a call, the opaque out parameter accepts only
+`&binding`, where `binding` is a mutable raw pointer to the exact opaque handle;
+the address expression must be the direct argument and the call remains
+lexical `unsafe`. It cannot be stored, returned, forwarded, used for ordinary
+GTI overload resolution, or written in any other local, field, parameter, or
+unannotated return position. The C call may replace the binding with null or a
+native address but does not confer ownership or cleanup policy. A named native
+function type recursively uses the ordinary ABI-safe parameter/result family
+and does not inherit the opaque out-parameter exception. The allowlist does
+not define array parameters, captured callbacks, opaque ownership transfer, or
+direct C++ linkage.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
@@ -273,7 +282,9 @@ transfer family.
 
 Calling the pointer-bearing function and indexing the returned storage require
 `unsafe`. A two-level result can be captured with `auto`; explicit `T**`
-locals, parameters, fields, and unannotated returns remain invalid:
+locals, fields, ordinary GTI parameters, and unannotated returns remain
+invalid. The separate opaque-handle out-parameter exception does not change
+this returned-array rule:
 
 ```gti
 mut int32_t count = 0;
@@ -290,7 +301,8 @@ that parameter index. MIR verification rejects a nested-pointer return without
 the pair metadata or a malformed pair before backend entry. The generated
 C/C++ bridge header erases the attribute and emits the exact C declarator.
 `GTI-S2073` owns an invalid attribute/count pair; `GTI-S2074` owns nested raw
-pointer syntax outside this return boundary.
+pointer syntax outside this return boundary or the exact opaque-handle C out
+parameter boundary.
 
 ## Passive Native Records
 
@@ -409,6 +421,7 @@ namespace graphics {
 
 extern "C" {
   NativeDatabase* database_open(std::string_view path);
+  int32_t database_open_out(c_string path, NativeDatabase** out_database);
   void database_close(NativeDatabase* database);
   int32_t database_version(const NativeDatabase* database);
 }
@@ -419,10 +432,11 @@ declaration ending in `;`. Ordinary forward declarations are not a second
 incomplete-type system: omitting the attribute is `GTI-S2065`. An opaque
 handle has nominal type identity but no public fields, size, alignment,
 construction, destruction, inheritance, or concurrency policy. It may appear
-only as the pointee of one raw pointer. Passing it by value, defining a GTI
-body, using it as a base or generic argument, or querying the pointee layout is
-invalid. `sizeof(NativeDatabase*)` and `alignof(NativeDatabase*)` remain valid
-pointer queries.
+as the pointee of one raw pointer, in the exact direct C out-parameter form
+`NativeDatabase**`, or in the bounded returned-array form below. Passing it by
+value, defining a GTI body, using it as a base or generic argument, or querying
+the pointee layout is invalid. `sizeof(NativeDatabase*)` and
+`alignof(NativeDatabase*)` remain valid pointer queries.
 
 An opaque-handle pointer is an address-only value. It may be initialized,
 copied, assigned, compared with a compatible pointer or `nullptr`, passed, and
@@ -435,8 +449,10 @@ the `[[c_opaque]]` declaration.
 A `[[c_abi]]` field may contain `NativeDatabase*` or
 `const NativeDatabase*`. The record contains only the address; the opaque
 pointee contributes no record-layout fact. An annotated `[[c_array(count)]]`
-function may return `NativeDatabase**`, but the opaque declaration alone does
-not enable nested pointers in any other position.
+function may return `NativeDatabase**`. A bodyless C function may instead take
+`NativeDatabase**` to replace one mutable handle-pointer binding. These are
+separate bounded positions; the opaque declaration alone does not enable a
+storable nested-pointer value.
 
 The generated bridge header gives each handle a deterministic dual surface:
 

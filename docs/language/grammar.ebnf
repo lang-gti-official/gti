@@ -231,7 +231,9 @@ native-c-array-attribute
    one-level pointer to a writable fixed-width integer. Parameters are
    immutable by-value instances of the same scalar and native-record types,
    the admitted pointer types, plus `std::string_view` as a non-retained
-   counted input buffer. A
+   counted input buffer. One direct bodyless C parameter may also use the exact
+   `OpaqueHandle**` out form; its only source argument is the contextual
+   address of an exact mutable `OpaqueHandle*` binding inside `unsafe`. A
    raw-pointer pointee may be qualified with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
    their resolved fixed-width type. Bool, char, enums, ordinary complete
@@ -239,8 +241,8 @@ native-c-array-attribute
    references, arrays, packs, string-view returns, native variables, general
    pointer-to-pointer types, and anonymous/general function pointers are not
    part of this contract. `GTI-S2073` owns malformed C-array pairs and
-   `GTI-S2074` owns a
-   second pointer level outside that annotated return. Calling a
+   `GTI-S2074` owns a second pointer level outside the annotated return or
+   exact opaque-handle out parameter. Calling a
    pointer-bearing C declaration requires an `unsafe`
    block; scalar-only calls and the counted string-view case remain safe. The
    exact function identifier is the native C symbol; a containing GTI namespace
