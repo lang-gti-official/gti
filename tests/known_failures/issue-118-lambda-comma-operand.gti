@@ -1,6 +1,0 @@
-int main() {
-  int32_t doubled = [](int32_t value) -> int32_t {
-    return value * 4;
-  }, 4;
-  return int(doubled) - 4;
-}

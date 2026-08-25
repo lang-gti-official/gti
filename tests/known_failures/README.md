@@ -11,27 +11,12 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-These are the shapes left broken by an otherwise-landed fix — see
-[#117](https://github.com/LukeHHA/gti/issues/117). Each has a passing sibling
-that the same fix already handles, which is what makes them worth keeping.
-
-Every closed issue from this branch has now been probed around, not just the
-ones where a gap surfaced by accident. Six fixes covered their family — #109,
-#111, #112, #113, #114 and #116 — and the six below did not. The fixes that
-held are largely the ones whose issues enumerated the family explicitly, which
-is a lesson about how the issues were written as much as how they were fixed.
+The current compiler reproducers remain outside CTest until their owning issue
+has a passing regression in the appropriate suite.
 
 | File | Left over from | Symptom |
 | --- | --- | --- |
 | `issue-121-direct-override-call.gti` | [#121](https://github.com/LukeHHA/gti/issues/121) | calling an `override` directly on the concrete object → `GTI-B0001`; the same call through the interface reference works, as does a non-override method |
-| `issue-120-generic-dtor-as-type-argument.gti` | [#120](https://github.com/LukeHHA/gti/issues/120) | a generic **with a destructor** used as a type argument; without the destructor, or instantiated directly, it compiles |
-| `issue-118-lambda-comma-operand.gti` | [#118](https://github.com/LukeHHA/gti/issues/118) | a lambda as the **discarded** operand of a comma; the same comma without a lambda compiles. Found by fuzzing, not a leftover |
-| `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
-| `issue-117-nested-capture-emission.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | capture-of-capture is now accepted by semantics but cannot be emitted, so `GTI-S2027` became `GTI-B0001` |
-| `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
-| `issue-117-global-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | `table[0].v = x` on a global array of class; the read and the plain write are fixed |
-| `issue-117-array-of-cleanup-owning-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | an array of a class **with a destructor**; without one it compiles. Reports the same gate #106 was filed with |
-| `issue-117-static-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | the same `[0].v = x` failure through a static class field rather than a global — one defect, two surfaces |
 
 ## Memory-safety reproducers
 
@@ -48,9 +33,7 @@ build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 \
 into the **current directory** by default, so reproducing one of these from
 the repository root litters the tree.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `asan/issue-117-loan-conflict-uaf.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | the #107 reproducer still reports a heap-use-after-free, now in `reportLoanPlaceConflict`; the freed `Symbol` and the scope-stack table are the same, so only the consumer changed |
+There are currently no quarantined memory-safety reproducers.
 
 ## Wrongly rejected programs
 
@@ -58,9 +41,7 @@ the repository root litters the tree.
 no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 (it sees an ordinary non-zero exit). Compile one and read the diagnostic.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `rejected/issue-119-concept-unspaced-equals.gti` | [#119](https://github.com/LukeHHA/gti/issues/119) | `concept c<T>= …` does not parse — `>=` is lexed greedily where `>>` in a nested generic close is handled |
+There are currently no quarantined wrongly rejected programs.
 
 ## Confirmed root causes
 
@@ -335,6 +316,10 @@ reproducers were removed from this directory.
 | [#114](https://github.com/LukeHHA/gti/issues/114) concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
 | [#115](https://github.com/LukeHHA/gti/issues/115) global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
 | [#116](https://github.com/LukeHHA/gti/issues/116) include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
+| [#117](https://github.com/LukeHHA/gti/issues/117) adjacent place, lambda, generic, aggregate-cleanup, and assignment-recovery shapes | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `place_shape_matrix.py`, ASan compiler run |
+| [#118](https://github.com/LukeHHA/gti/issues/118) lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
+| [#119](https://github.com/LukeHHA/gti/issues/119) compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
+| [#120](https://github.com/LukeHHA/gti/issues/120) generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

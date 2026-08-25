@@ -1,0 +1,14 @@
+int main() {
+  int32_t plain = 1, 4;
+  int32_t local = [](int32_t value) -> int32_t {
+    return value * 4;
+  }, 4;
+  int32_t grouped = ([]() -> int32_t { return 9; }, (4));
+  int32_t returned = int(([]() -> int32_t { return 11; }, 4));
+  int32_t offset = 3;
+  auto add_offset = [offset](int32_t value) -> int32_t {
+    return value + offset;
+  };
+  auto copied = add_offset;
+  return int(plain + local + grouped + returned + copied(1)) - 20;
+}

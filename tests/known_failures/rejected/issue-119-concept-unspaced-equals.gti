@@ -1,5 +1,0 @@
-concept c<T>= std::movable<T>;
-
-int main() {
-  return 0;
-}

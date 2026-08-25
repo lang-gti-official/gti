@@ -593,7 +593,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v44 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v45 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;

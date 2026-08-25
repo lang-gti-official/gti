@@ -1,0 +1,9 @@
+int main() {
+  mut int32_t left = 0;
+  if (left = 3 and left == 3) {}
+
+  mut int32_t right = 0;
+  if (right = 3 or right == 3) {}
+
+  return int(left + right) - 6;
+}

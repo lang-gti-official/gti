@@ -347,11 +347,25 @@ enum class MirDropObligationKind {
   ConstructionRollback,
 };
 
+// A homogeneous fixed-array drop walks these extents in reverse lexicographic
+// order and applies the leaf cleanup descriptor to every element. Keeping the
+// concrete shape in MIR avoids asking a backend to rediscover aggregate
+// lifetime semantics from its chosen array representation.
+struct MirFixedArrayDropSchedule {
+  std::vector<std::size_t> extents;
+  SemanticType leafType = SemanticType::Unknown;
+  std::optional<HirClassInstanceId> leafClassInstance;
+
+  friend bool operator==(const MirFixedArrayDropSchedule &,
+                         const MirFixedArrayDropSchedule &) = default;
+};
+
 struct MirDropType {
   SemanticType type = SemanticType::Unknown;
   std::optional<HirClassInstanceId> classInstance;
   std::optional<HirLambdaId> lambdaInstance;
   std::optional<HirDestructorInstanceId> destructor;
+  std::optional<MirFixedArrayDropSchedule> fixedArray;
   bool requiresActiveCleanup = false;
 
   friend bool operator==(const MirDropType &, const MirDropType &) = default;

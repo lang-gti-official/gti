@@ -1,0 +1,16 @@
+concept transferable<T>= std::movable<T>;
+concept compact<T>=std::movable<T>;
+
+T identity<transferable T>(T value) {
+  return std::move(value);
+}
+
+T pass_through<compact T>(T value) {
+  return std::move(value);
+}
+
+int main() {
+  int32_t value = pass_through<int32_t>(identity<int32_t>(7));
+  bool comparison = value >= 7;
+  return comparison ? 0 : 1;
+}

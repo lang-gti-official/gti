@@ -1,0 +1,22 @@
+class leaf {
+public:
+  leaf() {}
+  mut int32_t value = 1;
+};
+
+mut leaf global_items[2] = {};
+
+class holder {
+public:
+  holder() {}
+  static mut leaf static_items[2] = {};
+};
+
+int main() {
+  mut leaf local_items[2] = {};
+  local_items[0].value = 3;
+  global_items[0].value = 5;
+  holder::static_items[0].value = 7;
+  return int(local_items[0].value + global_items[0].value +
+             holder::static_items[0].value) - 15;
+}

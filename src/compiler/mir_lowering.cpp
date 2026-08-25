@@ -549,12 +549,56 @@ private:
                : FailurePropagationKind::None;
   }
 
-  [[nodiscard]] static MirDropType lowerDropType(const HirDropType &type) {
-    return {.type = type.type,
-            .classInstance = type.classInstance,
-            .lambdaInstance = type.lambdaInstance,
-            .destructor = type.destructor,
-            .requiresActiveCleanup = type.requiresActiveCleanup};
+  [[nodiscard]] MirDropType lowerDropType(const HirDropType &type) const {
+    MirDropType result{.type = type.type,
+                       .classInstance = type.classInstance,
+                       .lambdaInstance = type.lambdaInstance,
+                       .destructor = type.destructor,
+                       .requiresActiveCleanup = type.requiresActiveCleanup};
+    if (type.type.kind != SemanticType::Array) {
+      return result;
+    }
+
+    SemanticType leaf = type.type;
+    MirFixedArrayDropSchedule schedule;
+    while (leaf.kind == SemanticType::Array) {
+      if (leaf.arguments.size() != 1 || leaf.arrayLengthParameterId != 0 ||
+          leaf.arrayLength == 0) {
+        return result;
+      }
+      schedule.extents.push_back(leaf.arrayLength);
+      leaf = leaf.arguments.front();
+    }
+    schedule.leafType = leaf;
+    if (leaf.kind == SemanticType::Class) {
+      const HirClassInstance *selected = nullptr;
+      const HirClassInstance *exactSpecialization = nullptr;
+      for (const HirClassInstance &candidate : program.classInstances()) {
+        if (candidate.type == leaf) {
+          selected = &candidate;
+          break;
+        }
+        // Exact class specializations have their own stable ClassId and no
+        // remaining generic arguments. Array element types can retain the
+        // source arguments alongside that specialization identity, so match
+        // the unique concrete instance by the stronger declaration identity.
+        if (candidate.type.classId == leaf.classId &&
+            candidate.type.arguments.empty() &&
+            candidate.type.valueArguments.empty()) {
+          if (exactSpecialization != nullptr) {
+            return result;
+          }
+          exactSpecialization = &candidate;
+        }
+      }
+      selected = selected == nullptr ? exactSpecialization : selected;
+      if (selected != nullptr) {
+        schedule.leafClassInstance = selected->id;
+        result.destructor = selected->destructor;
+      }
+    }
+    result.fixedArray = std::move(schedule);
+    return result;
   }
 
   [[nodiscard]] MirDropObligationId

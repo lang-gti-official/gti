@@ -1,9 +1,0 @@
-// #117 item 2. Semantic analysis now accepts capture-of-capture (the #108
-// fix); emission does not, so this went from GTI-S2027 to GTI-B0001.
-int main() {
-  mut int32_t c = 7;
-  auto outer = [c]() -> int32_t {
-    return [c]() -> int32_t { return c; }();
-  };
-  return int(outer()) - 7;
-}

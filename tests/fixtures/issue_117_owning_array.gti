@@ -1,0 +1,15 @@
+struct record {
+  int32_t value;
+  record(int32_t initial) : value(initial) {}
+};
+
+int32_t partial_drop() {
+  mut std::unique_ptr<record> owners[2] = {
+      std::make_unique<record>(7), std::make_unique<record>(8)};
+  auto first = std::move(owners[0]);
+  return first->value;
+}
+
+int main() {
+  return partial_drop() == 7 ? 0 : 1;
+}

@@ -290,7 +290,7 @@ private:
           consume(TokenKind::IDENTIFIER,
                   "Expect a type parameter in concept declaration."));
     } while (match({TokenKind::COMMA}));
-    consume(TokenKind::GREATER, "Expect '>' after concept type parameters.");
+    consumeGenericClose("Expect '>' after concept type parameters.");
 
     std::vector<ConceptApplication> requirements;
     if (compilerBinding) {
@@ -321,7 +321,7 @@ private:
     do {
       arguments.emplace_back(parseType());
     } while (match({TokenKind::COMMA}));
-    consume(TokenKind::GREATER, "Expect '>' after concept arguments.");
+    consumeGenericClose("Expect '>' after concept arguments.");
     return {std::move(name), std::move(arguments)};
   }
 
@@ -882,7 +882,7 @@ private:
       parameters.push_back({std::move(name), std::move(pack), std::nullopt,
                             std::move(constraint)});
     } while (match({TokenKind::COMMA}));
-    consume(TokenKind::GREATER, "Expect '>' after generic parameters.");
+    consumeGenericClose("Expect '>' after generic parameters.");
     return parameters;
   }
 
@@ -1226,7 +1226,7 @@ private:
       consume(TokenKind::COMMA,
               "Expect ',' between expected value and error types.");
       arguments.emplace_back(parseType());
-      consume(TokenKind::GREATER, "Expect '>' after expected error type.");
+      consumeGenericClose("Expect '>' after expected error type.");
       return TypeRef(std::move(expected), std::move(arguments));
     }
     if (match({TokenKind::INT, TokenKind::INT8, TokenKind::INT16,
@@ -1244,7 +1244,7 @@ private:
         do {
           arguments.emplace_back(parseGenericArgument());
         } while (match({TokenKind::COMMA}));
-        consume(TokenKind::GREATER, "Expect '>' after generic arguments.");
+        consumeGenericClose("Expect '>' after generic arguments.");
       }
       return TypeRef(std::move(name), std::move(arguments));
     }
@@ -2294,7 +2294,7 @@ private:
     do {
       arguments.emplace_back(parseGenericArgument());
     } while (match({TokenKind::COMMA}));
-    consume(TokenKind::GREATER, "Expect '>' after generic arguments.");
+    consumeGenericClose("Expect '>' after generic arguments.");
     return arguments;
   }
 
@@ -2742,6 +2742,37 @@ private:
     }
     diagnostics.emplace_back(std::move(diagnostic));
     throw ParseError{};
+  }
+
+  // In a generic-close position, a greedily lexed `>=` is the two grammar
+  // tokens `>` and `=`. `>>=` follows the same rule one close at a time, so a
+  // nested generic can leave the final assignment token for its caller. The
+  // split is deliberately contextual: ordinary comparison and shift-assignment
+  // expressions retain their original lexer tokens.
+  Token consumeGenericClose(std::string_view message) {
+    if (check(TokenKind::GREATER)) {
+      return advance();
+    }
+    if (check(TokenKind::GREATER_EQUAL) ||
+        check(TokenKind::SHIFT_RIGHT_EQUAL)) {
+      Token close = peek();
+      consumedCompletion = consumedCompletion || close.completion;
+      close.kind = TokenKind::GREATER;
+      close.lexeme = ">";
+
+      Token &remainder = tokens.at(current);
+      remainder.kind = remainder.kind == TokenKind::GREATER_EQUAL
+                           ? TokenKind::EQUAL
+                           : TokenKind::GREATER_EQUAL;
+      remainder.lexeme = remainder.kind == TokenKind::EQUAL ? "=" : ">=";
+      ++remainder.position;
+      remainder.literal = std::monostate{};
+      remainder.leadingDocumentationMarkdown.reset();
+      remainder.configurationFlagDefined.reset();
+      remainder.configurationFlagReference = false;
+      return close;
+    }
+    return consume(TokenKind::GREATER, message);
   }
 
   ParseError error(const Token &token, std::string_view message) {

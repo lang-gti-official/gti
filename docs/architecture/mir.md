@@ -78,7 +78,11 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v44`/`mir-body-v42`.
+The deterministic serialization is currently `mir-v45`/`mir-body-v42`.
+Program v45 adds concrete fixed-array drop schedules: every array drop retains
+its ordered extents, exact leaf type, and leaf class instance when applicable.
+This lets verification and backends consume reverse element cleanup without
+recovering array lifecycle meaning from a source type or target spelling.
 Program v44/body v42 add exact proof-carrying safety discharges to instructions
 and transformation records. A discharge names one bounds, storage-state, or
 arithmetic-overflow family plus the exact local defined-failure origin and
@@ -692,6 +696,14 @@ lifecycle metadata contains every lexically dropped field in
 declaration order; its independently retained drop projection must be the exact
 reverse order. Trivial fields remain structural HIR/layout facts rather than
 lifecycle-verifier authority.
+
+A concrete fixed-array obligation retains one aggregate schedule rather than
+inventing a backend-visible drop for every element. Its extent sequence and
+leaf cleanup identity must exactly match the array type. The aggregate `Drop`
+still occupies one lifecycle position, while execution visits every leaf in
+reverse index order and routes a failure-capable leaf destructor through the
+ordinary MIR failure edge. This representation scales to nested fixed arrays
+without making the backend rediscover element order or destructor identity.
 
 ## Controlled Optimization Edits
 

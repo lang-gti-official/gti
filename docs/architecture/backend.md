@@ -264,6 +264,15 @@ Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.
 
+A fixed-array drop with a concrete MIR schedule uses the same lifetime-slot
+boundary for its aggregate storage. The C++ representation recursively visits
+the recorded extents in reverse order, invokes the exact leaf failure-form
+destructor, and destroys each completed leaf once. Ordinary cleanup preserves
+the first defined failure while completing the remaining leaves; cleanup while
+another failure is active retains the existing double-failure termination
+rule. The emitter rejects arrays whose schedule, leaf class, or destructor is
+not already verified by MIR.
+
 An all-owned-parameter initializer list may stay in native member-initializer
 form only when every declared initializer has one exact source-parameter move
 and the complete field order is proven. Cleanup-free fields require no
