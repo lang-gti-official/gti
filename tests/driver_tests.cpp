@@ -492,6 +492,16 @@ void testNativeCommandConstruction() {
                                        "native object.o"}),
          "native C compilation should preserve its distinct standard, include, "
          "argument, source, and output policy");
+  expect(
+      lang::driver::NativeToolchain().preprocessCommand(
+          cRequest, "native dependencies.d") ==
+          std::vector<std::string>(
+              {"custom-cc", "-std=c17", "-O2", "-Inative include",
+               "-DNATIVE_VALUE=42", "-E", "-MD", "-MF", "native dependencies.d",
+               "native source.c", "-o", "native object.o"}),
+      "native C preprocessing should preserve the compile request while "
+      "replacing object compilation with preprocessing and dependency "
+      "discovery");
 
   const lang::driver::NativeCppCompileRequest cppRequest(
       "custom-c++", "native source.cpp", "native object.o",
@@ -1631,6 +1641,12 @@ void testResourcesAndArtifactOwnership() {
          "temporary artifact paths should be process-unique");
   expect(firstTemporary.extension() == ".cpp",
          "temporary C++ artifacts should retain their backend extension");
+  const std::filesystem::path preprocessedTemporary =
+      lang::driver::temporaryArtifactPath(temporary.root() / "native.h", ".i");
+  expect(preprocessedTemporary.extension() == ".i" &&
+             preprocessedTemporary != firstTemporary,
+         "generic temporary artifacts should be unique and retain the "
+         "requested extension");
   std::error_code firstError;
   std::error_code temporaryError;
   const std::filesystem::path canonicalParent =

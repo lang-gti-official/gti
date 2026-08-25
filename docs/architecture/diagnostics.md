@@ -164,8 +164,12 @@ diagnostics or letting a backend message choose either identity.
   writable fixed-width integer. Do not infer a different count parameter or
   offer a fix-it.
 - `GTI-S2074` owns a written second raw-pointer level outside an exact
-  `[[c_array(count)]] extern "C"` return. Point at the outer `*`, explain the
-  bounded exception, and do not suggest general nested-pointer syntax.
+  `[[c_array(count)]] extern "C"` return or exact opaque-handle out parameter
+  on a bodyless C declaration. Point at the outer `*`, explain the bounded
+  positions, and do not suggest general nested-pointer syntax. `GTI-S2056`
+  owns an attempted nested address value at an expression: point at `&` and
+  require the direct address of an exact mutable handle-pointer binding in the
+  selected C call.
 - `GTI-P0003` owns malformed boolean compile-condition syntax, including a
   missing operand or delimiter. `GTI-P0004` owns `defined(...)` used as an
   ordinary GTI expression. Both keep the condition language confined to

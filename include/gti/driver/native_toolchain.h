@@ -191,6 +191,13 @@ struct NativeInvocationOptions {
   bool captureSuccessfulOutput = false;
 };
 
+struct NativePreprocessingResult {
+  std::vector<std::string> command;
+  NativeProcessResult process;
+
+  [[nodiscard]] bool succeeded() const { return process.succeeded(); }
+};
+
 class NativeToolchain final {
 public:
   [[nodiscard]] std::vector<std::string>
@@ -215,6 +222,11 @@ public:
   [[nodiscard]] std::vector<std::string>
   preprocessCommand(const NativeCppCompileRequest &request,
                     const std::filesystem::path &depfile) const;
+
+  [[nodiscard]] NativePreprocessingResult
+  preprocess(const NativeCCompileRequest &request,
+             const std::filesystem::path &depfile,
+             NativeInvocationOptions options = {}) const;
 
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCompileRequest &request,

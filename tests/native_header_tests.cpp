@@ -236,6 +236,104 @@ int main() {
          "conversion into unrestricted retained conversions");
 }
 
+void testOpaqueHandleOutPointerSurface() {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto analyze = [&](std::string_view name, std::string source) {
+    return lang::Frontend().analyze(
+        std::filesystem::path(name), std::move(source),
+        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  };
+
+  const lang::FrontendResult frontend = analyze("native-handle-out.gti", R"(
+[[c_opaque]] struct NativeDatabase;
+
+extern "C" {
+  int32_t database_open(c_string path, NativeDatabase** out_database);
+  void database_close(NativeDatabase* database);
+}
+
+int main() {
+  mut NativeDatabase* database = nullptr;
+  unsafe {
+    int32_t opened = database_open(":memory:", &database);
+    if (opened != 0 || database == nullptr) {
+      return 1;
+    }
+    database_close(database);
+  }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "an extern C function should write one opaque handle pointer through "
+         "an exact contextual out argument");
+  if (frontend.canGenerateCode()) {
+    const lang::LoweredProgram lowered = gti_test::lowerProgram(
+        frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
+    const std::string header =
+        lang::NativeHeaderBackend().generate(lowered).contents;
+    const std::string cpp = lang::CppBackend().generate(lowered).contents;
+    expect(header.find("NativeDatabase** out_database") != std::string::npos &&
+               cpp.find("NativeDatabase** out_database") != std::string::npos,
+           "native header and C++ representation should preserve the exact "
+           "opaque-handle out-parameter ABI");
+  } else {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+
+  const lang::FrontendResult ordinary = analyze("ordinary-handle-out.gti", R"(
+[[c_opaque]] struct NativeDatabase;
+void ordinary(NativeDatabase** out_database) {}
+int main() { return 0; }
+)");
+  expect(!ordinary.canGenerateCode() && hasCode(ordinary, "GTI-S2074"),
+         "ordinary GTI functions should not acquire nested-pointer "
+         "parameters");
+
+  const lang::FrontendResult nonOpaque = analyze("non-opaque-out.gti", R"(
+[[c_abi]] struct NativeValue { mut int32_t value; };
+[[c_opaque]] struct NativeDatabase;
+extern "C" {
+  int32_t write_scalar(int32_t** out_value);
+  int32_t write_record(NativeValue** out_value);
+  int32_t write_const_handle(const NativeDatabase** out_value);
+}
+int main() { return 0; }
+)");
+  expect(!nonOpaque.canGenerateCode() && hasCode(nonOpaque, "GTI-S2054"),
+         "the C boundary should reject scalar, by-value-record, and const "
+         "opaque-handle nested pointers rather than generalizing the "
+         "out-parameter exception");
+
+  const lang::FrontendResult retained = analyze("retained-handle-out.gti", R"(
+[[c_opaque]] struct NativeDatabase;
+extern "C" { int32_t database_open(NativeDatabase** out_database); }
+int main() {
+  mut NativeDatabase* database = nullptr;
+  unsafe { auto retained = &database; }
+  return 0;
+}
+)");
+  expect(!retained.canGenerateCode() && hasCode(retained, "GTI-S2056"),
+         "an opaque-handle pointer-to-pointer should exist only as the direct "
+         "contextual C call argument");
+
+  const lang::FrontendResult immutable = analyze("immutable-handle-out.gti", R"(
+[[c_opaque]] struct NativeDatabase;
+extern "C" { int32_t database_open(NativeDatabase** out_database); }
+int main() {
+  NativeDatabase* database = nullptr;
+  unsafe { return database_open(&database); }
+}
+)");
+  expect(!immutable.canGenerateCode() && hasCode(immutable, "GTI-S2056"),
+         "an opaque-handle out argument should require a mutable pointer "
+         "binding");
+}
+
 void testNativeArrayBoundarySurface() {
   const std::filesystem::path standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
@@ -365,7 +463,7 @@ extern "C" { NativeHandle** native_handles(int32_t* count); }
 int main() { return 0; }
 )");
   expect(!unannotated.canGenerateCode() && hasCode(unannotated, "GTI-S2074"),
-         "two-level pointer syntax should require the c_array boundary");
+         "two-level pointer returns should require the c_array boundary");
 
   const lang::FrontendResult ordinaryPositions =
       analyze("c-array-ordinary-nested.gti", R"(
@@ -415,6 +513,7 @@ int main() {
   testCAndCppHeaderSurface();
   testCStringBoundarySurface();
   testCStringBoundaryRejectsUnprovedUses();
+  testOpaqueHandleOutPointerSurface();
   testNativeArrayBoundarySurface();
   testNativeArrayBoundaryRejectsInvalidPairs();
   if (failures != 0) {

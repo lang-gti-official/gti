@@ -456,10 +456,10 @@ private:
       }
     }
     if (name == "size_t" || name == "uintptr_t") {
-      return makeInteger(profile_.sizeBits, false);
+      return makeInteger(profile_.sizeBits(), false);
     }
     if (name == "ptrdiff_t" || name == "ssize_t" || name == "intptr_t") {
-      return makeInteger(profile_.sizeBits, true);
+      return makeInteger(profile_.sizeBits(), true);
     }
     return std::nullopt;
   }
@@ -570,12 +570,12 @@ private:
         return makeInteger(16, isSigned);
       }
       if (longCount == 1) {
-        return makeInteger(profile_.longBits, isSigned);
+        return makeInteger(profile_.longBits(), isSigned);
       }
       if (longCount >= 2) {
-        return makeInteger(profile_.longLongBits, isSigned);
+        return makeInteger(profile_.longLongBits(), isSigned);
       }
-      return makeInteger(profile_.intBits, isSigned);
+      return makeInteger(profile_.intBits(), isSigned);
     }
     if (const std::optional<NativeTypeId> builtin =
             builtinTypedef(first.text)) {

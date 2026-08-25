@@ -7,6 +7,7 @@
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
 #include "gti/support.h"
+#include "gti/target.h"
 #include "project_presentation.h"
 
 #include <algorithm>
@@ -51,6 +52,17 @@ struct Options {
   bool emitNativeHeader = false;
   bool keepCpp = false;
   bool optimizationRemarks = false;
+  bool verbose = false;
+};
+
+struct BindgenCliOptions {
+  std::filesystem::path header;
+  std::filesystem::path output;
+  std::optional<std::string> targetTriple;
+  std::optional<std::string> clang;
+  std::vector<std::filesystem::path> includeDirectories;
+  std::vector<std::string> macroArguments;
+  lang::bindgen::BindingOptions bindings;
   bool verbose = false;
 };
 
@@ -132,7 +144,8 @@ void printUsage(std::ostream &stream) {
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
-         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]\n"
+         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] "
+         "[--target <triple>] [-I <dir>] [-D <macro>] [-U <macro>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -194,6 +207,19 @@ void printUsage(std::ostream &stream) {
          "anything.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
+         "\n"
+         "Bindgen options:\n"
+         "  -o, --output <path>  Write generated GTI declarations to a file.\n"
+         "      --namespace <name>\n"
+         "                       Wrap generated source names in a GTI "
+         "namespace.\n"
+         "      --target <triple>\n"
+         "                       Select the C ABI target (default: host).\n"
+         "      --clang <path>   Select the Clang preprocessor executable.\n"
+         "  -I <dir>             Add a C header search directory.\n"
+         "  -D <macro[=value]>   Define a C preprocessor macro.\n"
+         "  -U <macro>           Undefine a C preprocessor macro.\n"
+         "  -v, --verbose        Print the Clang preprocessing command.\n"
          "\n"
          "Project commands:\n"
          "  new                  Create a new executable package.\n"
@@ -1929,9 +1955,7 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
 }
 
 int runBindgen(int argc, char *argv[]) {
-  std::filesystem::path header;
-  std::filesystem::path output;
-  lang::bindgen::BindingOptions options;
+  BindgenCliOptions options;
   for (int index = 2; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "-o" || argument == "--output") {
@@ -1939,7 +1963,7 @@ int runBindgen(int argc, char *argv[]) {
         std::cerr << "gti: " << argument << " requires a path\n";
         return exitCode(ExitStatus::Usage);
       }
-      output = argv[++index];
+      options.output = argv[++index];
       continue;
     }
     if (argument == "--namespace") {
@@ -1947,7 +1971,53 @@ int runBindgen(int argc, char *argv[]) {
         std::cerr << "gti: --namespace requires a name\n";
         return exitCode(ExitStatus::Usage);
       }
-      options.namespaceName = argv[++index];
+      options.bindings.namespaceName = argv[++index];
+      continue;
+    }
+    if (argument == "--target") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --target requires a target triple\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.targetTriple = argv[++index];
+      continue;
+    }
+    if (argument == "--clang") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --clang requires an executable path\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.clang = argv[++index];
+      continue;
+    }
+    if (argument == "-I") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: -I requires a directory\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.includeDirectories.emplace_back(argv[++index]);
+      continue;
+    }
+    if (argument.starts_with("-I") && argument.size() > 2) {
+      options.includeDirectories.emplace_back(argument.substr(2));
+      continue;
+    }
+    if (argument == "-D" || argument == "-U") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: " << argument << " requires a macro spelling\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.macroArguments.emplace_back(std::string(argument) +
+                                          argv[++index]);
+      continue;
+    }
+    if ((argument.starts_with("-D") || argument.starts_with("-U")) &&
+        argument.size() > 2) {
+      options.macroArguments.emplace_back(argument);
+      continue;
+    }
+    if (argument == "--verbose" || argument == "-v") {
+      options.verbose = true;
       continue;
     }
     if (argument == "--help" || argument == "-h") {
@@ -1958,27 +2028,105 @@ int runBindgen(int argc, char *argv[]) {
       std::cerr << "gti: unknown bindgen option '" << argument << "'\n";
       return exitCode(ExitStatus::Usage);
     }
-    if (!header.empty()) {
+    if (!options.header.empty()) {
       std::cerr << "gti: bindgen accepts exactly one header\n";
       return exitCode(ExitStatus::Usage);
     }
-    header = argument;
+    options.header = argument;
   }
-  if (header.empty()) {
+  if (options.header.empty()) {
     std::cerr << "gti: bindgen requires a C header path\n";
     return exitCode(ExitStatus::Usage);
   }
-  std::ifstream stream(header, std::ios::binary);
+  std::ifstream headerStream(options.header, std::ios::binary);
+  if (!headerStream) {
+    std::cerr << "gti: failed to open header: " << options.header << '\n';
+    return exitCode(ExitStatus::Io);
+  }
+  headerStream.close();
+
+  lang::TargetInfo target = lang::TargetInfo::host();
+  if (options.targetTriple) {
+    lang::TargetTripleParseResult parsed =
+        lang::parseTargetTripleResult(*options.targetTriple);
+    if (!parsed.succeeded()) {
+      std::cerr << "gti: invalid bindgen target '" << *options.targetTriple
+                << "': " << lang::targetTripleErrorMessage(parsed.error)
+                << '\n';
+      return exitCode(ExitStatus::Usage);
+    }
+    target = std::move(*parsed.target);
+  }
+  if (!target.supported()) {
+    std::cerr << "gti: bindgen requires a supported 64-bit host or an "
+                 "explicit --target triple\n";
+    return exitCode(ExitStatus::ToolchainConfiguration);
+  }
+  const lang::bindgen::CTargetProfile profile(
+      target.os == "windows" ? lang::bindgen::CDataModel::Llp64
+                             : lang::bindgen::CDataModel::Lp64);
+
+  std::filesystem::path preprocessed;
+  std::filesystem::path dependencies;
+  try {
+    preprocessed =
+        lang::driver::temporaryArtifactPath(options.header, ".bindgen.i");
+    dependencies =
+        lang::driver::temporaryArtifactPath(options.header, ".bindgen.d");
+  } catch (const std::filesystem::filesystem_error &error) {
+    std::cerr << "gti: failed to create bindgen temporary paths: "
+              << error.what() << '\n';
+    return exitCode(ExitStatus::Io);
+  }
+  lang::driver::TemporaryArtifact preprocessedCleanup(preprocessed, true);
+  lang::driver::TemporaryArtifact dependencyCleanup(dependencies, true);
+
+  std::vector<std::string> preprocessorArguments{"-x", "c", "-P",
+                                                 "-fkeep-system-includes"};
+  if (options.targetTriple) {
+    preprocessorArguments.emplace_back("--target=" + *options.targetTriple);
+  }
+  preprocessorArguments.insert(preprocessorArguments.end(),
+                               options.macroArguments.begin(),
+                               options.macroArguments.end());
+  const lang::driver::NativeCCompileRequest preprocessRequest(
+      options.clang.value_or("clang"), options.header, preprocessed,
+      lang::driver::CStandard::C17, lang::OptimizationLevel::O0,
+      options.includeDirectories, std::move(preprocessorArguments));
+  const lang::driver::NativePreprocessingResult preprocessing =
+      lang::driver::NativeToolchain().preprocess(
+          preprocessRequest, dependencies, {.captureSuccessfulOutput = true});
+  if (options.verbose) {
+    std::cerr << lang::driver::renderCommand(preprocessing.command) << '\n';
+  }
+  if (preprocessing.process.driverDiagnostic) {
+    std::cerr << *preprocessing.process.driverDiagnostic << '\n';
+  }
+  if (!preprocessing.process.output.empty()) {
+    reportCapturedOutput(preprocessing.process.output,
+                         preprocessing.succeeded()
+                             ? "gti: C preprocessor diagnostics:\n"
+                             : "gti: C preprocessing failed:\n");
+  }
+  if (!preprocessing.succeeded()) {
+    return preprocessing.process.driverDiagnostic
+               ? exitCode(ExitStatus::ToolchainConfiguration)
+               : exitCode(ExitStatus::Compilation);
+  }
+
+  std::ifstream stream(preprocessed, std::ios::binary);
   if (!stream) {
-    std::cerr << "gti: failed to open header: " << header << '\n';
+    std::cerr << "gti: Clang did not produce a preprocessed translation unit\n";
     return exitCode(ExitStatus::Io);
   }
   std::ostringstream contents;
   contents << stream.rdbuf();
   const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
-      contents.str(), header.filename().string(), std::move(options));
+      contents.str(), options.header.filename().string(),
+      std::move(options.bindings), profile);
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
-    std::cerr << header.string() << ':' << diagnostic.origin.line << ": "
+    std::cerr << options.header.string() << ": preprocessed line "
+              << diagnostic.origin.line << ": "
               << (diagnostic.severity == lang::bindgen::ReaderSeverity::Error
                       ? "error: "
                       : "note: ")
@@ -1986,20 +2134,21 @@ int runBindgen(int argc, char *argv[]) {
   }
   for (const lang::bindgen::BindingItem &item : result.plan.items) {
     if (item.kind == lang::bindgen::BindingItemKind::Skipped) {
-      std::cerr << header.string() << ':' << item.origin.line
-                << ": note: skipped '" << item.name << "': " << item.reason
-                << '\n';
+      std::cerr << options.header.string() << ": preprocessed line "
+                << item.origin.line << ": note: skipped '" << item.name
+                << "': " << item.reason << '\n';
     }
   }
   if (!result.usable()) {
     return exitCode(ExitStatus::Compilation);
   }
-  if (output.empty()) {
+  if (options.output.empty()) {
     std::cout << result.gtiSource;
     return exitCode(ExitStatus::Success);
   }
-  return writeFile(output, result.gtiSource) ? exitCode(ExitStatus::Success)
-                                             : exitCode(ExitStatus::Io);
+  return writeFile(options.output, result.gtiSource)
+             ? exitCode(ExitStatus::Success)
+             : exitCode(ExitStatus::Io);
 }
 
 } // namespace
