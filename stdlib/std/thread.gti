@@ -1,0 +1,60 @@
+namespace std {
+/// Recoverable managed-thread creation and explicit-join outcomes.
+enum class thread_errc {
+  resource_unavailable,
+  operation_not_permitted,
+  not_joinable,
+  join_failed,
+};
+
+/// A move-only managed thread. Destruction joins an outstanding worker.
+///
+/// The worker owns its task and all transfer-safe captures. A worker defined
+/// failure is re-raised by `join()` or by the mandatory destructor join.
+class jthread {
+  mut gti_internal::thread_handle handle;
+
+  jthread(gti_internal::thread_handle value)
+      : handle(std::move(value)) {}
+
+public:
+  jthread(jthread& other) = delete;
+  jthread(jthread&& other) = default;
+
+  /// Starts one consumed, transfer-safe exact `void()` task.
+  static expected<jthread, thread_errc> start<Task>(Task task) {
+    mut gti_internal::thread_handle handle =
+        gti_internal::thread_handle_empty();
+    int32_t status =
+        gti_internal::thread_spawn(handle, std::move(task));
+    if (status == 1) {
+      return unexpected(thread_errc::resource_unavailable);
+    }
+    if (status != 0) {
+      return unexpected(thread_errc::operation_not_permitted);
+    }
+    return jthread(std::move(handle));
+  }
+
+  /// True while this value owns an outstanding join obligation.
+  bool joinable() {
+    return gti_internal::thread_joinable(this.handle);
+  }
+
+  /// Joins the worker once. A worker defined failure is re-raised here.
+  expected<void, thread_errc> join() mut {
+    int32_t status = gti_internal::thread_join(this.handle);
+    if (status == 1) {
+      return unexpected(thread_errc::not_joinable);
+    }
+    if (status != 0) {
+      return unexpected(thread_errc::join_failed);
+    }
+    return;
+  }
+
+  ~jthread() {
+    gti_internal::thread_auto_join(this.handle);
+  }
+};
+}

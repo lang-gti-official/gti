@@ -9275,6 +9275,18 @@ private:
     visiting.push_back(type);
 
     const ClassInfo &owner = classInfo(type.classId);
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
+      visiting.pop_back();
+      return SemanticTypeTraits{.ownership = OwnershipKind::Unique,
+                                .drop = DropKind::Lexical,
+                                .copyable = false,
+                                .movable = true,
+                                .copyAssignable = false,
+                                .moveAssignable = false,
+                                .containsBorrowedState = false,
+                                .transferCapable = false,
+                                .shareCapable = false};
+    }
     if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
       traits.drop = DropKind::Trivial;
     }
@@ -9713,6 +9725,21 @@ private:
     }
     if (name == "prefix_storage_erase") {
       return IntrinsicKind::PrefixStorageErase;
+    }
+    if (name == "thread_handle_empty") {
+      return IntrinsicKind::ThreadHandleEmpty;
+    }
+    if (name == "thread_spawn") {
+      return IntrinsicKind::ThreadSpawn;
+    }
+    if (name == "thread_joinable") {
+      return IntrinsicKind::ThreadJoinable;
+    }
+    if (name == "thread_join") {
+      return IntrinsicKind::ThreadJoin;
+    }
+    if (name == "thread_auto_join") {
+      return IntrinsicKind::ThreadAutoJoin;
     }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
@@ -11973,6 +12000,185 @@ private:
     std::erase(loanFlow.receiverStorageLoans, loan);
   }
 
+  [[nodiscard]] bool isThreadHandleType(const SemanticType &type) const {
+    const SemanticType *candidate = &type;
+    if (candidate->kind == SemanticType::Reference &&
+        candidate->arguments.size() == 1) {
+      candidate = &candidate->arguments.front();
+    }
+    const ClassInfo *owner = classInfo(*candidate);
+    return owner != nullptr &&
+           owner->compilerCapability == CompilerCapabilityTypeKind::ThreadHandle;
+  }
+
+  [[nodiscard]] bool isExactThreadTaskType(const SemanticType &type) {
+    if (type.kind == SemanticType::TypeParameter) {
+      return true;
+    }
+    if (type.hasLambdaShape()) {
+      const SemanticType *result = type.lambdaReturnType();
+      return result != nullptr && *result == SemanticType::Void &&
+             type.lambdaParameterTypes().empty();
+    }
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr) {
+      return false;
+    }
+    const auto found = owner->members.find(
+        std::string(operatorFunctionName(OverloadedOperator::Call)));
+    if (found == owner->members.end() ||
+        found->second.symbol.type != SemanticType::Function) {
+      return false;
+    }
+    const Symbol overloads = substituteSymbol(found->second.symbol, type);
+    return std::any_of(
+        overloads.overloads.begin(), overloads.overloads.end(),
+        [](const FunctionCandidate &candidate) {
+          return candidate.access == AccessModifier::Public &&
+                 candidate.parameterTypes.empty() &&
+                 candidate.returnType == SemanticType::Void &&
+                 candidate.requirements.empty() && !candidate.pureVirtual;
+        });
+  }
+
+  void analyzeThreadIntrinsicCall(const Call &expr,
+                                  const FunctionCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.intrinsic;
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty()) {
+      report(expr.paren(),
+             "Managed-thread operations infer their types and do not take "
+             "explicit generic arguments.",
+             "GTI-S2084");
+    }
+
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+
+    if (intrinsic == IntrinsicKind::ThreadHandleEmpty) {
+      if (!argumentTypes.empty()) {
+        report(expr.paren(), "thread_handle_empty expects no arguments.",
+               "GTI-S2084");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      currentType = declaration.returnType;
+      semanticModel.record(
+          expr, ResolvedCallInfo{.returnType = currentType,
+                                 .intrinsic = intrinsic});
+      return;
+    }
+
+    const std::size_t expected = intrinsic == IntrinsicKind::ThreadSpawn ? 2 : 1;
+    if (argumentTypes.size() != expected) {
+      report(expr.paren(),
+             intrinsic == IntrinsicKind::ThreadSpawn
+                 ? "thread_spawn expects a mutable handle and one task."
+                 : "This managed-thread operation expects one handle.",
+             "GTI-S2084");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!isThreadHandleType(argumentTypes.front())) {
+      report(expressionToken(expr.arguments().front()),
+             "Managed-thread operations require the compiler-private thread "
+             "handle capability.",
+             "GTI-S2084");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const ExpressionInfo *handle =
+        semanticModel.findExpression(*expr.arguments().front());
+    if (handle == nullptr || handle->category != ValueCategory::Place ||
+        ((intrinsic == IntrinsicKind::ThreadSpawn ||
+          intrinsic == IntrinsicKind::ThreadJoin ||
+          intrinsic == IntrinsicKind::ThreadAutoJoin) &&
+         handle->access != AccessMode::Mutable)) {
+      report(expressionToken(expr.arguments().front()),
+             "This managed-thread operation requires mutable stable handle "
+             "storage.",
+             "GTI-S2084");
+    }
+
+    std::vector<SemanticType> parameterTypes;
+    parameterTypes.push_back(SemanticType::referenceTo(
+        argumentTypes.front(),
+        intrinsic == IntrinsicKind::ThreadJoinable ? AccessMode::ReadOnly
+                                                   : AccessMode::Mutable));
+      std::vector<SemanticType> typeArguments;
+    if (intrinsic == IntrinsicKind::ThreadSpawn) {
+      const SemanticType &task = argumentTypes[1];
+      const ExpressionInfo *taskInfo =
+          semanticModel.findExpression(*expr.arguments()[1]);
+      const SemanticTypeTraits traits = typeTraits(task);
+      const bool symbolicTask = task.kind == SemanticType::TypeParameter;
+      bool validTask = task == SemanticType::Unknown ||
+                       (taskInfo != nullptr &&
+                        taskInfo->category == ValueCategory::Value &&
+                        isExactThreadTaskType(task) &&
+                        (symbolicTask ||
+                         (traits.movable && traits.transferCapable &&
+                          !traits.containsBorrowedState &&
+                          !containsDisallowedCallableCaptureState(task))));
+      if (!validTask) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2084", DiagnosticPhase::Semantics,
+            expressionToken(expr.arguments()[1]),
+            "A managed thread requires one consumed, transfer-safe exact "
+            "void() task.");
+        diagnostic.hints.emplace_back(
+            "Pass a fresh task value or std::move(task); captures must own "
+            "their state and cannot contain references, tracked borrows, or "
+            "raw pointers.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      parameterTypes.push_back(task);
+      typeArguments.push_back(task);
+      if (const FunctionInfo *function = currentFunctionInfo()) {
+        const std::optional<std::size_t> parameter =
+            movedFunctionParameter(expr.arguments()[1], *function);
+        if (parameter && *parameter < function->parameterTypes.size() &&
+            function->parameterTypes[*parameter].kind ==
+                SemanticType::TypeParameter &&
+            currentFunctionDeclaration != nullptr) {
+          const SemanticType callable = function->parameterTypes[*parameter];
+          semanticModel.recordCallableRequirement(
+              *currentFunctionDeclaration,
+              CallableParameterContract{
+                  .parameterIndex = *parameter,
+                  .genericParameter = callable.genericParameterId,
+                  .callableType = callable,
+                  .access = AccessMode::ReadOnly,
+                  .boundary = CallableBoundary::Owned,
+                  .ownedTransport =
+                      CallableOwnedTransport{
+                          .kind = CallableOwnedTransportKind::ThreadTask,
+                          .destinationType = SemanticType::Void}});
+        }
+      }
+    }
+
+    currentType = intrinsic == IntrinsicKind::ThreadJoinable
+                      ? SemanticType::Bool
+                      : intrinsic == IntrinsicKind::ThreadAutoJoin
+                            ? SemanticType::Void
+                            : SemanticType::Int32;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(parameterTypes),
+                               .typeArguments = std::move(typeArguments),
+                               .intrinsic = intrinsic});
+  }
+
   void analyzeIntrinsicCall(const Call &expr,
                             const FunctionCandidate &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
@@ -11992,6 +12198,15 @@ private:
     }
     if (intrinsic == IntrinsicKind::StorageBoundsCheck) {
       analyzeStorageBoundsCheckCall(expr);
+      bindIntrinsicCallDeclaration(expr, declaration);
+      return;
+    }
+    if (intrinsic == IntrinsicKind::ThreadHandleEmpty ||
+        intrinsic == IntrinsicKind::ThreadSpawn ||
+        intrinsic == IntrinsicKind::ThreadJoinable ||
+        intrinsic == IntrinsicKind::ThreadJoin ||
+        intrinsic == IntrinsicKind::ThreadAutoJoin) {
+      analyzeThreadIntrinsicCall(expr, declaration);
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
@@ -14793,6 +15008,15 @@ private:
         substituteType(contract.ownedTransport->destinationType, substitution);
     const SemanticType &callableType =
         call.parameterTypes[contract.parameterIndex];
+    if (contract.ownedTransport->kind ==
+        CallableOwnedTransportKind::ThreadTask) {
+      const SemanticTypeTraits traits = typeTraits(callableType);
+      return contract.ownedTransport->field == 0 &&
+             destination == SemanticType::Void &&
+             isExactThreadTaskType(callableType) && traits.movable &&
+             traits.transferCapable && !traits.containsBorrowedState &&
+             !containsDisallowedCallableCaptureState(callableType);
+    }
     if (destination != call.returnType) {
       return false;
     }
@@ -14845,8 +15069,13 @@ private:
         const SemanticType &argumentType =
             resolved.parameterTypes[contract.parameterIndex];
         const SemanticTypeTraits traits = typeTraits(argumentType);
+        const ExpressionInfo *argumentInfo =
+            semanticModel.findExpression(*argument);
+        const bool consumed = explicitMoveSource(argument) != nullptr ||
+                              (argumentInfo != nullptr &&
+                               argumentInfo->category == ValueCategory::Value);
         std::string failure;
-        if (explicitMoveSource(argument) == nullptr) {
+        if (!consumed) {
           failure = "requires an explicit std::move ownership transfer";
         } else if (!traits.movable) {
           failure = "is not movable";
@@ -15523,6 +15752,83 @@ private:
     return result;
   }
 
+  [[nodiscard]] bool
+  typeRequiresThreads(const SemanticType &type,
+                      std::unordered_set<ClassId> &visiting) const {
+    if (std::any_of(type.arguments.begin(), type.arguments.end(),
+                    [&](const SemanticType &argument) {
+                      return typeRequiresThreads(argument, visiting);
+                    })) {
+      return true;
+    }
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr) {
+      return false;
+    }
+    if (owner->compilerCapability ==
+        CompilerCapabilityTypeKind::ThreadHandle) {
+      return true;
+    }
+    if (!visiting.insert(owner->id).second) {
+      return false;
+    }
+    const GenericSubstitution substitution = classSubstitution(type);
+    const bool required =
+        std::any_of(owner->bases.begin(), owner->bases.end(),
+                    [&](const ClassBaseTypeInfo &base) {
+                      return typeRequiresThreads(
+                          substituteType(base.type, substitution), visiting);
+                    }) ||
+        std::any_of(owner->fields.begin(), owner->fields.end(),
+                    [&](const FieldInfo &field) {
+                      if (field.declaration == nullptr) {
+                        return false;
+                      }
+                      const auto member =
+                          owner->members.find(field.declaration->name().lexeme);
+                      return member != owner->members.end() &&
+                             typeRequiresThreads(
+                                 substituteType(member->second.symbol.type,
+                                                substitution),
+                                 visiting);
+                    });
+    visiting.erase(owner->id);
+    return required;
+  }
+
+  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type) const {
+    std::unordered_set<ClassId> visiting;
+    return typeRequiresThreads(type, visiting);
+  }
+
+  [[nodiscard]] bool
+  validateThreadSurfaceAvailability(const Token &location,
+                                    std::string_view surface) {
+    if (target.executionProfile == ExecutionProfile::Concurrent &&
+        target.runtimeCapabilities.threads) {
+      return true;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2084", DiagnosticPhase::Semantics, location,
+        target.executionProfile != ExecutionProfile::Concurrent
+            ? std::string(surface) +
+                  " requires the concurrent execution profile."
+            : std::string(surface) +
+                  " is unavailable because the selected target does not "
+                  "provide managed threads.");
+    diagnostic.hints.emplace_back(
+        target.executionProfile != ExecutionProfile::Concurrent
+            ? "Select the concurrent execution profile for programs that "
+              "spawn or join std::jthread values."
+            : "Select a target whose runtime capability set includes "
+              "threads.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+
   [[nodiscard]] static std::string
   constructorSignatureSpelling(const ConstructorInfo &constructor) {
     if (constructor.declaration == nullptr) {
@@ -15553,6 +15859,27 @@ private:
                            const ExprPtr &callee, const Token &paren,
                            std::span<const ExprPtr> arguments,
                            CallReceiverMode receiverMode) {
+    if (!isCompilerTrustedRequester(paren)) {
+      const SemanticType ownerType =
+          function.dispatchOwner.kind == SemanticType::Class
+              ? function.dispatchOwner
+              : function.ownerClass == 0
+                    ? SemanticType::Unknown
+                    : SemanticType::classType(function.ownerClass);
+      const bool requiresThreads = typeRequiresThreads(ownerType) ||
+                                   typeRequiresThreads(function.returnType) ||
+                                   std::any_of(
+                                       function.parameterTypes.begin(),
+                                       function.parameterTypes.end(),
+                                       [&](const SemanticType &parameter) {
+                                         return typeRequiresThreads(parameter);
+                                       });
+      if (requiresThreads &&
+          !validateThreadSurfaceAvailability(paren,
+                                             "This managed-thread API")) {
+        return false;
+      }
+    }
     if (!isCompilerTrustedRequester(paren) && function.compilerPrivate) {
       reportCompilerPrivateAccess(paren,
                                   function.declaration == nullptr
@@ -17435,6 +17762,13 @@ private:
       }
     }
     const SemanticType constructedType = selectedClass;
+    if (!isCompilerTrustedRequester(paren) &&
+        typeRequiresThreads(constructedType) &&
+        !validateThreadSurfaceAvailability(paren,
+                                           "This managed-thread value")) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (owner.abstract) {
       report(paren,
              "Cannot construct abstract " +
@@ -18726,6 +19060,15 @@ private:
         report(type.name.last(),
                "gti_internal::c_string does not take generic arguments.",
                "GTI-S2054");
+      }
+      return;
+    }
+    if (compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(),
+               "gti_internal::thread_handle does not take generic "
+               "arguments.",
+               "GTI-S2084");
       }
       return;
     }
@@ -22634,6 +22977,10 @@ private:
                    classDecl->genericParameters().empty() &&
                    classDecl->name().lexeme == "c_string") {
           compilerCapability = CompilerCapabilityTypeKind::CString;
+        } else if (trustedCapabilityScope &&
+                   classDecl->genericParameters().empty() &&
+                   classDecl->name().lexeme == "thread_handle") {
+          compilerCapability = CompilerCapabilityTypeKind::ThreadHandle;
         }
         CapabilityPolicyRegistration capabilityPolicies;
         if (classDecl->kind() == ClassKind::Union) {
@@ -27750,6 +28097,20 @@ private:
           case IntrinsicKind::ArrayRangeBegin:
           case IntrinsicKind::ArraySize:
           case IntrinsicKind::ExpectedHasValue:
+          case IntrinsicKind::ThreadHandleEmpty:
+          case IntrinsicKind::ThreadSpawn:
+          case IntrinsicKind::ThreadJoinable:
+            break;
+          case IntrinsicKind::ThreadJoin:
+            operation.propagation = FailurePropagationKind::TaskJoin;
+            break;
+          case IntrinsicKind::ThreadAutoJoin:
+            anchor(token);
+            addFailureOutcome(
+                operation,
+                DefinedFailureCode::InfallibleHostOperationFailed,
+                DefinedFailureDetail::AutomaticJoin);
+            operation.propagation = FailurePropagationKind::TaskJoin;
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):

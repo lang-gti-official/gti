@@ -4,6 +4,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <string>
 
 #if defined(_WIN32)
@@ -18,6 +19,7 @@ namespace {
 
 constexpr std::int32_t kEndOfFile = -1;
 constexpr std::int32_t kReadFailure = -2;
+std::mutex stdoutMutex;
 
 int narrowDescriptor(std::int64_t descriptor) {
   if (descriptor < 0 || descriptor > INT_MAX) {
@@ -56,10 +58,12 @@ extern "C" std::int32_t gti_rt_write_stdout(gti_c_string_view value) {
     return 1;
   }
   const std::size_t length = static_cast<std::size_t>(value.length);
+  const std::lock_guard lock(stdoutMutex);
   return std::fwrite(value.data, 1, length, stdout) == length ? 0 : 1;
 }
 
 extern "C" std::int32_t gti_rt_write_stdout_byte(std::uint8_t value) {
+  const std::lock_guard lock(stdoutMutex);
   return std::fwrite(&value, 1, 1, stdout) == 1 ? 0 : 1;
 }
 

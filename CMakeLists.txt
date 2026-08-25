@@ -10,6 +10,8 @@ endif()
 
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -332,6 +334,7 @@ add_library(
   "runtime/src/failure.cpp"
   "runtime/src/io.cpp"
   "runtime/src/random.cpp"
+  "runtime/src/thread.cpp"
 )
 target_include_directories(
   "gti_runtime"
@@ -340,6 +343,7 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+target_link_libraries("gti_runtime" PRIVATE Threads::Threads)
 if(WIN32)
   # gti_rt_random_bytes calls BCryptGenRandom.
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")

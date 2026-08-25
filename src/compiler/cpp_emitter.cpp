@@ -116,6 +116,7 @@ public:
       output << "#include <gti/runtime.hpp>\n";
     }
     output << "#include <gti/runtime_failure.h>\n";
+    output << "#include <gti/runtime_thread.hpp>\n";
     const bool usesCAbiTextView = loweredProgramContainsCAbiTextView();
     if (usesCAbiTextView) {
       output << "#include <gti/c_abi.h>\n";
@@ -990,6 +991,83 @@ unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
   return std::unique_ptr<Base>(std::move(owner));
 }
 
+class thread_handle final {
+public:
+  thread_handle() noexcept = default;
+  thread_handle(const thread_handle &) = delete;
+  thread_handle &operator=(const thread_handle &) = delete;
+
+  thread_handle(thread_handle &&other) noexcept
+      : state_(std::exchange(other.state_, nullptr)) {}
+
+  thread_handle &operator=(thread_handle &&other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+    if (state_ != nullptr) {
+      std::terminate();
+    }
+    state_ = std::exchange(other.state_, nullptr);
+    return *this;
+  }
+
+  ~thread_handle() {
+    // The source-defined jthread destructor must discharge this obligation.
+    // Reaching the representation destructor with a live state would detach
+    // ownership from the language's mandatory-join policy.
+    if (state_ != nullptr) {
+      std::terminate();
+    }
+  }
+
+  [[nodiscard]] bool joinable() const noexcept { return state_ != nullptr; }
+  [[nodiscard]] ::gti_thread_state_v1 **state_address() noexcept {
+    return &state_;
+  }
+  void adopt(::gti_thread_state_v1 *state) noexcept {
+    if (state_ != nullptr || state == nullptr) {
+      std::terminate();
+    }
+    state_ = state;
+  }
+
+private:
+  ::gti_thread_state_v1 *state_ = nullptr;
+};
+
+template <typename Task> struct managed_thread_task_box final {
+  Task task;
+};
+
+template <std::uint64_t Adapter> struct managed_thread_task_adapter;
+
+template <std::uint64_t Adapter, typename Task>
+inline std::int32_t managed_thread_spawn(thread_handle &handle, Task &&task) {
+  if (handle.joinable()) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1);
+  }
+  using Stored = std::remove_cvref_t<Task>;
+  auto *context = new (std::nothrow)
+      managed_thread_task_box<Stored>{std::forward<Task>(task)};
+  if (context == nullptr) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1);
+  }
+  const ::gti_thread_spawn_result_v1 result = ::gti_rt_thread_spawn_v1(
+      &managed_thread_task_adapter<Adapter>::template entry<Stored>, context,
+      &managed_thread_task_adapter<Adapter>::template destroy<Stored>);
+  if (result.status == GTI_THREAD_SPAWN_OK_V1) {
+    handle.adopt(result.state);
+  }
+  return static_cast<std::int32_t>(result.status);
+}
+
+inline ::gti_thread_join_result_v1
+managed_thread_join(thread_handle &handle) noexcept {
+  return ::gti_rt_thread_join_v1(handle.state_address());
+}
+
 template <typename T>
 inline decltype(auto) forward_pack_argument(T &value) noexcept {
   if constexpr (std::is_copy_constructible_v<T>) {
@@ -1624,6 +1702,7 @@ inline Target post_decrement(Target &target) {
 
 )";
 
+    emitThreadTaskAdapterDefinitions();
     emitMirScalarFailureHelpers();
 
     if (usesCAbiTextView) {
@@ -3079,7 +3158,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       loweredDeferredMembers.push_back(&row);
     }
 
+    const bool hasCallableTemplateFailure =
+        generic &&
+        !loweredCallableTemplateBody(function, instances, true).empty();
     const bool hasFailure =
+        hasCallableTemplateFailure ||
         loweredVirtualFailureContractRetained(function.id) ||
         std::any_of(instances.begin(), instances.end(),
                     [&](const auto *instance) {
@@ -3093,6 +3176,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                                      true, true, {}, genericOwner);
         output << (function.pureVirtual ? " = 0;\n" : ";\n");
       } else {
+        if (hasCallableTemplateFailure) {
+          emitLoweredTemplateDeclaration(function.genericParameters);
+          writeIndent();
+          emitLoweredFunctionSignature(row, function, nullptr, true, true, {},
+                                       true);
+          output << ";\n";
+        }
         std::vector<std::pair<std::vector<SemanticType>, SemanticType>> emitted;
         for (const MirFunctionInstance *instance : instances) {
           if (!loweredFailureBodySupported(*instance) || !instance->owner) {
@@ -4834,6 +4924,31 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         loweredFunctionInstances(function.id);
     const bool genericOwner = loweredOwnerIsGeneric(owner);
     const bool generic = genericOwner || !function.genericParameters.empty();
+    // A callable member template whose concrete instance contains an
+    // unnameable closure type must emit from the source-template overlay,
+    // just like a free callable template. Concrete-specialization emission
+    // cannot name that closure in a C++ signature.
+    if (!genericOwner && !function.genericParameters.empty()) {
+      const std::string callableFailure =
+          loweredCallableTemplateBody(function, instances, true);
+      const std::string callableNormal =
+          loweredCallableTemplateBody(function, instances, false);
+      const std::string ownerSpelling = loweredPrimaryClassSpelling(owner);
+      if (!callableFailure.empty()) {
+        emitLoweredTemplateDeclaration(function.genericParameters);
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, nullptr, true, false,
+                                     ownerSpelling, true);
+        output << ' ' << callableFailure;
+      }
+      if (!callableNormal.empty()) {
+        emitLoweredTemplateDeclaration(function.genericParameters);
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, nullptr, false, false,
+                                     ownerSpelling, true);
+        output << ' ' << callableNormal;
+      }
+    }
     for (const MirFunctionInstance *instance : instances) {
       if (!loweredNormalBodySupported(*instance) &&
           !loweredFailureBodySupported(*instance)) {
@@ -5599,6 +5714,62 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   [[nodiscard]] static constexpr std::string_view lifecycleFailureBodyName() {
     return "__gti_mir_destruct_body_failure";
+  }
+
+  [[nodiscard]] const CppMirThreadTaskThunk &
+  threadTaskPayload(const CppMirGeneratedThunk &thunk) const {
+    const auto *thread = std::get_if<CppMirThreadTaskThunk>(&thunk.payload);
+    if (thunk.identity.kind != CppMirThunkKind::ThreadTaskAdapter ||
+        thread == nullptr || thread->adapter.id != thunk.identity.owner ||
+        mir.findThreadTaskAdapter(thread->adapter.id) == nullptr) {
+      throw std::logic_error(
+          "planned thread task lost its exact generated-item payload");
+    }
+    return *thread;
+  }
+
+  void emitThreadTaskAdapterDefinitions() {
+    bool opened = false;
+    for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+      if (thunk.identity.kind != CppMirThunkKind::ThreadTaskAdapter) {
+        continue;
+      }
+      const CppMirThreadTaskThunk &thread = threadTaskPayload(thunk);
+      const MirThreadTaskAdapter &adapter = thread.adapter;
+      if (adapter.invocation != CallableInvocationCapability::Once ||
+          !adapter.catchesWorkerFailure || !adapter.catchesNativeExceptions) {
+        throw std::logic_error(
+            "verified thread task adapter lost its containment contract");
+      }
+      if (!opened) {
+        output << "namespace gti_internal::backend {\n\n";
+        opened = true;
+      }
+      output << "template <>\n"
+                "struct managed_thread_task_adapter<"
+             << adapter.id << "> final {\n"
+                "  template <typename Task>\n"
+                "  static void entry(void *raw) noexcept {\n"
+                "    auto *box = static_cast<managed_thread_task_box<Task> "
+                "*>(raw);\n"
+                "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
+                "      invoke_once(std::move(box->task),\n"
+                "                  exact_call<callable_capability::once_call>"
+                "{});\n"
+                "    });\n"
+                "  }\n\n"
+                "  template <typename Task>\n"
+                "  static void destroy(void *raw) noexcept {\n"
+                "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
+                "      delete static_cast<managed_thread_task_box<Task> "
+                "*>(raw);\n"
+                "    });\n"
+                "  }\n"
+                "};\n\n";
+    }
+    if (opened) {
+      output << "} // namespace gti_internal::backend\n\n";
+    }
   }
 
   [[nodiscard]] const CppMirNativeCallbackThunk &

@@ -924,6 +924,16 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
          .payload = LoweredNativeCallbackItem{.adapter = adapter}});
   }
 
+  for (const MirThreadTaskAdapter &adapter : program.threadTaskAdapters()) {
+    const LoweredGeneratedItemIdentity identity{
+        .kind = LoweredGeneratedItemKind::ThreadTaskAdapter,
+        .owner = adapter.id};
+    graph.items.push_back(
+        {.identity = identity,
+         .sourceBody = adapter.sourceBody,
+         .payload = LoweredThreadTaskAdapterItem{.adapter = adapter}});
+  }
+
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
@@ -931,6 +941,12 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
     }
     for (const MirBlock &block : body->blocks) {
       for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
+            instruction.threadTaskAdapter) {
+          rootBody(address,
+                   {.kind = LoweredGeneratedItemKind::ThreadTaskAdapter,
+                    .owner = *instruction.threadTaskAdapter});
+        }
         if (instruction.operation != MirOperation::NativeCallback ||
             !instruction.nativeCallbackAdapter) {
           continue;
@@ -1215,6 +1231,7 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
       hir.functionInstances().size() != mir.functionInstances().size() ||
       hir.nativeCallbackAdapters().size() !=
           mir.nativeCallbackAdapters().size() ||
+      hir.threadTaskAdapters().size() != mir.threadTaskAdapters().size() ||
       hir.constructorInstances().size() != mir.constructorInstances().size() ||
       hir.destructorInstances().size() != mir.destructorInstances().size() ||
       hir.lambdaInstances().size() != mir.lambdaInstances().size()) {
@@ -1317,6 +1334,17 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
                     " differs");
     }
   }
+  for (std::size_t index = 0; index < hir.threadTaskAdapters().size();
+       ++index) {
+    const HirThreadTaskAdapter &source = hir.threadTaskAdapters()[index];
+    const MirThreadTaskAdapter &lowered = mir.threadTaskAdapters()[index];
+    if (source.id != lowered.id || source.taskType != lowered.taskType ||
+        source.spawnValue != lowered.spawnValue ||
+        source.invocation != lowered.invocation) {
+      return reject("thread task adapter " + std::to_string(index + 1) +
+                    " differs");
+    }
+  }
   return true;
 }
 
@@ -1332,7 +1360,8 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
       identity.kind == LoweredGeneratedItemKind::StructuralOperatorAdapter ||
       identity.kind == LoweredGeneratedItemKind::CallableAdapter ||
       identity.kind == LoweredGeneratedItemKind::LifecycleCleanup ||
-      identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter) {
+      identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter ||
+      identity.kind == LoweredGeneratedItemKind::ThreadTaskAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
@@ -2626,6 +2655,52 @@ verifyLoweredProgram(const LoweredProgram &program) {
                  "lifecycle cleanup payload differs from its exact class and "
                  "destructor instances",
                  std::nullopt, item.sourceDeclaration, item.identity);
+      }
+    } else if (item.identity.kind ==
+               LoweredGeneratedItemKind::ThreadTaskAdapter) {
+      const auto *payload =
+          std::get_if<LoweredThreadTaskAdapterItem>(&item.payload);
+      const MirThreadTaskAdapter *adapter =
+          payload == nullptr
+              ? nullptr
+              : program.mir_.findThreadTaskAdapter(payload->adapter.id);
+      const MirBody *body =
+          payload == nullptr
+              ? nullptr
+              : findMirBody(program.mir_, payload->adapter.sourceBody);
+      const MirInstruction *spawn = nullptr;
+      if (body != nullptr && payload != nullptr) {
+        for (const MirBlock &block : body->blocks) {
+          const auto found = std::find_if(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const MirInstruction &instruction) {
+                return instruction.id ==
+                       payload->adapter.spawnInstruction;
+              });
+          if (found != block.instructions.end()) {
+            spawn = &*found;
+            break;
+          }
+        }
+      }
+      if (payload == nullptr || adapter == nullptr ||
+          *adapter != payload->adapter ||
+          item.identity.owner != payload->adapter.id ||
+          item.sourceBody != payload->adapter.sourceBody || spawn == nullptr ||
+          spawn->hirValue != payload->adapter.spawnValue ||
+          spawn->intrinsic != IntrinsicKind::ThreadSpawn ||
+          spawn->synchronization.kind !=
+              SynchronizationOperationKind::ThreadSpawn ||
+          spawn->threadTaskAdapter != payload->adapter.id ||
+          payload->adapter.taskType == SemanticType::Unknown ||
+          payload->adapter.invocation !=
+              CallableInvocationCapability::Once ||
+          !payload->adapter.catchesWorkerFailure ||
+          !payload->adapter.catchesNativeExceptions) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+                 "thread-task adapter payload differs from its exact MIR "
+                 "spawn operation",
+                 item.sourceBody, std::nullopt, item.identity);
       }
     } else if (item.identity.kind ==
                LoweredGeneratedItemKind::ConcreteInstanceAdapter) {

@@ -50,6 +50,8 @@ ownedTransportName(CallableOwnedTransportKind kind) {
     return "exact-return";
   case CallableOwnedTransportKind::ExactField:
     return "exact-field";
+  case CallableOwnedTransportKind::ThreadTask:
+    return "thread-task";
   }
   return "invalid";
 }

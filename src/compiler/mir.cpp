@@ -8648,6 +8648,41 @@ ownedTransportFailure(const MirProgram &program,
   const CallableOwnedTransport &transport = *parameter.ownedTransport;
   const SemanticType &callableType =
       instance.parameterTypes[parameter.parameterIndex];
+  if (transport.kind == CallableOwnedTransportKind::ThreadTask) {
+    if (transport.destinationType != SemanticType::Void ||
+        transport.field != 0) {
+      return "thread-task transport has an invalid destination contract";
+    }
+    std::size_t exactSpawns = 0;
+    for (const MirBlock &block : instance.body.blocks) {
+      if (!block.reachable) {
+        continue;
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic != IntrinsicKind::ThreadSpawn) {
+          continue;
+        }
+        if (instruction.operands.size() != 2 ||
+            instruction.operands[1].type != callableType ||
+            !instruction.threadTaskAdapter ||
+            !exactMoveFromBinding(
+                instance.body, instruction.operands[1],
+                instance.parameterBindings[parameter.parameterIndex]) ||
+            !movedValueIntoInstruction(instance.body,
+                                       instruction.operands[1],
+                                       instruction.id, 1) ||
+            !valueTransferredOut(instance.body,
+                                 instruction.operands[1])) {
+          return "thread-task transport is not rooted in the parameter move";
+        }
+        ++exactSpawns;
+      }
+    }
+    return exactSpawns == 1
+               ? std::nullopt
+               : std::optional<std::string>{
+                     "thread-task transport must feed exactly one spawn"};
+  }
   if (transport.destinationType != instance.returnType) {
     return "owned transport destination does not match the function return";
   }
@@ -14875,6 +14910,26 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                             "program adapter"});
           }
         }
+        if (instruction.threadTaskAdapter) {
+          const MirThreadTaskAdapter *adapter =
+              program.findThreadTaskAdapter(*instruction.threadTaskAdapter);
+          if (adapter == nullptr ||
+              instruction.intrinsic != IntrinsicKind::ThreadSpawn ||
+              instruction.synchronization.kind !=
+                  SynchronizationOperationKind::ThreadSpawn ||
+              instruction.hirValue != adapter->spawnValue ||
+              instruction.id != adapter->spawnInstruction ||
+              body.kind != adapter->sourceBody.kind ||
+              owner != adapter->sourceBody.owner) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "thread spawn instruction has no exact program "
+                            "task adapter"});
+          }
+        }
         for (std::size_t originIndex = 0;
              originIndex < instruction.definedFailure.localOrigins.size();
              ++originIndex) {
@@ -14941,6 +14996,44 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           {.bodyKind = MirBodyKind::Function,
            .owner = adapter.target,
            .message = "native callback adapter contract is invalid"});
+    }
+  }
+
+  for (std::size_t index = 0; index < program.threadTaskAdapters().size();
+       ++index) {
+    const MirThreadTaskAdapter &adapter =
+        program.threadTaskAdapters()[index];
+    const MirBody *body = findMirBody(program, adapter.sourceBody);
+    const MirInstruction *spawn = nullptr;
+    if (body != nullptr) {
+      for (const MirBlock &block : body->blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const MirInstruction &instruction) {
+              return instruction.id == adapter.spawnInstruction;
+            });
+        if (found != block.instructions.end()) {
+          spawn = &*found;
+          break;
+        }
+      }
+    }
+    if (adapter.id != index + 1 || adapter.taskType == SemanticType::Unknown ||
+        adapter.spawnValue == 0 || adapter.spawnInstruction == 0 ||
+        adapter.invocation != CallableInvocationCapability::Once ||
+        !adapter.catchesWorkerFailure || !adapter.catchesNativeExceptions ||
+        body == nullptr || spawn == nullptr ||
+        spawn->hirValue != adapter.spawnValue ||
+        spawn->intrinsic != IntrinsicKind::ThreadSpawn ||
+        spawn->threadTaskAdapter != adapter.id ||
+        spawn->synchronization.kind !=
+            SynchronizationOperationKind::ThreadSpawn ||
+        program.executionProfile() != ExecutionProfile::Concurrent) {
+      result.errors.push_back(
+          {.bodyKind = adapter.sourceBody.kind,
+           .owner = adapter.sourceBody.owner,
+           .instruction = adapter.spawnInstruction,
+           .message = "managed thread task adapter contract is invalid"});
     }
   }
 

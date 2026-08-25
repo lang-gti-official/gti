@@ -137,6 +137,12 @@ struct TargetInfo {
   std::string arch;
   TargetDataLayout dataLayout{};
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  struct RuntimeCapabilities {
+    bool threads = true;
+
+    friend bool operator==(const RuntimeCapabilities &,
+                           const RuntimeCapabilities &) = default;
+  } runtimeCapabilities;
 
   friend bool operator==(const TargetInfo &, const TargetInfo &) = default;
 
