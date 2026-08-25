@@ -1,13 +1,14 @@
 # Reference Documentation
 
-Status: Current foundation.
+Status: Current.
 
 The reference application under `reference/` is a statically exported
-Next.js site with a compiler-backed content pipeline. Its first user-facing
-workflow is deliberately narrow: an author can add one trustworthy language
-or library page, bind it to current compiler declarations, give it dedicated
-examples, and have CI reject structural, semantic-binding, compilation, or
-rendering drift.
+Next.js site with a compiler-backed content pipeline. An author can add one
+trustworthy language or library page, bind it to current compiler
+declarations, give it dedicated examples, and have CI reject structural,
+semantic-binding, compilation, or rendering drift. The first complete
+vertical slice publishes the standard-library landing pages and a
+`/std/vector/vector/` reference page.
 
 The foundation separates three authorities:
 
@@ -71,10 +72,29 @@ development, type checking, or production builds. It rejects:
 - page-local example directories not explicitly listed by that page.
 
 `scripts/generate-content.ts` then emits an ignored deterministic TypeScript
-registry with static MDX imports and the complete compiler declarations bound
-to each page. This is the future declaration renderer's typed input, so an
-author never has to duplicate a signature in MDX. Next.js consumes that
-registry; it does not scan or parse GTI source.
+registry with static MDX imports, complete compiler declarations, and the
+source and expected output of each bound example. The declaration and example
+renderers consume this typed payload, so an author never has to duplicate a
+signature or code listing in MDX. Next.js consumes the generated registry; it
+does not scan standard-library GTI source or invent a second API model.
+
+## Presentation And Navigation
+
+The site keeps the information shape familiar to cppreference without
+copying its implementation. Every content page receives:
+
+- a stable route and breadcrumb trail derived from authored parent pages;
+- a compiler-projected synopsis and grouped declaration table;
+- authored explanatory MDX;
+- rendered, page-owned source examples and expected results; and
+- page-specific title and description metadata.
+
+The persistent header and sidebar are derived from the validated content
+registry. The header search filters the same page metadata entirely in the
+browser, so static export requires no search service and cannot return a route
+that was not built. This initial search indexes pages rather than individual
+member declarations; dedicated member routes can extend it without changing
+the content boundary.
 
 ## Page-Owned Examples
 
@@ -116,7 +136,7 @@ Reference-only changes run this job without forcing the general compiler
 matrix. Any compiler/toolchain-visible change also runs it, because semantic
 or signature drift can invalidate existing reference bindings and examples.
 
-Search, complete language/library coverage, richer declaration rendering, and
-the final cppreference-familiar navigation and visual system remain later
-vertical slices. They must consume these boundaries rather than replacing them
-with source-text scraping or a second language model.
+Complete language/library coverage, dedicated member pages, richer overload
+and constraint presentation, and ranked symbol search remain later vertical
+slices. They must consume these boundaries rather than replacing them with
+source-text scraping or a second language model.
