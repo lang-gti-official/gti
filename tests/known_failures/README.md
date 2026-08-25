@@ -23,6 +23,7 @@ is a lesson about how the issues were written as much as how they were fixed.
 
 | File | Left over from | Symptom |
 | --- | --- | --- |
+| `issue-118-lambda-comma-operand.gti` | [#118](https://github.com/LukeHHA/gti/issues/118) | a lambda as the **discarded** operand of a comma; the same comma without a lambda compiles. Found by fuzzing, not a leftover |
 | `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
 | `issue-117-nested-capture-emission.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | capture-of-capture is now accepted by semantics but cannot be emitted, so `GTI-S2027` became `GTI-B0001` |
 | `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
