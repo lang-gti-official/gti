@@ -775,6 +775,55 @@ private:
   static std::unordered_set<std::string>
   collectDeclaredTypes(const std::vector<Lexeme> &lexemes) {
     std::unordered_set<std::string> result;
+    const auto collectGenericParameters = [&](std::size_t genericStart) {
+      std::size_t depth = 1;
+      std::size_t segmentStart = genericStart + 1;
+      for (std::size_t cursor = segmentStart; cursor < lexemes.size();
+           ++cursor) {
+        if (lexemes[cursor].kind == Kind::Less) {
+          ++depth;
+          continue;
+        }
+        const bool segmentEnd =
+            depth == 1 && lexemes[cursor].kind == Kind::Comma;
+        const bool genericEnd =
+            depth == 1 && lexemes[cursor].kind == Kind::Greater;
+        if (!segmentEnd && !genericEnd) {
+          if (lexemes[cursor].kind == Kind::Greater && depth > 1) {
+            --depth;
+          }
+          continue;
+        }
+
+        const Lexeme *firstWord = nullptr;
+        const Lexeme *parameterName = nullptr;
+        std::size_t nestedDepth = 0;
+        for (std::size_t candidate = segmentStart; candidate < cursor;
+             ++candidate) {
+          if (lexemes[candidate].kind == Kind::Less) {
+            ++nestedDepth;
+          } else if (lexemes[candidate].kind == Kind::Greater &&
+                     nestedDepth > 0) {
+            --nestedDepth;
+          } else if (nestedDepth == 0 &&
+                     lexemes[candidate].kind == Kind::Word) {
+            if (firstWord == nullptr) {
+              firstWord = &lexemes[candidate];
+            }
+            parameterName = &lexemes[candidate];
+          }
+        }
+        if (firstWord != nullptr && parameterName != nullptr &&
+            firstWord->text != "uint64_t" && firstWord->text != "uint64") {
+          result.insert(parameterName->text);
+        }
+        if (genericEnd) {
+          break;
+        }
+        segmentStart = cursor + 1;
+      }
+    };
+
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       if (lexemes[index].kind != Kind::Word ||
           (lexemes[index].text != "class" && lexemes[index].text != "concept" &&
@@ -797,54 +846,15 @@ private:
         if (generic == nullptr || generic->kind != Kind::Less) {
           continue;
         }
+        collectGenericParameters(
+            static_cast<std::size_t>(generic - lexemes.data()));
+      }
+    }
 
-        std::size_t depth = 1;
-        std::size_t segmentStart =
-            static_cast<std::size_t>(generic - lexemes.data()) + 1;
-        for (std::size_t cursor = segmentStart; cursor < lexemes.size();
-             ++cursor) {
-          if (lexemes[cursor].kind == Kind::Less) {
-            ++depth;
-            continue;
-          }
-          const bool segmentEnd =
-              depth == 1 && lexemes[cursor].kind == Kind::Comma;
-          const bool genericEnd =
-              depth == 1 && lexemes[cursor].kind == Kind::Greater;
-          if (!segmentEnd && !genericEnd) {
-            if (lexemes[cursor].kind == Kind::Greater && depth > 1) {
-              --depth;
-            }
-            continue;
-          }
-
-          const Lexeme *firstWord = nullptr;
-          const Lexeme *parameterName = nullptr;
-          std::size_t nestedDepth = 0;
-          for (std::size_t candidate = segmentStart; candidate < cursor;
-               ++candidate) {
-            if (lexemes[candidate].kind == Kind::Less) {
-              ++nestedDepth;
-            } else if (lexemes[candidate].kind == Kind::Greater &&
-                       nestedDepth > 0) {
-              --nestedDepth;
-            } else if (nestedDepth == 0 &&
-                       lexemes[candidate].kind == Kind::Word) {
-              if (firstWord == nullptr) {
-                firstWord = &lexemes[candidate];
-              }
-              parameterName = &lexemes[candidate];
-            }
-          }
-          if (firstWord != nullptr && parameterName != nullptr &&
-              firstWord->text != "uint64_t" && firstWord->text != "uint64") {
-            result.insert(parameterName->text);
-          }
-          if (genericEnd) {
-            break;
-          }
-          segmentStart = cursor + 1;
-        }
+    for (std::size_t index = 0; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind == Kind::Less &&
+          isFunctionGenericParameterClause(lexemes, index, result)) {
+        collectGenericParameters(index);
       }
     }
     return result;
@@ -1005,9 +1015,12 @@ private:
       return false;
     }
 
-    if (!typeEndsAt(lexemes,
-                    static_cast<std::size_t>(previous - lexemes.data()),
-                    declaredTypes)) {
+    const std::size_t previousIndex =
+        static_cast<std::size_t>(previous - lexemes.data());
+    if (!typeEndsAt(lexemes, previousIndex, declaredTypes) &&
+        !isUndeclaredFunctionReturnDeclarator(lexemes, previousIndex, index) &&
+        !isUndeclaredParameterDeclarator(lexemes, index, declaredTypes) &&
+        !isInitializedUndeclaredDeclarator(lexemes, index, declaredTypes)) {
       return false;
     }
 
@@ -1032,6 +1045,10 @@ private:
            afterName->kind == Kind::LeftBrace ||
            afterName->kind == Kind::RightParen ||
            afterName->kind == Kind::Semicolon ||
+           (afterName->kind == Kind::Less &&
+            isFunctionGenericParameterClause(
+                lexemes, static_cast<std::size_t>(afterName - lexemes.data()),
+                declaredTypes)) ||
            (afterName->kind == Kind::Operator && afterName->text == "=");
   }
 
@@ -1048,7 +1065,9 @@ private:
         static_cast<std::size_t>(previous - lexemes.data());
     const bool typeBefore = typeEndsAt(lexemes, previousIndex, declaredTypes);
     if (!typeBefore &&
-        !isUndeclaredFunctionReturnReference(lexemes, previousIndex, index)) {
+        !isUndeclaredFunctionReturnDeclarator(lexemes, previousIndex, index) &&
+        !isUndeclaredParameterDeclarator(lexemes, index, declaredTypes) &&
+        !isInitializedUndeclaredDeclarator(lexemes, index, declaredTypes)) {
       return false;
     }
 
@@ -1074,6 +1093,10 @@ private:
            afterName->kind == Kind::LeftBrace ||
            afterName->kind == Kind::RightParen ||
            afterName->kind == Kind::Semicolon ||
+           (afterName->kind == Kind::Less &&
+            isFunctionGenericParameterClause(
+                lexemes, static_cast<std::size_t>(afterName - lexemes.data()),
+                declaredTypes)) ||
            (afterName->kind == Kind::Operator && afterName->text == "=");
   }
 
@@ -1128,37 +1151,231 @@ private:
     return true;
   }
 
-  static bool
-  isUndeclaredFunctionReturnReference(const std::vector<Lexeme> &lexemes,
-                                      std::size_t typeEnd,
-                                      std::size_t reference) {
-    if (lexemes[typeEnd].kind != Kind::Word) {
+  static bool isNonTypeDeclarationWord(std::string_view word) {
+    return word == "break" || word == "case" || word == "class" ||
+           word == "concept" || word == "continue" || word == "default" ||
+           word == "do" || word == "else" || word == "enum" || word == "for" ||
+           word == "if" || word == "interface" || word == "namespace" ||
+           word == "return" || word == "struct" || word == "switch" ||
+           word == "this" || word == "union" || word == "unsafe" ||
+           word == "using" || word == "while";
+  }
+
+  static bool isDeclarationTypeLexeme(const Lexeme &lexeme) {
+    if (lexeme.kind == Kind::Word) {
+      return !isNonTypeDeclarationWord(lexeme.text);
+    }
+    if (lexeme.kind == Kind::Scope || lexeme.kind == Kind::Less ||
+        lexeme.kind == Kind::Greater || lexeme.kind == Kind::ShiftRight ||
+        lexeme.kind == Kind::Comma || lexeme.kind == Kind::Number ||
+        lexeme.kind == Kind::LeftBracket || lexeme.kind == Kind::RightBracket) {
+      return true;
+    }
+    return lexeme.kind == Kind::Operator &&
+           (lexeme.text == "*" || lexeme.text == "&" || lexeme.text == "&&");
+  }
+
+  static std::optional<std::size_t>
+  declarationTypeStartEndingAt(const std::vector<Lexeme> &lexemes,
+                               std::size_t typeEnd) {
+    std::size_t cursor = typeEnd;
+    std::size_t typeStart = typeEnd;
+    bool hasTypeWord = false;
+    while (true) {
+      const Lexeme &candidate = lexemes[cursor];
+      if (!isDeclarationTypeLexeme(candidate)) {
+        return std::nullopt;
+      }
+      hasTypeWord = hasTypeWord || (candidate.kind == Kind::Word &&
+                                    !isDeclarationModifier(candidate));
+      typeStart = cursor;
+
+      const Lexeme *previous = previousSyntaxLexeme(lexemes, cursor);
+      if (isDeclarationBoundary(previous)) {
+        break;
+      }
+      cursor = static_cast<std::size_t>(previous - lexemes.data());
+    }
+    return hasTypeWord ? std::optional<std::size_t>(typeStart) : std::nullopt;
+  }
+
+  static bool isFunctionDeclarationName(
+      const std::vector<Lexeme> &lexemes, std::size_t name,
+      const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *typeEnd = previousSyntaxLexeme(lexemes, name);
+    if (typeEnd != nullptr) {
+      const std::optional<std::size_t> typeStart = declarationTypeStartEndingAt(
+          lexemes, static_cast<std::size_t>(typeEnd - lexemes.data()));
+      if (typeStart && isDeclarationScope(lexemes, *typeStart)) {
+        return true;
+      }
+    }
+
+    if (lexemes[name].kind != Kind::Word ||
+        !declaredTypes.contains(lexemes[name].text) ||
+        !isDeclarationScope(lexemes, name)) {
+      return false;
+    }
+    const Lexeme *beforeName = previousSyntaxLexeme(lexemes, name);
+    return isDeclarationBoundary(beforeName);
+  }
+
+  static bool isFunctionGenericParameterClause(
+      const std::vector<Lexeme> &lexemes, std::size_t genericStart,
+      const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *name = previousSyntaxLexeme(lexemes, genericStart);
+    const std::optional<std::size_t> genericEnd =
+        matchingGenericClose(lexemes, genericStart);
+    if (name == nullptr || name->kind != Kind::Word || !genericEnd) {
+      return false;
+    }
+    const Lexeme *parameters = nextSyntaxLexeme(lexemes, *genericEnd);
+    return parameters != nullptr && parameters->kind == Kind::LeftParen &&
+           isFunctionDeclarationName(
+               lexemes, static_cast<std::size_t>(name - lexemes.data()),
+               declaredTypes);
+  }
+
+  static bool isFunctionParameterClause(
+      const std::vector<Lexeme> &lexemes, std::size_t leftParen,
+      const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *before = previousSyntaxLexeme(lexemes, leftParen);
+    if (before == nullptr) {
+      return false;
+    }
+    if (before->kind == Kind::Word) {
+      return isFunctionDeclarationName(
+          lexemes, static_cast<std::size_t>(before - lexemes.data()),
+          declaredTypes);
+    }
+    if (before->kind != Kind::Greater && before->kind != Kind::ShiftRight) {
       return false;
     }
 
-    const Lexeme *name = nextSyntaxLexeme(lexemes, reference);
+    const std::size_t close = static_cast<std::size_t>(before - lexemes.data());
+    for (std::size_t cursor = close; cursor > 0;) {
+      --cursor;
+      if (isDeclarationBoundary(&lexemes[cursor])) {
+        break;
+      }
+      if (lexemes[cursor].kind != Kind::Less ||
+          matchingGenericClose(lexemes, cursor) != close) {
+        continue;
+      }
+      const Lexeme *name = previousSyntaxLexeme(lexemes, cursor);
+      if (name != nullptr && name->kind == Kind::Word &&
+          isFunctionDeclarationName(
+              lexemes, static_cast<std::size_t>(name - lexemes.data()),
+              declaredTypes)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static std::optional<std::size_t>
+  enclosingLeftParen(const std::vector<Lexeme> &lexemes, std::size_t index) {
+    std::size_t depth = 0;
+    while (index > 0) {
+      --index;
+      if (lexemes[index].kind == Kind::RightParen) {
+        ++depth;
+      } else if (lexemes[index].kind == Kind::LeftParen) {
+        if (depth == 0) {
+          return index;
+        }
+        --depth;
+      } else if (depth == 0 && (lexemes[index].kind == Kind::LeftBrace ||
+                                lexemes[index].kind == Kind::RightBrace ||
+                                lexemes[index].kind == Kind::Semicolon)) {
+        return std::nullopt;
+      }
+    }
+    return std::nullopt;
+  }
+
+  static bool isUndeclaredParameterDeclarator(
+      const std::vector<Lexeme> &lexemes, std::size_t marker,
+      const std::unordered_set<std::string> &declaredTypes) {
+    const std::optional<std::size_t> parameters =
+        enclosingLeftParen(lexemes, marker);
+    if (!parameters ||
+        !isFunctionParameterClause(lexemes, *parameters, declaredTypes)) {
+      return false;
+    }
+
+    bool hasDefault = false;
+    std::size_t nested = 0;
+    for (std::size_t cursor = *parameters + 1; cursor < marker; ++cursor) {
+      const Lexeme &candidate = lexemes[cursor];
+      if (candidate.kind == Kind::LeftParen ||
+          candidate.kind == Kind::LeftBracket) {
+        ++nested;
+      } else if ((candidate.kind == Kind::RightParen ||
+                  candidate.kind == Kind::RightBracket) &&
+                 nested > 0) {
+        --nested;
+      } else if (nested == 0 && candidate.kind == Kind::Comma) {
+        hasDefault = false;
+      } else if (nested == 0 && candidate.kind == Kind::Operator &&
+                 candidate.text == "=") {
+        hasDefault = true;
+      }
+    }
+    return !hasDefault;
+  }
+
+  static bool
+  isInitializedUndeclaredDeclarator(const std::vector<Lexeme> &lexemes,
+                                    std::size_t marker,
+                                    const std::unordered_set<std::string> &) {
+    const Lexeme *typeEnd = previousSyntaxLexeme(lexemes, marker);
+    const Lexeme *name = nextSyntaxLexeme(lexemes, marker);
+    if (typeEnd == nullptr || name == nullptr || name->kind != Kind::Word) {
+      return false;
+    }
+    const std::optional<std::size_t> typeStart = declarationTypeStartEndingAt(
+        lexemes, static_cast<std::size_t>(typeEnd - lexemes.data()));
+    if (!typeStart) {
+      return false;
+    }
+
+    const Lexeme *afterName = nextSyntaxLexeme(
+        lexemes, static_cast<std::size_t>(name - lexemes.data()));
+    if (afterName == nullptr) {
+      return false;
+    }
+    return (afterName->kind == Kind::Operator && afterName->text == "=") ||
+           afterName->kind == Kind::LeftBrace ||
+           (afterName->kind == Kind::Semicolon &&
+            isDeclarationScope(lexemes, *typeStart));
+  }
+
+  static bool
+  isUndeclaredFunctionReturnDeclarator(const std::vector<Lexeme> &lexemes,
+                                       std::size_t typeEnd,
+                                       std::size_t marker) {
+    const std::optional<std::size_t> typeStart =
+        declarationTypeStartEndingAt(lexemes, typeEnd);
+    if (!typeStart || !isDeclarationScope(lexemes, *typeStart)) {
+      return false;
+    }
+
+    const Lexeme *name = nextSyntaxLexeme(lexemes, marker);
     if (name == nullptr || name->kind != Kind::Word) {
       return false;
     }
     const Lexeme *parameters = nextSyntaxLexeme(
         lexemes, static_cast<std::size_t>(name - lexemes.data()));
-    if (parameters == nullptr || parameters->kind != Kind::LeftParen) {
-      return false;
+    if (parameters != nullptr && parameters->kind == Kind::Less) {
+      const std::optional<std::size_t> genericEnd = matchingGenericClose(
+          lexemes, static_cast<std::size_t>(parameters - lexemes.data()));
+      if (!genericEnd) {
+        return false;
+      }
+      parameters = nextSyntaxLexeme(lexemes, *genericEnd);
     }
-
-    std::size_t typeStart = typeEnd;
-    while (typeStart >= 2 && lexemes[typeStart - 1].kind == Kind::Scope &&
-           lexemes[typeStart - 2].kind == Kind::Word) {
-      typeStart -= 2;
-    }
-
-    const Lexeme *beforeType = previousSyntaxLexeme(lexemes, typeStart);
-    while (beforeType != nullptr && isDeclarationModifier(*beforeType)) {
-      typeStart = static_cast<std::size_t>(beforeType - lexemes.data());
-      beforeType = previousSyntaxLexeme(lexemes, typeStart);
-    }
-    return isDeclarationBoundary(beforeType) &&
-           isDeclarationScope(lexemes, typeStart);
+    return parameters != nullptr && parameters->kind == Kind::LeftParen;
   }
 
   static std::vector<Lexeme> scan(std::string_view source) {

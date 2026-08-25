@@ -105,6 +105,12 @@ from names declared in the formatted file. This keeps an included nominal
 return type such as `LayerStack& GetLayerStack()` aligned consistently while
 leaving expression-level bitwise `&` spacing unchanged.
 
+The GTI base style attaches pointer and reference markers to the type:
+`T* pointer` and `T& reference`. Declaration recognition covers standalone
+function generic parameters, nominal parameter types supplied by another
+source unit, and initialized raw-pointer locals without treating expression
+operators such as `left * right` or `left & right` as declarators.
+
 Line comments, block comments, and strings remain separate scanner concerns
 because the compiler lexer intentionally discards comments. The formatter
 preserves inline and multiline `/* ... */` contents, normalizes continuation
