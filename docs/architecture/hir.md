@@ -255,11 +255,13 @@ its concrete type and selected function-instance identity. An empty pack is an
 explicit fold value with an empty element sequence. HIR neither reopens
 overload resolution nor derives element calls from emitted template behavior.
 
-This is not yet a complete executable schedule. Borrowed-state class values,
-whole-pack forwarding and general pack expressions beyond the bounded fold,
-unresolved callable calls, operators other than `operator()`, special/default
-construction, conditionals, target-place formation, result destinations, and
-module/static initializer bodies remain outside the bounded plan.
+This bounded invocation-input plan is not yet a complete executable schedule.
+Borrowed-state class values, whole-pack forwarding and general pack expressions
+beyond the bounded fold, unresolved callable calls, operators other than
+`operator()`, special/default construction, conditionals, target-place
+formation, result destinations, and generic static initialization remain
+outside this particular schedule. The source-graph initialization plan is
+separately lowered into the verified `Module/0` MIR body.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from
@@ -392,6 +394,7 @@ only after semantics owns its meaning. New body-local dataflow generally
 belongs in MIR. HIR is an input to `LoweredProgramBuilder`, not an input to a
 production backend.
 
-Current gaps and future instance/backend work are tracked in
-[`docs/plans/compiler-roadmap-status.md`](../plans/compiler-roadmap-status.md)
-and [`docs/plans/optimization.md`](../plans/optimization.md).
+Current gaps and future instance/backend work are tracked in the maintained
+[`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md),
+the [language restriction ledger](../plans/language-alignment.md), and the
+[optimization plan](../plans/optimization.md).

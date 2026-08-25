@@ -62,7 +62,7 @@ observer is available normally at runtime.
 
 The default C++23 target lowers to `std::expected`. The C++20 target lowers to
 the vendored `nonstd::expected` compatibility implementation. This is a
-representation choice only. The current backend still emits native observer
-calls directly, so wrong-state access does not yet conform to the category,
-cleanup, and reporting contract above; M-FAIL-01 owns the explicit checked
-lowering for both modes.
+representation choice only. Both backend modes lower `value()` and `error()`
+through the same explicit state check and defined-failure edge, so either
+wrong-state access reports `GTI-R0009`, runs the verified cleanup schedule, and
+terminates with the common runtime-failure status.

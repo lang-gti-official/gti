@@ -156,7 +156,7 @@ alignment below are measured in bytes:
 
 The layout is little-endian and has 64-bit pointers. `float` and `double`
 retain the exact binary32 and binary64 contracts in
-[Execution Section 4.6](execution.md#46-floating-point).
+[Execution Section 4.3](execution.md#43-numeric-execution).
 The pointer row is a representation category for compiler facts; it does not
 grant layout to ordinary classes, interfaces, owners, references, or other
 aggregate source types. A record explicitly declared `[[c_abi]] struct` has
@@ -383,5 +383,7 @@ argument must not contradict the resolved target/data-layout contract. Only
 structured path fields receive containment validation. These settings are not
 a source language feature.
 
-A future package model may control source roots and dependency visibility, but
-it must feed the same source graph and frontend rules as direct compilation.
+Project and workspace manifests provide declared package source roots and
+direct-dependency visibility to the same source graph and frontend used by
+direct compilation. Package resolution remains driver policy; it does not
+replace include resolution, parsing, or source-language semantics.

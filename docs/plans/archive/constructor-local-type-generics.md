@@ -1,9 +1,9 @@
 # GTI Constructor-Local Type Generics And Constraints Proposal
 
 > **Plan status:** Implemented. Canonical current behavior is specified by
-> [`static-semantics.md`](../language/static-semantics.md),
-> [`concepts.md`](../language/concepts.md), and
-> [`ranges.md`](../language/ranges.md).
+> [`static-semantics.md`](../../language/static-semantics.md),
+> [`concepts.md`](../../language/concepts.md), and
+> [`ranges.md`](../../language/ranges.md).
 
 Status: complete
 
@@ -24,10 +24,10 @@ constructor specialization, C++ overload ranking, class-template argument
 deduction, or a second generic implementation mechanism.
 
 Current generic and overload meaning remains specified by
-[`static-semantics.md`](../language/static-semantics.md), bounded requirements by
-[`concepts.md`](../language/concepts.md), and exact call selection by
-[`ADR 003`](../decisions/003-exact-overload-resolution.md). The iterator
-protocol remains owned by [`ranges.md`](../language/ranges.md). This proposal
+[`static-semantics.md`](../../language/static-semantics.md), bounded requirements by
+[`concepts.md`](../../language/concepts.md), and exact call selection by
+[`ADR 003`](../../decisions/003-exact-overload-resolution.md). The iterator
+protocol remains owned by [`ranges.md`](../../language/ranges.md). This proposal
 changes those documents only when the implementation lands.
 
 ## User-Facing Outcome
@@ -262,7 +262,7 @@ arguments and their corresponding parameter patterns. It does not use:
 
 A contextual fixed-array argument may continue to infer its `uint64_t` extent
 after one exact array parameter shape is known, under
-[`ADR 015`](../decisions/015-contextual-fixed-array-arguments.md). It does not
+[`ADR 015`](../../decisions/015-contextual-fixed-array-arguments.md). It does not
 infer a constructor-local element type. A type parameter that appears nowhere
 in a parameter pattern is ill-formed because no call can supply it in this
 inference-only version. A parameter occurring only in an optional parameter is
@@ -274,7 +274,7 @@ canonicalized before equality and constraint checks.
 ### Requirements and symbolic body checking
 
 A constructor requirement uses the bounded conjunction model from
-[`ADR 009`](../decisions/009-bounded-requires-contracts.md). Its arguments may
+[`ADR 009`](../../decisions/009-bounded-requires-contracts.md). Its arguments may
 refer to visible owning-class parameters, constructor-local parameters, and the
 closed exact types defined above.
 

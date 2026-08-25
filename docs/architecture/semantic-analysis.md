@@ -100,7 +100,8 @@ HIR copies that seal and must match the same program and target before
 lowering. The general ordered-expression work is still incomplete: active
 ordered child roles and some transient-loan endpoints remain M-EXEC-01 work,
 and the analyzer therefore retains conservative borrow restrictions for
-families whose production schedule is not yet authoritative.
+families whose MIR schedule is not yet representable. Accepted bodies never
+fall back to an earlier executable authority.
 
 ## SemanticModel
 
@@ -606,13 +607,15 @@ without copying a callee category set or changing the origin anchor. Exact
 `nullptr_t` contextual construction is reclassified after constructor
 selection so the late contextual step cannot lose its constructor channel.
 
-The failure-metadata builder now interns exact frontend origin records into
-artifact-local sites, including the two hosted-plan operations below. This is
-not yet a general executable hosted-startup body: generated startup control
-flow, remaining trusted host origins, broader function-effect refinement,
-failure successors, cleanup unwinding, and containment remain M-FAIL-01 /
-M-EXEC-01 work. Existing transitional backend helpers are not evidence that
-those pieces exist.
+The failure-metadata builder interns exact frontend origin records into
+artifact-local sites, including the two hosted-plan operations below. The
+generated hosted startup invokes the source-graph initialization plan through
+the merged verified `Module/0` body inside the hosted containment boundary; a
+no-entry artifact uses the separately verified initialization guard. Remaining
+trusted host origins, broader function-effect refinement,
+double-failure control flow, and task/callback/embedding containment remain
+M-FAIL-01 / M-EXEC-01 work; generated integrity helpers are not a second
+source-body authority.
 
 For an owned-argument entry, `HostedProgramEntryPlan` records the exact source
 entry, canonical vector/string constructors, append target, source unit, and

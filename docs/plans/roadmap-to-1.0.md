@@ -42,10 +42,12 @@ authoritative for their domains:
 - [`performance-tooling.md`](performance-tooling.md) for
   measurement and optimization diagnostics.
 
-The shorter [`compiler-roadmap-status.md`](compiler-roadmap-status.md) records
-the current implementation checkpoint against this dependency plan. Future
-compiler phases should update that ledger instead of inferring progress from
-the number of accepted syntax features.
+The archived
+[`compiler-roadmap-status.md`](archive/compiler-roadmap-status.md) preserves an
+older implementation checkpoint against this dependency plan. It is not a live
+ledger; current evidence belongs in architecture documents, tests, and the
+operational sequence rather than being inferred from the number of accepted
+syntax features.
 
 The prompt-sized, prerequisite-ordered work queue is
 [`implementation-sequence.md`](implementation-sequence.md). It is the sole
@@ -246,7 +248,7 @@ choices that affect every backend and optimization level.
   selectors fail; deprecation does not alter meaning; and Edition 1
   `#include` remains non-textual and direct-visibility. The readiness scope may
   be revised before publication; publishing 1.0 activates this contract.
-- [Programs Section 6.2](../language/programs-and-targets.md#62-target-selection)
+- [Programs Section 6.2](../language/programs-and-targets.md#62-target-and-configuration-selection)
   fixes the exact target-property/triple vocabulary and the first GTI-owned
   scalar data layout. Supported arm64/x86_64 macOS, Linux, and Windows triples
   share deterministic 64-bit little-endian facts checked by installed native
@@ -801,7 +803,7 @@ Add the staged project workflow from the build-system proposal:
 4. add deterministic whole-program caching — complete;
 5. add workspaces and source-only path dependencies — complete;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
-   `--offline`;
+   `--offline` — complete for pinned full revisions;
 7. make LSP project discovery read-only and use the same target/source-root
    facts as the CLI.
 
@@ -824,9 +826,10 @@ inputs are modeled. Cache hits skip parsing through
 native linking; corruption rebuilds before replacement; `--no-cache` bypasses
 lookup/publication; and direct mode remains uncached. Step 5 now adds canonical workspace membership, recursive
 source-only path dependency graphs, direct package include aliases,
-deterministic package selection/shared outputs, schema-7 metadata, and package
-cache provenance without network access. Exact Git/lockfile resolution and the
-read-only driver project-facts bridge are the next independent milestones.
+deterministic package selection/shared outputs, schema-9 metadata, and package
+cache provenance without network access. Step 6 adds explicit, content-verified
+acquisition of pinned full Git revisions and reproducible locked/offline builds.
+The read-only driver project-facts bridge is the next independent milestone.
 
 The systems-ready build workflow does not need a registry, package build
 scripts, binary GTI libraries, source globbing, or CMake replacement for
@@ -936,10 +939,11 @@ standard-library need, and tooling impact.
 
 The maintained sequence, blockers, parallel lanes, and current ready queue live
 in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the source executable-body cutover is complete. All 2,962 reviewed
-body identities across 63 examples use verified optimized MIR and the general
-C++ body emitter. The no-MIR emitter and executable AST statement route are
-gone; the exact census and two-endpoint corpus oracle guard that result.
+checkpoint the source executable-body cutover is complete. Every body identity
+recorded by `tests/mir_census_baseline.json` uses verified optimized MIR and
+the general C++ body emitter. The no-MIR emitter and executable AST statement
+route are gone; the exact census and two-endpoint corpus oracle guard that
+result.
 
 MIR failure effects cover functions, constructors, and destructors and permit
 conservative true summaries while rejecting unproved false claims and

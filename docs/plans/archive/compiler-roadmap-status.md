@@ -1,7 +1,8 @@
 # GTI Compiler Roadmap Status
 
-> **Plan status:** Implementation checkpoint and future-work ledger. It does
-> not define current language semantics.
+> **Plan status:** Archived implementation checkpoint. It does not define
+> current language semantics or the active work queue; current status lives in
+> architecture documents, tests, and `docs/plans/implementation-sequence.md`.
 
 Status: implementation checkpoint
 
@@ -11,12 +12,12 @@ exact qualified class specialization, mutable field groups, static assertions,
 and bounded mutable temporary receivers.
 The backend-authority campaign's
 per-release record lives in
-[`implementation-sequence.md`](implementation-sequence.md).
+[`implementation-sequence.md`](../implementation-sequence.md).
 
 This document records where the compiler currently sits against
-[`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
+[`roadmap-to-1.0.md`](../roadmap-to-1.0.md). The roadmap remains the durable
 capability and release plan; the operational dependency queue lives in
-[`implementation-sequence.md`](implementation-sequence.md). This checkpoint is
+[`implementation-sequence.md`](../implementation-sequence.md). This checkpoint is
 the shorter evidence ledger that future passes should update when they complete
 or materially unblock a milestone. The grammar and semantic specification
 remain authoritative for shipped language behavior.
@@ -25,7 +26,7 @@ remain authoritative for shipped language behavior.
 
 ### Outcome-first planning pivot
 
-[ADR 012](../decisions/012-outcome-first-systems-readiness.md) changes the
+[ADR 012](../../decisions/012-outcome-first-systems-readiness.md) changes the
 planning priority without changing current language semantics or discarding
 the architecture already built. Compiler work now names a user-facing program,
 API, or workflow and prefers the smallest sound vertical slice that makes it
@@ -763,11 +764,11 @@ add pointer-to-pointer source types, borrowed native storage, environment
 access, or general compiler-provided vector behavior.
 
 The checkpoint also completes D-MEM-01 and D-MEM-02. The
-[concurrency and memory-model proposal](concurrency-memory-model.md) is retained
+[concurrency and memory-model proposal](../concurrency-memory-model.md) is retained
 as design evidence, while
-[ADR 008](../decisions/008-safe-concurrency-memory-model.md),
-[Execution §4.9](../language/execution.md#49-concurrency-boundary), and
-[ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing)
+[ADR 008](../../decisions/008-safe-concurrency-memory-model.md),
+[Execution §4.9](../../language/execution.md#49-concurrency-boundary), and
+[ownership semantics](../../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing)
 now adopt safe data-race freedom, structural transfer/share facts, explicit
 single-threaded/concurrent profiles, an owned-only automatic-join first thread
 boundary, sequentially consistent scalar atomics, concurrent-global policy,
@@ -915,7 +916,7 @@ pointer-to-pointer output and annotated ownership transfer remain client-gated
 S-FFI-02 sub-slices.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
-[`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
+[`place-and-ownership-state.md`](../place-and-ownership-state.md). It selects one
 snapshot/body-scoped value key for program, body, formal, receiver, temporary,
 materialized, raw, and opaque roots; exact field/constant-index and
 conservative dynamic/raw/opaque projections; and one exhaustive equal,
@@ -929,7 +930,7 @@ now consumes that ownership foundation for explicit temporary and active-drop
 obligations.
 
 Design-only D-CALL-01 is complete in the accepted
-[callable ownership and escape contract](callable-ownership-and-escape.md).
+[callable ownership and escape contract](../callable-ownership-and-escape.md).
 Lexical closures, nominal callable objects, and future exact function items
 share one GTI-owned concrete identity/signature model; read-callable,
 mut-callable, and once-callable distinguish receiver access and invocation
@@ -947,8 +948,8 @@ S-CALL-01 now supplies the exact same-thread native adapter; C-CALL-01 and
 foreign-thread callback entry retain their concurrency/runtime gates.
 
 Design-only D-FAIL-01 is complete in
-[Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
-rationale in [ADR 007](../decisions/007-defined-runtime-failure.md). Defined failure now has
+[Execution §4.10](../../language/execution.md#410-defined-runtime-failure), with
+rationale in [ADR 007](../../decisions/007-defined-runtime-failure.md). Defined failure now has
 stable categories and artifact-qualified source sites, cleanup-preserving
 non-resumable propagation, an exact hosted report and status 70, a constrained
 observer, explicit program/embedding/task/callback boundaries, and a precise
@@ -970,7 +971,7 @@ state, generated hosted containment, descriptor emission, and complete
 failure-capable M-BACK-02 body migration land; M-LIFE-01 is complete.
 
 D-LANG-01 is now complete in the maintained
-[language restriction ledger](language-alignment.md). It classifies every
+[language restriction ledger](../language-alignment.md). It classifies every
 external language-audit finding, original alignment question, explicit
 language-specification gap, and backend-visible restriction with one reason,
 readiness role, user-facing client, owner, and evidence gate. ADR 012
@@ -1338,7 +1339,7 @@ lifetime work are incomplete.
 ## Operational Queue
 
 The sole maintained work queue is
-[`implementation-sequence.md`](implementation-sequence.md).
+[`implementation-sequence.md`](../implementation-sequence.md).
 `M-BACK-01`/`scalar-leaf-v1`, `M-BACK-02`/`scalar-cfg-v1`, and
 `M-BACK-02`/`scalar-direct-call-v1` plus
 `M-BACK-02`/`class-default-cleanup-v1` and

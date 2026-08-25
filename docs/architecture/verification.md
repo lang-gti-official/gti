@@ -41,7 +41,7 @@ assertions.
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
 | `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
-| `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts across the complete shipped corpus |
+| `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts recorded in `tests/lowered_program_census_baseline.json` across the complete shipped corpus |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -55,7 +55,7 @@ assertions.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 3,433 identities across 64 examples |
+| `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
 | `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and a corpus sweep requiring every emitted body to use direct planned labels/gotos, remain coherent, and byte-match production text; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 69 tests) |
 | `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
@@ -523,11 +523,12 @@ Two complementary gates replace it:
   identical body ownership at both endpoints, and compares exit status,
   stdout, and stderr.
 
-The reviewed corpus currently contains 3,433 MIR body identities across 64
-examples. The two-endpoint corpus matrix covers source and optimized MIR plus
-both supported C++ standards without retaining eight duplicate full-corpus
-jobs. Focused runtime matrices continue to exercise intermediate optimization
-levels where a feature's risk warrants them.
+The reviewed corpus inventory is the checked-in
+`tests/mir_census_baseline.json`; documentation does not duplicate its changing
+counts. The two-endpoint corpus matrix covers source and optimized MIR plus both
+supported C++ standards without retaining eight duplicate full-corpus jobs.
+Focused runtime matrices continue to exercise intermediate optimization levels
+where a feature's risk warrants them.
 
 Generated C++ is not a stable public text contract. Marker identities are a
 test-only ownership witness; behavior comparison remains on process status and
@@ -604,7 +605,8 @@ Use focused tests first; do not turn every change into the full audit matrix.
 ## Failure Capture And Opt-In Fuzzing
 
 The `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
-(design: [`compiler-bug-finding-and-triage.md`](../plans/compiler-bug-finding-and-triage.md)).
+(design record:
+[`compiler-bug-finding-and-triage.md`](../plans/archive/compiler-bug-finding-and-triage.md)).
 
 `scripts/debug/capture_compiler_failure.py` turns one failing direct source or
 project into a portable `gti-debug-bundle-v1` directory — probe ladder,

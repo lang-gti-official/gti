@@ -6,11 +6,11 @@ optimization families, snapshot-scoped analysis caching, and optimizer
 observability.
 
 GTI optimization has one executable-body authority: optimized MIR. The
-frontend still runs a compatibility HIR constant analysis for non-body
-representation surfaces and as a shadow check for the existing literal fold,
-but no new optimizer pass may use AST shape, source spelling, HIR replacement
-tables, emitted C++, or public standard-library names as transformation
-authority.
+frontend still runs the earlier HIR constant analysis as a transitional shadow
+check for the existing literal-fold family, but its replacement table is not a
+backend or non-body representation input. No new optimizer pass may use AST
+shape, source spelling, HIR replacement tables, emitted C++, or public
+standard-library names as transformation authority.
 
 ## HIR Constant Analysis
 
@@ -31,11 +31,13 @@ fold only to the exact retained `BinaryFloat` bit pattern in the selected
 width. Floating exceptions produce their specified IEEE default result rather
 than an integer-style failure.
 
-The C++ representation emitter still consumes this replacement table for
-non-body source surfaces such as declaration initializers. It does not control
-executable body text. Because one source expression can produce several
-concrete HIR values, a source replacement is available only when every
-instance has the same value.
+The compatibility result is compared with admitted MIR literal folds and is
+otherwise discarded before lowered-program construction. Backends never
+receive it. Non-body constants and declaration initializers are represented
+from canonical semantic and lowered-program facts rather than optimizer
+replacement entries. Because one source expression can produce several
+concrete HIR values, the shadow analysis reports one source replacement only
+when every instance has the same value.
 
 ## Owned MIR Path
 
