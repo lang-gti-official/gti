@@ -544,8 +544,30 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
 
     if (throughLoan != 0) {
       const MirLoan *loan = body.findLoan(throughLoan);
-      if (loan == nullptr || loan->source == id) {
+      if (loan == nullptr) {
         return {.ambiguous = true};
+      }
+      if (loan->source == id) {
+        // A by-value borrowed-state parameter is an opaque owner-loan root:
+        // MIR cannot name the caller's owner place, but the parameter's
+        // carrier object is the exact stable root inside this body.  Copies
+        // of that carrier resolve back to this same root.  Other self cycles
+        // remain malformed rather than being silently accepted.
+        const bool opaqueStoredEntry =
+            loan->kind == MirLoanKind::Stored && loan->entry &&
+            place->root == MirPlaceRootKind::Binding &&
+            place->traits.containsBorrowedState &&
+            std::find(loan->carriers.begin(), loan->carriers.end(),
+                      place->binding) != loan->carriers.end();
+        if (!opaqueStoredEntry) {
+          return {.ambiguous = true};
+        }
+        return {.root = place->root,
+                .binding = place->binding,
+                .symbol = place->symbol,
+                .temporary = place->temporary,
+                .value = place->value,
+                .projections = place->projections};
       }
       MirCanonicalPlace result = self(self, loan->source, depth + 1);
       result.throughLoan = throughLoan;
@@ -615,8 +637,30 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     }
     if (throughLoan != 0) {
       const MirLoan *loan = body.findLoan(throughLoan);
-      if (loan == nullptr || loan->source == id) {
+      if (loan == nullptr) {
         return {.ambiguous = true};
+      }
+      if (loan->source == id) {
+        // A by-value borrowed-state parameter is an opaque owner-loan root:
+        // MIR cannot name the caller's owner place, but the parameter's
+        // carrier object is the exact stable root inside this body.  Copies
+        // of that carrier resolve back to this same root.  Other self cycles
+        // remain malformed rather than being silently accepted.
+        const bool opaqueStoredEntry =
+            loan->kind == MirLoanKind::Stored && loan->entry &&
+            place->root == MirPlaceRootKind::Binding &&
+            place->traits.containsBorrowedState &&
+            std::find(loan->carriers.begin(), loan->carriers.end(),
+                      place->binding) != loan->carriers.end();
+        if (!opaqueStoredEntry) {
+          return {.ambiguous = true};
+        }
+        return {.root = place->root,
+                .binding = place->binding,
+                .symbol = place->symbol,
+                .temporary = place->temporary,
+                .value = place->value,
+                .projections = place->projections};
       }
       MirCanonicalPlace result = self(self, loan->source, depth + 1);
       result.throughLoan = throughLoan;
@@ -1603,6 +1647,46 @@ successors(const MirTerminator &terminator) {
                                     0) -> std::optional<MirVerificationResult> {
       const MirCanonicalPlace place =
           canonicalPlace(body, placeId, bindingLoans, active);
+      const auto opaqueBorrowCarrierMutation = [&](const MirLoan &loan) {
+        if (!write) {
+          return false;
+        }
+        const MirPlace *accessed = body.findPlace(placeId);
+        const bool storedEntryCarrier =
+            loan.kind == MirLoanKind::Stored && loan.entry &&
+            accessed != nullptr &&
+            accessed->root == MirPlaceRootKind::Binding &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      accessed->binding) != loan.carriers.end();
+        const bool canonicalStoredEntryCarrier =
+            loan.kind == MirLoanKind::Stored && loan.entry &&
+            !place.ambiguous && place.root == MirPlaceRootKind::Binding &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      place.binding) != loan.carriers.end();
+        const MirPlace *returnSource =
+            loan.kind == MirLoanKind::Return && loan.escapes
+                ? body.findPlace(loan.source)
+                : nullptr;
+        const bool returnedCarrier =
+            returnSource != nullptr &&
+            returnSource->traits.containsBorrowedState &&
+            returnSource->root == MirPlaceRootKind::Binding &&
+            returnSource->projections.empty() && accessed != nullptr &&
+            accessed->id == returnSource->id;
+        // The entry loan denotes caller-owned storage that MIR cannot name,
+        // not the by-value carrier object itself.  The same is true after an
+        // exact stored-value return transfer: the escaping loan protects the
+        // caller-owned referent while the moved-from parameter shell still
+        // needs scope-end destruction. Mutating/moving the whole carrier is
+        // independent of that referent. A projection that still carries
+        // borrowed state receives no exception, so this cannot reseat or
+        // write through the stored reference.
+        return returnedCarrier ||
+               (canonicalStoredEntryCarrier && place.projections.empty()) ||
+               (storedEntryCarrier &&
+                (accessed->projections.empty() ||
+                 !accessed->traits.containsBorrowedState));
+      };
       if (place.ambiguous) {
         return failure(body, owner,
                        "cannot resolve the canonical storage for a place in " +
@@ -1637,7 +1721,8 @@ successors(const MirTerminator &terminator) {
           }
         }
         if (write &&
-            body.loans[place.throughLoan - 1].access != AccessMode::Mutable) {
+            body.loans[place.throughLoan - 1].access != AccessMode::Mutable &&
+            !opaqueBorrowCarrierMutation(body.loans[place.throughLoan - 1])) {
           return failure(body, owner,
                          "read-only loan " + std::to_string(place.throughLoan) +
                              " is used for a write in " + context,
@@ -1649,7 +1734,8 @@ successors(const MirTerminator &terminator) {
         if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
             loan.id == place.throughLoan ||
             (place.throughLoan != 0 &&
-             isLoanAncestor(body, loan.id, place.throughLoan))) {
+             isLoanAncestor(body, loan.id, place.throughLoan)) ||
+            opaqueBorrowCarrierMutation(loan)) {
           continue;
         }
         const MirCanonicalPlace protectedPlace =
@@ -4837,7 +4923,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              validLoan(operand.loan) &&
              (operand.place == 0 ||
               (validPlace(operand.place) &&
-               body.places[operand.place - 1].type == operand.type));
+               ((operand.type.kind == SemanticType::Reference &&
+                 operand.type.arguments.size() == 1 &&
+                 body.places[operand.place - 1].type ==
+                     operand.type.arguments.front()) ||
+                body.places[operand.place - 1].type == operand.type)));
     }
     return false;
   };
@@ -6653,7 +6743,38 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (instruction.kind == MirInstructionKind::Borrow) {
         const MirLoan &produced = body.loans[*instruction.loan - 1];
         const MirOperand &source = instruction.operands.front();
-        if ((produced.parent == 0 && source.kind == MirOperandKind::Loan) ||
+        const bool storedValueReturnTransfer = [&] {
+          if (produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              !instruction.info.traits.containsBorrowedState) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr || retained->kind != MirLoanKind::Stored ||
+              retained->source != produced.source ||
+              retained->access != produced.access ||
+              source.type != instruction.info.type) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
+        if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
+             !storedValueReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,
@@ -9698,11 +9819,17 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             parameter.referenceAccess == AccessMode::Mutable
                 ? MirOperandKind::BorrowWrite
                 : MirOperandKind::BorrowRead;
+        const MirLoan *provenance = operand.kind == MirOperandKind::Loan
+                                        ? body.findLoan(operand.loan)
+                                        : nullptr;
+        const bool exactBorrowKind = operand.kind == expectedKind;
+        const bool exactLoanKind = provenance != nullptr;
         if (source == nullptr || parameter.arguments.size() != 1 ||
-            operand.type != parameter || operand.kind != expectedKind ||
+            operand.type != parameter || (!exactBorrowKind && !exactLoanKind) ||
             source->type != parameter.arguments.front() ||
             (parameter.referenceAccess == AccessMode::Mutable &&
-             source->access != AccessMode::Mutable)) {
+             (source->access != AccessMode::Mutable ||
+              (exactLoanKind && provenance->access != AccessMode::Mutable)))) {
           return failure(body, owner,
                          "direct reference argument does not match its exact "
                          "parameter pointee and access",

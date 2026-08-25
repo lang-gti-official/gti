@@ -2415,6 +2415,14 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       definition->operands.size() == 1 &&
       definition->operands.front().kind == MirOperandKind::Move &&
       definition->operands.front().place != 0;
+  const bool directCopy =
+      definition != nullptr && definition->kind == MirInstructionKind::Load &&
+      definition->result && *definition->result == valueId &&
+      definition->operands.size() == 1 &&
+      definition->operands.front().kind == MirOperandKind::Copy &&
+      definition->operands.front().place != 0 &&
+      definition->localFailureSites.empty() &&
+      definition->definedFailure.empty();
   const bool directFunctionCall =
       definition != nullptr && definition->kind == MirInstructionKind::Call &&
       definition->result && *definition->result == valueId &&
@@ -2435,7 +2443,7 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       definition->localFailureSites.empty();
   const MirPlace *ownedExpectedExtraction =
       expectedOwnedClassExtractionDestination(body, valueId);
-  if (!directConstruct && !directMove && !directFunctionCall &&
+  if (!directConstruct && !directMove && !directCopy && !directFunctionCall &&
       !directDefaultConstruction && ownedExpectedExtraction == nullptr) {
     return nullptr;
   }
@@ -5175,18 +5183,31 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
         call.receiver->place != 0;
     const bool temporaryReceiver =
         static_cast<bool>(directTemporaryReceiver(body, call));
-    const bool directValues =
-        std::all_of(call.operands.begin(), call.operands.end(),
-                    [&](const MirOperand &operand) {
-                      return (operand.kind == MirOperandKind::Value &&
-                              operand.value != 0) ||
-                             // A direct borrow argument binds the live place
-                             // lvalue; its formation has no effects to order.
-                             ((operand.kind == MirOperandKind::BorrowRead ||
-                               operand.kind == MirOperandKind::BorrowWrite) &&
-                              operand.place != 0 &&
-                              body.findPlace(operand.place) != nullptr);
-                    });
+    const bool directValues = std::all_of(
+        call.operands.begin(), call.operands.end(),
+        [&](const MirOperand &operand) {
+          return (operand.kind == MirOperandKind::Value &&
+                  operand.value != 0) ||
+                 // Operator lowering may carry an already
+                 // established reference argument by its exact
+                 // semantic loan.  The loan is the complete
+                 // schedule entry: it names an existing pointer
+                 // carrier and performs no evaluation of its own.
+                 (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
+                  body.findLoan(operand.loan) != nullptr &&
+                  (operand.place == 0 ||
+                   (operand.type.kind == SemanticType::Reference &&
+                    operand.type.arguments.size() == 1 &&
+                    body.findPlace(operand.place) != nullptr &&
+                    body.findPlace(operand.place)->type ==
+                        operand.type.arguments.front()))) ||
+                 // A direct borrow argument binds the live place
+                 // lvalue; its formation has no effects to order.
+                 ((operand.kind == MirOperandKind::BorrowRead ||
+                   operand.kind == MirOperandKind::BorrowWrite) &&
+                  operand.place != 0 &&
+                  body.findPlace(operand.place) != nullptr);
+        });
     return (!call.receiver || stagedReceiver || temporaryReceiver) &&
            directValues;
   }
@@ -12729,6 +12750,87 @@ returnLoanErasedByClassSsaSlot(const MirProgram &program,
   return false;
 }
 
+// Returning a class that stores a borrow transfers provenance from the
+// body-local carrier to the returned object.  MIR represents that temporal
+// handoff with this exact Return-loan Borrow followed by EndBorrow, but the
+// native class value already carries the reference field: there is no separate
+// pointer to declare or assign in C++.  Keep this predicate intentionally
+// structural so only that metadata-only publication is erased.
+[[nodiscard]] const MirInstruction *
+storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
+      loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
+      !loan.carriers.empty() || loan.storedField != 0 ||
+      body.returnType.kind == SemanticType::Reference) {
+    return nullptr;
+  }
+  const MirPlace *source = body.findPlace(loan.source);
+  if (source == nullptr) {
+    return nullptr;
+  }
+
+  const MirInstruction *producer = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const MirInstruction &instruction = block.instructions[index];
+      if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
+          *instruction.loan != loan.id) {
+        continue;
+      }
+      if (instruction.operands.size() != 1) {
+        return nullptr;
+      }
+      const MirOperand &origin = instruction.operands.front();
+      const MirLoan *retained = origin.kind == MirOperandKind::Loan
+                                    ? body.findLoan(origin.loan)
+                                    : nullptr;
+      if (producer != nullptr || instruction.hirValue != loan.producedBy ||
+          retained == nullptr || retained->kind != MirLoanKind::Stored ||
+          retained->source != loan.source || retained->access != loan.access ||
+          origin.place != 0 || origin.type != instruction.info.type ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.definedFailure.empty() ||
+          !instruction.info.traits.containsBorrowedState) {
+        return nullptr;
+      }
+      if (index + 1 >= block.instructions.size()) {
+        return nullptr;
+      }
+      const MirInstruction &retire = block.instructions[index + 1];
+      if (retire.kind != MirInstructionKind::EndBorrow || !retire.loan ||
+          *retire.loan != origin.loan ||
+          retire.hirValue != instruction.hirValue) {
+        return nullptr;
+      }
+      producer = &instruction;
+    }
+  }
+  if (producer == nullptr) {
+    return nullptr;
+  }
+
+  const MirTerminator *publication = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind != MirTerminatorKind::Return ||
+        !block.terminator.returnLoan ||
+        *block.terminator.returnLoan != loan.id) {
+      continue;
+    }
+    if (publication != nullptr || !block.terminator.value ||
+        block.terminator.value->kind != MirOperandKind::Value) {
+      return nullptr;
+    }
+    const MirValue *value = body.findValue(block.terminator.value->value);
+    if (value == nullptr || value->info.type != body.returnType ||
+        !value->info.traits.containsBorrowedState ||
+        value->sourceValue != loan.producedBy) {
+      return nullptr;
+    }
+    publication = &block.terminator;
+  }
+  return publication == nullptr ? nullptr : producer;
+}
+
 [[nodiscard]] std::string_view
 unqualifiedBodySpelling(std::string_view spelling) {
   std::size_t scope = std::string_view::npos;
@@ -13730,7 +13832,7 @@ public:
         // An expected extraction's class payload lands in the declared
         // local through the spelled member read.
         // A call-input stage sourced from a declared class value copies
-        // it into its own declared local under the copyable row.
+        // it into its own declared local under the copy-construction row.
         const bool valueStagedCopyResult =
             !valueProducingConstruct && !transformedClassResult &&
             definition != nullptr &&
@@ -13744,10 +13846,10 @@ public:
                         representations.types().end(),
                         [&](const CppMirTypeRepresentation &candidate) {
                           return candidate.type == value.info.type &&
-                                 candidate.copyable;
+                                 candidate.copyConstructible;
                         });
-        // A copy load assigns the place into the declared local when the
-        // copied row proves both copy members usable.
+        // A copy load constructs the consuming lifetime slot directly; copy
+        // assignment is neither performed nor required.
         const bool copyLoadResult =
             !valueProducingConstruct && !transformedClassResult &&
             definition != nullptr &&
@@ -13763,7 +13865,7 @@ public:
                         representations.types().end(),
                         [&](const CppMirTypeRepresentation &candidate) {
                           return candidate.type == value.info.type &&
-                                 candidate.copyable;
+                                 candidate.copyConstructible;
                         });
         // The explicit default construction of a class with no declared
         // constructor assigns the value-initialized temporary into the
@@ -13929,6 +14031,9 @@ public:
       }
       if (returnLoanErasedByClassSsaSlot(program, representations, facts.body,
                                          loan)) {
+        continue;
+      }
+      if (storedValueReturnLoanProducer(facts.body, loan) != nullptr) {
         continue;
       }
       // A bounds-checked element borrow's return loan publishes as the
@@ -15542,6 +15647,13 @@ private:
         return;
       }
       if (loan != nullptr &&
+          storedValueReturnLoanProducer(facts.body, *loan) != nullptr) {
+        writeIndent();
+        output << "// GTI MIR stored-value return loan " << loan->id
+               << " publishes in the returned class value\n";
+        return;
+      }
+      if (loan != nullptr &&
           ownerBorrowLoanProducer(facts.body, *loan) != nullptr) {
         // The owner borrow's loan has no pointer local; the fused
         // accessor spelling publishes at the consuming return.
@@ -15807,6 +15919,13 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Load) {
+      if (instruction.result &&
+          classValuePublicationSlot(facts.body, *instruction.result) !=
+              nullptr) {
+        output << "// class copy load " << *instruction.result
+               << " publishes at its consuming initialize\n";
+        return;
+      }
       if (const ClassCopyAssignmentFusion fusion =
               classCopyAssignmentFusion(facts.body, instruction)) {
         output << "// class copy load " << *instruction.result
@@ -16258,6 +16377,29 @@ private:
           const MirPlace *publishedDestination = directDestination != nullptr
                                                      ? directDestination
                                                      : conditionalDestination;
+          if (publishedDestination != nullptr &&
+              publishedDestination->id == instruction.destination &&
+              directDefinition != nullptr &&
+              directDefinition->kind == MirInstructionKind::Load &&
+              directDefinition->operands.size() == 1 &&
+              directDefinition->operands.front().kind == MirOperandKind::Copy) {
+            const MirPlace *source =
+                facts.body.findPlace(directDefinition->operands.front().place);
+            const CppMirTypeRepresentation *row = representationTypeRow(
+                representations, instruction.operands.front().type);
+            if (source == nullptr || row == nullptr ||
+                !row->copyConstructible) {
+              throw std::logic_error(
+                  "verified MIR class-copy publication lost its source or "
+                  "copy-construction capability");
+            }
+            output << "__gti_mir_p_"
+                   << canonicalSlotPlaceId(facts.body, *publishedDestination)
+                   << ".construct(";
+            emitStoragePlaceValue(facts, *source);
+            output << ");\n";
+            return;
+          }
           if (publishedDestination != nullptr &&
               publishedDestination->id == instruction.destination &&
               directDefinition != nullptr &&
@@ -17644,6 +17786,23 @@ private:
               "verified MIR call lost a direct borrowed argument place");
         }
         emitStoragePlaceValue(facts, *place);
+        return;
+      }
+      if (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
+          facts.body.findLoan(operand.loan) != nullptr) {
+        if (operand.place != 0) {
+          const MirPlace *place = facts.body.findPlace(operand.place);
+          if (place == nullptr ||
+              operand.type.kind != SemanticType::Reference ||
+              operand.type.arguments.size() != 1 ||
+              place->type != operand.type.arguments.front()) {
+            throw std::logic_error(
+                "verified MIR loan argument lost its exact runtime place");
+          }
+          emitStoragePlaceValue(facts, *place);
+        } else {
+          output << "(*__gti_mir_loan_" << operand.loan << ')';
+        }
         return;
       }
       if (marshalled) {
@@ -19536,6 +19695,9 @@ private:
         return;
       }
       if (terminator.returnLoan && *terminator.returnLoan != 0 &&
+          storedValueReturnLoanProducer(
+              facts.body, *facts.body.findLoan(*terminator.returnLoan)) ==
+              nullptr &&
           !(terminator.value &&
             terminator.value->kind == MirOperandKind::Value &&
             (returnConstructDefinition(facts.body, terminator.value->value) !=
@@ -20724,11 +20886,15 @@ cppMirStoredReferenceBindings(const MirConstructorInstance &constructor) {
          .parameter = static_cast<std::size_t>(
              parameter - constructor.parameterBindings.begin())});
   }
-  // Every Stored loan must be claimed by exactly one initializer; a stray
-  // stored loan would silently drop its binding.
+  // Every field-targeted Stored loan must be claimed by exactly one
+  // initializer; a stray field binding would silently drop its publication.
+  // Field-less Stored loans instead describe borrow-carrying values (such as
+  // iterator parameters) whose native object representation owns the carrier.
+  // They are admitted independently by the body loan-erasure proof.
   for (std::size_t loanIndex = 0; loanIndex < constructor.body.loans.size();
        ++loanIndex) {
     if (constructor.body.loans[loanIndex].kind == MirLoanKind::Stored &&
+        constructor.body.loans[loanIndex].storedField != 0 &&
         !loanUsed[loanIndex]) {
       return std::nullopt;
     }
@@ -23055,8 +23221,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           definition->kind == MirInstructionKind::Construct &&
           definition->result && *definition->result == value.id &&
           !definition->destination && !definition->receiver;
-      // A copy load assigns the place into the declared local when the
-      // copied row proves both copy members usable.
+      // A copy load constructs its exact destination slot, so only the copy
+      // constructor must be available.
       const auto copyLoadResult = [&]() {
         if (definition == nullptr ||
             definition->kind != MirInstructionKind::Load ||
@@ -23072,7 +23238,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             [&](const CppMirTypeRepresentation &candidate) {
               return candidate.type == value.info.type;
             });
-        return row != representations_.types().end() && row->copyable;
+        return row != representations_.types().end() && row->copyConstructible;
       };
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
@@ -23114,7 +23280,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (constructDefined && slotConsumed(*definition)) ||
           passiveFixedArrayConstructInput(program_, body, value.id) !=
               nullptr ||
-          classValuePublicationSlot(body, value.id) != nullptr ||
+          (classValuePublicationSlot(body, value.id) != nullptr &&
+           (definition == nullptr ||
+            definition->kind != MirInstructionKind::Load ||
+            copyLoadResult())) ||
           constructorFieldResultSlot(program_, body, value.id) ||
           classSsaLifetimeSlot(program_, representations_, body, value.id) ||
           valueRootedClassCallResultSlot(program_, representations_, body,
@@ -23620,6 +23789,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;
           // the Borrow spells as a comment only.
+          continue;
+        }
+        if (storedValueReturnLoanProducer(body, *loan) != nullptr) {
+          // The returned class value carries the reference field; this Borrow
+          // is the MIR-only provenance handoff from the body loan.
           continue;
         }
         const MirPlace *source = body.findPlace(loan->source);
@@ -25655,6 +25829,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if ((operand.kind == MirOperandKind::BorrowRead ||
                operand.kind == MirOperandKind::BorrowWrite) &&
               operand.place != 0 && body.findPlace(operand.place) != nullptr) {
+            continue;
+          }
+          // An exact loan argument is already sequenced at the operation
+          // that produced the loan.  Passing its pointer carrier to this
+          // compiler-generated operator call performs no new evaluation.
+          if (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
+              body.findLoan(operand.loan) != nullptr &&
+              (operand.place == 0 ||
+               (operand.type.kind == SemanticType::Reference &&
+                operand.type.arguments.size() == 1 &&
+                body.findPlace(operand.place) != nullptr &&
+                body.findPlace(operand.place)->type ==
+                    operand.type.arguments.front()))) {
             continue;
           }
           if (!valueOperand(operand)) {

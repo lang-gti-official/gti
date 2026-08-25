@@ -1104,6 +1104,18 @@ private:
       model = &analysis->model;
     }
 
+    if (const FunctionInfo *concrete =
+            model->findFunction(*declaration->declaration)) {
+      output.program.functions[index].returnBorrowOrigin =
+          concrete->returnBorrowOrigin;
+      output.program.functions[index].returnBorrowParameter =
+          concrete->returnBorrowParameter;
+      output.program.functions[index].returnBorrowAccess =
+          concrete->returnBorrowAccess;
+      output.program.functions[index].returnBorrowPlace =
+          concrete->returnBorrowPlace;
+    }
+
     lambdaTargets.clear();
     seedLambdaTargets(snapshot.typeArguments);
     HirBody body;
@@ -1542,6 +1554,7 @@ private:
     }
     for (const SemanticLoanInfo &loan : model.loans()) {
       HirLoan lowered{.semanticLoan = loan.id,
+                      .kind = loan.kind,
                       .parent = loan.parent,
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,

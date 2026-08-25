@@ -45,10 +45,12 @@ effects, multiple origins, and user-retainable mutable borrowed-state carriers
 remain proposal work. A separate bounded generic-algorithm slice is also
 implemented:
 multi-parameter concepts, validity-only trailing `requires`, public
-`std::input_iterator`/`std::sentinel_for`/`std::accumulates_into`, and
-source-defined `std::accumulate` over an iterator plus possibly distinct
-sentinel. It proves the existing exact operator protocol but does not complete
-range ownership or loans.
+`std::input_iterator`/`std::sentinel_for`/`std::dereferences_to`, the distinct
+`std::copy_constructible` lifecycle fact, source-composed
+`std::forward_iterator`, source-defined `std::accumulate`, and
+forward-iterator `std::binary_search` over an iterator plus possibly distinct
+sentinel. These prove the existing exact operator and owner-loan protocol but
+do not complete the range-first surface.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -706,6 +708,28 @@ C++ iterator tags, expression probing, implicit element conversion,
 specialization, or constrained-overload ranking. The concrete body is
 rechecked and resolves the ordinary operator declarations before HIR.
 
+The first demonstrated multi-pass subrange client is implemented in
+`<std/algorithm>`:
+
+```gti
+bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
+                                          Sentinel last,
+                                          T& value)
+  requires std::forward_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::totally_ordered<T>;
+```
+
+`std::forward_iterator<I>` composes input iteration, copy construction, and
+self-sentinel inequality. A read-only owner-tied cursor copy has an independent
+position and retains the same owner dependency; copy assignment/reseating is
+still forbidden, and mutable owner-tied cursors are not forward iterators.
+`binary_search` counts the possibly distinct sentinel range once, then copies
+and advances a cursor to each midpoint. It requires no iterator subtraction or
+end mutation, performs logarithmic comparisons and linear iterator increments,
+and assumes the input is already sorted by `operator<`.
+
 The confined callable layer supports direct generic `void` operations, exact
 `bool` predicates, and exact context-supplied non-reference value results
 without tracked borrowed state or lambda identity, including
@@ -858,8 +882,9 @@ authoritative until a dedicated optimization architecture is adopted.
 ### Phase 4: Range algorithms and callable parameters
 
 - The bounded iterator/sentinel groundwork is implemented through small source
-  `std` concepts over private exact protocol capabilities, with
-  `std::accumulate` as its first client.
+  `std` concepts over private exact protocol/lifecycle capabilities, with
+  `std::accumulate` as the first input client and `std::binary_search` as the
+  first copy-constructible forward-iterator client.
 - Define the remaining complete-range/readable/writable capabilities after
   range ownership and per-element protocol use are stable.
 - Use the implemented non-escaping operation, exact-predicate, and proven

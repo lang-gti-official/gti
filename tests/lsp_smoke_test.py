@@ -1715,7 +1715,7 @@ def test_constructor_local_generic_tooling(executable, root):
         "class Box {\n"
         "public:\n"
         "  Box<std::numeric Value>(Value value)\n"
-        "    requires std::copyable<Value> {}\n"
+        "    requires std::copy_constructible<Value> {}\n"
         "};\n"
         "int main() {\n"
         "  Box value = Box(1);\n"
@@ -1781,13 +1781,13 @@ def test_constructor_local_generic_tooling(executable, root):
         assert declared_hover["contents"]["value"].startswith(
             "```gti\n"
             "Box<std::numeric Value>(Value value) "
-            "requires std::copyable<Value>\n```"
+            "requires std::copy_constructible<Value>\n```"
         ), declared_hover
 
         selected_hover = request(3, "textDocument/hover", construction + 1)
         selected_signature = (
             "Box::Box<int32_t>(int32_t value) "
-            "requires std::copyable<int32_t>"
+            "requires std::copy_constructible<int32_t>"
         )
         assert selected_hover["contents"]["value"].startswith(
             f"```gti\n{selected_signature}\n```"
@@ -1869,8 +1869,8 @@ def test_constructor_local_generic_tooling(executable, root):
         ]
 
         incomplete = source.replace(
-            "requires std::copyable<Value> {}",
-            "requires std::copyable<",
+            "requires std::copy_constructible<Value> {}",
+            "requires std::copy_constructible<",
         )
         session.send(
             {

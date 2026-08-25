@@ -8352,6 +8352,9 @@ public:
 
   T& operator*() { return value; }
   void operator++() mut { this.position++; }
+  bool operator!=(BorrowingIterator<T>& other) {
+    return this.position != other.position;
+  }
   bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
 };
 
@@ -8388,6 +8391,9 @@ int main() {
   ++iterator;
   mut BorrowingIterator<int> moved = std::move(iterator);
   ++moved;
+  mut BorrowingIterator<int> copied = moved;
+  ++copied;
+  if (!(moved != copied)) { return 1; }
   mut int total = 0;
   for (int& item : range) { total += item; }
   mut SingleRange<int> wrapped_range = SingleRange<int>(7);
@@ -9980,13 +9986,13 @@ int main() { return 0; }
           ? nullptr
           : frontend.semantics.findClassLifecycle(*iteratorClass);
   expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
-             !lifecycle->traits.copyable && lifecycle->traits.movable &&
+             lifecycle->traits.copyable && lifecycle->traits.movable &&
              !lifecycle->traits.copyAssignable &&
              !lifecycle->traits.moveAssignable &&
              lifecycle->constructors.size() == 1 &&
              lifecycle->constructors.front().borrowParameter == 0,
-         "stored-reference classes should be move-constructible borrow "
-         "carriers with explicit constructor provenance");
+         "read-only stored-reference classes should copy-construct independent "
+         "borrow carriers without becoming assignable");
 
   const lang::ClassDecl *rangeClass =
       findTopLevelClass(frontend.program, "SingleRange");
@@ -10048,10 +10054,12 @@ int main() { return 0; }
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("const T & value") != std::string::npos &&
              artifact.contents.find("BorrowingIterator(const "
-                                    "BorrowingIterator &) = delete") !=
+                                    "BorrowingIterator &) = default") !=
                  std::string::npos &&
              artifact.contents.find("BorrowingIterator(BorrowingIterator "
-                                    "&&) = default") != std::string::npos,
+                                    "&&) = default") != std::string::npos &&
+             artifact.contents.find("operator=(const BorrowingIterator &) = "
+                                    "delete") != std::string::npos,
          "the C++ backend should preserve read-only storage and frontend "
          "special-member decisions");
 
@@ -10122,7 +10130,6 @@ BorrowingIterator<int> global_iterator = global_range.begin();
 int main() {
   mut SingleRange<int> range = SingleRange<int>(1);
   mut BorrowingIterator<int> iterator = range.begin();
-  BorrowingIterator<int> copy = iterator;
   BorrowingIterator<int> other = range.begin();
   iterator = std::move(other);
   BorrowingIterator<int> nested_source = range.begin();
@@ -10146,13 +10153,199 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot have global or static storage") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copy'") &&
           hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
           hasDiagnostic(invalid.diagnostics,
                         "Stored-reference value is derived from temporary "
                         "storage"),
       "stored-reference diagnostics should reject unsupported reference "
-      "graphs, copies, assignment, and temporary owners");
+      "graphs, assignment, and temporary owners");
+}
+
+void testForwardIteratorContractsAndBinarySearch() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "forward-iterator-contracts.gti", R"(
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({1, 3, 5, 7});
+  mut auto first = values.begin();
+  mut auto copied = first;
+  ++copied;
+  std::size_t distance = std::size_t(1);
+  mut auto advanced = std::next(std::move(copied), distance);
+  int32_t sought = 5;
+  bool found = std::binary_search(values.begin(), values.end(), sought);
+  return (*first == 1 && *advanced == 5 && found) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected forward-iterator diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "a copied owner-tied read iterator should satisfy forward_iterator "
+         "and drive std::next and std::binary_search");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const auto bindingAt = [&](std::size_t index) -> const lang::BindingInfo * {
+    if (main == nullptr || index >= main->body()->statements().size()) {
+      return nullptr;
+    }
+    const auto *binding = dynamic_cast<const lang::VariableDecl *>(
+        main->body()->statements().at(index).get());
+    return binding == nullptr ? nullptr : valid.semantics.findBinding(*binding);
+  };
+  const lang::BindingInfo *first = bindingAt(1);
+  const lang::BindingInfo *copied = bindingAt(2);
+  const lang::BindingInfo *advanced = bindingAt(5);
+  expect(first != nullptr && copied != nullptr && advanced != nullptr &&
+             first->traits.copyable && !first->traits.copyAssignable &&
+             first->retainedLoan != 0 &&
+             first->retainedLoan == copied->retainedLoan &&
+             first->retainedLoan == advanced->retainedLoan,
+         "forward read cursors should copy-construct independent positions "
+         "while preserving one read-only owner dependency");
+
+  const lang::HirFunctionInstance *nextHir = nullptr;
+  const lang::HirFunctionInstance *binarySearchHir = nullptr;
+  const lang::HirFunctionInstance *countedSearchHir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "next" &&
+        instance.parameterTypes.size() == 2 &&
+        instance.returnType.kind == lang::SemanticType::Class) {
+      nextHir = &instance;
+    } else if (instance.source->name().lexeme == "binary_search") {
+      binarySearchHir = &instance;
+    } else if (instance.source->name().lexeme == "binary_search_counted") {
+      countedSearchHir = &instance;
+    }
+  }
+  const bool hirEntryStored =
+      nextHir != nullptr &&
+      std::any_of(nextHir->body.loans.begin(), nextHir->body.loans.end(),
+                  [](const lang::HirLoan &loan) {
+                    return loan.kind == lang::SemanticLoanKind::StoredValue &&
+                           loan.entry &&
+                           loan.access == lang::AccessMode::ReadOnly;
+                  });
+  expect(nextHir != nullptr && binarySearchHir != nullptr &&
+             countedSearchHir != nullptr && hirEntryStored &&
+             nextHir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+             nextHir->returnBorrowParameter == 0 &&
+             nextHir->returnBorrowAccess == lang::AccessMode::ReadOnly,
+         "concrete HIR should retain the owner-tied parameter and return "
+         "contracts used by forward-iterator utilities");
+
+  const lang::MirFunctionInstance *nextMir =
+      nextHir == nullptr ? nullptr
+                         : valid.mir.findFunctionInstance(nextHir->id);
+  const lang::MirLoan *entryStored = nullptr;
+  const lang::MirLoan *returnLoan = nullptr;
+  if (nextMir != nullptr) {
+    for (const lang::MirLoan &loan : nextMir->body.loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && loan.entry) {
+        entryStored = &loan;
+      } else if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        returnLoan = &loan;
+      }
+    }
+  }
+  bool exactReturnTransfer = false;
+  if (nextMir != nullptr && entryStored != nullptr && returnLoan != nullptr) {
+    for (const lang::MirBlock &block : nextMir->body.blocks) {
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        const lang::MirInstruction &borrow = block.instructions[index];
+        const lang::MirInstruction &end = block.instructions[index + 1];
+        exactReturnTransfer =
+            exactReturnTransfer ||
+            (borrow.kind == lang::MirInstructionKind::Borrow && borrow.loan &&
+             *borrow.loan == returnLoan->id && borrow.operands.size() == 1 &&
+             borrow.operands.front().kind == lang::MirOperandKind::Loan &&
+             borrow.operands.front().loan == entryStored->id &&
+             end.kind == lang::MirInstructionKind::EndBorrow && end.loan &&
+             *end.loan == entryStored->id);
+      }
+    }
+  }
+  expect(nextMir != nullptr && entryStored != nullptr &&
+             returnLoan != nullptr && exactReturnTransfer &&
+             nextMir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+             nextMir->returnBorrowParameter == 0,
+         "MIR should transfer a borrowed-state class return from its stored "
+         "parameter loan into a distinct escaping return loan");
+
+  if (valid.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(valid.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
+    expect(!artifact.contents.empty(),
+           "the C++ backend should emit the complete owner-tied forward "
+           "iterator and binary-search client");
+  }
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-forward-iterator-contracts.gti", R"(
+#include <std/iterator>
+#include <std/vector>
+
+class CopyBlockedIterator {
+  int& value;
+public:
+  CopyBlockedIterator(int& source) : value(source) {}
+  CopyBlockedIterator(CopyBlockedIterator& other) = delete;
+  CopyBlockedIterator(CopyBlockedIterator&& other) = default;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(CopyBlockedIterator& other) { return false; }
+};
+
+class DistinctSentinel {};
+
+class DistinctOnlyIterator {
+  int& value;
+public:
+  DistinctOnlyIterator(int& source) : value(source) {}
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(DistinctSentinel& other) { return false; }
+};
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut int value = 1;
+  mut CopyBlockedIterator blocked = CopyBlockedIterator(value);
+  bool blocked_result = accepts_forward(std::move(blocked));
+  DistinctOnlyIterator distinct = DistinctOnlyIterator(value);
+  bool distinct_result = accepts_forward(distinct);
+  mut std::vector<int> values = std::vector<int>({1});
+  mut auto mutable_cursor = values.begin_mut();
+  bool mutable_result = accepts_forward(std::move(mutable_cursor));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalid.canGenerateCode() &&
+             countDiagnosticContaining(invalid.diagnostics,
+                                       "'std::forward_iterator'") >= 3,
+         "forward_iterator should reject a non-copyable cursor, a "
+         "distinct-sentinel-only cursor, and a mutable owner loan");
 }
 
 void testGeneralOwnerDependentReturns() {
@@ -10215,8 +10408,11 @@ int main() {
   std::unique_ptr<DirectPayload> direct_owner =
       std::make_unique<DirectPayload>(7);
   DirectPayload& direct_value = direct_owner_value(direct_owner);
+  mut ReadingView<int> relay_source = make_view<int>(reading.read());
+  ReadingView<int> generic_relay =
+      unconstrained_relay<ReadingView<int>>(std::move(relay_source));
   return relayed + static_view.get() + called_view.get() + indexed_view.get() +
-      direct_value.value + shared_aliases() - 35;
+      direct_value.value + generic_relay.get() + shared_aliases() - 42;
 }
 
 ReadingView<T> make_view<T>(T& source) {
@@ -10226,6 +10422,8 @@ ReadingView<T> make_view<T>(T& source) {
 ReadingView<T> forward_view<T>(ReadingView<T> view) {
   return std::move(view);
 }
+
+T unconstrained_relay<T>(T value) { return std::move(value); }
 
 T& forward_reference<T>(T& source) { return source; }
 
@@ -10358,6 +10556,27 @@ int shared_aliases() {
          "std::move through a borrowed-value relay should transfer one loan "
          "identity");
 
+  const auto *relaySource = main == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::VariableDecl *>(
+                                      main->body()->statements().at(11).get());
+  const auto *genericRelay = main == nullptr
+                                 ? nullptr
+                                 : dynamic_cast<const lang::VariableDecl *>(
+                                       main->body()->statements().at(12).get());
+  const lang::BindingInfo *relaySourceBinding =
+      relaySource == nullptr ? nullptr
+                             : valid.semantics.findBinding(*relaySource);
+  const lang::BindingInfo *genericRelayBinding =
+      genericRelay == nullptr ? nullptr
+                              : valid.semantics.findBinding(*genericRelay);
+  expect(relaySourceBinding != nullptr && genericRelayBinding != nullptr &&
+             relaySourceBinding->retainedLoan != 0 &&
+             relaySourceBinding->retainedLoan ==
+                 genericRelayBinding->retainedLoan,
+         "a concrete unconstrained generic borrowed-value return should "
+         "publish and transfer its inferred owner dependency");
+
   const auto *callable = main == nullptr
                              ? nullptr
                              : dynamic_cast<const lang::VariableDecl *>(
@@ -10467,8 +10686,6 @@ public:
   int& get() { return this.value; }
 };
 
-T unconstrained_relay<T>(T value) { return std::move(value); }
-
 int global_value = 1;
 
 int& ambiguous(int& left, int& right) { return left; }
@@ -10521,13 +10738,6 @@ int shared_invalidation() {
   return second;
 }
 
-int unconstrained_escape() {
-  mut Owner owner = Owner(1);
-  mut View view = View(owner.read());
-  View forwarded = unconstrained_relay<View>(std::move(view));
-  return forwarded.get();
-}
-
 int mutable_alias() {
   mut int value = 1;
   mut int& first = value;
@@ -10553,13 +10763,10 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics,
                            "Mutable method receiver overlaps a borrow") &&
              hasDiagnostic(invalid.diagnostics,
-                           "Stored-reference value is derived from temporary "
-                           "storage") &&
-             hasDiagnostic(invalid.diagnostics,
                            "Reference initializer is derived from temporary "
                            "storage"),
          "owner-dependency diagnostics should identify the unsafe source or "
-         "unsupported alias graph");
+         "alias graph");
 }
 
 void testSwitchAndBreakLoanFlow() {
@@ -21065,6 +21272,12 @@ public:
   DeletedMove(DeletedMove&& other) = delete;
 };
 
+class CopyConstructOnly {
+  int& value;
+public:
+  CopyConstructOnly(int& source) : value(source) {}
+};
+
 class NoDefault {
   int stored;
 
@@ -21076,6 +21289,9 @@ bool needs_equality<std::equality_comparable T>(T left, T right) {
   return left == right;
 }
 T needs_total_order<std::totally_ordered T>(T value) { return value; }
+T needs_copy_construction<std::copy_constructible T>(T value) {
+  return value;
+}
 T needs_copy<std::copyable T>(T value) { return value; }
 T needs_move<std::movable T>(T value) { return std::move(value); }
 T needs_default<std::default_initializable T>() { return T(); }
@@ -21099,7 +21315,10 @@ int use() {
   int invalid_floating_point = floating_value(1);
   bool invalid_equality = needs_equality(EqualOnly(), EqualOnly());
   AlmostOrdered invalid_total = needs_total_order(AlmostOrdered());
-  DeletedCopy invalid_copy = needs_copy(DeletedCopy());
+  DeletedCopy invalid_construction = needs_copy_construction(DeletedCopy());
+  mut int copy_source = 1;
+  CopyConstructOnly copy_only = CopyConstructOnly(copy_source);
+  CopyConstructOnly invalid_copy = needs_copy(std::move(copy_only));
   DeletedMove invalid_move = needs_move(DeletedMove());
   NoDefault invalid_default = needs_default<NoDefault>();
   return 0;
@@ -21125,6 +21344,7 @@ int use() {
           hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
           hasDiagnostic(invalid.diagnostics, "'std::equality_comparable'") &&
           hasDiagnostic(invalid.diagnostics, "'std::totally_ordered'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::copy_constructible'") &&
           hasDiagnostic(invalid.diagnostics, "'std::copyable'") &&
           hasDiagnostic(invalid.diagnostics, "'std::movable'") &&
           hasDiagnostic(invalid.diagnostics, "'std::default_initializable'") &&
@@ -21139,6 +21359,8 @@ int use() {
                            "public, read-only bool operator==") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "exact public, read-only bool overloads") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available copy constructor") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "available copy construction and assignment") &&
              hasDiagnosticHint(invalid.diagnostics,
@@ -31041,6 +31263,10 @@ int main(int argc, char **argv) {
     testRestrictedMemberOperators();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "forward-iterators") {
+    testForwardIteratorContractsAndBinarySearch();
+    return failures == 0 ? 0 : 1;
+  }
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
@@ -31075,6 +31301,7 @@ int main(int argc, char **argv) {
   testPrefixStorageCapability();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
+  testForwardIteratorContractsAndBinarySearch();
   testGeneralOwnerDependentReturns();
   testSwitchAndBreakLoanFlow();
   testSharedReadOnlyLoanAliases();

@@ -2541,8 +2541,22 @@ private:
     }
     emitPlaceDependencies(id);
     if (const MirLoanId existing = loanForValue(id); existing != 0) {
-      return {
-          .kind = MirOperandKind::Loan, .loan = existing, .type = parameter};
+      // A borrow-carrying value (for example a read-only stored-reference
+      // iterator) already has an owner loan, but a reference parameter needs
+      // the runtime address of the carrier object rather than the address of
+      // that carrier's referent.  Retain the owner loan as provenance and,
+      // when the HIR place is an exact referent-typed place, carry that place
+      // alongside it for backend publication.
+      MirPlaceId runtimePlace = placeForValue(id);
+      const MirPlace *resolved = output.findPlace(runtimePlace);
+      if (parameter.arguments.size() != 1 || resolved == nullptr ||
+          resolved->type != parameter.arguments.front()) {
+        runtimePlace = 0;
+      }
+      return {.kind = MirOperandKind::Loan,
+              .place = runtimePlace,
+              .loan = existing,
+              .type = parameter};
     }
     const MirPlaceId place = placeForValue(id);
     return {.kind = parameter.referenceAccess == AccessMode::Mutable
@@ -5333,8 +5347,10 @@ private:
       if (sourcePlace == 0) {
         continue;
       }
-      const MirLoanId lowered =
-          createLoan(MirLoanKind::Parameter, sourcePlace, loan.access);
+      const MirLoanKind kind = loan.kind == SemanticLoanKind::StoredValue
+                                   ? MirLoanKind::Stored
+                                   : MirLoanKind::Parameter;
+      const MirLoanId lowered = createLoan(kind, sourcePlace, loan.access);
       output.loans[lowered - 1].entry = true;
       recordLoanIdentity(lowered, loan);
       for (const HirBindingId carrier : loan.carriers) {
@@ -6526,13 +6542,31 @@ private:
           if (retained == 0 || retained > output.loans.size()) {
             valid = false;
           } else {
-            MirLoan &loan = output.loans[retained - 1];
-            loan.kind = MirLoanKind::Return;
-            loan.escapes = true;
-            for (Scope &scope : scopes) {
-              std::erase(scope.loans, retained);
-            }
-            returnLoan = retained;
+            // A borrow-carrying class value owns two temporally distinct
+            // capabilities at a return: its live body-local/entry loan, then
+            // the dependency exported by the returned object.  Reclassifying
+            // the original loan globally would make it a Return loan from the
+            // start of the body and incorrectly forbid mutation of an opaque
+            // by-value cursor before this point.  Publish a fresh return-only
+            // loan from the live provenance, then retire the body capability
+            // at this exact instruction boundary.
+            const MirLoan retainedLoan = output.loans[retained - 1];
+            const MirLoanId published =
+                createLoan(MirLoanKind::Return, retainedLoan.source,
+                           retainedLoan.access, *statement.value);
+            (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                                     .hirValue = *statement.value,
+                                     .operands = {{.kind = MirOperandKind::Loan,
+                                                   .loan = retained,
+                                                   .type = value->info.type}},
+                                     .loan = published,
+                                     .info = value->info});
+            (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                     .hirValue = *statement.value,
+                                     .loan = retained});
+            removeLoanFromState(retained, scopes, bindingLoans);
+            output.loans[published - 1].escapes = true;
+            returnLoan = published;
           }
         }
       }
