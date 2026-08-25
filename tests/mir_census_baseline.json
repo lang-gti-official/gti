@@ -65,7 +65,14 @@
     "64-restricted-arithmetic-operators.gti": 39,
     "65-mutable-ranges.gti": 49,
     "66-managed-threads.gti": 62,
-    "67-forward-iterators.gti": 60
+    "67-forward-iterators.gti": 60,
+    "68-static-assertions.gti": 33,
+    "69-mutable-field-groups.gti": 34,
+    "70-qualified-specializations.gti": 36,
+    "71-fresh-temporary-borrows.gti": 37,
+    "72-filesystem-paths.gti": 243,
+    "73-constructor-local-generics.gti": 188,
+    "74-read-only-range-loans.gti": 45
   },
-  "total": 3555
+  "total": 4171
 }
