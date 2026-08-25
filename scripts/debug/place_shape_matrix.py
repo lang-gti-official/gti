@@ -258,6 +258,58 @@ public:
 """
 
 
+def dispatch_shapes() -> list[Shape]:
+    """Direct versus dispatched calls of an override method.
+
+    #121's inversion: the virtual dispatch through a base or interface
+    reference works, and the *direct* call of the same override on the
+    concrete object does not. A non-override method on the same class is
+    fine, so the trigger is the override flag on the callee, not the class.
+
+    The array cell records a side observation from the same sweep: inheriting
+    from an interface makes a type cleanup-owning by itself, so an array of
+    implementors hits the #117 item 5 gate even with no destructor declared.
+    """
+    iface = ("interface Shape {\n"
+             "  int32_t value();\n"
+             "};\n"
+             "\n"
+             "class square : public Shape {\n"
+             "public:\n"
+             "  square() {}\n"
+             "  int32_t value() override { return 7; }\n"
+             "  int32_t plain() { return 7; }\n"
+             "};\n")
+    return [
+        # #121 itself.
+        Shape("dispatch", "direct override call", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  return int(s.value()) - 7;\n"
+                           "}"),
+        # The passing control: identical object, dispatched call.
+        Shape("dispatch", "via interface reference", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  mut Shape& bound = s;\n"
+                           "  return int(bound.value()) - 7;\n"
+                           "}"),
+        # The other control: a non-override method called directly is fine.
+        Shape("dispatch", "direct non-override call", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square s = square();\n"
+                           "  return int(s.plain()) - 7;\n"
+                           "}"),
+        # Side observation: interface inheritance alone makes the array path
+        # treat the type as cleanup-owning.
+        Shape("dispatch", "array of implementors", "", "", "raw",
+              body=iface + "int main() {\n"
+                           "  mut square a[2] = {};\n"
+                           "  return 0;\n"
+                           "}"),
+    ]
+
+
 def lifecycle_placement_shapes() -> list[Shape]:
     """Type kind crossed with where the value is placed.
 
@@ -849,7 +901,8 @@ def main() -> int:
                          + inheritance_shapes() + static_shapes()
                          + language_surface_shapes() + declaration_shapes()
                          + constexpr_limit_shapes()
-                         + lifecycle_placement_shapes())
+                         + lifecycle_placement_shapes()
+                         + dispatch_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
