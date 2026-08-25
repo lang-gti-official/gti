@@ -2642,6 +2642,10 @@ private:
           lang::driver::loadProjectManifest(*discovery.path);
       if (manifest.succeeded()) {
         frontendOptions.configurationFlags = manifest.manifest->build().defines;
+        if (const lang::driver::ProjectProfile *profile =
+                manifest.manifest->findProfile("dev")) {
+          frontendOptions.target.executionProfile = profile->executionProfile;
+        }
       }
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();

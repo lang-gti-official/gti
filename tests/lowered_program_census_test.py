@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -17,25 +18,28 @@ GENERATED_KINDS = (
     "lifecycle_cleanup",
     "native_interop_adapter",
     "concrete_instance_adapter",
+    "thread_task_adapter",
 )
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
-        print(
-            "usage: lowered_program_census_test.py <tool> <repo-root> <baseline>",
-            file=sys.stderr,
-        )
-        return 2
-    tool = Path(sys.argv[1]).resolve()
-    root = Path(sys.argv[2]).resolve()
-    baseline_path = Path(sys.argv[3]).resolve()
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    expected: dict[str, dict[str, object]] = baseline["examples"]
-    names = sorted(expected)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("tool")
+    parser.add_argument("root")
+    parser.add_argument("baseline")
+    parser.add_argument("--update", action="store_true")
+    arguments = parser.parse_args()
+    tool = Path(arguments.tool).resolve()
+    root = Path(arguments.root).resolve()
+    baseline_path = Path(arguments.baseline).resolve()
     shipped = sorted(path.name for path in (root / "examples").glob("*.gti"))
-    if shipped != names:
+    baseline = None
+    expected: dict[str, dict[str, object]] = {}
+    if not arguments.update:
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        expected = baseline["examples"]
+    names = shipped if arguments.update else sorted(expected)
+    if not arguments.update and shipped != names:
         print("FAIL: lowered-program census and shipped examples differ", file=sys.stderr)
         print(f"  baseline only: {sorted(set(names) - set(shipped))}", file=sys.stderr)
         print(f"  corpus only: {sorted(set(shipped) - set(names))}", file=sys.stderr)
@@ -66,6 +70,22 @@ def main() -> int:
             "generated_kinds": dict(zip(GENERATED_KINDS, counts[3:], strict=True)),
         }
 
+    totals = {
+        "declarations": sum(int(row["declarations"]) for row in actual.values()),
+        "bodies": sum(int(row["bodies"]) for row in actual.values()),
+        "generated_items": sum(int(row["generated_items"]) for row in actual.values()),
+    }
+    if arguments.update:
+        baseline_path.write_text(
+            json.dumps({"examples": actual, "totals": totals}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(
+            "LoweredProgram baseline updated: "
+            f"{totals['declarations']} declarations, {totals['bodies']} bodies, "
+            f"{totals['generated_items']} generated items across {len(names)} examples"
+        )
+        return 0
     changed = [name for name in names if actual.get(name) != expected[name]]
     if changed:
         print(
@@ -76,11 +96,7 @@ def main() -> int:
             print(f"  {name}: expected {expected[name]}, got {actual.get(name)}", file=sys.stderr)
         return 1
 
-    totals = {
-        "declarations": sum(int(row["declarations"]) for row in actual.values()),
-        "bodies": sum(int(row["bodies"]) for row in actual.values()),
-        "generated_items": sum(int(row["generated_items"]) for row in actual.values()),
-    }
+    assert baseline is not None
     if totals != baseline["totals"]:
         print(
             f"FAIL: LoweredProgram census totals differ: expected {baseline['totals']}, got {totals}",

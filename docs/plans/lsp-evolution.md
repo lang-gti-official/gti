@@ -140,11 +140,18 @@ publication, and request freshness only when a concrete feature or testability
 problem warrants it. Preserve the existing worker model during that
 extraction.
 
-### 5. Consume resolved project configuration
+### 5. Consume resolved project configuration - default profile bounded slice implemented
 
-Use a read-only driver-owned project/metadata model for selected target and
-source roots. Do not parse `gti.toml` semantics inside the LSP, build/fetch on
-open, or let on-disk project state override dirty buffers.
+Nearest-manifest analysis now uses the driver's canonical parser for
+`[build].defines` and the default `dev` profile's execution model. The managed-
+thread tooling gate proves that a concurrent `dev` project receives valid
+diagnostics, hover, definition, completion, and semantic tokens without
+exposing its private capability surface.
+
+The complete row still requires a read-only driver-owned project/metadata
+model for selected package/profile, target, dependency source roots, and
+workspace structure. Do not parse `gti.toml` semantics inside the LSP,
+build/fetch on open, or let on-disk project state override dirty buffers.
 
 ## Project Index Boundary
 

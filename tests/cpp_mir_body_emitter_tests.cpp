@@ -60,9 +60,10 @@ lang::FrontendResult analyzeWithStandardLibrary(std::string name,
 
 lang::CppMirBodyEmissionMapRows
 buildRows(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
-          lang::CppStandard standard = lang::CppStandard::Cpp23) {
+          lang::CppStandard standard = lang::CppStandard::Cpp23,
+          const lang::TargetInfo &target = lang::TargetInfo::host()) {
   const lang::LoweredProgram lowered =
-      gti_test::lowerProgram(frontend, frontend.mir, mir);
+      gti_test::lowerProgram(frontend, frontend.mir, mir, target);
   return lang::buildCppMirBodyEmissionMapRows(lowered, standard);
 }
 
@@ -2747,9 +2748,15 @@ void testExampleCorpusEmissionReadiness() {
     std::stringstream buffer;
     buffer << input.rdbuf();
     const std::filesystem::path standardLibrary = repository / "stdlib";
-    const lang::FrontendResult frontend = lang::Frontend().analyze(
-        source.filename().string(), buffer.str(),
-        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    lang::TargetInfo target = lang::TargetInfo::host();
+    if (source.filename() == "66-managed-threads.gti") {
+      target.executionProfile = lang::ExecutionProfile::Concurrent;
+      target.runtimeCapabilities.threads = true;
+    }
+    const lang::FrontendResult frontend =
+        lang::Frontend({.target = target})
+            .analyze(source.filename().string(), buffer.str(),
+                     {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
     if (!frontend.canGenerateCode()) {
       ++rejected;
       std::cerr << "corpus source no longer reaches MIR: "
@@ -2762,7 +2769,7 @@ void testExampleCorpusEmissionReadiness() {
     }
     lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
     const lang::CppMirBodyEmissionMapRows productionRows =
-        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target);
     rows.enums = productionRows.enums;
     for (const lang::CppMirEnumRepresentation &enumeration : rows.enums) {
       addType(rows, enumeration.underlyingType);

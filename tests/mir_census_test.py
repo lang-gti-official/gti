@@ -61,7 +61,18 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
         for source in sorted((root / "examples").glob("*.gti")):
             out.unlink(missing_ok=True)
             completed = subprocess.run(
-                [str(gti), "--emit-cpp", str(source), "-o", str(out)],
+                [
+                    str(gti),
+                    "--emit-cpp",
+                    *(
+                        ["--execution-profile", "concurrent"]
+                        if source.name == "66-managed-threads.gti"
+                        else []
+                    ),
+                    str(source),
+                    "-o",
+                    str(out),
+                ],
                 cwd=root,
                 capture_output=True,
                 timeout=180,

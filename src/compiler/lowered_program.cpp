@@ -1340,6 +1340,9 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
     const MirThreadTaskAdapter &lowered = mir.threadTaskAdapters()[index];
     if (source.id != lowered.id || source.taskType != lowered.taskType ||
         source.spawnValue != lowered.spawnValue ||
+        source.functionTarget != lowered.functionTarget ||
+        source.lambdaTarget != lowered.lambdaTarget ||
+        source.targetInvocation != lowered.targetInvocation ||
         source.invocation != lowered.invocation) {
       return reject("thread task adapter " + std::to_string(index + 1) +
                     " differs");
@@ -2674,8 +2677,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
           const auto found = std::find_if(
               block.instructions.begin(), block.instructions.end(),
               [&](const MirInstruction &instruction) {
-                return instruction.id ==
-                       payload->adapter.spawnInstruction;
+                return instruction.id == payload->adapter.spawnInstruction;
               });
           if (found != block.instructions.end()) {
             spawn = &*found;
@@ -2693,8 +2695,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
               SynchronizationOperationKind::ThreadSpawn ||
           spawn->threadTaskAdapter != payload->adapter.id ||
           payload->adapter.taskType == SemanticType::Unknown ||
-          payload->adapter.invocation !=
-              CallableInvocationCapability::Once ||
+          payload->adapter.invocation != CallableInvocationCapability::Once ||
           !payload->adapter.catchesWorkerFailure ||
           !payload->adapter.catchesNativeExceptions) {
         addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,

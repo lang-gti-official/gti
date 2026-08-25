@@ -566,17 +566,22 @@ propagation.
 
 GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler does
-not yet expose public threads, atomics, mutexes, or foreign-thread entry. The
-single-threaded profile is the default executable profile.
+not yet expose public atomics, mutexes, or foreign-thread entry. It does expose
+the first owned managed-thread slice through the ordinary source-defined
+`std::jthread` in `<std/thread>`. The single-threaded profile remains the
+default executable profile.
 
 The compiler now has backend-independent HIR/MIR identities for thread
 spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
 lock/unlock. Atomic records retain operation-specific memory orders and MIR
-rejects illegal order combinations or any synchronization operation in the
-single-threaded profile. These internal records are not source operations and
-do not make a public API available; a future ordinary `std::jthread` wrapper
-must reach them through trusted private capabilities after task transfer,
-failure containment, runtime, and backend requirements are met.
+rejects illegal order combinations. In the single-threaded profile it rejects
+executable synchronization records while permitting only exact private thread
+intrinsics in lowering-marked dormant standard-library wrapper bodies. This is
+why source may import `<std/thread>` without using it; calling or constructing
+its managed-thread surface still fails semantically before MIR publication.
+These internal records are not source operations. `std::jthread` reaches the
+implemented spawn and join records through exact trusted private capabilities;
+public atomics and mutexes remain unavailable.
 
 The reference toolchain accepts an explicit concurrent-profile selection
 before semantic analysis and retains it in semantic, HIR, and MIR program
@@ -585,8 +590,9 @@ profile spells it `execution-profile = "concurrent"`. The exact
 `single-threaded` value is available in both places and is the default. Native
 link flags, host-library behavior, backend code, and incidental use of a host
 thread never infer the selection. Selecting the profile applies the
-transfer/share and global rules below; it does not make an unimplemented
-operation available.
+transfer/share and global rules below. An implemented managed-thread operation
+also requires the selected target/runtime `threads` capability; profile
+selection does not make any other unimplemented operation available.
 
 One **memory location** is a live scalar object or non-overlapping scalar
 subobject. Two accesses conflict when they touch the same location or
@@ -604,13 +610,14 @@ whose contract says so. **Happens-before** is the transitive closure of those
 relations. A compiler effect such as `maySynchronize` is a conservative
 optimization barrier, not proof of a synchronizes-with edge.
 
-The first executable concurrent profile shall provide these edges:
+The implemented managed-thread subset provides the first two edges below. The
+remaining rows define later atomic and mutex slices:
 
 - every evaluation sequenced before successful spawn happens-before task
   entry;
 - task completion happens-before successful explicit or automatic join
   returns or continues cleanup;
-- every sequentially consistent atomic operation participates in one
+- every future sequentially consistent atomic operation participates in one
   program-wide sequentially consistent order; and
 - a future mutex unlock synchronizes-with the corresponding later successful
   acquisition.
@@ -621,11 +628,12 @@ freedom nor C-compatible layout. Later accepted order names are `relaxed`,
 `acquire`, `release`, `acq_rel`, and `seq_cst`; `consume` is absent. Operation-
 specific legality must be checked before lowering.
 
-The first managed thread model transfers only owned values into one consumed
-task. References, borrowed-state carriers, raw pointers, and borrowed captures
-cannot cross. The move-only handle owns one join obligation, detach is absent,
-and destruction of an outstanding handle automatically joins. Automatic join
-may block or participate in deadlock. A later scoped-borrow model requires a
+The first managed thread model transfers only one owned exact `void()` task.
+Its callable object and every capture must be transfer-capable. References,
+borrowed-state carriers, raw pointers, and borrowed captures cannot cross. The
+move-only `std::jthread` handle owns one join obligation, detach is absent, and
+destruction of an outstanding handle automatically joins. Automatic join may
+block or participate in deadlock. A later scoped-borrow model requires a
 represented structured join, child loan, parent suspension, cleanup on every
 exit, and verified reactivation after join.
 
@@ -637,12 +645,17 @@ initialization order. Recursive thread-local initialization raises `GTI-R0013`
 while the detected state is still safe to clean; references to thread-local
 storage cannot cross to another thread.
 
-A future worker checked failure cleans task-owned and initialized thread-owned
-state to the task-entry boundary and stores the original section 4.10 record.
-Explicit or automatic join re-raises that record on the joining thread; task
-capture does not independently invoke the observer. An environmental automatic-
-join failure with no result channel raises `GTI-R0012`, and such a failure
-during other failure cleanup takes the `GTI-R0014` emergency path.
+A worker checked failure cleans task-owned state to the generated task-entry
+boundary and stores the original section 4.10 record without independently
+invoking the observer or writing a report. Destruction of the transferred
+callable and captures is part of that boundary. Its first failure becomes the
+worker record; a failure after an existing record completes the exact
+`GTI-R0014` envelope, and a third failure is an integrity termination. Explicit
+or automatic join re-raises the resulting record on the joining thread. An
+environmental automatic-join failure with no result channel transfers any
+still-coherent native state to terminal quarantine and raises `GTI-R0012`;
+such a failure during other failure cleanup takes the `GTI-R0014` emergency
+path. The quarantine cannot detach or resume execution.
 
 The model guarantees no fairness. Deadlock, livelock, starvation, priority
 inversion, and permitted blocking are not memory undefined behavior. Native
@@ -828,7 +841,9 @@ owns.
 Failure cleanup is not transactional. Assignment, completed output operations,
 native calls, and other effects completed before the check remain observable.
 Completion of a GTI output operation means its bytes were accepted by the
-runtime service; the terminal failure path does not implicitly flush host or C
+runtime service. The hosted terminal path flushes the GTI stdout service after
+verified language cleanup and before reporting/exit so its already completed
+bytes remain observable. It does not promise to flush arbitrary host or C
 library buffers. A GTI-owned buffered output abstraction must define and run
 its own failure-boundary flush before it can promise stronger persistence. A
 second defined failure during cleanup takes the emergency `GTI-R0014` path:
@@ -856,15 +871,15 @@ There are three containment policies:
   same context may be invoked again only when all retained program/context
   state remains structurally valid; the generated ABI must expose a poisoned
   state instead when its chosen persistent state cannot meet that invariant.
-- A future managed-task entry boundary completes task/thread-owned cleanup and
-  stores the original record without invoking the observer. Explicit join
-  re-raises that record on the joining thread, distinct from returning a
+- The generated managed-task entry boundary completes task-owned cleanup and
+  stores the original record without invoking the observer. Explicit join re-
+  raises that record on the joining thread, distinct from returning a
   recoverable native join error; observation occurs once at the eventual hosted
-  or embedding containment boundary. If the adopted task model provides
-  automatic join, it likewise re-raises the same record. Worker failure never
-  becomes silent or a category-erasing generic thread error. Detach is absent
-  from the first task model and requires its own later observation/escalation
-  rule.
+  containment boundary. Automatic join likewise re-raises the same record. A
+  cleanup double failure stores and re-raises the exact `GTI-R0014` envelope.
+  Worker failure never becomes silent or a category-erasing generic thread
+  error. Detach is absent from the first task model and requires its own later
+  observation/escalation rule.
 
 The current generated callback entered from C under the single-threaded
 profile is a terminating containment boundary. It completes the selected GTI
@@ -931,11 +946,12 @@ immediate status-70 termination.
 
 `expected<T, E>` is the ordinary recoverable path. Environmental or resource
 conditions that callers can reasonably handle use an API returning
-`expected`: file/socket operations, future thread creation, recoverable join,
-and future `try_make_*` allocation are examples. A checked language operation
-or documented type-level-infallible API instead raises defined failure. An
-infallible host convenience API shall map its native error to `GTI-R0012`, not
-discard it, and should have a recoverable sibling when callers need control.
+`expected`: file/socket operations, managed-thread creation and recoverable
+join, and future `try_make_*` allocation are examples. A checked language
+operation or documented type-level-infallible API instead raises defined
+failure. An infallible host convenience API shall map its native error to
+`GTI-R0012`, not discard it, and should have a recoverable sibling when callers
+need control.
 
 Consequently wrong-state `expected.value()` and `expected.error()` access uses
 `GTI-R0009`; it never inherits native `bad_expected_access`, assertion, or

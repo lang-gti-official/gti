@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -619,6 +620,11 @@ struct ActiveTerminal {
 thread_local const ActiveTerminal *gActiveTerminal = nullptr;
 
 [[noreturn]] void completeTerminal() {
+  // Defined failure exits through _Exit so host atexit/destructor machinery
+  // cannot run after GTI cleanup. Preserve stdout writes that completed before
+  // the failure boundary, including worker-local destructor output handed back
+  // through a managed join.
+  (void)std::fflush(stdout);
   gTerminalState.store(2, std::memory_order_release);
   std::_Exit(GTI_FAILURE_EXIT_STATUS);
 }
@@ -705,6 +711,10 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v1(
     const gti_failure_emergency_v1 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  if (failure != nullptr && gti_runtime_detail::managed_worker_active()) {
+    gti_runtime_detail::handoff_managed_worker_cleanup_failure(
+        *failure, primary_artifact, secondary_artifact);
+  }
   claimTerminalWinner();
   (void)writeCleanupNative(failure, primary_artifact, secondary_artifact);
   completeTerminal();

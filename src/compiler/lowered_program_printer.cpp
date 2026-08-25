@@ -681,7 +681,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v3\n";
+  output << "lowered-program-v4\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -936,6 +936,30 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
                                                                 : "no-raise")
              << ':'
              << (callback->adapter.catchesNativeExceptions ? "catch" : "leak");
+    } else if (const auto *thread =
+                   std::get_if<LoweredThreadTaskAdapterItem>(&item.payload)) {
+      output << " payload=thread-task:" << thread->adapter.id << ":type=";
+      values.semanticType(thread->adapter.taskType);
+      output << ":spawn=v" << thread->adapter.spawnValue
+             << ":body=" << bodyKindName(thread->adapter.sourceBody.kind) << '/'
+             << thread->adapter.sourceBody.owner << ":instruction=i"
+             << thread->adapter.spawnInstruction << ":entry=";
+      if (thread->adapter.functionTarget) {
+        output << "function@" << *thread->adapter.functionTarget;
+      } else if (thread->adapter.lambdaTarget) {
+        output << "lambda@" << *thread->adapter.lambdaTarget;
+      } else {
+        output << "missing";
+      }
+      output << ":entry-capability="
+             << static_cast<std::size_t>(thread->adapter.targetInvocation)
+             << ":invocation="
+             << static_cast<std::size_t>(thread->adapter.invocation) << ':'
+             << (thread->adapter.catchesWorkerFailure ? "catch-worker"
+                                                      : "leak-worker")
+             << ':'
+             << (thread->adapter.catchesNativeExceptions ? "catch-native"
+                                                         : "leak-native");
     } else {
       output << " payload=none";
     }

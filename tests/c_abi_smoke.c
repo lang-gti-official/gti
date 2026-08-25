@@ -1,4 +1,5 @@
 #include "gti/runtime.h"
+#include "gti/runtime_thread.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -124,6 +125,38 @@ _Static_assert(
                  const gti_failure_artifact_descriptor_v1 *): 1,
         default: 0),
     "the cleanup failure terminal entry must retain its C prototype");
+
+_Static_assert(GTI_THREAD_ABI_VERSION_V1 == UINT32_C(1),
+               "the initial managed-thread ABI version must remain one");
+_Static_assert(GTI_THREAD_SPAWN_OK_V1 == 0 &&
+                   GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1 == 2 &&
+                   GTI_THREAD_JOIN_OK_V1 == 0 &&
+                   GTI_THREAD_JOIN_WORKER_FAILURE_V1 == 3 &&
+                   GTI_THREAD_WORKER_FAILURE_NONE_V1 == 0 &&
+                   GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 == 2,
+               "managed-thread status ordinals must remain stable");
+_Static_assert(sizeof(gti_thread_spawn_result_v1) == 16 &&
+                   offsetof(gti_thread_spawn_result_v1, state) == 8,
+               "the v1 managed-thread spawn result layout must remain fixed");
+_Static_assert(sizeof(gti_thread_join_result_v1) == 184 &&
+                   offsetof(gti_thread_join_result_v1, failure_kind) == 8 &&
+                   offsetof(gti_thread_join_result_v1, failure) == 16 &&
+                   offsetof(gti_thread_join_result_v1, cleanup_failure) == 64 &&
+                   offsetof(gti_thread_join_result_v1, primary_artifact) ==
+                       168 &&
+                   offsetof(gti_thread_join_result_v1, secondary_artifact) ==
+                       176,
+               "the v1 managed-thread join result layout must remain fixed");
+_Static_assert(
+    _Generic(&gti_rt_thread_spawn_v1,
+        gti_thread_spawn_result_v1 (*)(gti_thread_task_entry_v1, void *,
+                                       gti_thread_task_destroy_v1): 1,
+        default: 0),
+    "the managed-thread spawn entry must retain its C prototype");
+_Static_assert(_Generic(&gti_rt_thread_join_v1,
+                   gti_thread_join_result_v1 (*)(gti_thread_state_v1 **): 1,
+                   default: 0),
+               "the managed-thread join entry must retain its C prototype");
 
 int main(void) {
   static const char text[] = "gti";

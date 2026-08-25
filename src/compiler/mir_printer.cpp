@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v45 valid=" << program.valid() << '\n';
+    output << "mir-v47 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -278,6 +278,29 @@ public:
     }
     programInitialization(program.programInitializationPlan());
     hostedStartup(program.hostedStartupPlan());
+    output << "thread-task-adapters " << program.threadTaskAdapters().size()
+           << '\n';
+    for (const MirThreadTaskAdapter &adapter : program.threadTaskAdapters()) {
+      output << "thread-task-adapter @" << adapter.id << " type=";
+      type(adapter.taskType);
+      output << " spawn=v" << adapter.spawnValue
+             << " source=" << number(adapter.sourceBody.kind) << ':'
+             << adapter.sourceBody.owner << ":i" << adapter.spawnInstruction;
+      if (adapter.functionTarget) {
+        output << " entry=function@" << *adapter.functionTarget;
+      } else if (adapter.lambdaTarget) {
+        output << " entry=lambda@" << *adapter.lambdaTarget;
+      } else {
+        output << " entry=missing";
+      }
+      output << " entry-capability="
+             << callableCapabilityName(adapter.targetInvocation)
+             << " invocation=" << callableCapabilityName(adapter.invocation)
+             << " worker-failure="
+             << (adapter.catchesWorkerFailure ? "catch" : "leak")
+             << " native-exception="
+             << (adapter.catchesNativeExceptions ? "catch" : "leak") << '\n';
+    }
     output << "module\n";
     body(program.module(), 0);
 
@@ -583,7 +606,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v42\n";
+    output << "mir-body-v43\n";
     body(value, 0);
     return output.str();
   }
@@ -1375,7 +1398,8 @@ private:
 
   void body(const MirBody &value, std::size_t owner) {
     output << "body kind=" << number(value.kind) << " owner=" << owner
-           << " domain=";
+           << " compiler-trusted-synchronization="
+           << value.compilerTrustedSynchronization << " domain=";
     placeDomain(value.placeDomain);
     output << " entry=bb" << value.entry << " return=";
     type(value.returnType);

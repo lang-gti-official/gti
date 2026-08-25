@@ -1,3 +1,17 @@
+namespace gti_internal {
+[[no_transfer, no_share]] class thread_handle {
+public:
+  thread_handle(thread_handle& other) = delete;
+  ~thread_handle() = default;
+};
+
+gti_internal::thread_handle thread_handle_empty();
+bool thread_joinable(gti_internal::thread_handle& handle);
+int32_t thread_spawn<Task>(mut gti_internal::thread_handle& handle, Task task);
+int32_t thread_join(mut gti_internal::thread_handle& handle);
+void thread_auto_join(mut gti_internal::thread_handle& handle);
+}
+
 namespace std {
 /// Recoverable managed-thread creation and explicit-join outcomes.
 enum class thread_errc {

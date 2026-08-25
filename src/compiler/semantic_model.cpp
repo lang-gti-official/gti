@@ -1870,7 +1870,10 @@ void SemanticModel::finalizeCallableArguments(ResolvedCallInfo &call) const {
                              return self(self, argument);
                            });
       };
-      if (parameter.boundary == CallableBoundary::Owned &&
+      const bool threadTask = parameter.ownedTransport &&
+                              parameter.ownedTransport->kind ==
+                                  CallableOwnedTransportKind::ThreadTask;
+      if (parameter.boundary == CallableBoundary::Owned && !threadTask &&
           !containsLambda(containsLambda,
                           call.parameterTypes[parameter.parameterIndex])) {
         continue;
