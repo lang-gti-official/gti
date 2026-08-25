@@ -23,6 +23,7 @@ is a lesson about how the issues were written as much as how they were fixed.
 
 | File | Left over from | Symptom |
 | --- | --- | --- |
+| `issue-121-direct-override-call.gti` | [#121](https://github.com/LukeHHA/gti/issues/121) | calling an `override` directly on the concrete object → `GTI-B0001`; the same call through the interface reference works, as does a non-override method |
 | `issue-120-generic-dtor-as-type-argument.gti` | [#120](https://github.com/LukeHHA/gti/issues/120) | a generic **with a destructor** used as a type argument; without the destructor, or instantiated directly, it compiles |
 | `issue-118-lambda-comma-operand.gti` | [#118](https://github.com/LukeHHA/gti/issues/118) | a lambda as the **discarded** operand of a comma; the same comma without a lambda compiles. Found by fuzzing, not a leftover |
 | `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
