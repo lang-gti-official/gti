@@ -1,0 +1,28 @@
+class Report {
+  mut int value;
+
+public:
+  Report(int value) : value(value) {}
+
+  int add(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+
+  int code() { return this.value; }
+};
+
+Report make_report(int value) { return Report(value); }
+
+int inspect(Report& report) { return report.code(); }
+
+int main() {
+  // A fresh value may use a mutable receiver for this full expression.
+  int updated = Report(4).add(3);
+
+  // A read-only reference parameter may observe a fresh self-contained value
+  // for one call. The temporary is destroyed at the statement boundary.
+  int observed = inspect(make_report(5));
+
+  return updated == 7 and observed == 5 ? 0 : 1;
+}

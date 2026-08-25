@@ -1,0 +1,20 @@
+constexpr uint64_t protocol_word_bytes = uint64_t(4);
+
+static_assert(sizeof(int32_t) == protocol_word_bytes,
+              "protocol words must remain four bytes");
+
+class Packet<uint64_t Capacity> {
+  static_assert(Capacity > uint64_t(0), "a packet needs storage");
+  static_assert(Capacity <= uint64_t(64), "packet capacity is too large");
+
+public:
+  uint64_t capacity() { return Capacity; }
+};
+
+int main() {
+  constexpr bool wire_format_enabled = true;
+  static_assert(wire_format_enabled, "the wire format must be enabled");
+
+  Packet<8> packet{};
+  return packet.capacity() == uint64_t(8) ? 0 : 1;
+}

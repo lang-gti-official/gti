@@ -1,0 +1,21 @@
+#include <std/functional>
+
+class Widget {
+  int identifier = 42;
+
+public:
+  int id() { return this.identifier; }
+};
+
+// Applications may exactly specialize a foreign primary when at least one
+// top-level nominal argument belongs to the application.
+class std::hash<Widget> {
+public:
+  size_t operator()(Widget& value) { return size_t(value.id()); }
+};
+
+int main() {
+  Widget value{};
+  std::hash<Widget> hash{};
+  return int(hash(value)) == 42 ? 0 : 1;
+}
