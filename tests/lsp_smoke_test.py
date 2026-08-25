@@ -2955,6 +2955,211 @@ def test_compiler_private_tooling_boundary(executable, root):
         session.close()
 
 
+def test_managed_thread_tooling(executable, root):
+    project = root / "managed-thread-lsp"
+    path = project / "src/main.gti"
+    path.parent.mkdir(parents=True)
+    source = (
+        "#include <std/thread>\n"
+        "int main() {\n"
+        "  auto started = std::jthread::start([]() -> void {});\n"
+        "  if (!started.has_value()) { return 1; }\n"
+        "  mut std::jthread worker = std::move(started).value();\n"
+        "  bool was_joinable = worker.joinable();\n"
+        "  auto joined = worker.join();\n"
+        "  if (!joined.has_value() || !was_joinable) { return 2; }\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    project.joinpath("gti.toml").write_text(
+        "manifest-version = 1\n\n"
+        "[package]\n"
+        'name = "managed_thread_lsp"\n'
+        'version = "0.1.0"\n\n'
+        "[targets.managed_thread_lsp]\n"
+        'kind = "executable"\n'
+        'root = "src/main.gti"\n\n'
+        "[profiles.dev]\n"
+        'execution-profile = "concurrent"\n',
+        encoding="utf-8",
+    )
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "rootUri": project.resolve().as_uri(),
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            },
+                        }
+                    },
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def position_request(request_id, method, offset, text=source):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(text, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        type_use = source.index("jthread worker")
+        type_hover = position_request(2, "textDocument/hover", type_use + 1)
+        assert "move-only managed thread" in type_hover["contents"]["value"]
+        definition = position_request(
+            3, "textDocument/definition", type_use + 1
+        )
+        assert definition is not None
+        assert definition["uri"].endswith("/stdlib/std/thread.gti")
+
+        start_use = source.index("start(")
+        start_hover = position_request(4, "textDocument/hover", start_use + 1)
+        assert "Starts one consumed, transfer-safe exact `void()` task." in (
+            start_hover["contents"]["value"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 5)[
+                "result"
+            ]["data"]
+        )
+        for offset, expected_type in (
+            (type_use, 4),
+            (start_use, 6),
+            (source.index("joinable()"), 6),
+            (source.index("join();"), 6),
+        ):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])][
+                "type"
+            ] == expected_type
+
+        completion_source = source.replace("std::jthread::start", "std::jthread::st")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": completion_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        prefix = completion_source.index("::st") + len("::st")
+        completion = position_request(
+            6, "textDocument/completion", prefix, completion_source
+        )
+        start_item = next(
+            item for item in completion["items"] if item["label"] == "start"
+        )
+        assert "std::jthread::start" in start_item["detail"]
+
+        private_source = (
+            "int main() {\n"
+            "  gti_internal::thread_handle handle;\n"
+            "  int probe = gti_internal::thread_;\n"
+            "  return 0;\n"
+            "}\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": private_source}],
+                },
+            }
+        )
+        private_diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2058"
+            for diagnostic in private_diagnostics
+        )
+        private_handle = private_source.index("thread_handle")
+        assert (
+            position_request(
+                7, "textDocument/hover", private_handle + 1, private_source
+            )
+            is None
+        )
+        assert (
+            position_request(
+                8, "textDocument/definition", private_handle + 1, private_source
+            )
+            is None
+        )
+        private_prefix = private_source.index("thread_;") + len("thread_")
+        private_completion = position_request(
+            9, "textDocument/completion", private_prefix, private_source
+        )
+        assert private_completion["items"] == []
+    finally:
+        session.close()
+
+
 def test_diagnostic_code_actions(executable, root):
     source = 'int main() { std::print("🙂"); int value = 1 return 0; }\n'
     corrected_source = 'int main() { std::print("🙂"); int value = 1; return 0; }\n'
@@ -7033,6 +7238,7 @@ def main():
     test_exact_qualified_specialization_tooling(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)
+    test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_recursive_layout_diagnostic(sys.argv[1], root)

@@ -254,6 +254,16 @@ diagnostics or letting a backend message choose either identity.
   diagnostics may accompany an invalid nominal class, but the LSP must publish
   this compiler diagnostic unchanged and clear it when a newer snapshot
   becomes valid.
+- `GTI-S2084` owns the trusted managed-thread boundary. Point at an invalid
+  handle/task argument, explicit type argument, or unavailable execution/
+  target capability. A task must be one consumed, movable, transfer-capable
+  exact `void()` lambda or nominal callable; relate the first structural
+  transfer denial and the source-defined task parameter when available.
+  Suggest a fresh task or `std::move(task)` and owned captures, but do not
+  offer a fix-it because choosing ownership, capture shape, execution profile,
+  or target is not mechanical. Ordinary missing-move diagnostics remain
+  `GTI-S2046`. The LSP publishes the shared diagnostic unchanged and must not
+  recognize `std::jthread` by spelling.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

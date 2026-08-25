@@ -517,10 +517,11 @@ class, type-erased heap allocation, or parallel callback/task descriptor.
 
 ### C-CALL-01: Owned Task Adapter
 
-With D-FAIL-01, C-TYPE-01, this decision, and M-LIFE-01 complete, after
-M-FAIL-01 add only the consumed owned `void()` task requirement, capture
-transfer checks, and task-entry HIR/MIR metadata. Thread creation remains
-C-THREAD-01 work.
+Complete for the first managed-thread slice. The consumed owned `void()` task
+requirement, capture transfer checks, and exact task-entry HIR/MIR/Lowered
+metadata now serve the source-defined `std::jthread` implementation completed
+by C-THREAD-01. Result-bearing tasks, separate task arguments, scoped borrows,
+and detached work remain separate breadth.
 
 ### S-CALL-01: Native Function Item Adapter
 

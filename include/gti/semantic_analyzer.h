@@ -726,6 +726,19 @@ struct CallableArgumentBoundary {
                          const CallableArgumentBoundary &) = default;
 };
 
+// The exact source callable selected for a managed-thread task. A concrete
+// task names exactly one function declaration or one lambda declaration; the
+// selected invocation capability is retained so later phases never reopen
+// operator() selection from the host-language type.
+struct ResolvedThreadTaskEntry {
+  FunctionId function = 0;
+  LambdaId lambda = 0;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
+
+  friend bool operator==(const ResolvedThreadTaskEntry &,
+                         const ResolvedThreadTaskEntry &) = default;
+};
+
 struct CallableParameterContract {
   std::size_t parameterIndex = 0;
   GenericParameterId genericParameter = 0;
@@ -1259,6 +1272,7 @@ struct ResolvedCallInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -26,14 +27,20 @@ int main(int argc, char **argv) {
 
   const std::filesystem::path root = std::filesystem::weakly_canonical(argv[1]);
   const std::filesystem::path standardLibrary = root / "stdlib";
-  const lang::TargetInfo target = lang::TargetInfo::host();
   for (int index = 2; index < argc; ++index) {
     const std::string name =
         std::filesystem::path(argv[index]).filename().string();
     const std::filesystem::path source = root / "examples" / name;
-    const lang::FrontendResult frontend = lang::Frontend().analyze(
-        source, std::nullopt, {standardLibrary / "prelude.gti"}, {},
-        {standardLibrary});
+    lang::TargetInfo target = lang::TargetInfo::host();
+    if (name == "66-managed-threads.gti") {
+      target.executionProfile = lang::ExecutionProfile::Concurrent;
+    }
+    lang::FrontendOptions options;
+    options.target = target;
+    const lang::FrontendResult frontend =
+        lang::Frontend(std::move(options))
+            .analyze(source, std::nullopt, {standardLibrary / "prelude.gti"},
+                     {}, {standardLibrary});
     if (!frontend.canGenerateCode()) {
       std::cerr << name << ": frontend rejected corpus source\n";
       printDiagnostics(frontend);

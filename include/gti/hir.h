@@ -489,8 +489,11 @@ struct HirThreadTaskAdapter {
   HirThreadTaskAdapterId id = 0;
   SemanticType taskType = SemanticType::Unknown;
   HirValueId spawnValue = 0;
-  CallableInvocationCapability invocation =
-      CallableInvocationCapability::Once;
+  std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirLambdaId> lambdaTarget;
+  CallableInvocationCapability targetInvocation =
+      CallableInvocationCapability::Read;
+  CallableInvocationCapability invocation = CallableInvocationCapability::Once;
 
   friend bool operator==(const HirThreadTaskAdapter &,
                          const HirThreadTaskAdapter &) = default;
@@ -662,8 +665,7 @@ public:
 
   [[nodiscard]] const HirThreadTaskAdapter *
   findThreadTaskAdapter(HirThreadTaskAdapterId id) const {
-    return id == 0 || id > threadTasks.size() ? nullptr
-                                              : &threadTasks[id - 1];
+    return id == 0 || id > threadTasks.size() ? nullptr : &threadTasks[id - 1];
   }
 
   [[nodiscard]] const HirConstructorInstance *

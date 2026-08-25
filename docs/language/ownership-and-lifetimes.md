@@ -125,9 +125,9 @@ dereference operation.
 ## Concurrency Transfer And Sharing
 
 The default executable profile is single-threaded. GTI also implements the
-ownership facts and process-wide storage policy of its opt-in concurrent
-profile before the 1.0 ownership contract freezes; public concurrent
-operations remain unavailable.
+ownership facts, process-wide storage policy, and first owned managed-thread
+operation of its opt-in concurrent profile. Public atomics, mutex-protected
+borrows, scoped threads, detach, and foreign-thread entry remain unavailable.
 
 For a concrete type `T`:
 
@@ -209,8 +209,9 @@ volatile, synchronized, transfer-capable, share-capable, or safe for concurrent
 use. Concurrent mutation must be mediated by an operation with an explicit
 synchronization contract, such as a future atomic or mutex guard.
 
-The first executable thread model consumes one owned task plus owned
-transfer-capable arguments. References, borrowed-state iterators/views, raw
+The executable `std::jthread` model consumes one exact owned `void()` task.
+The callable object and every capture must be transfer-capable and are moved to
+the worker exactly once. References, borrowed-state iterators/views, raw
 pointers, and borrowed captures cannot cross even when a native lifetime looks
 long enough. A later scoped-borrow extension requires an explicit structured
 join proof, a child loan and suspended parent, cleanup on every normal and

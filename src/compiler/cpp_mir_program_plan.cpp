@@ -164,8 +164,7 @@ threadTaskRequirements(const MirBody &body) {
           !instruction.threadTaskAdapter) {
         continue;
       }
-      result.push_back(
-          threadTaskThunkIdentity(*instruction.threadTaskAdapter));
+      result.push_back(threadTaskThunkIdentity(*instruction.threadTaskAdapter));
     }
   }
   std::sort(result.begin(), result.end(), thunkLess);
@@ -636,8 +635,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   }
   std::vector<CppMirThunkIdentity> sortedSuppliedThreadTasks =
       suppliedThreadTasks;
-  std::sort(sortedSuppliedThreadTasks.begin(),
-            sortedSuppliedThreadTasks.end(), thunkLess);
+  std::sort(sortedSuppliedThreadTasks.begin(), sortedSuppliedThreadTasks.end(),
+            thunkLess);
   if (sortedSuppliedThreadTasks == expectedThreadTasks &&
       suppliedThreadTasks != expectedThreadTasks) {
     addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkOrder,
@@ -1200,11 +1199,11 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
         mirBody == nullptr ? std::vector<CppMirThunkIdentity>{}
                            : threadTaskRequirements(*mirBody);
     std::vector<CppMirThunkIdentity> supplied;
-    std::copy_if(
-        body.requiredThunks.begin(), body.requiredThunks.end(),
-        std::back_inserter(supplied), [](const CppMirThunkIdentity &identity) {
-          return identity.kind == CppMirThunkKind::ThreadTaskAdapter;
-        });
+    std::copy_if(body.requiredThunks.begin(), body.requiredThunks.end(),
+                 std::back_inserter(supplied),
+                 [](const CppMirThunkIdentity &identity) {
+                   return identity.kind == CppMirThunkKind::ThreadTaskAdapter;
+                 });
     if (supplied != expected) {
       addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
                "body thread task roots differ from its exact verified MIR "

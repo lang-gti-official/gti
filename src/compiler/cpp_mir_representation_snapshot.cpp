@@ -674,8 +674,7 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
       thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};
     } else if (const auto *threadTask =
                    std::get_if<LoweredThreadTaskAdapterItem>(&item.payload)) {
-      thunk.payload =
-          CppMirThreadTaskThunk{.adapter = threadTask->adapter};
+      thunk.payload = CppMirThreadTaskThunk{.adapter = threadTask->adapter};
     }
     snapshot.thunks.push_back(std::move(thunk));
   }

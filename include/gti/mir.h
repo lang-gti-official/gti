@@ -805,6 +805,14 @@ struct MirRangeIteration {
 
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
+  // Source-defined standard-library wrappers are part of the complete MIR
+  // declaration inventory even when their public surface is unavailable in
+  // the selected execution profile. Lowering sets this bit only on a
+  // compiler-trusted body that actually contains an exact private
+  // synchronization intrinsic. Program verification treats it as a narrow
+  // exemption for that dormant wrapper body, never as executable profile
+  // authority.
+  bool compilerTrustedSynchronization = false;
   PlaceDomain placeDomain;
   MirBlockId entry = 0;
   SemanticType returnType = SemanticType::Void;
@@ -1116,8 +1124,11 @@ struct MirThreadTaskAdapter {
   HirValueId spawnValue = 0;
   MirBodyAddress sourceBody;
   MirInstructionId spawnInstruction = 0;
-  CallableInvocationCapability invocation =
-      CallableInvocationCapability::Once;
+  std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirLambdaId> lambdaTarget;
+  CallableInvocationCapability targetInvocation =
+      CallableInvocationCapability::Read;
+  CallableInvocationCapability invocation = CallableInvocationCapability::Once;
   bool catchesWorkerFailure = true;
   bool catchesNativeExceptions = true;
 
@@ -1439,8 +1450,7 @@ public:
 
   [[nodiscard]] const MirThreadTaskAdapter *
   findThreadTaskAdapter(MirThreadTaskAdapterId id) const {
-    return id == 0 || id > threadTasks.size() ? nullptr
-                                              : &threadTasks[id - 1];
+    return id == 0 || id > threadTasks.size() ? nullptr : &threadTasks[id - 1];
   }
 
   [[nodiscard]] const MirClassInstance *
@@ -1612,7 +1622,8 @@ private:
       const HirConstructorInstance *constructor = nullptr,
       const HirLambda *lambda = nullptr,
       const HirProgramInitializationPlan *programInitialization = nullptr,
-      MirProgramInitializationPlan *loweredProgramInitialization = nullptr);
+      MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
+      bool compilerTrusted = false);
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

@@ -237,6 +237,14 @@ diagnostics without retaining stale semantic range errors. The protocol layer
 does not infer a range protocol, access mode, parent/child loan lifetime,
 array strategy, invalidation rule, or temporary ownership from punctuation.
 
+Managed-thread diagnostics also remain shared frontend authority. An invalid
+task transfer, single-threaded profile, or target without thread support
+publishes `GTI-S2084` with its semantic related spans and hints. The LSP reads
+the default project profile as described below, exposes only the source-defined
+`std::jthread` declarations in hover/definition/completion, and filters the
+identity-bound `gti_internal` handle and operations. It does not derive task
+transfer, callable entry selection, or concurrency from public spelling.
+
 ## Document State
 
 `LanguageServer` still owns protocol handling, open overlays, client versions,
@@ -313,8 +321,11 @@ does not build failure metadata or MIR; retaining the HIR result is the current
 cost of publishing the compiler's complete source-level semantic diagnostic
 set. Code generation remains disabled. Before analysis, the LSP uses the
 driver's canonical nearest-manifest discovery and parser to seed
-`FrontendOptions::configurationFlags` from `[build].defines`; it does not
-reimplement TOML or manifest validation. Analysis work additionally runs
+`FrontendOptions::configurationFlags` from `[build].defines` and the execution
+profile from the canonical default `dev` profile; it does not reimplement TOML
+or manifest validation. This keeps concurrent-project diagnostics and the
+public `<std/thread>` surface aligned with the default project check/run
+workflow. Analysis work additionally runs
 inside `lang::runGuarded`, and that boundary is deliberately narrow. Only
 compiler work runs under the guard: `runIsolatedAnalysis` builds an isolated
 `DocumentAnalysis` and its immutable frontend snapshot, and `publishAnalysis`
@@ -413,12 +424,13 @@ meaning from punctuation.
   durable symbol identity is implemented.
 - `Frontend`/`LanguageQueries` can consume the same explicit
   `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
-  manifest's configuration flags, but does not yet resolve its workspace graph,
-  selected package/profile, command-line overrides, or execution profile.
-  Consequently, package angle includes are not resolved in editor snapshots
-  yet, and editor analysis currently uses the default single-threaded execution
-  profile; project-selected concurrent-global diagnostics remain a project
-  CLI/build check until that configuration is shared.
+  manifest's configuration flags and default `dev` execution profile, but does
+  not yet resolve its workspace graph, selected package, a non-default profile,
+  or command-line overrides. Consequently, package angle includes are not
+  resolved in editor snapshots yet. A project whose `dev` profile selects
+  `concurrent` receives the same managed-thread and concurrent-global semantic
+  checks in editor analysis; another build-profile selection still awaits the
+  shared project-facts model.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.

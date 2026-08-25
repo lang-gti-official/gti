@@ -11,7 +11,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "02-control-flow.gti": {
@@ -25,7 +26,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "03-functions.gti": {
@@ -39,7 +41,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "04-integers.gti": {
@@ -53,7 +56,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "05-objects.gti": {
@@ -67,7 +71,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "06-namespaces.gti": {
@@ -81,7 +86,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "07-generics.gti": {
@@ -95,7 +101,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 7
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 7
       }
     },
     "08-expected.gti": {
@@ -109,7 +116,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "09-target-selection.gti": {
@@ -123,7 +131,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "11-overloads.gti": {
@@ -137,7 +146,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "12-fixed-arrays.gti": {
@@ -151,7 +161,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 2
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 2
       }
     },
     "13-ownership.gti": {
@@ -165,7 +176,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 6
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 6
       }
     },
     "14-operators.gti": {
@@ -179,7 +191,8 @@
         "callable_adapter": 1,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "15-variadic-generics.gti": {
@@ -193,7 +206,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 13
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 13
       }
     },
     "16-move-generics.gti": {
@@ -207,7 +221,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 5
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 5
       }
     },
     "17-standard-array.gti": {
@@ -221,7 +236,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 5
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 5
       }
     },
     "18-lambdas.gti": {
@@ -235,7 +251,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "19-auto.gti": {
@@ -249,7 +266,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "20-strings.gti": {
@@ -263,7 +281,8 @@
         "callable_adapter": 9,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "21-scoped-enums.gti": {
@@ -277,7 +296,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "22-switch.gti": {
@@ -291,7 +311,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "23-direct-initialization.gti": {
@@ -305,7 +326,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "24-static.gti": {
@@ -319,7 +341,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "25-polymorphic-ranges.gti": {
@@ -333,7 +356,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "26-stored-references.gti": {
@@ -347,7 +371,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 7
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 7
       }
     },
     "27-copy-move-policies.gti": {
@@ -361,7 +386,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "28-callable-parameters.gti": {
@@ -375,7 +401,8 @@
         "callable_adapter": 1,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "29-callable-predicates.gti": {
@@ -389,7 +416,8 @@
         "callable_adapter": 1,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 2
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 2
       }
     },
     "30-callable-forwarding.gti": {
@@ -403,7 +431,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "31-exact-constraints.gti": {
@@ -417,7 +446,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "32-structured-bindings.gti": {
@@ -431,7 +461,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 1
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 1
       }
     },
     "33-source-concepts.gti": {
@@ -445,7 +476,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 1
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 1
       }
     },
     "34-do-while.gti": {
@@ -459,7 +491,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "35-conditional-expressions.gti": {
@@ -473,7 +506,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "36-c-abi-sockets.gti": {
@@ -487,7 +521,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "37-tcp-socket-owner.gti": {
@@ -501,7 +536,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "38-vector-emplace.gti": {
@@ -515,7 +551,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 23
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 23
       }
     },
     "39-raw-pointers.gti": {
@@ -529,7 +566,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "40-loan-flow-edges.gti": {
@@ -543,7 +581,8 @@
         "callable_adapter": 9,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "41-owner-dependencies.gti": {
@@ -557,7 +596,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "42-exclusive-reborrows.gti": {
@@ -571,7 +611,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "43-program-arguments.gti": {
@@ -585,7 +626,8 @@
         "callable_adapter": 9,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 10
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 10
       }
     },
     "44-bounded-requires.gti": {
@@ -599,7 +641,8 @@
         "callable_adapter": 8,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 12
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 12
       }
     },
     "45-layout-queries.gti": {
@@ -613,7 +656,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "46-defined-integer-arithmetic.gti": {
@@ -627,7 +671,8 @@
         "callable_adapter": 8,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "47-binary64.gti": {
@@ -641,7 +686,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 1
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 1
       }
     },
     "48-native-c-records.gti": {
@@ -655,7 +701,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "49-native-bridge-header.gti": {
@@ -669,7 +716,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "50-opaque-native-handles.gti": {
@@ -683,7 +731,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "51-callable-value-results.gti": {
@@ -697,7 +746,8 @@
         "callable_adapter": 2,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "52-stateful-callables.gti": {
@@ -711,7 +761,8 @@
         "callable_adapter": 10,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 12
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 12
       }
     },
     "53-consuming-callables.gti": {
@@ -725,7 +776,8 @@
         "callable_adapter": 5,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 2
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 2
       }
     },
     "54-owned-move-captures.gti": {
@@ -739,7 +791,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "55-owned-callable-transport.gti": {
@@ -753,7 +806,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 3
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 3
       }
     },
     "56-sum-types.gti": {
@@ -767,7 +821,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "57-contextual-array-arguments.gti": {
@@ -781,7 +836,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
       }
     },
     "58-formatted-output.gti": {
@@ -795,7 +851,8 @@
         "callable_adapter": 9,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 17
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 17
       }
     },
     "59-default-parameters.gti": {
@@ -809,7 +866,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 1
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 1
       }
     },
     "60-configuration-and-comments.gti": {
@@ -823,7 +881,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "61-global-borrow-returns.gti": {
@@ -837,7 +896,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "62-native-c-boundaries.gti": {
@@ -851,7 +911,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 1,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "63-random-engine.gti": {
@@ -865,7 +926,8 @@
         "callable_adapter": 10,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "64-restricted-arithmetic-operators.gti": {
@@ -879,7 +941,8 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 0
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
       }
     },
     "65-mutable-ranges.gti": {
@@ -893,13 +956,29 @@
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 11
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 11
+      }
+    },
+    "66-managed-threads.gti": {
+      "declarations": 177,
+      "bodies": 62,
+      "generated_items": 17,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 2,
+        "callable_adapter": 1,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 3,
+        "thread_task_adapter": 9
       }
     }
   },
   "totals": {
-    "declarations": 10171,
-    "bodies": 3433,
-    "generated_items": 468
+    "declarations": 10348,
+    "bodies": 3495,
+    "generated_items": 485
   }
 }

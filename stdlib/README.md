@@ -76,6 +76,20 @@ advances its four-word state in GTI; only `random_device` crosses the bounded
 `gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
+`<std/thread>` provides the first public managed-thread slice as an ordinary
+source-defined `std::jthread`. `std::jthread::start(task)` consumes one exact
+transfer-safe `void()` lambda or callable object and returns
+`expected<std::jthread, std::thread_errc>`. The move-only handle may be joined
+explicitly and otherwise autojoins during destruction. A recoverable native
+creation/join condition uses `thread_errc`; a GTI failure in the worker is
+cleaned there, preserved exactly, and re-raised by explicit or automatic join.
+References, borrowed captures, raw pointers, and non-transferable owned
+captures are rejected before lowering. Detach, stop tokens, separate argument
+packs, result-bearing tasks, scoped borrows, atomics, mutexes, and foreign-
+thread entry are outside this first surface. The direct compiler requires
+`--execution-profile concurrent`; project profiles use
+`execution-profile = "concurrent"`.
+
 `<std/filesystem>` provides `std::filesystem::path` as pure pathname
 manipulation with no filesystem access. It carries C++'s decomposition and
 `has_*` query set, the modifiers, `assign`/`append`/`concat`, directory joining
@@ -85,8 +99,8 @@ Element-wise comparison is what makes `"/a/b"` and `"/a//b"` equal while
 `"/a/b/"` differs from both, since a trailing separator contributes an empty
 final element. A pathname is stored exactly as supplied; normalization happens
 only in `lexically_normal`. Copying is explicit through `clone()`, and the
-converting constructor is declared but not yet callable — build a path with
-`path()` followed by `assign()` until `R-CLASS-VALUE-EMISSION` closes.
+converting `path(std::string_view)` constructor is implemented through the
+ordinary verified class-construction route.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
@@ -230,9 +244,11 @@ storage teardown. Declared cleanup makes the wrapper noncopyable and uses
 compiler-generated active-state moves, preventing moved-from containers from
 running the cleanup body twice.
 
-Intrinsic behavior is restricted to exact trusted-prelude declaration
-identities. The root `gti_internal` namespace and declarations whose exposed
-signatures contain its private capabilities are visible only to
+Intrinsic behavior is restricted to exact compiler-trusted declaration
+identities. Most are prelude-owned; the managed-thread identities are owned by
+the exact installed `<std/thread>` source unit and are absent when that module
+is not imported. The root `gti_internal` namespace and declarations whose
+exposed signatures contain its private capabilities are visible only to
 compiler-trusted prelude and physical standard-library source. Application
 declarations, direct references, aliases, and tooling queries cannot enter that
 surface; public wrappers such as `std::FILE` and `std::unique_ptr` remain the

@@ -4,7 +4,9 @@
 > decisions by [ADR 008](../decisions/008-safe-concurrency-memory-model.md),
 > [execution semantics](../language/execution.md#49-concurrency-boundary), and
 > [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing).
-> D-MEM-02 adopted the boundary; implementation remains staged below.
+> D-MEM-02 adopted the boundary; the first owned `std::jthread` vertical slice
+> is implemented in 0.309.0 and remaining concurrency families stay staged
+> below.
 > ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
 > technical prerequisites remain evidence, while the bounded public
 > concurrency profile is now systems-readiness work.
@@ -12,10 +14,10 @@
 Original design baseline: GTI 0.93.0. Current implemented policy is documented
 in the canonical language and architecture documents linked above.
 
-This document proposes the language boundary needed before GTI can add
-threads, atomics, mutexes, or callbacks entered from native threads. It does
-not change current single-threaded GTI behavior, choose final source spelling,
-or authorize concurrency implementation. Current behavior remains defined by
+This document records the language boundary used by GTI's managed-thread slice
+and required before atomics, mutexes, scoped threads, or callbacks entered from
+native threads. It is design and implementation-matrix evidence, not current
+source authority. Current behavior remains defined by
 [`docs/language/`](../language/), and implementation order remains owned by
 [`implementation-sequence.md`](implementation-sequence.md).
 
@@ -65,37 +67,38 @@ requiring them to become source keywords or public concept names.
     bounded public SC atomic/thread/mutex profile for the work-queue readiness
     outcome.
 
-## Current Facts This Proposal Preserves
+## Baseline Facts This Proposal Preserved
 
-GTI already has a substantial single-threaded memory-safety foundation:
+At proposal time, GTI already had a substantial single-threaded memory-safety
+foundation:
 
-- semantic values distinguish places from values, read-only from mutable
+- semantic values distinguished places from values, read-only from mutable
   access, value/borrow/unique/shared ownership, copy/move availability, and
   lexical destruction;
-- `T&` is a non-null read-only loan and `mut T&` is an exclusive writable loan;
-  retained loans, reborrows, parent suspension, and proven endpoints are
+- `T&` was a non-null read-only loan and `mut T&` was an exclusive writable
+  loan; retained loans, reborrows, parent suspension, and proven endpoints were
   semantic facts preserved through HIR and MIR;
-- raw pointers are nullable non-owning values, create no semantic loan, and
-  require lexical `unsafe` for address formation, access, arithmetic, and
+- raw pointers were nullable non-owning values, created no semantic loan, and
+  required lexical `unsafe` for address formation, access, arithmetic, and
   pointer-bearing C calls;
 - violating an unsafe raw-pointer validity, lifetime, alignment,
   initialization, bounds, provenance, aliasing, native-retention, or
-  concurrent-access obligation is already undefined behavior;
-- class lifecycle is structural, declared cleanup suppresses copying, and
-  active cleanup transfers exactly once during movement;
-- globals and static fields exist, including mutable scalar storage, while
-  unique owners and borrowed-state values are already rejected in global or
+  concurrent-access obligation was already undefined behavior;
+- class lifecycle was structural, declared cleanup suppressed copying, and
+  active cleanup transferred exactly once during movement;
+- globals and static fields existed, including mutable scalar storage, while
+  unique owners and borrowed-state values were already rejected in global or
   static storage;
-- lambdas currently take immutable copy snapshots or explicit owned
-  `[target = std::move(source)]` captures of local values, reject reference and
-  stored-borrowed-state captures, and are non-escaping; and
-- MIR has conservative reads/writes, calls, moves, loans, drops, raw-memory
+- lambdas took immutable copy snapshots or explicit owned
+  `[target = std::move(source)]` captures of local values, rejected reference
+  and stored-borrowed-state captures, and were non-escaping; and
+- MIR had conservative reads/writes, calls, moves, loans, drops, raw-memory
   effects, and `maySynchronize`, but no atomic order, thread operation, or
-  cross-thread edge. The C++ backend still emits bodies from AST/HIR facts.
+  cross-thread edge. The C++ backend still emitted bodies from AST/HIR facts.
 
-The proposal composes with those facts. It does not replace the borrow checker
-with a separate concurrency checker or treat C++ `std::thread` and
-`std::atomic` behavior as language authority.
+The proposal composed with those facts. Its implemented thread slice does not
+replace the borrow checker with a separate concurrency checker or treat C++
+`std::thread` and `std::atomic` behavior as language authority.
 
 ## Abstract Concurrent Execution
 
@@ -293,9 +296,9 @@ lifetime:
 - every raw pointer type; and
 - a capture or wrapper lacking the required transfer capability.
 
-An owned capture follows the same rule as an explicit argument. Current
-copy/move-capture lambdas remain non-escaping and cannot serve as thread tasks
-until C-CALL-01 implements the consumed-task adapter over D-CALL-01's accepted
+An owned capture follows the same rule as an explicit argument. C-CALL-01 now
+lets an exact fresh or explicitly moved transfer-safe `void()` lambda serve as
+one consumed managed-thread task over D-CALL-01's accepted
 [callable contract](callable-ownership-and-escape.md). Explicit owned move
 capture consumes the source and derives the closure's lifecycle and transfer
 facts from the captured value. No implicit reference capture is introduced.
@@ -520,13 +523,14 @@ task completion happen-before every evaluation after join returns.
 Explicit join consumes the handle into the operation. A join error is
 recoverable only when the runtime can prove that the worker remains joinable;
 the error result must then return ownership of the same join obligation. If
-the worker has completed and the obligation is safely discharged but a
-destructor/automatic-join API has no result channel, it may raise Execution §4.10's
-`infallible_host_operation_failed`. Truly indeterminate native state cannot be
-returned or contained as an ordinary GTI failure because invocation cleanup
-cannot prove that no worker still accesses owned state; it is a runtime
-integrity fault that terminates the process. No safe result or embedding record
-silently abandons a live obligation.
+a destructor/automatic-join API has no result channel, a coherent retained
+state is transferred to the hosted terminal quarantine before raising
+Execution §4.10's `infallible_host_operation_failed`. The quarantine is not a
+detached execution facility and cannot return to GTI. Truly indeterminate
+native state cannot be returned or contained as an ordinary GTI failure
+because invocation cleanup cannot prove that no worker still accesses owned
+state; it is a runtime integrity fault that terminates the process. No safe
+result or embedding record silently abandons a live obligation.
 
 ADR 008 selects automatic join when an outstanding handle is destroyed. This
 preserves structured lifetime and ensures no managed child survives program or
@@ -729,17 +733,17 @@ column is part of every stage rather than a final test-only pass.
 | C-TYPE-01 | **Done:** structural transfer/share facts, public concepts, and nominal negative/interface/unsafe-positive policy are semantic and HIR facts | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic `GTI-S2059` related spans and tooling coverage. |
 | C-GLOBAL-01 | **Done:** explicit pre-semantics profile selection plus concurrent-profile global/static enforcement | `GTI-S2060` rejects mutable and non-share-capable storage; immutable share-capable aliases/generics/statics/internal linkage pass; semantic/HIR/MIR and direct/project CLI evidence agree. |
 | M-LIFE-01 | **Done:** profile-independent recursive active-cleanup global/static rejection plus normal-exit drop authority | `GTI-S2061` covers aliases, arrays, bases, fields, and concrete generics before the concurrent policy; HIR/MIR lifecycle evidence is shared with later task cleanup. |
-| C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
-| C-RUNTIME-01 | Add target `threads` capability, private handle/task storage, attach state, and thread-safe host services | Unsupported targets fail before backend; installed runtime smoke and platform linkage pass; allocator/failure/I/O service classifications are exercised. |
+| C-MIR-01 | **Done:** synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
+| C-RUNTIME-01 | **Done for managed threads:** target `threads` capability, private handle/task storage, fixed failure handoff, and classified host services | Unsupported targets fail before backend; installed runtime smoke, platform linkage, stdout serialization, exact record handoff, and fault seams pass. |
 | C-ATOM-01 | Add SC scalar atomic wrapper and exact lowering | Domain and order diagnostics; strong CAS semantics; message-passing and modification-order tests at O0/O3; controlled native-thread harness and TSAN where available. |
-| D-CALL-01 done / C-CALL-01 | Implement one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
-| C-THREAD-01 | Add move-only automatic-join thread and recoverable creation/join | Spawn/join happens-before tests, move-only argument transfer, join on every cleanup edge, creation failure injection, stress, O0/O3, and sanitizers. |
+| D-CALL-01 / C-CALL-01 | **Done:** one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
+| C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::jthread` and recoverable creation/join | Spawn/join happens-before tests, move-only task transfer, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
 | M-OWN-03 / C-SYNC-01 | Add guard-tied mutex access after stored mutable dependencies exist | Exactly-once unlock on every edge, no protected-reference escape, contention stress, poisoning/failure behavior, and TSAN. |
 | C-ORDER-01 | Add only the accepted weaker orders | Operation/order compile-fail cases plus deterministic litmus tests for release/acquire and relaxed non-synchronization. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
 | later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
-| C-CONFORM-01 | Make the selected public profile a release gate | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, TSAN where supported, and no timing-only oracle. |
+| C-CONFORM-01 | **Done for `std::jthread`; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
 must not infer transfer/share from spelling. Hover displays the adopted public
@@ -753,7 +757,8 @@ This proposal does not add or promise:
 
 - source syntax for thread creation, atomics, thread-local storage, memory
   orders, or native callbacks beyond the implemented capability attributes;
-- public threads, atomics, mutexes, condition variables, or detach in D-MEM-01;
+- public atomics, mutexes, condition variables, scoped borrows, stop tokens,
+  result-bearing tasks, or detach in the shipped jthread slice;
 - cross-thread references in the first executable profile;
 - pointer atomics before a public provenance/cast contract;
 - volatile/MMIO, signals, coroutines, async tasks, work stealing, parallel
@@ -771,7 +776,8 @@ choice this proposal reserved:
    public SC atomics, joined threads/tasks, and mutex-guard access are
    systems-readiness executable work;
 2. concurrent policy selection is explicit before semantics and the default
-   executable profile remains single-threaded; public concurrent runtime
+   executable profile remains single-threaded; managed threads additionally
+   require the target `threads` capability, while other public concurrent
    operations retain their later gates;
 3. destruction of an outstanding first-model handle automatically joins;
 4. worker failure is contained, cleaned, preserved byte-for-byte, and re-raised

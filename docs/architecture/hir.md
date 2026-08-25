@@ -24,6 +24,8 @@ obligations, not HIR declarations or executable values.
 - concrete class, function, constructor, destructor, and lambda instances;
 - exact native callback adapter identities linking a callback type to one
   concrete free-function instance;
+- exact managed-thread task adapter identities linking one concrete spawn
+  value to its task type and once-invocation contract;
 - enums and resolved class/base/lifecycle metadata;
 - executable `HirBody` values, bindings, statements, and root statements;
 - snapshot-local full-expression identities plus typed lexical/value drop
@@ -153,6 +155,19 @@ exact-checks the source conversion, function declaration/instance, ownership,
 linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
+
+An exact trusted thread-spawn call creates one `HirThreadTaskAdapter`. Its
+identity retains the concrete task type, the exact spawning `HirValueId`, and
+the required outer `Once` invocation capability. It also retains exactly one
+concrete `HirFunctionInstanceId` or `HirLambdaId` task entry plus the selected
+read, mutable, or consuming receiver capability. The spawn value simultaneously
+retains the ordinary owned callable transport and
+`SynchronizationOperationKind::ThreadSpawn`; explicit and automatic join
+values retain `ThreadJoin`. Program verification requires every adapter to be
+nonzero, type-complete, referenced by its exact spawn, rooted in that exact
+function/lambda instance and owner type, and ordered deterministically. HIR
+does not erase the task, invent a native entry point, reopen `operator()`
+selection, or recognize the source-defined `std::jthread` wrapper.
 
 ## Executable Values
 

@@ -661,6 +661,8 @@ void testNativeCCompilerFailure() {
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
              writeFile(include / "gti/runtime_failure.h", "") &&
+             writeFile(include / "gti/runtime_thread.h", "") &&
+             writeFile(include / "gti/runtime_thread.hpp", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(nativeObject, "previous object"),
          "native C compiler failure fixtures should be writable");
@@ -717,6 +719,8 @@ void testNativeCppCompilerFailure() {
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
              writeFile(include / "gti/runtime_failure.h", "") &&
+             writeFile(include / "gti/runtime_thread.h", "") &&
+             writeFile(include / "gti/runtime_thread.hpp", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(nativeObject, "previous object"),
          "native C++ compiler failure fixtures should be writable");
@@ -764,6 +768,8 @@ void testOrderedExecutableBuildCommand() {
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
              writeFile(include / "gti/runtime_failure.h", "") &&
+             writeFile(include / "gti/runtime_thread.h", "") &&
+             writeFile(include / "gti/runtime_thread.hpp", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(temporary.root() / "provider.c",
                        "int native_provider(void) { return 42; }\n") &&
@@ -968,7 +974,8 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   std::filesystem::create_directories(localRuntimeInclude / "gti");
   std::error_code copyError;
   for (const std::string_view header :
-       {"runtime.hpp", "runtime.h", "c_abi.h", "runtime_failure.h"}) {
+       {"runtime.hpp", "runtime.h", "c_abi.h", "runtime_failure.h",
+        "runtime_thread.h", "runtime_thread.hpp"}) {
     std::filesystem::copy_file(discoveredToolchain.runtimeInclude / "gti" /
                                    header,
                                localRuntimeInclude / "gti" / header, copyError);
@@ -1576,8 +1583,20 @@ void testResourcesAndArtifactOwnership() {
   expect(writeFile(include / "gti/runtime_failure.h", ""),
          "the defined-failure ABI header fixture should be writable");
   expect(
+      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
+          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+      "runtime validation should require the managed-thread C ABI header");
+  expect(writeFile(include / "gti/runtime_thread.h", ""),
+         "the managed-thread C ABI header fixture should be writable");
+  expect(
+      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
+          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+      "runtime validation should require the managed-thread C++ bridge");
+  expect(writeFile(include / "gti/runtime_thread.hpp", ""),
+         "the managed-thread C++ bridge fixture should be writable");
+  expect(
       !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23),
-      "C++23 resource validation should not require expected-lite");
+      "C++23 resource validation should accept the complete runtime surface");
   expect(
       lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp20) ==
           lang::driver::ToolchainResourceError::

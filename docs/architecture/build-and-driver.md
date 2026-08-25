@@ -507,7 +507,8 @@ resolved into the plan's `TargetInfo`, and the command-line option is an
 explicit project override. Metadata schema 9 publishes the declared value for
 every profile plus the selected workspace and sorted package/dependency graph.
 This build profile field selects static language policy only;
-the later target/runtime `threads` capability remains independent.
+the target/runtime `threads` capability remains independent. Public managed
+thread operations require both the concurrent profile and that capability.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses
