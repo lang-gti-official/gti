@@ -746,6 +746,58 @@ Acceptance criteria:
 - native vectorization remarks and assembly support performance conclusions
   without becoming semantic authority.
 
+#### O-MIR-08 measured gate
+
+The 2026-08-26 exact-main audit deferred the loop-derived fixed-array client.
+It found a broad MIR proof near miss but not an accepted runtime optimization:
+
+- a 4-element affine source loop converges before interval widening and
+  discharges its fixed-array read, while the equivalent 64-element loop widens
+  the loop-carried place fact and retains its read and write checks;
+- ordinary source MIR lowering does not create block parameters or edge
+  arguments. The only production creator is `rewriteMirScalarPlace`, whose
+  current topological-order requirement rejects every cyclic CFG. O-MIR-06's
+  affine induction tests therefore exercise constructed MIR rather than a
+  source-produced optimization client;
+- `examples/12-fixed-arrays.gti` already discharges the canonical short loop,
+  so widening O-MIR-08 around that case would be a no-op;
+- `vector-checked-loop` retains four dynamic vector bounds checks that require
+  interprocedural/inlining facts rather than fixed-array induction;
+- the managed-thread workload retains 34 bounds checks, but its source MIR has
+  no loop-carried block parameters and its checks are not a bounded O-MIR-08
+  fixed-array client;
+- the new `fixed-array-loop-proof` workload records the 64-element widening
+  case. At native O3, current checked emission and a manual direct-access upper
+  bound produced identical hot-function assembly and no runtime improvement.
+
+The smallest sound prerequisite is a core scalar-promotion extension in
+`rewriteMirScalarPlace` (`src/compiler/mir.cpp`) with two inseparable parts.
+First, construct block parameters and matching edge arguments for one
+reducible, single-latch loop at a time. Second, narrowly admit a
+failure-sensitive body when the promoted place is a non-owning trivial scalar
+that is absent from invoke operands/results, cleanup metadata, loans, drop
+obligations, aliases, and failure-path loads, and whose instructions meet the
+existing simple-load/write and trivial-ownership filters. Carry the scalar
+value through both invoke edges wherever a downstream load requires it without
+changing the invoke, failure origin, failure edge, cleanup order, ownership
+event, or checked operation. Keep rejecting all other failure-sensitive,
+cleanup-sensitive, and non-trivial cases. Verify the candidate body, rebuild
+value uses, retain stable provenance, and add positive and near-miss coverage
+for multiple latches, irreducible control flow, failure-path uses, calls
+touching the place, cleanup, checked arithmetic, and mutation barriers.
+
+This prerequisite needs no MIR representation change; existing block
+parameters and edge arguments are sufficient. It does require a change in the
+core MIR implementation currently owned by the MIR campaign, so an optimizer
+pass must not duplicate it. After that prerequisite lands, rerun the source-MIR
+induction census and the fixed-array workload. Implement O-MIR-08 only if a
+replayable loop fact reaches real source MIR and a representative workload
+shows the required runtime value after native optimization. The safety client
+must then consume only loop, dominance, alias, effect, and fixed-array facts,
+record near misses, invalidate safety analysis after edits, replay coherently,
+use `MirProgramEditor`, preserve O0 identity and all checked failure behavior,
+and remain backend-neutral.
+
 ### Milestone 6: interprocedural optimization
 
 Status: effect-summary foundation complete; transforms deferred.
