@@ -79,10 +79,14 @@ equivalence gates pass; it does not preserve two selectable readers.
 
 Bounded C17 surface read today: `struct`/`union` definitions and forward
 declarations (including `typedef struct { ... } Name;` and implicit forward
-references from pointer uses), `enum` definitions with literal or
-previous+1 values, object and function-pointer `typedef`s, and function
-prototypes (named or unnamed parameters, `void` lists, `...` recorded as
-variadic, multi-level pointers and `const` qualifiers parsed faithfully).
+references from pointer uses), fields with pointer declarators and one or
+more concrete array extents (nested `Array` model nodes, outermost first),
+`enum` definitions with literal or previous+1 values including bare
+anonymous enums (an `Enum` declaration with an empty name), object and
+function-pointer `typedef`s, and function prototypes (named or unnamed
+parameters, `void` lists, `...` recorded as variadic, multi-level pointers
+and `const` qualifiers parsed faithfully, `restrict` spellings consumed as
+ignorable qualifiers because they never change the caller's contract).
 `<stdint.h>`/`<stddef.h>` names resolve through a `CTargetProfile`. The CLI
 selects LP64 for supported macOS/Linux targets and LLP64 for supported Windows
 targets, either from the host or an explicit target triple. This is the
@@ -112,13 +116,21 @@ methods, overloads) lands without touching the reader. Two passes:
    disappearing, so every pointer-based API through it stays importable.
    Only by-value uses of a degraded record skip.
 2. Entity mapping. Functions, enums (alias to `int32_t` plus `constexpr`
-   enumerators), object typedefs, and callback typedefs map through one
+   enumerators; a bare anonymous enum contributes constants only), object
+   typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
    fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
    admitted pointees, `const char*` as `c_string`, by-value bindable
    records, named callback shapes, `const char**` as `c_string*`, and one exact
    `OpaqueHandle**` direct function-parameter form. The latter is position
    aware: callback shapes, fields, aliases, and returns do not inherit it.
+   Record-field positions are equally position aware: `c_string`, nested
+   pointers, by-value record arrays, and `void` pointer arrays have no GTI
+   field representation, so a record using one degrades to an opaque handle
+   with the reason recorded instead of emitting source the frontend rejects.
+   Fields otherwise cover the frontend's full admitted set, including
+   callback aliases and fixed arrays with multiple extents or pointer,
+   callback, and scalar elements.
    Everything else — variadics, plain `char`/`bool`, other multi-level
    pointers, native variables, reserved or GTI-invalid identifiers — becomes a
    `SkippedItem{origin, name, reason}`.

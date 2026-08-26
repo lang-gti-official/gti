@@ -27,15 +27,23 @@ void writeItem(const BindingItem &item, std::string_view indent,
     }
     out << indent << "};\n\n";
     return;
-  case BindingItemKind::Enum:
-    out << indent << "using " << item.name << " = int32_t;\n";
+  case BindingItemKind::Enum: {
+    // An anonymous C enum contributes only its constants; there is no type
+    // name to alias.
+    const bool anonymous = item.name.empty();
+    if (!anonymous) {
+      out << indent << "using " << item.name << " = int32_t;\n";
+    }
+    const std::string_view constantType =
+        anonymous ? std::string_view("int32_t") : std::string_view(item.name);
     for (const BindingConstant &constant : item.constants) {
-      out << indent << "constexpr " << item.name << ' ' << constant.name
+      out << indent << "constexpr " << constantType << ' ' << constant.name
           << " = " << (constant.value < 0 ? "int32_t(" : "") << constant.value
           << (constant.value < 0 ? ")" : "") << ";\n";
     }
     out << '\n';
     return;
+  }
   case BindingItemKind::Alias:
     out << indent << "using " << item.name << " = " << item.aliasSpelling
         << ";\n\n";
