@@ -9,6 +9,23 @@ import sys
 import tempfile
 
 
+DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "OBJC_INCLUDE_PATH",
+    "LIBRARY_PATH",
+    "COMPILER_PATH",
+    "GCC_EXEC_PREFIX",
+    "SDKROOT",
+    "DEVELOPER_DIR",
+    "LD_LIBRARY_PATH",
+    "DYLD_LIBRARY_PATH",
+    "INCLUDE",
+    "LIB",
+)
+
+
 def run(arguments, expected=0, cwd=None, env=None):
     result = subprocess.run(
         arguments, cwd=cwd, env=env, text=True, capture_output=True, check=False
@@ -63,6 +80,13 @@ def main():
     if resolved_gti is None:
         raise AssertionError(f"could not resolve GTI executable: {sys.argv[1]}")
     gti = str(resolved_gti)
+    # Cache checks need a deterministic environment. Some hosted Python
+    # launchers inject SDK/include/library search paths before this script
+    # starts; the driver correctly treats those mutable roots as a cache
+    # bypass. Explicit environment-bypass coverage below adds CPATH back for
+    # the command that owns that behavior.
+    for variable in DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT:
+        os.environ.pop(variable, None)
     scaffold_source = (
         "#include <std/string>\n"
         "#include <std/vector>\n"
@@ -368,7 +392,7 @@ def main():
         assert generated.read_bytes() == direct_cpp.read_bytes()
 
         cached_build = run([gti, "build", "--verbose"], cwd=project)
-        assert "gti: cache hit " in cached_build.stderr
+        assert "gti: cache hit " in cached_build.stderr, cached_build.stderr
         assert not any(
             line.startswith("+ ") for line in cached_build.stderr.splitlines()
         )

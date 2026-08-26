@@ -585,7 +585,8 @@ private:
         return result;
       }
       schedule.extents.push_back(leaf.arrayLength);
-      leaf = leaf.arguments.front();
+      SemanticType element = leaf.arguments.front();
+      leaf = std::move(element);
     }
     schedule.leafType = leaf;
     if (leaf.kind == SemanticType::Class) {

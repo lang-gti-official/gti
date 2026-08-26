@@ -334,9 +334,21 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
                 "params": {"id": 13},
             }
         )
-        canceled = session.receive(lambda message: message.get("id") == 13)
+        cancellation_response = session.receive(
+            lambda message: message.get("id") == 13
+        )
         timings["cancellation"] = elapsed_ms(start)
-        assert canceled.get("error", {}).get("code") == -32800, canceled
+        cancellation_error = cancellation_response.get("error")
+        if cancellation_error is not None:
+            assert cancellation_error.get("code") == -32800, cancellation_response
+        else:
+            # Cancellation is advisory: a fast worker may publish the completed
+            # request before the protocol loop observes $/cancelRequest.
+            cancellation_labels = {
+                item["label"]
+                for item in cancellation_response.get("result", {}).get("items", [])
+            }
+            assert "benchmark_helper" in cancellation_labels, cancellation_response
 
         start = time.perf_counter_ns()
         final_version = 6

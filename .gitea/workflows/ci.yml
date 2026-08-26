@@ -103,7 +103,7 @@ jobs:
             fi
           fi
 
-      - name: Install LLVM 18
+      - name: Install Linux build dependencies and LLVM 18
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -112,7 +112,8 @@ jobs:
             apt=(sudo apt-get)
           fi
           "${apt[@]}" update
-          "${apt[@]}" install --no-install-recommends llvm-18-dev
+          "${apt[@]}" install -y --no-install-recommends \
+            build-essential cmake llvm-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
       - name: Install LLVM 22
@@ -183,7 +184,7 @@ jobs:
             fi
           fi
 
-      - name: Install LLVM 18 and Clang
+      - name: Install Linux build dependencies, LLVM 18, and Clang
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -192,7 +193,8 @@ jobs:
             apt=(sudo apt-get)
           fi
           "${apt[@]}" update
-          "${apt[@]}" install --no-install-recommends clang llvm-18-dev
+          "${apt[@]}" install -y --no-install-recommends \
+            build-essential clang cmake llvm-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
       - name: Install LLVM 22
