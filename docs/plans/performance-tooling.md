@@ -436,6 +436,82 @@ O3 GTI: [150945333,153679875,150761458,150175292,149793375,149733834,149602459,1
 O3 semantic: [150240708,149801209,149247542,150823625,149560750,150632167,149187666,149076792,150795541,149569334,150260833,149082000,149040875,150374375,149494791,149251334,150366750,149628875,152427042,150156166]
 ```
 
+### O-PERF-01 exact-head closure
+
+The row closed on exact clean source commit
+`52d13d058bf76a7d3f33a82de1334eed03f28b78` with `gti 0.314.0` and
+compiler SHA-256
+`f13587fdd0ee461118b67f0b231e226b5f86a13a8c82bc1a2ff2619b63c7021b`.
+The host, Apple Clang 21 executable, C++23 mode, strict floating-point flags,
+five warmups, twenty seeded interleaved samples, and seed 3108 match the
+O-PERF-00 protocol. Both reports are exact-head and conclusive. Their SHA-256
+values are
+`39557c306cb9f334243ca40df670ac4172859e1801bd9a0ecce7f49dfd240f8f`
+for O2 and
+`f207e8f6426170d82405911466d403864b4930a1ea32e11582fec4e33473c301`
+for O3.
+
+| GTI/native level | GTI median / MAD (ms) | Semantic C++ median (ms) | Idiomatic C++ median (ms) | GTI / idiomatic |
+| --- | ---: | ---: | ---: | ---: |
+| O2 / O2 | 59.838 / 0.203 | 264.786 | 59.414 | 1.007x |
+| O3 / O3 | 59.389 / 0.219 | 264.676 | 59.315 | 1.001x |
+
+The complete-state record remained
+`GTI-BENCH-1 digest:0000000034322aaf work-units:327680000`. The O2
+optimization report has SHA-256
+`e7eb182ae46f3d8793616c8d07f4a7b2c120ffe41fa216cd66aa87d58fda4708`;
+its emitted C++ has SHA-256
+`5e91c93899d38b9a28dfd592887ce01e2fb3d7965e3959a1c9d890325dff8ad9`.
+It records 109 source, 96 emitted, and 13 statically discharged safety
+outcomes. Bounds are 34/31/3, arithmetic overflow is 27/21/6, and the new
+arithmetic-domain family is 4/0/4. In the admitted body, the inner-loop
+multiply, add, remainder, accumulator add, and increment outcomes are all
+discharged, as are its three dynamic fixed-array accesses: five of five hot
+arithmetic outcomes and three of three hot bounds outcomes.
+
+The implementation uses exact remainder and bit-mask interval transfer, one
+joined scalar envelope per non-escaping fixed-array root, and a checked finite
+trip-count threshold for one additive place recurrence. It reuses the shared
+dataflow solver, loop forest, alias/effect facts, controlled editor, typed
+discharges, and independent replay. Dynamic divisors, dynamic loop bounds,
+multiple accumulator writes, alias writes, calls, lifecycle barriers,
+irreducible CFGs, raw/unsafe memory, escapes, and unrepresentable thresholds
+remain conservative. The backend's discharged-remainder helper preserves
+GTI's defined signed-minimum remainder `-1` result instead of emitting C++
+undefined behavior.
+
+Exact-head O3 controls were also conclusive. The comparison below normalizes
+each GTI median to its same-run semantic C++ twin, then compares that ratio to
+the O-PERF-00 ratio so host-frequency movement is not mistaken for a compiler
+regression.
+
+| Control | GTI / semantic now | O-PERF-00 | Relative change |
+| --- | ---: | ---: | ---: |
+| checked scalar chain | 1.0021x | 0.9976x | +0.45% |
+| fixed-array loop proof | 1.0089x | 1.0085x | +0.03% |
+| scalar FP update | 1.0043x | 1.0091x | -0.47% |
+| game update stage | 0.9939x | 0.9998x | -0.59% |
+| checked vector | 2.1695x | 2.1577x | +0.55% |
+
+The exact-head control-report SHA-256 values are, in table order,
+`7c62a5f4841cda2aeead2ddff5df3b794cfa11c21dae49d96435035848368656`,
+`a5eaef999e3882199f8d8dea6197393f3a612b063ffcbf391a02da88c55e8a1d`,
+`8b6451ff4bf7ae75780fe92020fbba74095194373aaf1bf8f8876be14c91b0c3`,
+`33c5ccad1d7087ed1635edd62828ba370ce584d6a27500340ffc425075c27794`,
+and `da41a2282e3a1ee2277033da2e6aa2ba050e496c324a9445234bbafaf8a9876c`.
+No control regressed by the 5% row threshold.
+
+Canonical fixed-array-overflow samples, in nanoseconds:
+
+```text
+O2 GTI: [59415375,59844208,60242875,59835542,60405167,59988917,59693292,60805625,59633750,59635250,59393417,59839750,59685292,59522958,60017708,59712875,60574458,59847500,59564750,60286667]
+O2 semantic: [264257500,264374541,264316042,264492375,265473125,265756334,264442667,264935709,264126416,265097250,265067792,264624458,264681083,265005833,264891292,264373667,265398708,264564542,265453375,265548084]
+O2 idiomatic: [59086791,59310167,59155083,60258875,59439458,59462458,59107250,59156625,59253709,59663667,59388375,59908125,59679791,59586334,59236459,59222625,59206459,59622333,59941500,60082167]
+O3 GTI: [59433709,59479625,59723250,59500334,59840250,59745583,59117375,59576541,59768209,59055333,59127625,59266750,59303500,59178000,59636833,59161291,59528500,59344000,59244041,59085416]
+O3 semantic: [265373959,265354709,264913292,264968666,264491166,264292417,264654459,265089333,264670833,265182500,264343917,264815875,263945125,264537041,265302125,264507250,264600000,264681750,264776458,264097167]
+O3 idiomatic: [59213375,60271459,59205625,59926458,59315833,58850167,59052416,59119041,59258166,59458292,59405083,59361208,59544834,59115334,59054209,58961584,59789458,59536208,59672667,59313750]
+```
+
 ### Independent reproduction of PR #164
 
 The reproduction used compiler source `4ceaca7`, `gti 0.312.9` with SHA-256

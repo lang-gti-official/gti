@@ -58,7 +58,8 @@ and cleanup:
 1. `sparse-conditional-constants`;
 2. `discharge-bounds-checks`;
 3. `discharge-storage-state-checks`; and
-4. `discharge-arithmetic-overflow-checks`.
+4. `discharge-arithmetic-overflow-checks`; and
+5. `discharge-arithmetic-domain-checks`.
 
 Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
@@ -102,26 +103,52 @@ synchronization.
 `analyzeMirSafetyChecks` is the canonical body-local abstract interpreter for
 the first check-elimination slice. It propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
-tracks fixed-array extents, and tracks exact initialized slots in private
-sparse storage. It is a client of the shared deterministic monotone
-forward-dataflow solver; its existing typed lattice, join, and bounded widening
-remain safety-analysis policy. Unknown or opaque calls, raw/unsafe memory
-effects, and other unclassified mutation invalidate mutable facts instead of
-being guessed through. Every canonical normal edge participates, including a
-switch default edge; omitted infeasible branch edges retain their terminator
-slot identity when they later become executable.
+tracks fixed-array extents and one scalar element envelope per non-escaping
+fixed-array root, and tracks exact initialized slots in private sparse storage.
+It is a client of the shared deterministic monotone forward-dataflow solver;
+its typed lattice, join, and bounded widening remain safety-analysis policy.
+Unknown or opaque calls, raw/unsafe memory effects, escaping roots, aliasing
+writes, lifetime changes, and other unclassified mutation invalidate mutable
+facts instead of being guessed through. Every canonical normal edge
+participates, including a switch default edge; omitted infeasible branch edges
+retain their terminator slot identity when they later become executable.
+
+Exact nonzero integer remainder and bitwise-and with one exact nonnegative mask
+have dedicated interval transfer. Remainder contributes a result-domain
+envelope independent of the changing dividend; the mask contributes
+`[0, mask]`. Dynamic fixed-array writes join their scalar value into the root
+envelope and never create per-element truth.
+
+For one bounded loop-carried accumulator family, safety analysis first solves
+the ordinary lattice, then derives a threshold from the existing reducible
+natural-loop forest and alias/effect facts. Every containing loop must have one
+literal initialization, one positive literal step, one latch, and a finite
+literal upper bound. The accumulator must have one dominating literal
+initialization and one additive write, cannot escape, and cannot share its loop
+with calls, raw/unsafe memory, synchronization, user code, unknown memory
+effects, or another aliasing write. The product of the containing trip-count
+upper bounds and the already-proved per-update interval forms a checked GTI
+integer threshold. A second run of the same solver widens to that threshold;
+ordinary branch refinement supplies the bounded edge narrowing needed by the
+client. Irreducible CFGs and arithmetic used to derive an unrepresentable
+threshold fail closed. This is not a second solver, general recurrence engine,
+or symbolic loop optimizer.
 
 The admitted operations are deliberately narrow:
 
-- fixed-array scalar reads whose complete index interval is within the known
-  extent;
+- fixed-array scalar reads and writes whose complete index interval is within
+  the known extent;
 - private sparse-storage reads and mutable reads whose exact index is both in
   capacity and definitely initialized by a successful construct not invalidated
   by a destroy or mutation barrier; and
 - checked integer add, subtract, multiply, and unary negate whose complete
-  operand intervals prove the result remains in the declared GTI domain.
+  operand intervals prove the result remains in the declared GTI domain; and
+- integer remainder whose divisor is an exact nonzero value. The proof removes
+  only the zero-divisor outcome; the C++ backend still uses a GTI-owned helper
+  so signed-minimum remainder `-1` retains GTI's defined zero result instead of
+  invoking C++ undefined behavior.
 
-Array writes and borrows, prefix-storage operations, division, remainder,
+Array borrows, prefix-storage operations, division, dynamic-divisor remainder,
 shifts, conversions, cross-call range facts, and unproved dynamic indices
 remain checked. Place alias facts refine mutable safety state: duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves

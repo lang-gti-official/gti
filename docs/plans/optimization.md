@@ -48,19 +48,16 @@ is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
 Performance-priority update (2026-08-26): `O-PERF-00` closed on exact clean
-commit `a2bd29dc`; `O-PERF-01` is active. The exact-main audit selected the
-checked-vector runtime gap, rather than the retained fixed-array bounds checks,
-as the performance-delivery client. The fixed-array bounds workload was within
-0.33% of both comparison variants and a direct-access proxy changed its median
-by -0.16% with identical hot-function assembly. The admitted complete-state
-fixed-array overflow workload measured 283.568 ms in GTI versus 60.253 ms in
-idiomatic C++; the runner's strict three-helper successful-path proxy measured
-60.377 ms. The scaled checked vector measured 1235.735 ms in GTI versus 57.625
-ms in idiomatic C++, while the same strict proxy measured 83.189 ms. Those
-proxies are explicitly non-semantic upper bounds, but they establish checked
-arithmetic side exits as the first measured cause. Fixed-native O0/O1/O2/O3
-control runs produced byte-identical native-O3 executables and medians within
-1.2%, so native optimization is not being misattributed to GTI passes. Exact
+commit `a2bd29dc`, and `O-PERF-01` closed on exact clean commit `52d13d05`.
+The fixed-array bounds control remained a measured no-op. The admitted
+complete-state fixed-array overflow workload originally measured 283.568 ms in
+GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
+alias-safe fixed-array content envelopes, and finite loop-carried accumulator
+thresholds now discharge all five hot arithmetic outcomes and all three hot
+bounds outcomes. The clean implementation measured 59.838 versus 59.414 ms at
+O2 and 59.389 versus 59.315 ms at O3. The five campaign controls changed by at
+most 0.6% relative to their semantic C++ twins. `O-PERF-02` is now the sole
+active row and owns the checked-vector closed-call/container client. Exact
 report identities, raw samples, profiles, MIR/report counters, and
 disassembly hashes live in
 [`performance-tooling.md`](performance-tooling.md).
