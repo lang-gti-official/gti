@@ -359,12 +359,9 @@ std::string requestIdKey(const JsonValue *id) {
   return llvm::formatv("{0}", *id).str();
 }
 
-bool supportsHoverFormat(const JsonValue *params, std::string_view format) {
-  const JsonValue *contentFormats = member(
-      member(member(member(params, "capabilities"), "textDocument"), "hover"),
-      "contentFormat");
+bool formatListContains(const JsonValue *formatList, std::string_view format) {
   const JsonArray *formats =
-      contentFormats != nullptr ? contentFormats->getAsArray() : nullptr;
+      formatList != nullptr ? formatList->getAsArray() : nullptr;
   if (formats == nullptr) {
     return false;
   }
@@ -375,6 +372,34 @@ bool supportsHoverFormat(const JsonValue *params, std::string_view format) {
     }
   }
   return false;
+}
+
+bool supportsHoverFormat(const JsonValue *params, std::string_view format) {
+  return formatListContains(
+      member(member(member(member(params, "capabilities"), "textDocument"),
+                    "hover"),
+             "contentFormat"),
+      format);
+}
+
+bool supportsCompletionDocumentationMarkdown(const JsonValue *params) {
+  return formatListContains(
+      member(
+          member(member(member(member(params, "capabilities"), "textDocument"),
+                        "completion"),
+                 "completionItem"),
+          "documentationFormat"),
+      "markdown");
+}
+
+bool supportsSignatureDocumentationMarkdown(const JsonValue *params) {
+  return formatListContains(
+      member(
+          member(member(member(member(params, "capabilities"), "textDocument"),
+                        "signatureHelp"),
+                 "signatureInformation"),
+          "documentationFormat"),
+      "markdown");
 }
 
 bool supportsCompletionSnippets(const JsonValue *params) {
@@ -1305,8 +1330,17 @@ int completionItemKind(lang::CompletionCandidateKind kind) {
   return 6;
 }
 
+// Retained `///` documentation as LSP MarkupContent. The value is the
+// compiler-owned Markdown either way; the kind follows the client's declared
+// documentationFormat support, mirroring hover's contentFormat handling.
+JsonValue documentationJson(const std::string &markdown, bool markdownSupport) {
+  return JsonObject{{"kind", markdownSupport ? "markdown" : "plaintext"},
+                    {"value", markdown}};
+}
+
 JsonValue completionListJson(const lang::CompletionResult &completion,
-                             std::string_view source, bool snippetSupport) {
+                             std::string_view source, bool snippetSupport,
+                             bool markdownDocumentation) {
   JsonArray items;
   items.reserve(completion.candidates.size());
   for (const lang::CompletionCandidate &candidate : completion.candidates) {
@@ -1316,6 +1350,10 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
                     {"sortText", candidate.sortText}};
     if (!candidate.detail.empty()) {
       item["detail"] = candidate.detail;
+    }
+    if (candidate.documentationMarkdown) {
+      item["documentation"] = documentationJson(
+          *candidate.documentationMarkdown, markdownDocumentation);
     }
 
     const bool useSnippet = snippetSupport && candidate.snippet.has_value();
@@ -1438,6 +1476,7 @@ struct CompletionRequest {
   std::unordered_map<std::string, std::string> sourceOverrides;
   lang::lsp::FrontendSourceSnapshot frontendSources;
   bool snippetSupport = false;
+  bool markdownDocumentation = false;
 };
 
 enum class SemanticRequestKind {
@@ -1601,6 +1640,10 @@ private:
 
   JsonValue initializeResult(const JsonValue *params) {
     markdownHover = supportsHoverFormat(params, "markdown");
+    markdownCompletionDocumentation =
+        supportsCompletionDocumentationMarkdown(params);
+    markdownSignatureDocumentation =
+        supportsSignatureDocumentationMarkdown(params);
     completionSnippets = supportsCompletionSnippets(params);
     semanticTokenRefreshSupport = supportsSemanticTokenRefresh(params);
     workspaceDocumentChanges = supportsWorkspaceDocumentChanges(params);
@@ -2204,9 +2247,14 @@ private:
     for (const std::string &label : info->parameterLabels) {
       parameters.push_back(JsonObject{{"label", label}});
     }
+    JsonObject signature{{"label", info->label},
+                         {"parameters", std::move(parameters)}};
+    if (info->documentationMarkdown) {
+      signature["documentation"] = documentationJson(
+          *info->documentationMarkdown, markdownSignatureDocumentation);
+    }
     JsonArray signatures;
-    signatures.push_back(JsonObject{{"label", info->label},
-                                    {"parameters", std::move(parameters)}});
+    signatures.push_back(std::move(signature));
     sendJson(response(
         id, JsonObject{{"signatures", std::move(signatures)},
                        {"activeSignature", 0},
@@ -2450,6 +2498,7 @@ private:
         request.source = source;
         request.generation = generation->second;
         request.snippetSupport = completionSnippets;
+        request.markdownDocumentation = markdownCompletionDocumentation;
         request.frontendSources = frontendSnapshots.capture();
         for (const auto &[documentUri, documentSource] : documents) {
           const std::optional<std::filesystem::path> path =
@@ -2464,7 +2513,8 @@ private:
     }
     if (!validRequest) {
       sendJson(
-          response(id, completionListJson({}, source, completionSnippets)));
+          response(id, completionListJson({}, source, completionSnippets,
+                                          markdownCompletionDocumentation)));
       return;
     }
 
@@ -2473,7 +2523,8 @@ private:
         SourcePositionIndex(source).byteOffset(*position);
     if (!filePath || !byteOffset) {
       sendJson(
-          response(id, completionListJson({}, source, completionSnippets)));
+          response(id, completionListJson({}, source, completionSnippets,
+                                          markdownCompletionDocumentation)));
       return;
     }
     request.id = *id;
@@ -2990,9 +3041,10 @@ private:
       } else if (!current) {
         sendJson(errorResponse(request.id, -32801, "Content modified"));
       } else {
-        sendJson(
-            response(request.id, completionListJson(completion, request.source,
-                                                    request.snippetSupport)));
+        sendJson(response(request.id,
+                          completionListJson(completion, request.source,
+                                             request.snippetSupport,
+                                             request.markdownDocumentation)));
       }
       {
         const std::lock_guard lock(stateMutex);
@@ -3472,6 +3524,8 @@ private:
   bool stoppingCompletion = false;
   bool shutdownRequested = false;
   bool markdownHover = false;
+  bool markdownCompletionDocumentation = false;
+  bool markdownSignatureDocumentation = false;
   bool completionSnippets = false;
   bool semanticTokenRefreshSupport = false;
   bool workspaceDocumentChanges = false;

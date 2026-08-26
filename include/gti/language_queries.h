@@ -157,12 +157,14 @@ enum class CompletionCandidateKind {
 };
 
 // One presentable signature for the innermost call containing the query
-// offset: the printed signature label, each parameter's label, and the
-// active argument index derived from the parser-recorded separators.
+// offset: the printed signature label, each parameter's label, the active
+// argument index derived from the parser-recorded separators, and the
+// selected callable's retained `///` documentation when present.
 struct SignatureHelpInfo {
   std::string label;
   std::vector<std::string> parameterLabels;
   std::size_t activeParameter = 0;
+  std::optional<std::string> documentationMarkdown;
 };
 
 struct CompletionCandidate {
@@ -173,6 +175,9 @@ struct CompletionCandidate {
   std::optional<std::string> snippet;
   std::string sortText;
   SourceSpan replacementRange;
+  // The candidate symbol's retained `///` documentation — the same
+  // compiler-owned value hover publishes; never a second comment store.
+  std::optional<std::string> documentationMarkdown;
 };
 
 struct CompletionResult {
