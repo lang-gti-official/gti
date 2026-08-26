@@ -10,8 +10,10 @@ Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
 deterministic MIR printing, pre/post MIR dumps, GTI optimization remarks,
 versioned JSON reports, and exact current safety-operation counts are
-implemented. Compiler pass timing and the broader benchmark harness remain
-independent work.
+implemented. Compiler pass timing and the broader benchmark workload set remain
+independent work. The current harness includes strict schema-1 compatibility,
+schema-2 execution profiles, content-complete GTI/runtime provenance for
+schema-2 builds, and fail-closed exact-head evidence.
 
 This document proposes general performance tooling for the GTI compiler and
 for programs compiled by GTI. It is not tied to CHIP-8 or any other example.
@@ -135,6 +137,10 @@ so that variant's timing is unreliable at this work size. The `gti` and
 `cpp-semantic` medians are well above it, so the 2.20x ratio — the one the
 language is judged on — is sound. Raising `work_units` would make all three
 conclusive.
+
+This historical measurement predates compiler source-head binding and is not
+exact-head evidence. It remains a transparent first baseline rather than being
+rewritten under the newer rule.
 
 Re-measure and update this section when check elimination lands, and when the
 MIR cutover completes. A single point is a baseline, not a trend.
@@ -265,10 +271,16 @@ it is runner configuration, not a GTI project manifest:
 }
 ```
 
-Version 1 accepts only known structured fields. It must not accept shell
-command strings, environment interpolation, setup hooks, or arbitrary output
-paths. Sources must resolve beneath the workload directory, and outputs must
-resolve beneath the selected runner-owned output root.
+Version 1 accepts only known structured fields and exactly one GTI variant for
+the ordinary GTI/C++ comparison. Implemented version 2 retains the same
+top-level fields, permits multiple GTI variants, and adds one required
+`execution_profile` field to every variant. Its value is `single-threaded` or
+`concurrent` for GTI and `null` for C++. This makes same-language execution
+strategies reproducible without admitting arbitrary per-variant compiler
+flags. Neither version accepts shell command strings, environment
+interpolation, setup hooks, or arbitrary output paths. Sources must resolve
+beneath the workload directory, and outputs must resolve beneath the selected
+runner-owned output root.
 
 Measurement policy such as repetitions and warmups belongs to runner arguments,
 not the workload descriptor. Work amount and minimum useful sample duration
@@ -336,9 +348,11 @@ insignificant by workload duration rather than subtracted with an unreliable
 empty-program estimate.
 
 Record the complete argument vectors. Do not parse `--verbose` human output to
-discover compiler facts. A later structured build report may provide resolved
-runtime, compiler, target, and native-command metadata to both this runner and
-project mode.
+discover compiler facts. The implemented direct-build `--build-report` sidecar
+provides the exact loaded source graph, consumed source text, native depfile
+runtime closure, runtime archive, native command, executable identities, and
+build-time compiler source identity. Project-mode exposure and additional
+target metadata remain possible follow-up work.
 
 ### Measurement method
 
@@ -568,7 +582,7 @@ request serialized remarks, and record the native artifact path. Unsupported
 toolchains should report that the feature is unavailable rather than silently
 ignoring it.
 
-Useful future driver options include:
+Useful driver/reporting options include:
 
 ```text
 --emit-assembly <path>
@@ -577,8 +591,10 @@ Useful future driver options include:
 --build-report <path>
 ```
 
-`--build-report` should use structured driver data. It must not parse the
-human-readable `--verbose` stream.
+`--build-report` is implemented for successful direct executable builds. It
+uses structured driver data and never parses the human-readable `--verbose`
+stream. Assembly, retained-temp, optimization-report, and project-mode build
+report surfaces remain future work.
 
 ## Profiling And Source Mapping
 
@@ -675,6 +691,17 @@ Milestone 1 remains in progress. Integer-kernel, fixed-array-scan, and
 method/branch-dispatch workloads still need to exercise the same descriptor and
 runner without workload-specific code. Compiler-, LSP-, and project-driver
 smoke workloads likewise remain part of the milestone exit gate.
+
+The managed-thread schema-2 workload and report-hardening slice is implemented.
+Its 2,800,000 deterministic pixel visits keep the fixed 0.10-second minimum
+conservative; an exploratory fastest result of about 225 ms leaves more than
+twice that floor. Both variants use the concurrent execution profile, and the
+threaded variant shares no mutable state: each owned task validates private
+state before its deterministic join. A 5-warmup, 20-run managed-thread
+campaign from the final clean commit is a publication gate. Its generated
+reports belong under the configured build output and in review evidence rather
+than in source control. Earlier exploratory runs must not be presented as
+exact-head evidence.
 
 - Add `benchmarks/README.md`, versioned descriptors, and
   `scripts/benchmark_compare.py`.

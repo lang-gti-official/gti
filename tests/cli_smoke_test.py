@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
+import os
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +87,200 @@ def main():
         assert "Built" in built.stdout
         assert executable.is_file()
         assert run([str(executable)]).stdout == "hello world\n"
+
+        build_report = root / "build-report.json"
+        build_report.write_text("previous report\n", encoding="utf-8")
+        reported_executable = root / "reported-main"
+        reported = run(
+            [
+                gti,
+                str(source),
+                "--std",
+                "c++20",
+                "--build-report",
+                str(build_report),
+                "-o",
+                str(reported_executable),
+            ]
+        )
+        assert "Build report" in reported.stdout and str(build_report) in reported.stdout
+        sidecar = json.loads(build_report.read_text(encoding="utf-8"))
+        assert sidecar["schema"] == 1
+        producer = sidecar["producer"]
+        producer_file = producer["executable"]
+        assert pathlib.Path(producer_file["canonical_path"]) == pathlib.Path(gti).resolve()
+        assert producer_file["sha256"] == hashlib.sha256(
+            pathlib.Path(gti).read_bytes()
+        ).hexdigest()
+        compiler_build = producer["compiler_build"]
+        assert compiler_build["state"] in {"clean", "dirty", "unavailable"}
+        assert (compiler_build["commit"] is None) == (
+            compiler_build["state"] == "unavailable"
+        )
+        sources = sidecar["sources"]
+        source_materials = {
+            pathlib.Path(unit["material"]["canonical_path"]): unit
+            for unit in sources["units"]
+        }
+        assert source.resolve() in source_materials
+        assert library.resolve() in source_materials
+        assert sources["entry_root"] in {
+            unit["id"] for unit in sources["units"] if unit["entry"]
+        }
+        assert set(sources["compilation_order"]) == {
+            unit["id"] for unit in sources["units"]
+        }
+        assert sources["dependencies"]
+        native = sidecar["native"]
+        invoked_compiler = shutil.which(native["argv"][0]) or native["argv"][0]
+        assert pathlib.Path(invoked_compiler).resolve() == pathlib.Path(
+            native["compiler_executable"]["canonical_path"]
+        )
+        assert "-MD" in native["argv"] and "-MF" in native["argv"]
+        runtime = native["runtime"]
+        assert any(header["kind"] == "runtime" for header in runtime["headers"])
+        assert any(
+            header["kind"] == "compatibility" for header in runtime["headers"]
+        )
+        assert runtime["archive"]["canonical_path"] in native["argv"]
+        assert not list(root.glob(".build-report.gti-stage-*"))
+        run([str(reported_executable)])
+
+        preserved_report = build_report.read_bytes()
+        invalid_report_source = root / "invalid-report-source.gti"
+        invalid_report_source.write_text("int main( {\n", encoding="utf-8")
+        run(
+            [
+                gti,
+                str(invalid_report_source),
+                "--build-report",
+                str(build_report),
+                "-o",
+                str(root / "invalid-report-program"),
+            ],
+            expected=65,
+        )
+        assert build_report.read_bytes() == preserved_report
+        assert not list(root.glob(".build-report.gti-stage-*"))
+
+        library_before_report_collision = library.read_text(encoding="utf-8")
+        report_source_collision = run(
+            [
+                gti,
+                str(source),
+                "--build-report",
+                str(library),
+                "-o",
+                str(root / "report-source-collision"),
+            ],
+            expected=64,
+        )
+        assert "refusing to overwrite loaded source" in report_source_collision.stderr
+        assert library.read_text(encoding="utf-8") == library_before_report_collision
+        report_output_collision = run(
+            [
+                gti,
+                str(source),
+                "--build-report",
+                str(executable),
+                "-o",
+                str(executable),
+            ],
+            expected=64,
+        )
+        assert "must use different output paths" in report_output_collision.stderr
+
+        producer_report_alias = root / "producer-report-hardlink"
+        try:
+            os.link(gti, producer_report_alias)
+        except OSError:
+            pass
+        else:
+            producer_alias_collision = run(
+                [
+                    gti,
+                    str(source),
+                    "--build-report",
+                    str(producer_report_alias),
+                    "-o",
+                    str(root / "producer-alias-program"),
+                ],
+                expected=64,
+            )
+            assert "must not overwrite" in producer_alias_collision.stderr
+            assert producer_report_alias.samefile(gti)
+
+        hardlink_output = root / "hardlink-output-program"
+        hardlink_output.write_text("preserved output\n", encoding="utf-8")
+        output_report_alias = root / "output-report-hardlink"
+        try:
+            os.link(hardlink_output, output_report_alias)
+        except OSError:
+            pass
+        else:
+            output_alias_collision = run(
+                [
+                    gti,
+                    str(source),
+                    "--build-report",
+                    str(output_report_alias),
+                    "-o",
+                    str(hardlink_output),
+                ],
+                expected=64,
+            )
+            assert "must not overwrite" in output_alias_collision.stderr
+            assert output_report_alias.samefile(hardlink_output)
+            assert hardlink_output.read_text(encoding="utf-8") == "preserved output\n"
+
+        generated_alias_output = root / "generated-alias-program"
+        generated_alias_source = pathlib.Path(
+            str(generated_alias_output) + ".gti.cpp"
+        )
+        generated_alias_source.write_text(
+            "preserved generated source\n", encoding="utf-8"
+        )
+        generated_report_alias = root / "generated-report-hardlink"
+        try:
+            os.link(generated_alias_source, generated_report_alias)
+        except OSError:
+            pass
+        else:
+            generated_alias_collision = run(
+                [
+                    gti,
+                    str(source),
+                    "--keep-cpp",
+                    "--build-report",
+                    str(generated_report_alias),
+                    "-o",
+                    str(generated_alias_output),
+                ],
+                expected=64,
+            )
+            assert "must not overwrite" in generated_alias_collision.stderr
+            assert generated_report_alias.samefile(generated_alias_source)
+            assert (
+                generated_alias_source.read_text(encoding="utf-8")
+                == "preserved generated source\n"
+            )
+
+        report_for_emission = run(
+            [
+                gti,
+                str(source),
+                "--emit-cpp",
+                "--build-report",
+                str(root / "invalid-report.json"),
+            ],
+            expected=64,
+        )
+        assert "requires executable output" in report_for_emission.stderr
+        dependency_override = run(
+            [gti, str(source), "-o", str(executable), "--", "-MFother.d"],
+            expected=64,
+        )
+        assert "cannot override" in dependency_override.stderr
 
         redirected_output = root / "redirected-output"
         rejected_output_override = run(
@@ -3466,7 +3663,9 @@ def main():
             run([gti, "bindgen"], 64)
             run([gti, "bindgen", str(root / "missing.h")], 74)
 
-        assert "Usage: gti" in run([gti, "--help"]).stdout
+        help_output = run([gti, "--help"]).stdout
+        assert "Usage: gti" in help_output
+        assert "--build-report <path>" in help_output
         run([gti], 64)
         run([gti, str(source), "--unknown"], 64)
         run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)

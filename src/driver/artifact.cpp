@@ -55,41 +55,41 @@ ArtifactWriteStatus writeArtifact(const std::filesystem::path &path,
                 : ArtifactWriteStatus::WriteFailure;
 }
 
+bool artifactPathsAlias(const std::filesystem::path &left,
+                        const std::filesystem::path &right) {
+  std::error_code leftError;
+  const std::filesystem::path absoluteLeft =
+      std::filesystem::absolute(left, leftError);
+  std::error_code rightError;
+  const std::filesystem::path absoluteRight =
+      std::filesystem::absolute(right, rightError);
+  if (leftError || rightError) {
+    return false;
+  }
+
+  std::error_code equivalentError;
+  if (std::filesystem::equivalent(absoluteLeft, absoluteRight,
+                                  equivalentError)) {
+    return true;
+  }
+
+  leftError.clear();
+  const std::filesystem::path resolvedLeft =
+      std::filesystem::weakly_canonical(absoluteLeft, leftError);
+  rightError.clear();
+  const std::filesystem::path resolvedRight =
+      std::filesystem::weakly_canonical(absoluteRight, rightError);
+  return !leftError && !rightError && resolvedLeft == resolvedRight;
+}
+
 std::optional<std::filesystem::path>
 findLoadedSourceCollision(const std::filesystem::path &artifact,
                           const SourceManager &sources) {
-  std::error_code error;
-  const std::filesystem::path absoluteArtifact =
-      std::filesystem::absolute(artifact, error);
-  if (error) {
-    return std::nullopt;
-  }
-  error.clear();
-  const std::filesystem::path resolvedArtifact =
-      std::filesystem::weakly_canonical(absoluteArtifact, error);
-  if (error) {
-    return std::nullopt;
-  }
-
   std::vector<std::string> names = sources.names();
   std::sort(names.begin(), names.end());
   for (const std::string &name : names) {
     const std::filesystem::path source(name);
-    error.clear();
-    if (std::filesystem::equivalent(absoluteArtifact, source, error)) {
-      return source;
-    }
-
-    error.clear();
-    const std::filesystem::path absoluteSource =
-        std::filesystem::absolute(source, error);
-    if (error) {
-      continue;
-    }
-    error.clear();
-    const std::filesystem::path resolvedSource =
-        std::filesystem::weakly_canonical(absoluteSource, error);
-    if (!error && resolvedArtifact == resolvedSource) {
+    if (artifactPathsAlias(artifact, source)) {
       return source;
     }
   }

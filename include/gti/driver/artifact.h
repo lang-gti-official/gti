@@ -18,6 +18,12 @@ enum class ArtifactWriteStatus {
 [[nodiscard]] ArtifactWriteStatus
 writeArtifact(const std::filesystem::path &path, std::string_view contents);
 
+// True when two path spellings select the same normalized destination or when
+// both existing paths identify the same filesystem object. A missing path is
+// permitted and conflicts only through its normalized spelling.
+[[nodiscard]] bool artifactPathsAlias(const std::filesystem::path &left,
+                                      const std::filesystem::path &right);
+
 [[nodiscard]] std::optional<std::filesystem::path>
 findLoadedSourceCollision(const std::filesystem::path &artifact,
                           const SourceManager &sources);

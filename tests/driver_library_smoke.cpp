@@ -78,8 +78,13 @@ int main() {
   const lang::driver::ExecutableBuildRequest buildRequest(
       compilation, toolchain, "generated.cpp", "program", "c++", {}, false,
       false, false);
+  const lang::driver::CompilerBuildIdentity buildIdentity =
+      lang::driver::currentCompilerBuildIdentity();
   return buildRequest.output() == "program" &&
-                 !buildRequest.keepGeneratedSource()
+                 !buildRequest.keepGeneratedSource() &&
+                 lang::driver::currentBuildProvenanceSchema == 1 &&
+                 !lang::driver::compilerSourceStateName(buildIdentity.state)
+                      .empty()
              ? 0
              : 5;
 }

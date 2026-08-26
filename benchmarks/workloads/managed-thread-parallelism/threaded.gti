@@ -1,0 +1,48 @@
+#include <std/thread>
+#include "kernel.gti"
+
+int main() {
+  auto first_started = std::jthread::start([]() -> void {
+    require_partition(0, worker_count, first_partition_checksum);
+  });
+  auto second_started = std::jthread::start([]() -> void {
+    require_partition(1, worker_count, second_partition_checksum);
+  });
+  auto third_started = std::jthread::start([]() -> void {
+    require_partition(2, worker_count, third_partition_checksum);
+  });
+  auto fourth_started = std::jthread::start([]() -> void {
+    require_partition(3, worker_count, fourth_partition_checksum);
+  });
+
+  if (!first_started.has_value() || !second_started.has_value() ||
+      !third_started.has_value() || !fourth_started.has_value()) {
+    return 1;
+  }
+
+  mut std::jthread first = std::move(first_started).value();
+  mut std::jthread second = std::move(second_started).value();
+  mut std::jthread third = std::move(third_started).value();
+  mut std::jthread fourth = std::move(fourth_started).value();
+  mut uint64_t digest = uint64_t(0);
+
+  auto first_joined = first.join();
+  if (!first_joined.has_value()) { return 2; }
+  digest += first_partition_checksum;
+
+  auto second_joined = second.join();
+  if (!second_joined.has_value()) { return 3; }
+  digest += second_partition_checksum;
+
+  auto third_joined = third.join();
+  if (!third_joined.has_value()) { return 4; }
+  digest += third_partition_checksum;
+
+  auto fourth_joined = fourth.join();
+  if (!fourth_joined.has_value()) { return 5; }
+  digest += fourth_partition_checksum;
+
+  if (digest != expected_checksum) { return 6; }
+  print_benchmark_record(digest);
+  return 0;
+}

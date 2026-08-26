@@ -1,0 +1,150 @@
+#include <std/format>
+
+constexpr int32_t image_width = 1000;
+constexpr int32_t image_height = 700;
+constexpr int32_t maximum_iterations = 600;
+constexpr int32_t worker_count = 4;
+constexpr int32_t repetition_count = 4;
+
+constexpr uint64_t first_partition_checksum = uint64_t(10152834640);
+constexpr uint64_t second_partition_checksum = uint64_t(10172543656);
+constexpr uint64_t third_partition_checksum = uint64_t(10236517964);
+constexpr uint64_t fourth_partition_checksum = uint64_t(10172902632);
+constexpr uint64_t expected_checksum = uint64_t(40734798892);
+
+int32_t escape_iterations(double coordinate_real,
+                          double coordinate_imaginary) {
+  mut double value_real = 0.0d;
+  mut double value_imaginary = 0.0d;
+  mut int32_t iteration = 0;
+
+  while (iteration < maximum_iterations) {
+    double real_squared = value_real * value_real;
+    double imaginary_squared = value_imaginary * value_imaginary;
+    if (real_squared + imaginary_squared > 4.0d) {
+      break;
+    }
+
+    double next_imaginary =
+        2.0d * value_real * value_imaginary + coordinate_imaginary;
+    value_real = real_squared - imaginary_squared + coordinate_real;
+    value_imaginary = next_imaginary;
+    iteration++;
+  }
+
+  return iteration;
+}
+
+uint64_t render_partition(int32_t first_row, int32_t row_stride) {
+  mut uint64_t checksum = uint64_t(0);
+
+  for (mut int32_t pixel_y = first_row; pixel_y < image_height;
+       pixel_y += row_stride) {
+    double coordinate_imaginary =
+        (double(pixel_y) / double(image_height)) * 2.4d - 1.2d;
+
+    for (mut int32_t pixel_x = 0; pixel_x < image_width; pixel_x++) {
+      double coordinate_real =
+          (double(pixel_x) / double(image_width)) * 3.5d - 2.5d;
+      int32_t iterations =
+          escape_iterations(coordinate_real, coordinate_imaginary);
+      uint64_t column_weight =
+          uint64_t((pixel_x % int32_t(251)) + int32_t(1));
+      uint64_t row_tag =
+          uint64_t((pixel_y % int32_t(257)) + int32_t(1));
+      checksum += uint64_t(iterations) * column_weight + row_tag;
+    }
+  }
+
+  return checksum;
+}
+
+uint64_t render_repeated_partition(int32_t first_row, int32_t row_stride) {
+  mut uint64_t checksum = uint64_t(0);
+  for (mut int32_t repetition = 0; repetition < repetition_count;
+       repetition++) {
+    checksum += render_partition(first_row, row_stride);
+  }
+  return checksum;
+}
+
+void require_partition(int32_t first_row, int32_t row_stride,
+                       uint64_t expected_value) {
+  uint64_t checksum = render_repeated_partition(first_row, row_stride);
+  if (checksum != expected_value) {
+    // A bad result must fail inside the worker because the first managed-task
+    // slice deliberately has no result channel or shared mutable state.
+    int32_t zero = 0;
+    int32_t failure = 1 / zero;
+  }
+}
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0):
+    std::print("0");
+    break;
+  case uint64_t(1):
+    std::print("1");
+    break;
+  case uint64_t(2):
+    std::print("2");
+    break;
+  case uint64_t(3):
+    std::print("3");
+    break;
+  case uint64_t(4):
+    std::print("4");
+    break;
+  case uint64_t(5):
+    std::print("5");
+    break;
+  case uint64_t(6):
+    std::print("6");
+    break;
+  case uint64_t(7):
+    std::print("7");
+    break;
+  case uint64_t(8):
+    std::print("8");
+    break;
+  case uint64_t(9):
+    std::print("9");
+    break;
+  case uint64_t(10):
+    std::print("a");
+    break;
+  case uint64_t(11):
+    std::print("b");
+    break;
+  case uint64_t(12):
+    std::print("c");
+    break;
+  case uint64_t(13):
+    std::print("d");
+    break;
+  case uint64_t(14):
+    std::print("e");
+    break;
+  case uint64_t(15):
+    std::print("f");
+    break;
+  default:
+    std::print("?");
+    break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+void print_benchmark_record(uint64_t digest) {
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:2800000");
+}
