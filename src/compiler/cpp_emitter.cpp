@@ -6609,9 +6609,23 @@ mir_checked_array_write_v1(Array &array, std::uint64_t index,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  using Stored = std::remove_cvref_t<decltype(array[0])>;
-  array[static_cast<std::size_t>(index)] =
-      static_cast<Stored>(std::move(value));
+  array[static_cast<std::size_t>(index)] = std::move(value);
+  return mir_failure_success_v1;
+}
+
+struct mir_array_copy_assignment_v1_t {};
+inline constexpr mir_array_copy_assignment_v1_t
+    mir_array_copy_assignment_v1{};
+
+template <typename Array, typename Value>
+inline mir_failure_status_v1 mir_checked_array_write_v1(
+    Array &array, std::uint64_t index, Value &value,
+    mir_array_copy_assignment_v1_t) noexcept {
+  if (index >= std::size(array)) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  array[static_cast<std::size_t>(index)] = value;
   return mir_failure_success_v1;
 }
 

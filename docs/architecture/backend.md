@@ -203,6 +203,21 @@ source into its out result. Multiple uses, a mismatched operand/place type, or
 an absent copy-construction row reject body admission rather than selecting a
 native fallback.
 
+A checked fixed-array whole-element class assignment may likewise erase one
+adjacent staging value, but only for the emitter's existing binding-array,
+binding-field-array, and receiver-field-array element place families. A named
+copy requires one bare-binding `Load(Copy)` source and a copyable destination;
+a fresh construction requires a generated cleanup-free class destructor and
+no value-rooted place, drop obligation, or lifecycle event. Both forms require
+one exact fixed-array bounds origin paired with the assignment's site, the
+same source and destination type, one consumer, adjacency, and mutable access
+through the sibling array storage. The checked-write helper's tagged lvalue
+overload performs copy assignment without constructing a class temporary. Its
+by-value route still stages an explicit move or fresh prvalue before the bounds
+check, then move-assigns without a second materialization. Projected sources,
+unmatched failure metadata, cleanup-owning temporaries, and every other
+projected destination remain outside this fusion vocabulary.
+
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
 MIR, never as a backend analysis result. When all local overflow outcomes for a
