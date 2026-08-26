@@ -42,6 +42,16 @@ jobs:
       - name: Check out GTI
         uses: actions/checkout@v6
 
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Install Ninja
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
       - name: Set up compiler cache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
@@ -49,7 +59,7 @@ jobs:
 
       - name: Configure release build
         run: >-
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
           -DCMAKE_C_COMPILER_LAUNCHER=sccache
@@ -80,6 +90,7 @@ jobs:
           cmake \
             -S "${{ github.workspace }}/tests/installed_library_smoke" \
             -B "${{ runner.temp }}/gti-installed-library-smoke" \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-stage"
           cmake --build \

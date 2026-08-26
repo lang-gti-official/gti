@@ -76,7 +76,11 @@ identifierProblem(std::string_view name, bool fileScope) {
 
 enum class RecordBinding { CAbi, Opaque };
 
-enum class TypeUse { Ordinary, DirectFunctionParameter };
+// GTI's bounded ABI is position-aware: `c_string` crosses only function and
+// callback boundaries, and the `Handle**` out-parameter form exists only as
+// a direct function parameter. `RecordField` marks uses inside a [[c_abi]]
+// record, whose field set admits neither.
+enum class TypeUse { Ordinary, DirectFunctionParameter, RecordField };
 
 struct MappedType {
   bool supported = false;
@@ -278,6 +282,10 @@ private:
       return unsupportedType("the pointee type is invalid");
     }
     if (pointee->kind == NativeTypeKind::Pointer) {
+      if (use == TypeUse::RecordField) {
+        return unsupportedType("a nested pointer has no GTI [[c_abi]] field "
+                               "representation");
+      }
       if (pointer.constPointee) {
         return unsupportedType(
             "a const-qualified inner pointer has no bounded GTI C ABI "
@@ -305,6 +313,11 @@ private:
           "C handle out parameters");
     }
     if (pointee->kind == NativeTypeKind::Char) {
+      if (use == TypeUse::RecordField) {
+        return unsupportedType(
+            "a 'char' pointer field has no GTI [[c_abi]] representation; "
+            "c_string crosses only function and callback boundaries");
+      }
       if (pointer.constPointee) {
         return supportedType("c_string");
       }
@@ -359,6 +372,24 @@ private:
 
   // -- Record classification ------------------------------------------------
 
+  // Walks a (possibly nested) fixed-array field type to its ultimate element,
+  // collecting the extents in declarator order: `int a[2][3]` yields {2, 3}.
+  struct ArrayShape {
+    NativeTypeId elementId = 0;
+    std::vector<std::uint64_t> extents;
+  };
+
+  [[nodiscard]] ArrayShape arrayShape(const NativeType &array) const {
+    ArrayShape shape;
+    const NativeType *node = &array;
+    while (node != nullptr && node->kind == NativeTypeKind::Array) {
+      shape.extents.push_back(node->count);
+      shape.elementId = node->element;
+      node = model_.findType(node->element);
+    }
+    return shape;
+  }
+
   [[nodiscard]] std::optional<std::string>
   fieldProblem(const NativeRecordField &field) const {
     if (const std::optional<std::string> problem =
@@ -370,19 +401,16 @@ private:
       return "field '" + field.name + "' has an invalid type";
     }
     if (type->kind == NativeTypeKind::Array) {
-      const NativeType *element = canonical(type->element);
-      if (element == nullptr ||
-          !(admittedScalar(*element) ||
-            (element->kind == NativeTypeKind::Record &&
-             recordBindings_.count(element->declaration) != 0 &&
-             recordBindings_.at(element->declaration) ==
-                 RecordBinding::CAbi))) {
-        return "array field '" + field.name +
-               "' has an element type outside the bounded surface";
+      // The ultimate element uses the ordinary field set: GTI computes array
+      // layout recursively from admitted element facts (decision 013).
+      const MappedType element =
+          mapType(arrayShape(*type).elementId, false, TypeUse::RecordField);
+      if (!element.supported) {
+        return "array field '" + field.name + "': " + element.reason;
       }
       return std::nullopt;
     }
-    const MappedType mapped = mapType(field.type, false);
+    const MappedType mapped = mapType(field.type, false, TypeUse::RecordField);
     if (!mapped.supported) {
       return "field '" + field.name + "': " + mapped.reason;
     }
@@ -449,13 +477,18 @@ private:
     for (const NativeRecordField &field : declaration.fields) {
       const NativeType *type = model_.findType(field.type);
       if (type->kind == NativeTypeKind::Array) {
-        const MappedType element = mapType(type->element, false);
-        item.fields.push_back(
-            {field.name, element.spelling + " " + field.name + "[" +
-                             std::to_string(type->count) + "]"});
+        const ArrayShape shape = arrayShape(*type);
+        const MappedType element =
+            mapType(shape.elementId, false, TypeUse::RecordField);
+        std::string spelling = element.spelling + " " + field.name;
+        for (const std::uint64_t extent : shape.extents) {
+          spelling += "[" + std::to_string(extent) + "]";
+        }
+        item.fields.push_back({field.name, std::move(spelling)});
         continue;
       }
-      const MappedType mapped = mapType(field.type, false);
+      const MappedType mapped =
+          mapType(field.type, false, TypeUse::RecordField);
       item.fields.push_back({field.name, mapped.spelling + " " + field.name});
     }
     return item;
@@ -465,9 +498,13 @@ private:
     BindingItem item;
     item.name = declaration.name;
     item.origin = declaration.origin;
-    if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, false)) {
-      return skipped(declaration, *problem);
+    // An anonymous enum is a pure constant list: C cannot name it in a later
+    // declaration, and GTI needs only the `constexpr int32_t` constants.
+    if (!declaration.name.empty()) {
+      if (const std::optional<std::string> problem =
+              identifierProblem(declaration.name, false)) {
+        return skipped(declaration, *problem);
+      }
     }
     for (const NativeEnumerator &enumerator : declaration.enumerators) {
       if (const std::optional<std::string> problem =

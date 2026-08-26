@@ -77,6 +77,25 @@ ADMITTED: tuple[AdmittedRecord, ...] = (
         layout=(40, 4),
         offsets=(("buttons", 0), ("axes", 16)),
     ),
+    AdmittedRecord(
+        # By-value record arrays, void-pointer arrays, and multi-extent
+        # record arrays: decision 013's recursive element facts.
+        name="Board",
+        c_fields=(
+            "  uint8_t tag;\n"
+            "  Vec2 cells[3];\n"
+            "  void *scratch[2];\n"
+            "  Vec2 grid[2][2];\n"
+        ),
+        gti_fields=(
+            "  mut uint8_t tag;\n"
+            "  mut Vec2 cells[3];\n"
+            "  mut void* scratch[2];\n"
+            "  mut Vec2 grid[2][2];\n"
+        ),
+        layout=(80, 8),
+        offsets=(("tag", 0), ("cells", 4), ("scratch", 32), ("grid", 48)),
+    ),
 )
 
 

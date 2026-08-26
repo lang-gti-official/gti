@@ -254,6 +254,79 @@ void testTargetMatrix() {
          "the same bounded native-record facts");
 }
 
+void testRecordArrayFieldLayout() {
+  const std::string source = R"(
+[[c_abi]]
+struct Cell {
+  mut float x;
+  mut float y;
+};
+
+[[c_abi]]
+struct Board {
+  mut uint8_t tag;
+  mut Cell cells[3];
+  mut void* scratch[2];
+  mut Cell grid[2][2];
+};
+
+int main() {
+  uint64_t size = sizeof(Board);
+  uint64_t alignment = alignof(Board);
+  return int32_t(size + alignment - 88);
+}
+)";
+  const lang::FrontendResult result =
+      analyze("native-record-array-fields.gti", source);
+  if (!result.canGenerateCode()) {
+    printDiagnostics(result);
+  }
+  expect(result.canGenerateCode() && result.diagnostics.empty(),
+         "record-array, void-pointer-array, and multi-extent record-array "
+         "fields should complete the compiler pipeline");
+  if (!result.canGenerateCode()) {
+    return;
+  }
+  const lang::ClassDecl *boardSyntax = findClass(result.program, "Board");
+  const lang::ClassTypeInfo *board =
+      boardSyntax == nullptr ? nullptr
+                             : result.semantics.findClassType(*boardSyntax);
+  expect(board != nullptr && board->cAbiRecord && board->cAbiLayout &&
+             board->cAbiLayout->sizeBytes == 80 &&
+             board->cAbiLayout->abiAlignmentBytes == 8 &&
+             board->cAbiLayout->fields.size() == 4 &&
+             board->cAbiLayout->fields[0].offsetBytes == 0 &&
+             board->cAbiLayout->fields[1].offsetBytes == 4 &&
+             board->cAbiLayout->fields[2].offsetBytes == 32 &&
+             board->cAbiLayout->fields[3].offsetBytes == 48,
+         "array fields should take element facts from the record layout pass "
+         "and scale by every extent");
+  expect(lang::verifyMirProgram(result.mir).valid(),
+         "record-array field layout metadata should verify in MIR");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
+  expect(artifact.contents.find("static_assert(sizeof(Board) == 80") !=
+                 std::string::npos &&
+             artifact.contents.find("__builtin_offsetof(Board, grid) == 48") !=
+                 std::string::npos &&
+             artifact.contents.find("grid[2][2];") != std::string::npos &&
+             artifact.contents.find("scratch[2];") != std::string::npos,
+         "the backend should emit direct C array declarators and audit the "
+         "frontend layout with native assertions");
+
+  const lang::FrontendResult bareVoid = analyze(
+      "native-record-void-array.gti",
+      "[[c_abi]] struct Bad { mut void slots[4]; }; int main() { return 0; }");
+  const lang::Diagnostic *voidElement = findCode(bareVoid, "GTI-S2015");
+  expect(!bareVoid.canGenerateCode() && voidElement != nullptr &&
+             voidElement->message.find("cannot have type void") !=
+                 std::string::npos,
+         "a bare void array element should stay rejected while void-pointer "
+         "elements are admitted");
+}
+
 void expectNativeRecordFailure(std::string_view name, std::string source,
                                std::string_view messageFragment) {
   const lang::FrontendResult result = analyze(name, std::move(source));
@@ -397,6 +470,10 @@ void testNativeRecordDiagnostics() {
   expectNativeRecordFailure(
       "recursive.gti",
       "[[c_abi]] struct Node { Node next; }; int main() { return 0; }",
+      "recursive by-value");
+  expectNativeRecordFailure(
+      "recursive-array.gti",
+      "[[c_abi]] struct Node { Node next[2]; }; int main() { return 0; }",
       "recursive by-value");
   expectNativeRecordFailure(
       "mixed-policy.gti",
@@ -820,6 +897,7 @@ void testFormatting() {
 int main() {
   testSemanticLayoutAndAbi();
   testTargetMatrix();
+  testRecordArrayFieldLayout();
   testNativeRecordDiagnostics();
   testNativeIdentifierPortability();
   testUnsafeBoundary();
