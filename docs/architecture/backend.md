@@ -185,6 +185,16 @@ number plus `for (;;)`/dispatch `switch`. Native optimization is free to
 recover natural loops from the direct backedges, while retained checked exits
 and call boundaries remain visible consequences of MIR behavior.
 
+A trivially-droppable value whose native representation is not default
+constructible may use a representation-only lifetime slot without acquiring a
+semantic drop obligation. When an exact producer-to-`Initialize` publication
+can execute again through arbitrary verified control flow, the C++ emitter
+ends any prior representation immediately before constructing that same
+canonical destination. This rearming is permitted only by the existing exact
+publication classifier and the proof that no MIR `Drop` governs the slot. It
+does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
+cleanup-owning slot replace or conceal a missing `Drop`.
+
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
 MIR, never as a backend analysis result. When all local overflow outcomes for a
