@@ -299,6 +299,16 @@ failure record when construction fails. The emitter rejects missing,
 duplicated, or mismatched rows; no C++ spelling or containment policy enters
 `LoweredProgram`.
 
+The passive initializer schedule keeps a closed expression vocabulary.
+Transparent `Identity` values preserve one exact staged spelling, `Convert`
+uses the copied target-type row and retains either the unchecked cast or the
+terminally contained checked-conversion edge, and `PayloadConstruct` uses the
+exact copied enum variant and ordered field types. Each form requires its
+producer-before-consumer order, exact single-use chain, matching types, and
+trivial cleanup state. Any operation outside the listed vocabulary still
+rejects body admission; initializer emission never falls back to AST/HIR or
+general C++ expression text.
+
 A failure-form constructor may publish owned fields from its MIR body instead
 of the native C++ member-initializer list when native initialization would
 reorder an earlier operation after a later parameter move. This route requires
