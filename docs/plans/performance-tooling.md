@@ -275,6 +275,76 @@ evidence only; the runtime result is decisive. The next audit must first gain
 a production loop-carried MIR client and then demonstrate a workload whose
 native backend does not already erase the retained check.
 
+## Priority-One Runtime Campaign
+
+The exact-main audit changes the operational priority from adding optimizer
+families to closing a measured runtime gap. `O-PERF-01` owns the first campaign
+and `vector-checked-loop` is its first client. On the recorded reference
+configuration, GTI is 2.18x slower than semantic-equivalent C++ even though the
+fixed-array workload is already effectively at parity. The campaign therefore
+starts at the vector call, representation, and hot-loop boundaries rather than
+at general loop infrastructure.
+
+The comparison variants answer different questions and both gaps remain
+important:
+
+- GTI versus semantic C++ measures lowering and representation overhead that
+  GTI should be able to remove without weakening its language contract;
+- semantic C++ versus idiomatic C++ estimates the current safety and container
+  policy cost. Semantic parity is not permission to declare the remaining
+  cost permanent.
+
+The first campaign uses these acceptance targets on one published stable
+machine, compiler revision, native toolchain, and build configuration:
+
+- reduce median GTI runtime for `vector-checked-loop` by at least 30% from the
+  exact-head campaign baseline and reach at most 1.25x the semantic-C++ median;
+- introduce no conclusive median regression greater than 5% in the
+  fixed-array or managed-thread reference workloads;
+- leave no representative workload more than 2x slower than semantic C++
+  without a profiler-backed explanation and a numbered follow-up;
+- bring the eventual game-style update workload to at most 1.5x
+  semantic-equivalent C++ on the published reference configuration.
+
+These are campaign and systems-readiness gates, not ordinary shared-CI timing
+thresholds. Shared CI continues to enforce descriptors, builds, correctness
+digests, reports, and smoke execution without failing on noisy wall-clock
+samples. Performance gates require stable hardware, raw samples, environment
+metadata, and an explicit baseline update.
+
+Every performance slice follows the same bounded loop:
+
+1. record an exact-head baseline and work counters;
+2. profile the GTI and semantic-C++ binaries and inspect the relevant native
+   code;
+3. test one disposable upper-bound proxy for the suspected cost;
+4. implement the smallest sound compiler, backend, runtime, or source-library
+   change justified by that proxy;
+5. rerun the complete comparison and retain the raw report.
+
+Current native inspection makes two candidates worth testing. The GTI vector
+case retains closed `scale` and `sum` calls that the semantic C++ compiler can
+inline and specialize, and its wrapper plus prefix storage keep separate
+logical-length state live in the hot path. These are hypotheses until profiler
+and proxy results attribute material runtime to them. A forced-inline or
+backend-attribute experiment may diagnose native optimizer behavior, but a
+committed policy must be deterministic, portable across supported native
+toolchains, and must not become GTI semantic authority. A MIR transform must
+retain exact provenance and independent replay. A standard-library
+representation change must preserve public bounds, failure, move, and cleanup
+semantics without public-name compiler magic.
+
+The game-style acceptance workload should be added as a deterministic update
+kernel, not as a rendering demo. It should stage data-oriented scalar/math
+updates over both array-of-structures and structure-of-arrays layouts,
+container traversal and mutation, bounded allocation or pool reuse, static and
+virtual/callable dispatch, and joined task execution as those public APIs are
+available. Input generation and output belong outside the timed region; every
+variant must consume the same event stream and produce the same complete-state
+digest. Report median and tail update time plus logical work units. Add C-FFI
+call overhead as a separate workload so native interoperability cost is not
+hidden inside the combined score.
+
 ## Benchmark Comparison Model
 
 ### Variants
@@ -338,6 +408,9 @@ programs:
 - construction, movement, assignment, and destruction;
 - generic instantiation and calls;
 - string and container operations as those APIs stabilize;
+- data-oriented array-of-structures and structure-of-arrays updates;
+- bounded allocation/pool reuse, joined task execution, and C-FFI call
+  overhead as separate attributable workloads;
 - one or more real-world integration programs.
 
 Small kernels identify the cost of one language rule. Integration workloads
@@ -919,10 +992,15 @@ differential tests establish semantic preservation; representative benchmark
 remeasurement remains required before making performance claims or widening a
 family.
 
+- `O-PERF-01` is the active performance-delivery client. Profile and proxy the
+  checked-vector call and representation boundaries before selecting a
+  transform; do not claim success from pass counts or emitted-code changes
+  that miss the end-to-end gate.
 - The first bounded `O-MIR-08` loop-range client is measured and deferred by
   the exact-main audit above. Reconsider it only after source MIR produces its
-  induction facts and native runtime evidence shows value; continue measuring
-  `O-MIR-09` local-memory clients independently.
+  induction facts and native runtime evidence shows value. `O-MIR-09` remains
+  measured-defer. A bounded `O-MIR-10` closed-call family is the first
+  interprocedural candidate only if the runtime campaign proves it material.
 - Add benchmark coverage for each optimization before implementing it.
 - Report when a check is discharged and the proof that allowed it.
 - Compare GTI against semantic C++ before and after each pass.
