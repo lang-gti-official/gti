@@ -124,13 +124,12 @@ methods, overloads) lands without touching the reader. Two passes:
    records, named callback shapes, `const char**` as `c_string*`, and one exact
    `OpaqueHandle**` direct function-parameter form. The latter is position
    aware: callback shapes, fields, aliases, and returns do not inherit it.
-   Record-field positions are equally position aware: `c_string`, nested
-   pointers, by-value record arrays, and `void` pointer arrays have no GTI
-   field representation, so a record using one degrades to an opaque handle
-   with the reason recorded instead of emitting source the frontend rejects.
-   Fields otherwise cover the frontend's full admitted set, including
-   callback aliases and fixed arrays with multiple extents or pointer,
-   callback, and scalar elements.
+   Record-field positions are equally position aware: `c_string` and nested
+   pointers have no GTI field representation, so a record using one degrades
+   to an opaque handle with the reason recorded instead of emitting source
+   the frontend rejects. Fields otherwise cover the frontend's full admitted
+   set, including callback aliases and fixed arrays with multiple extents or
+   record, pointer, callback, and scalar elements.
    Everything else — variadics, plain `char`/`bool`, other multi-level
    pointers, native variables, reserved or GTI-invalid identifiers — becomes a
    `SkippedItem{origin, name, reason}`.

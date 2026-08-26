@@ -164,12 +164,12 @@ enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
 enum becomes its `constexpr int32_t` constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
 block. Record import covers the documented field set, including callback
-fields and fixed arrays with multiple extents or pointer, callback, and
-scalar elements; `restrict` qualifiers are read and dropped because they do
-not change the caller's contract. Field positions the record surface rejects
-— `char` pointers, nested pointers, by-value record arrays, `void` pointer
-arrays — degrade the record to an opaque handle with the reason recorded, so
-generated source always satisfies this contract's own validation. Everything
+fields and fixed arrays with multiple extents or record, pointer, callback,
+and scalar elements; `restrict` qualifiers are read and dropped because they
+do not change the caller's contract. Field positions the record surface
+rejects — `char` pointers and nested pointers — degrade the record to an
+opaque handle with the reason recorded, so generated source always satisfies
+this contract's own validation. Everything
 the bounded surface cannot express is reported with its
 reason and listed in the generated file's skip report rather than silently
 dropped. Native preprocessor errors retain Clang's source diagnostics. Notes
@@ -360,11 +360,10 @@ zero-length arrays, symbolic types, and cleanup-owning values are rejected.
 `c_string` is a function- and callback-boundary type, not a field type.
 Native fixed-array fields emit direct C array declarators in both header
 branches and generated C++, never `std::array`; their ordinary GTI indexing
-remains bounds checked. Multiple concrete extents nest in declarator order.
-Two array-element cases are not implemented yet and are rejected today:
-the layout pass does not supply by-value record array elements, and a
-`void` pointer is not accepted as an array element. Empty records and
-recursive by-value records are rejected; a one-level pointer is the bounded
+remains bounds checked. Multiple concrete extents nest in declarator order,
+and an array element takes its layout facts recursively, including by-value
+record elements. Empty records and recursive by-value records — directly or
+through an array element — are rejected; a one-level pointer is the bounded
 linked/opaque edge.
 
 Fields remain in source order. Starting at offset zero, semantics rounds each
