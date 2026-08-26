@@ -650,6 +650,14 @@ if(BUILD_TESTING)
   target_link_libraries("gti_pack_fold_syntax_tests" PRIVATE gti_compiler)
   add_test(NAME pack_fold_syntax COMMAND gti_pack_fold_syntax_tests)
 
+  add_executable("gti_parser_conditional_recovery_tests"
+                 "tests/parser_conditional_recovery_tests.cpp")
+  target_link_libraries("gti_parser_conditional_recovery_tests"
+                        PRIVATE gti_compiler)
+  add_test(NAME parser_conditional_recovery
+           COMMAND gti_parser_conditional_recovery_tests)
+  set_tests_properties(parser_conditional_recovery PROPERTIES TIMEOUT 10)
+
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
