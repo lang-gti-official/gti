@@ -43,6 +43,16 @@ sites agree across entry files, included sources, and dirty dependency
 overlays. The protocol adapter places the documentation after the canonical GTI
 signature and does not search source text for comments.
 
+Completion and signature help publish the same symbol-attached value.
+Completion candidates carry each resolved symbol's documentation — a function
+overload resolves its own declaration's symbol rather than the shared
+overload-set scope entry — and signature help attaches the selected
+callable's documentation through the call-site occurrence hover already uses.
+The protocol adapter emits LSP `MarkupContent`, following the client's
+declared `documentationFormat` for completion items and signature information
+exactly as hover follows `contentFormat`; an undocumented symbol omits the
+field. No consumer parses comments or stores documentation independently.
+
 Compile-time conditions retain loader-resolved inactive token spans in each
 `SourceUnit`. Semantic tokens apply the `inactiveCode` modifier to those spans;
 the loader also retains the exact `defined` operator and configuration-flag
@@ -424,9 +434,9 @@ meaning from punctuation.
 
 ## Current Limits
 
-- Retained documentation is currently consumed by hover. Completion,
-  signature help, and generated API reference output do not yet publish the
-  same compiler-owned Markdown.
+- Retained documentation is consumed by hover, completion, and signature
+  help. Generated API reference output does not yet publish the same
+  compiler-owned Markdown.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
   function-local names: identities visible outside the entry document's
