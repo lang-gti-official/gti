@@ -28,6 +28,9 @@ EXPECTED_RECORDS = {
     "optimizer-level-control": (
         "GTI-BENCH-1 digest:000000025efeed0b work-units:700000"
     ),
+    "opaque-checked-update": (
+        "GTI-BENCH-1 digest:00000000000f3fec work-units:200000000"
+    ),
     "scalar-fp-update": (
         "GTI-BENCH-1 digest:00000000034ee502 work-units:60000000"
     ),

@@ -123,16 +123,19 @@ For one bounded loop-carried accumulator family, safety analysis first solves
 the ordinary lattice, then derives a threshold from the existing reducible
 natural-loop forest and alias/effect facts. Every containing loop must have one
 literal initialization, one positive literal step, one latch, and a finite
-literal upper bound. The accumulator must have one dominating literal
-initialization and one additive write, cannot escape, and cannot share its loop
-with calls, raw/unsafe memory, synchronization, user code, unknown memory
-effects, or another aliasing write. The product of the containing trip-count
-upper bounds and the already-proved per-update interval forms a checked GTI
-integer threshold. A second run of the same solver widens to that threshold;
-ordinary branch refinement supplies the bounded edge narrowing needed by the
-client. Irreducible CFGs and arithmetic used to derive an unrepresentable
-threshold fail closed. This is not a second solver, general recurrence engine,
-or symbolic loop optimizer.
+nonnegative upper-bound interval proved at its dominating exit comparison. The
+comparison may follow exact source-defined calls only when their signatures,
+effects, and closed summaries prove that they cannot mutate or escape the
+counter; native, virtual, raw, unsafe, synchronizing, allocating, or otherwise
+opaque calls remain barriers. The accumulator must have one dominating literal
+initialization and one additive write and cannot escape or have another
+may-alias write. The product of the containing maximum trip counts and the
+already-proved per-update interval forms a checked GTI integer threshold. A
+second run of the same solver widens to that threshold; ordinary branch
+refinement supplies the bounded edge narrowing needed by the client.
+Irreducible CFGs and arithmetic used to derive an unrepresentable threshold
+fail closed. This is not a second solver, general recurrence engine, symbolic
+loop optimizer, or call transform.
 
 The admitted operations are deliberately narrow:
 
@@ -159,8 +162,12 @@ fields, private prefix-storage capacity/length/content, and structurally
 admitted indexed-container element envelopes through concrete source-defined
 static calls and constructors. Indexed elements are admitted only when every
 relevant `operator[]` body is verified to return the exact receiver-owned
-prefix-storage element loan; public names never participate. Contexts join
-monotonically, use fixed global and per-body update budgets, and contribute
+prefix-storage element loan through one matching field path; public names never
+participate. A scalar fact returned by reference crosses the call boundary only
+when the returned loan identifies one exact prefix-read producer with the same
+source and access. Prefix length is always constrained to the storage invariant
+`0 <= length <= capacity`; contradictory abstract facts fail closed. Contexts
+join monotonically, use fixed global and per-body update budgets, and contribute
 proofs only after convergence. Recursive SCCs, native or virtual calls, owning
 argument transfers, synchronization, raw/unsafe memory, unsupported cleanup,
 open call families, and conflicting facts remain conservative.

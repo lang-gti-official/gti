@@ -197,6 +197,52 @@ int64_t recurrence_call_barrier() {
   return total;
 }
 
+uint64_t exact_loop_bound(uint64_t count) { return count; }
+
+void observe_recurrence(int64_t value) {}
+
+void replace_recurrence(mut int64_t& value, int64_t replacement) {
+  value = replacement;
+}
+
+int64_t contextual_bound_recurrence() {
+  uint64_t count = 100;
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < exact_loop_bound(count); index++) {
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+int64_t bounded_interval_recurrence(uint64_t count) {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < (count & uint64_t(127)); index++) {
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+int64_t exact_observer_recurrence() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < exact_loop_bound(uint64_t(100));
+       index++) {
+    observe_recurrence(total);
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+int64_t mutating_closed_call_recurrence() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < exact_loop_bound(uint64_t(100));
+       index++) {
+    int64_t element = int64_t(index & uint64_t(255));
+    replace_recurrence(total, element);
+    total += element;
+  }
+  return total;
+}
+
 int32_t fixed_array_envelope(int32_t value) {
   mut int32_t values[4] = {};
   for (mut uint64_t index = 0; index < 4; index++) {
@@ -230,6 +276,10 @@ int32_t main() {
   if (masked_add(511) != 256) { return 4; }
   if (bounded_recurrence() != 4950) { return 5; }
   if (fixed_array_envelope(511) != 257) { return 6; }
+  if (contextual_bound_recurrence() != 4950) { return 7; }
+  if (exact_observer_recurrence() != 4950) { return 8; }
+  if (mutating_closed_call_recurrence() != 198) { return 9; }
+  if (bounded_interval_recurrence(uint64_t(100)) != 4950) { return 10; }
   return 0;
 }
 )";
@@ -303,11 +353,26 @@ int32_t main() {
   const std::size_t callRecurrence =
       functionDischarges(frontend, o2, "recurrence_call_barrier",
                          lang::MirSafetyCheckFamily::ArithmeticOverflow);
-  expect(boundedRecurrence == dynamicRecurrence + 1 &&
-             boundedRecurrence == repeatedRecurrence + 1 &&
-             boundedRecurrence == callRecurrence + 1,
-         "only a finite single-write recurrence without an opaque native "
-         "call should gain the accumulator overflow proof");
+  const std::size_t contextualRecurrence =
+      functionDischarges(frontend, o2, "contextual_bound_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t boundedIntervalRecurrence =
+      functionDischarges(frontend, o2, "bounded_interval_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t observerRecurrence =
+      functionDischarges(frontend, o2, "exact_observer_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t mutatingCallRecurrence =
+      functionDischarges(frontend, o2, "mutating_closed_call_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  expect(boundedRecurrence == 2 && dynamicRecurrence == 0 &&
+             repeatedRecurrence == 1 && callRecurrence == 0 &&
+             contextualRecurrence == 2 && boundedIntervalRecurrence == 2 &&
+             observerRecurrence == 2 && mutatingCallRecurrence == 0,
+         "finite exact or interval bounds and unrelated exact calls should "
+         "prove the counter and accumulator while dynamic bounds, repeated "
+         "writes, native calls, and exact calls mutating the accumulator "
+         "remain checked");
 
   const std::size_t arrayEnvelope =
       functionDischarges(frontend, o2, "fixed_array_envelope",
@@ -613,12 +678,107 @@ int32_t index_write_after_check(mut uint64_t index, uint64_t replacement) {
   }
 }
 
+void testClosedIndexedElementEnvelope() {
+  const std::string source = R"(
+class CheckedBuffer {
+  mut gti_internal::prefix_storage<int32_t> data;
+
+public:
+  CheckedBuffer()
+      : data(gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4))) {
+    gti_internal::prefix_storage_append(this.data, int32_t(1));
+    gti_internal::prefix_storage_append(this.data, int32_t(2));
+    gti_internal::prefix_storage_append(this.data, int32_t(3));
+    gti_internal::prefix_storage_append(this.data, int32_t(4));
+  }
+
+  uint64_t size() {
+    return gti_internal::prefix_storage_length(this.data);
+  }
+
+  int32_t& operator[](uint64_t index) {
+    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    gti_internal::index_bounds_check(index, live);
+    return gti_internal::prefix_storage_read(this.data, index);
+  }
+
+  mut int32_t& operator[](uint64_t index) mut {
+    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    gti_internal::index_bounds_check(index, live);
+    return gti_internal::prefix_storage_read_mut(this.data, index);
+  }
+};
+
+void negate(mut CheckedBuffer& values) {
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    values[index] *= int32_t(-1);
+  }
+}
+
+int32_t closed_indexed_sum(CheckedBuffer& values) {
+  mut int32_t total = 0;
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    total += values[index];
+  }
+  return total;
+}
+
+int32_t unknown_indexed_sum(CheckedBuffer& values) {
+  mut int32_t total = 0;
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    total += values[index];
+  }
+  return total;
+}
+
+int32_t main() {
+  mut CheckedBuffer values = CheckedBuffer();
+  negate(values);
+  return closed_indexed_sum(values) == int32_t(-10) ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-indexed-envelope.gti", source);
+  expect(frontend.canGenerateCode(),
+         "closed indexed-element envelope fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const auto optimize = [&](lang::OptimizationLevel level) {
+    return pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+  };
+  const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
+  const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
+  const auto overflow = [&](const lang::OptimizedProgram &optimized,
+                            std::string_view name) {
+    return functionDischarges(frontend, optimized, name,
+                              lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  };
+
+  expect(o2.valid() && o3.valid() && overflow(o2, "closed_indexed_sum") == 2 &&
+             overflow(o3, "closed_indexed_sum") == 2,
+         "an exact closed call chain should carry the prefix-storage element "
+         "envelope through an indexed return borrow and prove both loop "
+         "arithmetic checks");
+  expect(overflow(o2, "unknown_indexed_sum") == 0 &&
+             overflow(o3, "unknown_indexed_sum") == 0,
+         "an indexed receiver without a closed object context must retain "
+         "both arithmetic checks");
+}
+
 } // namespace
 
 int main() {
   lang::installCrashHandlers("gti_optimizer_safety_tests");
   testProofCarryingSafetyCheckElimination();
   testPrefixStorageBoundsRelation();
+  testClosedIndexedElementEnvelope();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";
     return 1;
