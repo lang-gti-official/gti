@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "optimizer-level-control",
+  "description": "Deterministic Mandelbrot checksum for fixed-native GTI optimization attribution",
+  "work_units": 700000,
+  "minimum_sample_seconds": 0.10,
+  "variants": [
+    {
+      "name": "gti",
+      "kind": "gti",
+      "source": "main.gti"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp"
+    }
+  ]
+}

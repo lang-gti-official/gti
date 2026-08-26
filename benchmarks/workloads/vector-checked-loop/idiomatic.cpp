@@ -6,9 +6,9 @@
 namespace {
 
 constexpr std::size_t kElementCount = 5000;
-constexpr std::size_t kRoundCount = 20000;
+constexpr std::size_t kRoundCount = 240000;
 constexpr std::uint64_t kDigestModulus = 1000000007;
-constexpr std::uint64_t kExpectedDigest = 347609426;
+constexpr std::uint64_t kExpectedDigest = 324940710;
 
 void scale(std::vector<std::int32_t> &values, std::int32_t multiplier) {
   for (std::int32_t &value : values) {
@@ -29,7 +29,7 @@ std::int32_t sum(const std::vector<std::int32_t> &values) {
 void print_record(std::uint64_t digest) {
   std::cout << "GTI-BENCH-1 digest:" << std::hex << std::nouppercase
             << std::setw(16) << std::setfill('0') << digest << std::dec
-            << " work-units:200000000\n";
+            << " work-units:2400000000\n";
 }
 
 } // namespace

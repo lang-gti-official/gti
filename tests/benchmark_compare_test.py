@@ -16,7 +16,7 @@ import tempfile
 from typing import Any, Iterator
 
 
-EXPECTED_RECORD = "GTI-BENCH-1 digest:0000000014b81952 work-units:200000000"
+EXPECTED_RECORD = "GTI-BENCH-1 digest:00000000135e33a6 work-units:2400000000"
 THREAD_EXPECTED_RECORD = (
     "GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000"
 )
@@ -178,6 +178,15 @@ def test_strict_descriptors(
         module,
         lambda: module.load_workload(str(descriptor)),
         "is missing fields: description",
+    )
+    expect_cli_error(
+        runner,
+        gti,
+        cxx,
+        descriptor,
+        root / "invalid-native-optimization-output",
+        "invalid choice",
+        ["--native-optimization", "4"],
     )
     expect_cli_error(
         runner,
@@ -493,8 +502,18 @@ def fake_build_variant(
     cpp_standard: str,
     native_flags: list[str],
     timeout: float,
+    native_optimization: str | None = None,
 ) -> dict[str, Any]:
-    del workload, gti, cxx, optimization, cpp_standard, native_flags, timeout
+    del (
+        workload,
+        gti,
+        cxx,
+        optimization,
+        cpp_standard,
+        native_flags,
+        timeout,
+        native_optimization,
+    )
     return {
         "name": variant.name,
         "kind": variant.kind,
@@ -646,6 +665,276 @@ def test_deterministic_sample_order(module: Any, root: Path) -> None:
     )
 
 
+def test_fixed_native_command_contract(module: Any, root: Path) -> None:
+    root.mkdir(parents=True)
+    generated = root / "generated.cpp"
+    driver_executable = root / "driver-executable"
+    runtime = root / "libgti_runtime.a"
+    for path in (generated, driver_executable, runtime):
+        path.write_bytes(path.name.encode("utf-8"))
+
+    original_dependency = root / "driver.d"
+    fixed_dependency = root / "fixed.d"
+    fixed_executable = root / "fixed-executable"
+    native_argv = [
+        "/usr/bin/c++",
+        "-std=c++23",
+        "-O0",
+        "-I/runtime/include",
+        "-MD",
+        "-MF",
+        str(original_dependency),
+        str(generated),
+        str(runtime),
+        "-o",
+        str(driver_executable),
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-D__gti_strict_ieee754=1",
+    ]
+    rebuilt = module.fixed_native_rebuild_command(
+        native_argv,
+        generated,
+        driver_executable,
+        fixed_executable,
+        fixed_dependency,
+        "c++23",
+        "0",
+        "3",
+        root,
+    )
+    expected = list(native_argv)
+    expected[2] = "-O3"
+    expected[expected.index("-MF") + 1] = str(fixed_dependency)
+    expected[expected.index("-o") + 1] = str(fixed_executable)
+    require(
+        rebuilt == expected,
+        f"fixed-native command changed more than its bounded fields: {rebuilt!r}",
+    )
+    require(
+        native_argv[2] == "-O0"
+        and native_argv[native_argv.index("-o") + 1] == str(driver_executable),
+        "fixed-native command mutation altered the driver sidecar argv",
+    )
+
+    duplicate_optimization = list(native_argv)
+    duplicate_optimization.insert(3, "-O2")
+    expect_benchmark_error(
+        module,
+        lambda: module.fixed_native_rebuild_command(
+            duplicate_optimization,
+            generated,
+            driver_executable,
+            fixed_executable,
+            fixed_dependency,
+            "c++23",
+            "0",
+            "3",
+            root,
+        ),
+        "exactly its driver-owned optimization flag",
+    )
+
+    wrong_source = list(native_argv)
+    wrong_source[wrong_source.index(str(generated))] = str(root / "missing.cpp")
+    expect_benchmark_error(
+        module,
+        lambda: module.fixed_native_rebuild_command(
+            wrong_source,
+            generated,
+            driver_executable,
+            fixed_executable,
+            fixed_dependency,
+            "c++23",
+            "0",
+            "3",
+            root,
+        ),
+        "exactly one retained generated source",
+    )
+
+    wrong_output = list(native_argv)
+    wrong_output[wrong_output.index("-o") + 1] = str(root / "unrelated-output")
+    expect_benchmark_error(
+        module,
+        lambda: module.fixed_native_rebuild_command(
+            wrong_output,
+            generated,
+            driver_executable,
+            fixed_executable,
+            fixed_dependency,
+            "c++23",
+            "0",
+            "3",
+            root,
+        ),
+        "does not identify the driver-built executable",
+    )
+
+    expect_benchmark_error(
+        module,
+        lambda: module.fixed_native_rebuild_command(
+            native_argv,
+            generated,
+            driver_executable,
+            fixed_executable,
+            fixed_dependency,
+            "c++20",
+            "0",
+            "3",
+            root,
+        ),
+        "selected C++ standard",
+    )
+
+    replacement_source = root / "proxy.cpp"
+    replacement_source.write_text("int main() { return 0; }\n", encoding="utf-8")
+    proxy_command = module.fixed_native_rebuild_command(
+        native_argv,
+        generated,
+        driver_executable,
+        fixed_executable,
+        fixed_dependency,
+        "c++23",
+        "0",
+        "3",
+        root,
+        replacement_source=replacement_source,
+    )
+    require(
+        str(replacement_source.resolve()) in proxy_command
+        and str(generated) not in proxy_command,
+        "fixed-native command did not bind the validated proxy source exactly",
+    )
+    expect_benchmark_error(
+        module,
+        lambda: module.fixed_native_rebuild_command(
+            native_argv,
+            generated,
+            driver_executable,
+            fixed_executable,
+            fixed_dependency,
+            "c++23",
+            "0",
+            "3",
+            root,
+            replacement_source=root / "missing-proxy.cpp",
+        ),
+        "replacement source is unavailable",
+    )
+
+
+def arithmetic_helper_source(module: Any) -> str:
+    definitions = []
+    for _, helper_name in module.ARITHMETIC_SUCCESS_PROXY_HELPERS:
+        definitions.append(
+            "template <typename Target, typename Left, typename Right>\n"
+            f"inline mir_failure_status_v1 {helper_name}(Left left, Right right, "
+            "Target *result) noexcept {\n"
+            "  bool overflow = false;\n"
+            "  overflow = left > right;\n"
+            "  if (overflow) {\n"
+            "    return failure;\n"
+            "  }\n"
+            "  *result = left;\n"
+            "  return success;\n"
+            "}\n"
+        )
+    return (
+        "namespace gti_internal::backend {\n"
+        + "\n".join(definitions)
+        + "} // namespace gti_internal::backend\n"
+    )
+
+
+def test_arithmetic_success_proxy_contract(module: Any, root: Path) -> None:
+    workload = synthetic_workload(module, root / "selection")
+    selected = module.arithmetic_success_proxy_targets(
+        ["synthetic/gti"], [workload], "3"
+    )
+    require(
+        selected == {"synthetic": ("gti",)},
+        f"arithmetic proxy selection lost its exact target: {selected!r}",
+    )
+    cases = (
+        (["synthetic/gti"], [workload], None, "requires --native-optimization"),
+        (["synthetic"], [workload], "3", "must use WORKLOAD/VARIANT"),
+        (["missing/gti"], [workload], "3", "was not selected"),
+        (["synthetic/missing"], [workload], "3", "has no variant"),
+        (["synthetic/cpp-semantic"], [workload], "3", "must be a GTI variant"),
+        (
+            ["synthetic/gti", "synthetic/gti"],
+            [workload],
+            "3",
+            "selection repeats",
+        ),
+    )
+    for selections, workloads, native_optimization, message in cases:
+        expect_benchmark_error(
+            module,
+            lambda selections=selections, workloads=workloads,
+            native_optimization=native_optimization: (
+                module.arithmetic_success_proxy_targets(
+                    selections, workloads, native_optimization
+                )
+            ),
+            message,
+        )
+
+    source = arithmetic_helper_source(module)
+    transformed, replacements = module.arithmetic_success_proxy_source(source)
+    require(
+        transformed.count(module.ARITHMETIC_SUCCESS_GUARD) == 3
+        and transformed.count(module.ARITHMETIC_OVERFLOW_GUARD) == 0,
+        "arithmetic proxy did not replace exactly the three helper guards",
+    )
+    require(
+        [replacement["function"] for replacement in replacements]
+        == [name for name, _ in module.ARITHMETIC_SUCCESS_PROXY_HELPERS]
+        and sum(replacement["count"] for replacement in replacements) == 3,
+        "arithmetic proxy did not retain its exact replacement family/count",
+    )
+
+    multiply_name = module.ARITHMETIC_SUCCESS_PROXY_HELPERS[-1][1]
+    missing_helper = source.replace(multiply_name, "missing_multiply_v1", 1)
+    duplicate_helper = source.replace(
+        "} // namespace gti_internal::backend",
+        source[
+            source.index("template <typename Target") : source.index(
+                "template <typename Target", source.index("template <typename Target") + 1
+            )
+        ]
+        + "} // namespace gti_internal::backend",
+        1,
+    )
+    missing_guard = source.replace(module.ARITHMETIC_OVERFLOW_GUARD, "if (false) {", 1)
+    guarded_failure = (
+        module.ARITHMETIC_OVERFLOW_GUARD + "\n    return failure;\n  }"
+    )
+    duplicate_guard = source.replace(
+        guarded_failure,
+        guarded_failure + "\n  " + guarded_failure,
+        1,
+    )
+    malformed_body = source.replace(") noexcept {", ") noexcept", 1)
+    negative_sources = (
+        (missing_helper, "found 0"),
+        (duplicate_helper, "found 2"),
+        (missing_guard, "guard, found 0"),
+        (duplicate_guard, "guard, found 2"),
+        (malformed_body, "has no bounded function body"),
+        (source.replace(module.BACKEND_NAMESPACE_CLOSE, "", 1), "balanced"),
+    )
+    for invalid_source, message in negative_sources:
+        expect_benchmark_error(
+            module,
+            lambda invalid_source=invalid_source: (
+                module.arithmetic_success_proxy_source(invalid_source)
+            ),
+            message,
+        )
+
+
 def test_exact_head_truth_table(module: Any, root: Path) -> None:
     compiler = root / "gti"
     compiler.parent.mkdir(parents=True)
@@ -677,6 +966,19 @@ def test_exact_head_truth_table(module: Any, root: Path) -> None:
     require(
         module.exact_head_evidence(clean, clean, tool, workloads())["exact"] is True,
         "matching clean repository/compiler/producer identities were not exact",
+    )
+    proxy_workloads = workloads()
+    proxy_workloads[0]["variants"].append(
+        {
+            "kind": module.ARITHMETIC_SUCCESS_PROXY_KIND,
+            "exact_head_proof_eligible": False,
+            "provenance": {"must_not_be_read": True},
+        }
+    )
+    require(
+        module.exact_head_evidence(clean, clean, tool, proxy_workloads)["exact"]
+        is True,
+        "non-semantic arithmetic proxy contaminated exact-head proof inputs",
     )
     cases = (
         ({"commit": None, "dirty": False}, clean, workloads(),
@@ -1427,6 +1729,316 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         )
 
 
+def test_fixed_native_smoke(
+    module: Any, runner: Path, gti: Path, cxx: Path, root: Path
+) -> None:
+    repository = runner.parent.parent
+    workload_directory = root / "workload"
+    workload_directory.mkdir(parents=True)
+    (workload_directory / "main.gti").write_text(
+        "int main() {\n"
+        '  std::println("GTI-BENCH-1 digest:0000000000000000 work-units:1");\n'
+        "  return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (workload_directory / "main.cpp").write_text(
+        "#include <cstdio>\n\n"
+        "int main() {\n"
+        '  std::puts("GTI-BENCH-1 digest:0000000000000000 work-units:1");\n'
+        "  return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    descriptor = workload_directory / "benchmark.json"
+    descriptor.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "name": "fixed-native-smoke",
+                "description": "Focused two-stage native optimization smoke",
+                "work_units": 1,
+                "minimum_sample_seconds": 0,
+                "variants": [
+                    {"name": "gti", "kind": "gti", "source": "main.gti"},
+                    {"name": "cpp", "kind": "cpp", "source": "main.cpp"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = root / "output"
+    json_report = output / "report.json"
+    markdown_report = output / "report.md"
+    command = [
+        sys.executable,
+        str(runner),
+        "--gti",
+        str(gti),
+        "--cxx",
+        str(cxx),
+        "--optimization",
+        "0",
+        "--native-optimization",
+        "3",
+        "--workload",
+        str(descriptor),
+        "--output",
+        str(output),
+        "--json",
+        str(json_report),
+        "--markdown",
+        str(markdown_report),
+        "--smoke",
+    ]
+    environment = os.environ.copy()
+    environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
+    environment.setdefault("GTI_RUNTIME_INCLUDE", str(repository / "runtime/include"))
+    environment.setdefault(
+        "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
+    )
+    runtime_library = gti.parent / "libgti_runtime.a"
+    if runtime_library.is_file():
+        environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime_library))
+
+    run(command, repository, environment=environment)
+    report = json.loads(json_report.read_text(encoding="utf-8"))
+    require(report["schema"] == 3, "fixed-native run did not use report schema 3")
+    require(
+        report["configuration"]["optimization"] == "0"
+        and report["configuration"]["native_optimization"] == "3",
+        "fixed-native report did not retain both optimization levels",
+    )
+    require(
+        report["workloads"][0]["descriptor"]["schema"] == 1,
+        "fixed-native report changed the workload descriptor schema",
+    )
+    require(
+        "exact_head_evidence" in report,
+        "fixed-native report omitted compiler/source exact-head evidence",
+    )
+
+    variants = {
+        variant["name"]: variant for variant in report["workloads"][0]["variants"]
+    }
+    gti_variant = variants["gti"]
+    cpp_variant = variants["cpp"]
+    require(
+        gti_variant["command"][2] == "-O0"
+        and "--build-report" in gti_variant["command"],
+        "fixed-native GTI producer command lost its selected GTI level or sidecar",
+    )
+    provenance_argv = gti_variant["provenance"]["build"]["native"]["argv"]
+    rebuild = gti_variant["native_rebuild"]
+    require(
+        provenance_argv[2] == "-O0"
+        and rebuild["optimization"] == "3"
+        and rebuild["command"][2] == "-O3",
+        "fixed-native rebuild did not separate GTI and native optimization",
+    )
+    require(
+        Path(gti_variant["artifacts"]["driver_executable"]["path"]).is_file()
+        and Path(gti_variant["artifacts"]["executable"]["path"]).is_file()
+        and Path(rebuild["dependency_file"]["path"]).is_file(),
+        "fixed-native report omitted a retained build artifact",
+    )
+    require(
+        cpp_variant["command"][1] == "-O3"
+        and "native_rebuild" not in cpp_variant
+        and "provenance" not in cpp_variant,
+        "native comparison variant did not use the fixed native level directly",
+    )
+    require(
+        report["workloads"][0]["correctness_record"]
+        == "GTI-BENCH-1 digest:0000000000000000 work-units:1",
+        "fixed-native variants did not validate one identical result",
+    )
+    require(
+        "Configuration: `GTI -O0, native -O3 -std=c++23`"
+        in markdown_report.read_text(encoding="utf-8"),
+        "fixed-native Markdown report obscured the split optimization policy",
+    )
+
+
+def test_arithmetic_success_proxy_smoke(
+    module: Any, runner: Path, gti: Path, cxx: Path, root: Path
+) -> None:
+    repository = runner.parent.parent
+    workload_directory = root / "workload"
+    workload_directory.mkdir(parents=True)
+    (workload_directory / "main.gti").write_text(
+        "int main() {\n"
+        "  mut int value = 4;\n"
+        "  value = value + 3;\n"
+        "  value = value * 2;\n"
+        "  value = value - 4;\n"
+        "  if (value != 10) {\n"
+        "    return 1;\n"
+        "  }\n"
+        '  std::println("GTI-BENCH-1 digest:000000000000000a work-units:1");\n'
+        "  return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (workload_directory / "main.cpp").write_text(
+        "#include <cstdio>\n\n"
+        "int main() {\n"
+        "  int value = 4;\n"
+        "  value = value + 3;\n"
+        "  value = value * 2;\n"
+        "  value = value - 4;\n"
+        "  if (value != 10) {\n"
+        "    return 1;\n"
+        "  }\n"
+        '  std::puts("GTI-BENCH-1 digest:000000000000000a work-units:1");\n'
+        "  return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    descriptor = workload_directory / "benchmark.json"
+    descriptor.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "name": "arithmetic-proxy-smoke",
+                "description": "Focused generated arithmetic proxy smoke",
+                "work_units": 1,
+                "minimum_sample_seconds": 0,
+                "variants": [
+                    {"name": "gti", "kind": "gti", "source": "main.gti"},
+                    {"name": "cpp", "kind": "cpp", "source": "main.cpp"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = root / "output"
+    json_report = output / "report.json"
+    markdown_report = output / "report.md"
+    seed = 29
+    command = [
+        sys.executable,
+        str(runner),
+        "--gti",
+        str(gti),
+        "--cxx",
+        str(cxx),
+        "--optimization",
+        "0",
+        "--native-optimization",
+        "3",
+        "--arithmetic-success-proxy",
+        "arithmetic-proxy-smoke/gti",
+        "--seed",
+        str(seed),
+        "--workload",
+        str(descriptor),
+        "--output",
+        str(output),
+        "--json",
+        str(json_report),
+        "--markdown",
+        str(markdown_report),
+        "--smoke",
+    ]
+    environment = os.environ.copy()
+    environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
+    environment.setdefault("GTI_RUNTIME_INCLUDE", str(repository / "runtime/include"))
+    environment.setdefault(
+        "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
+    )
+    runtime_library = gti.parent / "libgti_runtime.a"
+    if runtime_library.is_file():
+        environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime_library))
+
+    run(command, repository, environment=environment)
+    report = json.loads(json_report.read_text(encoding="utf-8"))
+    require(report["schema"] == 4, "arithmetic proxy run did not use report schema 4")
+    require(
+        report["configuration"]["arithmetic_success_proxies"]
+        == ["arithmetic-proxy-smoke/gti"],
+        "arithmetic proxy report lost its exact CLI selection",
+    )
+    workload = report["workloads"][0]
+    variants = {variant["name"]: variant for variant in workload["variants"]}
+    proxy_name = "gti" + module.ARITHMETIC_SUCCESS_PROXY_SUFFIX
+    require(
+        set(variants) == {"gti", "cpp", proxy_name},
+        f"arithmetic proxy smoke variant set is wrong: {set(variants)!r}",
+    )
+    require(
+        {variant["validation"]["record"] for variant in variants.values()}
+        == {"GTI-BENCH-1 digest:000000000000000a work-units:1"},
+        "arithmetic proxy was not included in correctness validation",
+    )
+    expected_order = ["gti", "cpp", proxy_name]
+    random.Random(seed).shuffle(expected_order)
+    require(
+        workload["sample_order"] == [{"round": 0, "variants": expected_order}],
+        "arithmetic proxy was not included in seeded sample interleaving",
+    )
+
+    proxy = variants[proxy_name]
+    require(
+        proxy["kind"] == module.ARITHMETIC_SUCCESS_PROXY_KIND
+        and proxy["semantic"] is False
+        and proxy["successful_path_only"] is True
+        and proxy["exact_head_proof_eligible"] is False,
+        "arithmetic proxy is not clearly marked non-semantic/successful-path-only",
+    )
+    transformation = proxy["proxy"]
+    require(
+        transformation["replacement_family"]
+        == [name for name, _ in module.ARITHMETIC_SUCCESS_PROXY_HELPERS]
+        and transformation["replacement_count"] == 3
+        and {replacement["count"] for replacement in transformation["replacements"]}
+        == {1},
+        "arithmetic proxy report lost its exact replacement family/count",
+    )
+    transformed_path = Path(proxy["artifacts"]["transformed_cpp"]["path"])
+    original_path = Path(variants["gti"]["artifacts"]["emitted_cpp"]["path"])
+    expected_transformed, _ = module.arithmetic_success_proxy_source(
+        original_path.read_text(encoding="utf-8")
+    )
+    require(
+        transformed_path.read_text(encoding="utf-8") == expected_transformed
+        and transformation["source_sha256_after"] == sha256_file(transformed_path)
+        and transformation["source_sha256_before"] == sha256_file(original_path),
+        "arithmetic proxy transformed-source evidence is incomplete",
+    )
+    require(
+        str(transformed_path.resolve()) in proxy["command"]
+        and str(original_path) not in proxy["command"]
+        and proxy["command"][2] == "-O3",
+        "arithmetic proxy native command was not derived at the fixed native level",
+    )
+    for artifact in (
+        "build_stdout",
+        "build_stderr",
+        "dependency_file",
+        "executable",
+    ):
+        path = Path(proxy["artifacts"][artifact]["path"])
+        require(
+            path.is_file()
+            and proxy["artifacts"][artifact]["sha256"] == sha256_file(path),
+            f"arithmetic proxy report omitted exact {artifact} evidence",
+        )
+    require(
+        "gti_build_provenance_unavailable"
+        not in report["exact_head_evidence"]["reasons"],
+        "arithmetic proxy contaminated exact-head provenance inputs",
+    )
+    markdown = markdown_report.read_text(encoding="utf-8")
+    require(
+        "Successful-path-only, non-semantic arithmetic proxies" in markdown
+        and proxy_name in markdown,
+        "arithmetic proxy Markdown report obscured its non-semantic contract",
+    )
+
+
 def main() -> None:
     if len(sys.argv) != 4:
         raise SystemExit("usage: benchmark_compare_test.py runner.py gti cxx")
@@ -1442,8 +2054,14 @@ def main() -> None:
         test_output_containment(module, runner, gti, cxx, root / "outputs")
         test_correctness_precedes_timing(module, root / "correctness")
         test_deterministic_sample_order(module, root / "ordering")
+        test_fixed_native_command_contract(module, root / "fixed-command")
+        test_arithmetic_success_proxy_contract(module, root / "proxy-contract")
         test_exact_head_truth_table(module, root / "exact-head")
         test_real_smoke(module, runner, gti, cxx, root / "smoke")
+        test_fixed_native_smoke(module, runner, gti, cxx, root / "fixed-smoke")
+        test_arithmetic_success_proxy_smoke(
+            module, runner, gti, cxx, root / "proxy-smoke"
+        )
 
 
 if __name__ == "__main__":

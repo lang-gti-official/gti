@@ -47,16 +47,23 @@ memory family) remain measured-defer, while the active interprocedural client
 is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
-Performance-priority update (2026-08-26): the exact-main audit selected the
+Performance-priority update (2026-08-26): `O-PERF-00` closed on exact clean
+commit `a2bd29dc`; `O-PERF-01` is active. The exact-main audit selected the
 checked-vector runtime gap, rather than the retained fixed-array bounds checks,
 as the performance-delivery client. The fixed-array bounds workload was within
 0.33% of both comparison variants and a direct-access proxy changed its median
-by -0.16% with identical hot-function assembly. The independently reproduced
-PR #164 experiment then isolated a different fixed-array workload: making only
-overflow-failure branches unreachable reduced it from 73.684 to 15.882 ms,
-while the checked vector fell from 117.285 to 9.519 ms with identical selected
-successful output. Those ablations are semantic-invalid upper bounds, but they
-establish checked arithmetic side exits as the first measured cause.
+by -0.16% with identical hot-function assembly. The admitted complete-state
+fixed-array overflow workload measured 283.568 ms in GTI versus 60.253 ms in
+idiomatic C++; the runner's strict three-helper successful-path proxy measured
+60.377 ms. The scaled checked vector measured 1235.735 ms in GTI versus 57.625
+ms in idiomatic C++, while the same strict proxy measured 83.189 ms. Those
+proxies are explicitly non-semantic upper bounds, but they establish checked
+arithmetic side exits as the first measured cause. Fixed-native O0/O1/O2/O3
+control runs produced byte-identical native-O3 executables and medians within
+1.2%, so native optimization is not being misattributed to GTI passes. Exact
+report identities, raw samples, profiles, MIR/report counters, and
+disassembly hashes live in
+[`performance-tooling.md`](performance-tooling.md).
 
 The audit proposal is not adopted verbatim. The live safety analysis already
 has a loop fixpoint and widening; prefix storage has no unchecked-read
