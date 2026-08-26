@@ -42,10 +42,14 @@ struct IntegerFact {
   friend bool operator==(const IntegerFact &, const IntegerFact &) = default;
 };
 
+using FieldPath = std::vector<SymbolId>;
+using IntegerFieldFacts = std::map<FieldPath, IntegerFact>;
+
 struct StorageFact {
   IntegerFact capacity;
   std::optional<IntegerFact> length;
   std::optional<IntegerFact> elements;
+  IntegerFieldFacts elementIntegers;
   bool elementsUnknown = false;
   std::set<std::uint64_t> initialized;
   Evidence evidence;
@@ -68,12 +72,11 @@ struct ScalarOrigin {
   friend auto operator<=>(const ScalarOrigin &, const ScalarOrigin &) = default;
 };
 
-using FieldPath = std::vector<SymbolId>;
-
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
   std::map<FieldPath, StorageFact> storages;
   std::optional<IntegerFact> elements;
+  IntegerFieldFacts elementIntegers;
 
   friend bool operator==(const ObjectFact &, const ObjectFact &) = default;
 };
@@ -95,6 +98,7 @@ struct AbstractState {
   std::map<MirPlaceId, PrefixLengthFact> prefixLengthPlaces;
   std::map<std::pair<MirPlaceId, ScalarOrigin>, Evidence> checkedPrefixBounds;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
+  std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
   std::map<MirPlaceId, ObjectFact> objects;
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
   std::map<MirValueId, ObjectFact> objectValues;
@@ -622,6 +626,10 @@ void stabilize(StorageFact &storage) {
   if (storage.elements) {
     stabilize(*storage.elements);
   }
+  for (auto &[path, fact] : storage.elementIntegers) {
+    (void)path;
+    stabilize(fact);
+  }
 }
 
 void stabilize(ObjectFact &object) {
@@ -635,6 +643,10 @@ void stabilize(ObjectFact &object) {
   }
   if (object.elements) {
     stabilize(*object.elements);
+  }
+  for (auto &[path, fact] : object.elementIntegers) {
+    (void)path;
+    stabilize(fact);
   }
 }
 
@@ -1051,10 +1063,15 @@ fieldPath(const MirBody &body, MirPlaceId rootId, MirPlaceId placeId) {
                         : std::optional<FieldPath>{std::move(result)};
 }
 
-[[nodiscard]] bool
-indexedAggregatePlace(const MirProgram *program, const MirBody &body,
-                      const MirPlaceAliasEscapeAnalysis &aliases,
-                      MirPlaceId placeId, MirPlaceId aggregateRootId);
+struct IndexedAggregateAccess {
+  MirPlaceId root = 0;
+  FieldPath field;
+};
+
+[[nodiscard]] std::optional<IndexedAggregateAccess>
+indexedAggregateAccess(const MirProgram *program, const MirBody &body,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       MirPlaceId placeId);
 
 [[nodiscard]] IntegerFact rebased(IntegerFact fact, MirBlockId block = 0,
                                   MirInstructionId instruction = 0,
@@ -1079,6 +1096,10 @@ indexedAggregatePlace(const MirProgram *program, const MirBody &body,
   if (fact.elements) {
     fact.elements =
         rebased(std::move(*fact.elements), block, instruction, 0, place);
+  }
+  for (auto &[path, element] : fact.elementIntegers) {
+    (void)path;
+    element = rebased(std::move(element), block, instruction, 0, place);
   }
   fact.evidence = {};
   add(fact.evidence, block);
@@ -1110,6 +1131,18 @@ void seedObjectFact(const MirBody &body,
   }
   if (object.elements) {
     state.aggregateElements[root] = rebased(*object.elements, 0, 0, 0, root);
+  } else {
+    state.aggregateElements.erase(root);
+  }
+  if (!object.elementIntegers.empty()) {
+    IntegerFieldFacts fields = object.elementIntegers;
+    for (auto &[path, fact] : fields) {
+      (void)path;
+      fact = rebased(std::move(fact), 0, 0, 0, root);
+    }
+    state.aggregateElementIntegers.insert_or_assign(root, std::move(fields));
+  } else {
+    state.aggregateElementIntegers.erase(root);
   }
 }
 
@@ -1126,6 +1159,25 @@ extractObjectFact(const MirBody &body,
   bool observedElements = false;
   bool unknownElements = false;
   std::optional<IntegerFact> derivedElements;
+  bool observedElementIntegers = false;
+  IntegerFieldFacts derivedElementIntegers;
+  const auto mergeElementIntegers = [&](const IntegerFieldFacts &incoming) {
+    if (!observedElementIntegers) {
+      derivedElementIntegers = incoming;
+      observedElementIntegers = true;
+      return;
+    }
+    for (auto iterator = derivedElementIntegers.begin();
+         iterator != derivedElementIntegers.end();) {
+      const auto found = incoming.find(iterator->first);
+      if (found == incoming.end()) {
+        iterator = derivedElementIntegers.erase(iterator);
+        continue;
+      }
+      iterator->second = joinedElementFact(iterator->second, found->second);
+      ++iterator;
+    }
+  };
   for (const MirPlace &place : body.places) {
     const std::optional<FieldPath> path = fieldPath(body, root, place.id);
     if (!path) {
@@ -1149,6 +1201,7 @@ extractObjectFact(const MirBody &body,
                                   *derivedElements, *storage->second.elements)}
                             : storage->second.elements;
       }
+      mergeElementIntegers(storage->second.elementIntegers);
     }
   }
   if (const auto aggregateElements = state.aggregateElements.find(root);
@@ -1159,11 +1212,20 @@ extractObjectFact(const MirBody &body,
                               *derivedElements, aggregateElements->second)}
                         : std::optional<IntegerFact>{aggregateElements->second};
   }
+  if (const auto aggregateFields = state.aggregateElementIntegers.find(root);
+      aggregateFields != state.aggregateElementIntegers.end()) {
+    observedElements = true;
+    mergeElementIntegers(aggregateFields->second);
+  }
   if (observedElements) {
     result.elements =
         unknownElements ? std::nullopt : std::move(derivedElements);
+    result.elementIntegers = unknownElements
+                                 ? IntegerFieldFacts{}
+                                 : std::move(derivedElementIntegers);
   }
-  if (result.integers.empty() && result.storages.empty() && !result.elements) {
+  if (result.integers.empty() && result.storages.empty() && !result.elements &&
+      result.elementIntegers.empty()) {
     return std::nullopt;
   }
   return result;
@@ -1241,13 +1303,21 @@ compoundIntegerFact(const MirBody &body, const MirProgram *program,
     return std::nullopt;
   }
   std::optional<IntegerFact> left;
-  const MirPlaceId root =
-      aggregateRoot(body, aliases, *instruction.destination);
-  if (root != 0 && indexedAggregatePlace(program, body, aliases,
-                                         *instruction.destination, root)) {
-    if (const auto elements = state.aggregateElements.find(root);
-        elements != state.aggregateElements.end()) {
-      left = elements->second;
+  if (const std::optional<IndexedAggregateAccess> indexed =
+          indexedAggregateAccess(program, body, aliases,
+                                 *instruction.destination)) {
+    if (indexed->field.empty()) {
+      if (const auto elements = state.aggregateElements.find(indexed->root);
+          elements != state.aggregateElements.end()) {
+        left = elements->second;
+      }
+    } else if (const auto fields =
+                   state.aggregateElementIntegers.find(indexed->root);
+               fields != state.aggregateElementIntegers.end()) {
+      if (const auto fact = fields->second.find(indexed->field);
+          fact != fields->second.end()) {
+        left = fact->second;
+      }
     }
   }
   if (!left) {
@@ -1343,6 +1413,7 @@ void invalidatePlaceRoot(const MirBody &body,
     state.integerPlaces.clear();
     state.arrayElements.clear();
     state.aggregateElements.clear();
+    state.aggregateElementIntegers.clear();
     state.objects.clear();
     state.loadedOrigins.clear();
     state.storageValues.clear();
@@ -1363,6 +1434,8 @@ void invalidatePlaceRoot(const MirBody &body,
   std::erase_if(state.arrayElements,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.aggregateElements,
+                [&](const auto &entry) { return overlaps(entry.first); });
+  std::erase_if(state.aggregateElementIntegers,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.objects,
                 [&](const auto &entry) { return overlaps(entry.first); });
@@ -1391,6 +1464,36 @@ void invalidatePlaceRoot(const MirBody &body,
     state.storageValues.erase(iterator->first);
     iterator = state.storageOrigins.erase(iterator);
   }
+}
+
+[[nodiscard]] bool
+initializesReferenceCarrier(const MirBody &body,
+                            const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Initialize ||
+      !instruction.destination || instruction.operands.size() != 1) {
+    return false;
+  }
+  const MirPlace *destination = body.findPlace(*instruction.destination);
+  const MirOperand &source = instruction.operands.front();
+  if (destination == nullptr ||
+      destination->root != MirPlaceRootKind::Binding ||
+      destination->binding == 0 ||
+      destination->type.kind != SemanticType::Reference ||
+      source.kind != MirOperandKind::Loan || source.place == 0 ||
+      source.loan == 0) {
+    return false;
+  }
+  const MirLoan *loan = body.findLoan(source.loan);
+  const MirPlace *address = body.findPlace(source.place);
+  return loan != nullptr && address != nullptr && !loan->entry &&
+         !loan->escapes &&
+         (loan->kind == MirLoanKind::Local ||
+          loan->kind == MirLoanKind::CallResult) &&
+         loan->carriers.size() == 1 &&
+         loan->carriers.front() == destination->binding &&
+         ((address->root == MirPlaceRootKind::Loan &&
+           address->loan == loan->id) ||
+          loan->source == address->id);
 }
 
 struct FixedArrayIndex {
@@ -1680,6 +1783,66 @@ contextForCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   return result;
 }
 
+struct ClosedElementConstruction {
+  bool pending = false;
+  std::optional<ObjectFact> object;
+};
+
+[[nodiscard]] ClosedElementConstruction closedElementConstruction(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirInstruction &instruction, std::size_t firstArgument,
+    const AbstractState &state, ClosedCallRound *closedCalls,
+    MirBodyAddress address) {
+  if (closedCalls == nullptr || !instruction.constructorTarget) {
+    return {};
+  }
+  const MirConstructorInstance *target =
+      closedCalls->program.findConstructorInstance(
+          *instruction.constructorTarget);
+  const MirBodyAddress targetAddress{.kind = MirBodyKind::Constructor,
+                                     .owner = *instruction.constructorTarget};
+  if (instruction.dispatch != CallDispatch::Static ||
+      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+      instruction.lambdaTarget || target == nullptr ||
+      target->definitionKind != MirDefinitionKind::Source ||
+      closedCalls->rejected.contains(targetAddress) ||
+      firstArgument > instruction.operands.size() ||
+      target->parameterTypes.size() !=
+          instruction.operands.size() - firstArgument) {
+    return {};
+  }
+  if (std::any_of(instruction.operands.begin() +
+                      static_cast<std::ptrdiff_t>(firstArgument),
+                  instruction.operands.end(), [&](const MirOperand &operand) {
+                    return owningCallOperand(body, operand);
+                  })) {
+    return {};
+  }
+
+  ClosedCallContext context;
+  context.reached = true;
+  context.arguments.resize(target->parameterTypes.size());
+  context.argumentObjects.resize(target->parameterTypes.size());
+  for (std::size_t index = 0; index < target->parameterTypes.size(); ++index) {
+    const MirOperand &operand = instruction.operands[firstArgument + index];
+    context.arguments[index].observed = true;
+    context.arguments[index].fact = integerForOperand(body, state, operand);
+    context.argumentObjects[index].observed = true;
+    context.argumentObjects[index].fact =
+        objectForOperand(body, aliases, state, operand);
+  }
+  closedCalls->discovered.emplace_back(targetAddress, std::move(context));
+
+  const auto summary = closedCalls->summaries.find(targetAddress);
+  if (summary == closedCalls->summaries.end() || !summary->second.complete) {
+    closedCalls->incompleteBodies.insert(address);
+    return {.pending = true};
+  }
+  return {.object = summary->second.constructed.observed
+                        ? summary->second.constructed.fact
+                        : std::nullopt};
+}
+
 void invalidateObjectOperand(const MirBody &body,
                              const MirPlaceAliasEscapeAnalysis &aliases,
                              const MirOperand &operand, AbstractState &state) {
@@ -1799,6 +1962,7 @@ void killUnknownMemory(AbstractState &state) {
   state.integerPlaces.clear();
   state.arrayElements.clear();
   state.aggregateElements.clear();
+  state.aggregateElementIntegers.clear();
   state.objects.clear();
   state.loadedOrigins.clear();
   state.storageValues.clear();
@@ -1911,19 +2075,32 @@ void applyInstruction(const MirBody &body,
           fixedArrayProjection(body, source.place);
       const MirPlaceId arrayPlace =
           canonicalPlace(aliases, projected.arrayPlace);
-      const MirPlaceId objectRoot = aggregateRoot(body, aliases, source.place);
+      const std::optional<IndexedAggregateAccess> indexed =
+          indexedAggregateAccess(program, body, aliases, source.place);
       const auto arrayElements = state.arrayElements.find(arrayPlace);
-      const auto aggregateElements = state.aggregateElements.find(objectRoot);
-      const std::optional<IntegerFact> fact =
-          objectRoot != 0 &&
-                  indexedAggregatePlace(program, body, aliases, source.place,
-                                        objectRoot) &&
-                  aggregateElements != state.aggregateElements.end()
-              ? std::optional<IntegerFact>{aggregateElements->second}
-          : projected.arrayPlace != 0 &&
-                  arrayElements != state.arrayElements.end()
-              ? std::optional<IntegerFact>{arrayElements->second}
-              : integerForPlace(body, state, sourcePlace);
+      std::optional<IntegerFact> fact;
+      if (indexed) {
+        if (indexed->field.empty()) {
+          if (const auto elements = state.aggregateElements.find(indexed->root);
+              elements != state.aggregateElements.end()) {
+            fact = elements->second;
+          }
+        } else if (const auto fields =
+                       state.aggregateElementIntegers.find(indexed->root);
+                   fields != state.aggregateElementIntegers.end()) {
+          if (const auto element = fields->second.find(indexed->field);
+              element != fields->second.end()) {
+            fact = element->second;
+          }
+        }
+      }
+      if (!fact && projected.arrayPlace != 0 &&
+          arrayElements != state.arrayElements.end()) {
+        fact = arrayElements->second;
+      }
+      if (!fact) {
+        fact = integerForPlace(body, state, sourcePlace);
+      }
       if (fact) {
         IntegerFact loaded = *fact;
         add(loaded.evidence, block.id);
@@ -1951,6 +2128,7 @@ void applyInstruction(const MirBody &body,
           source.type.kind == SemanticType::PrefixStorage) {
         state.storageOrigins[*instruction.result] = sourcePlace;
       }
+      const MirPlaceId objectRoot = aggregateRoot(body, aliases, source.place);
       if (objectRoot != 0) {
         state.aggregateOrigins[*instruction.result] = objectRoot;
         if (const std::optional<ObjectFact> object =
@@ -1974,27 +2152,40 @@ void applyInstruction(const MirBody &body,
        instruction.kind == MirInstructionKind::Assign ||
        instruction.kind == MirInstructionKind::Move) &&
       instruction.destination && !instruction.operands.empty()) {
+    const bool referenceCarrierInitialization =
+        initializesReferenceCarrier(body, instruction);
     const MirPlaceId destination =
         canonicalPlace(aliases, *instruction.destination);
     const FixedArrayProjection projected =
         fixedArrayProjection(body, *instruction.destination);
     const MirPlaceId arrayPlace = canonicalPlace(aliases, projected.arrayPlace);
-    const MirPlaceId objectRoot =
-        aggregateRoot(body, aliases, *instruction.destination);
-    const bool aggregateIndex =
-        objectRoot != 0 &&
-        indexedAggregatePlace(program, body, aliases, *instruction.destination,
-                              objectRoot);
+    const std::optional<IndexedAggregateAccess> indexed =
+        indexedAggregateAccess(program, body, aliases,
+                               *instruction.destination);
     const auto previousArray = state.arrayElements.find(arrayPlace);
     const std::optional<IntegerFact> previousElements =
         projected.arrayPlace != 0 && previousArray != state.arrayElements.end()
             ? std::optional<IntegerFact>{previousArray->second}
             : std::nullopt;
-    const auto previousAggregate = state.aggregateElements.find(objectRoot);
+    const auto previousAggregate =
+        indexed ? state.aggregateElements.find(indexed->root)
+                : state.aggregateElements.end();
     const std::optional<IntegerFact> previousAggregateElements =
-        aggregateIndex && previousAggregate != state.aggregateElements.end()
+        indexed && indexed->field.empty() &&
+                previousAggregate != state.aggregateElements.end()
             ? std::optional<IntegerFact>{previousAggregate->second}
             : std::nullopt;
+    std::optional<IntegerFact> previousAggregateField;
+    if (indexed && !indexed->field.empty()) {
+      if (const auto fields =
+              state.aggregateElementIntegers.find(indexed->root);
+          fields != state.aggregateElementIntegers.end()) {
+        if (const auto previous = fields->second.find(indexed->field);
+            previous != fields->second.end()) {
+          previousAggregateField = previous->second;
+        }
+      }
+    }
     const MirOperand &source = instruction.operands.front();
     std::optional<IntegerFact> fact =
         source.place != 0
@@ -2012,7 +2203,8 @@ void applyInstruction(const MirBody &body,
         objectForOperand(body, aliases, state, source);
     const std::optional<PrefixLengthFact> sourcePrefixLength =
         prefixLengthForOperand(state, aliases, source);
-    if (!aggregateIndex || !previousAggregateElements) {
+    if (!referenceCarrierInitialization &&
+        (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
     }
     if (fact && projected.arrayPlace == 0) {
@@ -2060,18 +2252,30 @@ void applyInstruction(const MirBody &body,
       addPlace(elements.evidence, destination);
       state.arrayElements[destination] = std::move(elements);
     }
-    if (aggregateIndex && fact) {
+    if (indexed && fact) {
       IntegerFact elements =
-          previousAggregateElements
-              ? joinedElementFact(*previousAggregateElements, *fact)
-              : *fact;
+          indexed->field.empty()
+              ? (previousAggregateElements
+                     ? joinedElementFact(*previousAggregateElements, *fact)
+                     : *fact)
+              : (previousAggregateField
+                     ? joinedElementFact(*previousAggregateField, *fact)
+                     : *fact);
       add(elements.evidence, block.id);
       addInstruction(elements.evidence, instruction.id);
-      addPlace(elements.evidence, objectRoot);
+      addPlace(elements.evidence, indexed->root);
       addPlace(elements.evidence, *instruction.destination);
-      state.aggregateElements[objectRoot] = std::move(elements);
-      ObjectFact &object = state.objects[objectRoot];
-      object.elements = state.aggregateElements[objectRoot];
+      ObjectFact &object = state.objects[indexed->root];
+      if (indexed->field.empty()) {
+        state.aggregateElements[indexed->root] = std::move(elements);
+        object.elements = state.aggregateElements[indexed->root];
+      } else {
+        state.aggregateElementIntegers[indexed->root].insert_or_assign(
+            indexed->field, std::move(elements));
+        object.elementIntegers.insert_or_assign(
+            indexed->field,
+            state.aggregateElementIntegers[indexed->root].at(indexed->field));
+      }
     }
     if (storage) {
       StorageFact stored = *storage;
@@ -2279,6 +2483,7 @@ void applyInstruction(const MirBody &body,
         storage->length.reset();
       }
       storage->elements.reset();
+      storage->elementIntegers.clear();
       storage->elementsUnknown = false;
       updateStorageOperand(state, aliases, instruction.operands.front(),
                            std::move(*storage));
@@ -2289,7 +2494,10 @@ void applyInstruction(const MirBody &body,
       invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
       const std::size_t valueIndex =
           instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ? 2 : 1;
+      const bool storageWasEmpty =
+          storage->length && nonnegativeSingleton(*storage->length) == 0;
       std::optional<IntegerFact> value;
+      std::optional<ObjectFact> object;
       if (constantIntegerDomain(*elementType) &&
           instruction.operands.size() > valueIndex) {
         value =
@@ -2297,15 +2505,45 @@ void applyInstruction(const MirBody &body,
       } else if (const std::optional<CheckedIntegerDomain> domain =
                      constantIntegerDomain(*elementType)) {
         value = IntegerFact{.domain = *domain, .lower = {}, .upper = {}};
+      } else {
+        const ClosedElementConstruction construction =
+            closedElementConstruction(body, aliases, instruction, valueIndex,
+                                      state, closedCalls, address);
+        if (construction.pending) {
+          state.reachable = false;
+          return;
+        }
+        object = construction.object;
+        if (!object && instruction.operands.size() > valueIndex) {
+          object = objectForOperand(body, aliases, state,
+                                    instruction.operands[valueIndex]);
+        }
       }
-      if (!value) {
+      if (!value && !object) {
         storage->elements.reset();
+        storage->elementIntegers.clear();
         storage->elementsUnknown = true;
-      } else if (!storage->elementsUnknown) {
+      } else if (value && !storage->elementsUnknown) {
         storage->elements = storage->elements
                                 ? std::optional<IntegerFact>{joinedElementFact(
                                       *storage->elements, *value)}
                                 : value;
+      } else if (object && !storage->elementsUnknown) {
+        if (storageWasEmpty) {
+          storage->elementIntegers = object->integers;
+        } else {
+          for (auto iterator = storage->elementIntegers.begin();
+               iterator != storage->elementIntegers.end();) {
+            const auto found = object->integers.find(iterator->first);
+            if (found == object->integers.end()) {
+              iterator = storage->elementIntegers.erase(iterator);
+              continue;
+            }
+            iterator->second =
+                joinedElementFact(iterator->second, found->second);
+            ++iterator;
+          }
+        }
       }
       if (storage->length) {
         const IntegerFact one{.domain = storage->length->domain,
@@ -2492,6 +2730,10 @@ void joinOptionalInteger(std::optional<IntegerFact> &target,
 
 void joinStorageFact(StorageFact &target, const StorageFact &incoming,
                      bool widen) {
+  const bool targetEmpty =
+      target.length && nonnegativeSingleton(*target.length) == 0;
+  const bool incomingEmpty =
+      incoming.length && nonnegativeSingleton(*incoming.length) == 0;
   target.capacity = joinedInteger(target.capacity, incoming.capacity, widen);
   joinOptionalInteger(target.length, incoming.length, widen);
   if (target.length) {
@@ -2499,12 +2741,20 @@ void joinStorageFact(StorageFact &target, const StorageFact &incoming,
   }
   if (target.elementsUnknown || incoming.elementsUnknown) {
     target.elements.reset();
+    target.elementIntegers.clear();
     target.elementsUnknown = true;
   } else if (target.elements && incoming.elements) {
     target.elements =
         joinedInteger(*target.elements, *incoming.elements, widen);
   } else if (!target.elements && incoming.elements) {
     target.elements = incoming.elements;
+  }
+  if (!target.elementsUnknown) {
+    if (targetEmpty) {
+      target.elementIntegers = incoming.elementIntegers;
+    } else if (!incomingEmpty) {
+      joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
+    }
   }
   std::set<std::uint64_t> intersection;
   std::set_intersection(target.initialized.begin(), target.initialized.end(),
@@ -2557,6 +2807,20 @@ void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
   }
 }
 
+void joinAggregateElementIntegers(
+    std::map<MirPlaceId, IntegerFieldFacts> &target,
+    const std::map<MirPlaceId, IntegerFieldFacts> &incoming, bool widen) {
+  for (auto iterator = target.begin(); iterator != target.end();) {
+    const auto found = incoming.find(iterator->first);
+    if (found == incoming.end()) {
+      iterator = target.erase(iterator);
+      continue;
+    }
+    joinIntegers(iterator->second, found->second, widen);
+    ++iterator;
+  }
+}
+
 [[nodiscard]] bool mergeInto(AbstractState &target,
                              const AbstractState &incoming, bool widen) {
   if (!incoming.reachable) {
@@ -2572,6 +2836,8 @@ void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
   joinIntegers(target.arrayValues, incoming.arrayValues, widen);
   joinIntegers(target.arrayElements, incoming.arrayElements, widen);
   joinIntegers(target.aggregateElements, incoming.aggregateElements, widen);
+  joinAggregateElementIntegers(target.aggregateElementIntegers,
+                               incoming.aggregateElementIntegers, widen);
   joinObjectFacts(target.objects, incoming.objects, widen);
   for (auto iterator = target.loadedOrigins.begin();
        iterator != target.loadedOrigins.end();) {
@@ -3748,33 +4014,135 @@ indexedElementStoragePath(const MirProgram &program, const SemanticType &type) {
   return result;
 }
 
-[[nodiscard]] bool
-indexedAggregatePlace(const MirProgram *program, const MirBody &body,
-                      const MirPlaceAliasEscapeAnalysis &aliases,
-                      MirPlaceId placeId, MirPlaceId aggregateRootId) {
+[[nodiscard]] std::optional<IndexedAggregateAccess>
+indexedAggregateAccess(const MirProgram *program, const MirBody &body,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       MirPlaceId placeId) {
   const MirPlace *place = body.findPlace(placeId);
-  if (place == nullptr) {
-    return false;
-  }
-  if (std::any_of(place->projections.begin(), place->projections.end(),
-                  [](const MirPlaceProjection &projection) {
-                    return projection.kind == MirProjectionKind::Index ||
-                           projection.kind == MirProjectionKind::RawIndex;
-                  })) {
-    return true;
-  }
-  if (program == nullptr || aggregateRootId == 0 ||
-      place->root != MirPlaceRootKind::Loan || place->loan == 0 ||
-      !place->projections.empty()) {
-    return false;
+  if (program == nullptr || place == nullptr) {
+    return std::nullopt;
   }
 
-  const MirLoan *loan = body.findLoan(place->loan);
+  const auto directIndex =
+      std::find_if(place->projections.begin(), place->projections.end(),
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Index ||
+                            projection.kind == MirProjectionKind::RawIndex;
+                   });
+  if (directIndex != place->projections.end()) {
+    if (!std::all_of(place->projections.begin(), directIndex,
+                     [](const MirPlaceProjection &projection) {
+                       return transparentRootProjection(projection.kind);
+                     })) {
+      return std::nullopt;
+    }
+    FieldPath field;
+    for (auto projection = std::next(directIndex);
+         projection != place->projections.end(); ++projection) {
+      if (projection->kind != MirProjectionKind::Field ||
+          projection->field == 0) {
+        return std::nullopt;
+      }
+      field.push_back(projection->field);
+    }
+    const MirPlaceId root = aggregateRoot(body, aliases, placeId);
+    return root == 0 ? std::nullopt
+                     : std::optional<IndexedAggregateAccess>{
+                           {.root = root, .field = std::move(field)}};
+  }
+
+  const MirLoan *loan = nullptr;
+  const MirLoan *carrierLoan = nullptr;
+  const MirPlace *element = nullptr;
+  std::size_t projection = 0;
+  if (place->root == MirPlaceRootKind::Loan && place->loan != 0) {
+    loan = body.findLoan(place->loan);
+    const auto found = std::find_if(
+        body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+          return candidate.root == MirPlaceRootKind::Loan &&
+                 candidate.loan == place->loan && candidate.projections.empty();
+        });
+    element = found == body.places.end() ? nullptr : &*found;
+  } else if (place->root == MirPlaceRootKind::Binding && place->binding != 0 &&
+             !place->projections.empty() &&
+             place->projections.front().kind ==
+                 MirProjectionKind::Dereference) {
+    projection = 1;
+    for (const MirLoan &candidate : body.loans) {
+      if (std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                    place->binding) == candidate.carriers.end()) {
+        continue;
+      }
+      if (carrierLoan != nullptr) {
+        return std::nullopt;
+      }
+      carrierLoan = &candidate;
+    }
+    if (carrierLoan != nullptr) {
+      if (carrierLoan->kind == MirLoanKind::CallResult) {
+        loan = carrierLoan;
+      } else if (carrierLoan->kind == MirLoanKind::Local) {
+        const MirPlace *carrierSource = body.findPlace(carrierLoan->source);
+        if (carrierSource == nullptr ||
+            carrierSource->root != MirPlaceRootKind::Loan ||
+            carrierSource->loan == 0) {
+          return std::nullopt;
+        }
+        loan = body.findLoan(carrierSource->loan);
+        if (loan == nullptr) {
+          return std::nullopt;
+        }
+      } else {
+        return std::nullopt;
+      }
+      const auto found =
+          std::find_if(body.places.begin(), body.places.end(),
+                       [&](const MirPlace &candidate) {
+                         return candidate.root == MirPlaceRootKind::Loan &&
+                                candidate.loan == loan->id &&
+                                candidate.projections.empty();
+                       });
+      element = found == body.places.end() ? nullptr : &*found;
+    }
+  }
+
+  FieldPath field;
+  for (; projection < place->projections.size(); ++projection) {
+    const MirPlaceProjection &current = place->projections[projection];
+    if (current.kind != MirProjectionKind::Field || current.field == 0) {
+      return std::nullopt;
+    }
+    field.push_back(current.field);
+  }
+
+  const MirLoan *parentLoan = loan != nullptr && loan->parent != 0
+                                  ? body.findLoan(loan->parent)
+                                  : nullptr;
+  const bool directCarrier = carrierLoan != nullptr && carrierLoan == loan;
   if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
-      loan->parent != 0 || loan->source == 0 || loan->producedBy == 0 ||
-      !loan->carriers.empty() || loan->entry || loan->escapes ||
-      canonicalPlace(aliases, loan->source) != aggregateRootId) {
-    return false;
+      loan->source == 0 || loan->producedBy == 0 || loan->entry ||
+      loan->escapes || element == nullptr ||
+      (place->root == MirPlaceRootKind::Loan && !loan->carriers.empty()) ||
+      (loan->parent != 0 &&
+       (parentLoan == nullptr || parentLoan->kind != MirLoanKind::Parameter ||
+        !parentLoan->entry || parentLoan->source != loan->source ||
+        parentLoan->access != loan->access)) ||
+      (place->root == MirPlaceRootKind::Binding &&
+       (carrierLoan == nullptr || carrierLoan->entry || carrierLoan->escapes ||
+        carrierLoan->carriers.size() != 1 ||
+        carrierLoan->carriers.front() != place->binding ||
+        (directCarrier ? carrierLoan->kind != MirLoanKind::CallResult
+                       : (carrierLoan->kind != MirLoanKind::Local ||
+                          !loan->carriers.empty() ||
+                          carrierLoan->parent != loan->parent ||
+                          carrierLoan->source != element->id ||
+                          carrierLoan->access != loan->access ||
+                          carrierLoan->producedBy != loan->producedBy))))) {
+    return std::nullopt;
+  }
+  const MirPlaceId aggregateRootId = aggregateRoot(body, aliases, loan->source);
+  if (aggregateRootId == 0) {
+    return std::nullopt;
   }
 
   const MirInstruction *producer = nullptr;
@@ -3787,19 +4155,20 @@ indexedAggregatePlace(const MirProgram *program, const MirBody &body,
         continue;
       }
       if (producer != nullptr) {
-        return false;
+        return std::nullopt;
       }
       producer = &instruction;
     }
   }
   if (producer == nullptr || !producer->functionTarget || !producer->receiver ||
       producer->receiver->place == 0 ||
-      canonicalPlace(aliases, producer->receiver->place) != aggregateRootId ||
+      aggregateRoot(body, aliases, producer->receiver->place) !=
+          aggregateRootId ||
       producer->operands.size() != 1 ||
       producer->borrowOrigin != BorrowOriginKind::Receiver ||
       producer->borrowAccess != loan->access ||
-      producer->info.type != place->type) {
-    return false;
+      producer->info.type != element->type) {
+    return std::nullopt;
   }
 
   const MirFunctionInstance *target =
@@ -3818,14 +4187,15 @@ indexedAggregatePlace(const MirProgram *program, const MirBody &body,
       target->returnBorrowAccess != loan->access ||
       target->returnType.kind != SemanticType::Reference ||
       target->returnType.arguments.size() != 1 ||
-      target->returnType.arguments.front() != place->type ||
+      target->returnType.arguments.front() != element->type ||
       (loan->access == AccessMode::Mutable
            ? target->receiverMutability != ReceiverMutability::Mutable
            : target->receiverMutability != ReceiverMutability::ReadOnly) ||
       !indexedElementBorrowPath(target->body, loan->access)) {
-    return false;
+    return std::nullopt;
   }
-  return true;
+  return IndexedAggregateAccess{.root = aggregateRootId,
+                                .field = std::move(field)};
 }
 
 void sanitizeObject(const MirProgram &program, const SemanticType &type,
@@ -3834,17 +4204,21 @@ void sanitizeObject(const MirProgram &program, const SemanticType &type,
       indexedElementStoragePath(program, type);
   if (!storagePath) {
     object.elements.reset();
-    return;
-  }
-  if (!object.elements) {
+    object.elementIntegers.clear();
     return;
   }
   const auto storage = object.storages.find(*storagePath);
   if (storage == object.storages.end() || storage->second.elementsUnknown) {
     object.elements.reset();
+    object.elementIntegers.clear();
     return;
   }
-  storage->second.elements = object.elements;
+  if (object.elements) {
+    storage->second.elements = object.elements;
+  }
+  if (!object.elementIntegers.empty()) {
+    storage->second.elementIntegers = object.elementIntegers;
+  }
 }
 
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
@@ -3862,6 +4236,7 @@ void sanitizeObject(const MirProgram &program, const SemanticType &type,
     ++iterator;
   }
   joinOptionalInteger(target.elements, incoming.elements, widen);
+  joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
   return target != before;
 }
 
@@ -4044,6 +4419,58 @@ objectAtExits(const MirProgram &program, const MirBody &body,
   return result;
 }
 
+[[nodiscard]] FieldPath prefixedFieldPath(SymbolId field,
+                                          const FieldPath &suffix = {}) {
+  FieldPath result;
+  result.reserve(suffix.size() + 1);
+  result.push_back(field);
+  result.insert(result.end(), suffix.begin(), suffix.end());
+  return result;
+}
+
+[[nodiscard]] ObservedFact<ObjectFact> fieldInitializersAtExits(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirClassInstance &owner, const std::vector<AbstractState> &exits) {
+  ObservedFact<ObjectFact> result{.observed = true};
+  for (const AbstractState &state : exits) {
+    ObjectFact object;
+    for (const MirClassFieldInfo &field : owner.declaredFields) {
+      const MirPlaceId fieldRoot = rootForBinding(body, field.field);
+      if (fieldRoot == 0) {
+        continue;
+      }
+      const MirPlaceId root = canonicalPlace(aliases, fieldRoot);
+      if (const auto integer = state.integerPlaces.find(root);
+          integer != state.integerPlaces.end()) {
+        object.integers.insert_or_assign(FieldPath{field.symbol},
+                                         integer->second);
+      }
+      if (const auto storage = state.storages.find(root);
+          storage != state.storages.end()) {
+        object.storages.insert_or_assign(FieldPath{field.symbol},
+                                         storage->second);
+      }
+      if (const std::optional<ObjectFact> nested =
+              extractObjectFact(body, aliases, root, state)) {
+        for (const auto &[path, fact] : nested->integers) {
+          object.integers.insert_or_assign(
+              prefixedFieldPath(field.symbol, path), fact);
+        }
+        for (const auto &[path, storage] : nested->storages) {
+          object.storages.insert_or_assign(
+              prefixedFieldPath(field.symbol, path), storage);
+        }
+      }
+    }
+    if (!result.fact) {
+      result.fact = std::move(object);
+    } else {
+      (void)mergeObject(*result.fact, object, false);
+    }
+  }
+  return result;
+}
+
 struct ContextualBodyResult {
   ClosedCallSummary summary;
   MirSafetyAnalysis safety;
@@ -4104,8 +4531,33 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   }
   const MirPlaceAliasEscapeAnalysis aliases =
       analyzeMirPlaceAliasEscape(program, address);
-  const AbstractState entry =
+  AbstractState entry =
       entryStateForContext(program, address, *body, aliases, context);
+  std::optional<ObjectFact> initialFields;
+  const MirClassInstance *constructorOwner = nullptr;
+  if (address.kind == MirBodyKind::Constructor) {
+    const MirConstructorInstance *constructor =
+        program.findConstructorInstance(address.owner);
+    constructorOwner = constructor == nullptr
+                           ? nullptr
+                           : program.findClassInstance(constructor->owner);
+    if (constructorOwner != nullptr) {
+      const MirBodyAddress initializerAddress{
+          .kind = MirBodyKind::FieldInitializers,
+          .owner = constructorOwner->id};
+      const auto initializers = round.summaries.find(initializerAddress);
+      if (initializers == round.summaries.end() ||
+          !initializers->second.complete) {
+        round.incompleteBodies.insert(address);
+      } else if (initializers->second.constructed.observed) {
+        initialFields = initializers->second.constructed.fact;
+        const MirPlaceId root = thisRoot(*body);
+        if (root != 0 && initialFields) {
+          seedObjectFact(*body, aliases, root, *initialFields, entry);
+        }
+      }
+    }
+  }
   const std::vector<AbstractState> incoming =
       solveStates(*body, aliases, &entry, &round, address);
   if (incoming.empty()) {
@@ -4121,9 +4573,13 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   std::vector<AbstractState> exits;
   std::vector<std::optional<IntegerFact>> returnFacts;
   for (const MirBlock &block : body->blocks) {
+    const bool successfulExit =
+        block.terminator.kind == MirTerminatorKind::Return ||
+        ((address.kind == MirBodyKind::FieldInitializers ||
+          address.kind == MirBodyKind::Constructor) &&
+         block.terminator.kind == MirTerminatorKind::Exit);
     if (block.id == 0 || block.id > incoming.size() ||
-        !incoming[block.id - 1].reachable ||
-        block.terminator.kind != MirTerminatorKind::Return) {
+        !incoming[block.id - 1].reachable || !successfulExit) {
       continue;
     }
     BlockTransfer transferred =
@@ -4132,7 +4588,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     if (!transferred.output.reachable) {
       continue;
     }
-    if (block.terminator.value) {
+    if (block.terminator.kind == MirTerminatorKind::Return &&
+        block.terminator.value) {
       std::optional<IntegerFact> fact =
           integerForOperand(*body, transferred.output, *block.terminator.value);
       if (!fact) {
@@ -4192,16 +4649,20 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
           objectAtExits(program, *body, aliases, exits, root, owner->type);
     }
   }
-  if (address.kind == MirBodyKind::Constructor) {
-    const MirConstructorInstance *constructor =
-        program.findConstructorInstance(address.owner);
-    const MirClassInstance *owner =
-        constructor == nullptr ? nullptr
-                               : program.findClassInstance(constructor->owner);
-    const MirPlaceId root = thisRoot(*body);
-    if (owner != nullptr && root != 0) {
+  if (address.kind == MirBodyKind::FieldInitializers) {
+    const MirClassInstance *owner = program.findClassInstance(address.owner);
+    if (owner != nullptr) {
       result.summary.constructed =
-          objectAtExits(program, *body, aliases, exits, root, owner->type);
+          fieldInitializersAtExits(*body, aliases, *owner, exits);
+    }
+  } else if (address.kind == MirBodyKind::Constructor) {
+    const MirPlaceId root = thisRoot(*body);
+    if (constructorOwner != nullptr && root != 0) {
+      result.summary.constructed = objectAtExits(program, *body, aliases, exits,
+                                                 root, constructorOwner->type);
+    } else if (constructorOwner != nullptr) {
+      result.summary.constructed.observed = true;
+      result.summary.constructed.fact = std::move(initialFields);
     }
   }
   return result;
@@ -4245,6 +4706,17 @@ rejectedClosedCallBodies(const MirProgram &program) {
         if (const std::optional<MirBodyAddress> target =
                 closedCallTarget(program, instruction)) {
           graph[address].push_back(*target);
+        } else if (instruction.constructorTarget) {
+          const MirConstructorInstance *target =
+              program.findConstructorInstance(*instruction.constructorTarget);
+          if (instruction.dispatch == CallDispatch::Static &&
+              !instruction.nativeCallbackAdapter &&
+              !instruction.threadTaskAdapter && !instruction.lambdaTarget &&
+              target != nullptr &&
+              target->definitionKind == MirDefinitionKind::Source) {
+            graph[address].push_back({.kind = MirBodyKind::Constructor,
+                                      .owner = *instruction.constructorTarget});
+          }
         }
       }
     }

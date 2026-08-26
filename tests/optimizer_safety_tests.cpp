@@ -772,6 +772,113 @@ int32_t main() {
          "both arithmetic checks");
 }
 
+void testClosedIndexedRecordFieldEnvelope() {
+  const std::string source = R"(
+extern "C" {
+  void analysis_barrier();
+}
+
+struct CheckedRecord {
+  CheckedRecord() {}
+
+  mut int32_t broad = int32_t(2147483647);
+  mut int32_t narrow = int32_t(0);
+};
+
+class CheckedRecordBuffer {
+  mut gti_internal::prefix_storage<CheckedRecord> data;
+
+public:
+  CheckedRecordBuffer()
+      : data(gti_internal::allocate_prefix_storage<CheckedRecord>(uint64_t(2))) {
+    gti_internal::prefix_storage_append(this.data, CheckedRecord());
+    gti_internal::prefix_storage_append(this.data, CheckedRecord());
+  }
+
+  uint64_t size() {
+    return gti_internal::prefix_storage_length(this.data);
+  }
+
+  CheckedRecord& operator[](uint64_t index) {
+    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    gti_internal::index_bounds_check(index, live);
+    return gti_internal::prefix_storage_read(this.data, index);
+  }
+
+  mut CheckedRecord& operator[](uint64_t index) mut {
+    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    gti_internal::index_bounds_check(index, live);
+    return gti_internal::prefix_storage_read_mut(this.data, index);
+  }
+};
+
+void increment_narrow(mut CheckedRecordBuffer& values) {
+  mut CheckedRecord& value = values[uint64_t(0)];
+  value.narrow =
+      (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
+}
+
+int32_t direct_increment_narrow() {
+  mut CheckedRecordBuffer values = CheckedRecordBuffer();
+  mut CheckedRecord& value = values[uint64_t(0)];
+  value.narrow =
+      (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
+  return value.narrow;
+}
+
+void barrier_then_increment(mut CheckedRecordBuffer& values) {
+  mut CheckedRecord& value = values[uint64_t(0)];
+  analysis_barrier();
+  value.narrow =
+      (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
+}
+
+int32_t main() {
+  mut CheckedRecordBuffer values = CheckedRecordBuffer();
+  int32_t direct = direct_increment_narrow();
+  increment_narrow(values);
+  barrier_then_increment(values);
+  return direct;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-indexed-record-envelope.gti", source);
+  expect(frontend.canGenerateCode(),
+         "closed indexed-record envelope fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const auto optimize = [&](lang::OptimizationLevel level) {
+    return pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+  };
+  const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
+  const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
+  const auto overflow = [&](const lang::OptimizedProgram &optimized,
+                            std::string_view name) {
+    return functionDischarges(frontend, optimized, name,
+                              lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  };
+
+  expect(o2.valid() && o3.valid() && overflow(o2, "increment_narrow") == 2 &&
+             overflow(o3, "increment_narrow") == 2,
+         "a closed record constructor should preserve independent field "
+         "envelopes through a retained indexed mutable reference");
+  expect(overflow(o2, "direct_increment_narrow") == 2 &&
+             overflow(o3, "direct_increment_narrow") == 2,
+         "a direct call-result loan retained by a local reference should "
+         "preserve its indexed-record field envelope");
+  expect(overflow(o2, "barrier_then_increment") == 0 &&
+             overflow(o3, "barrier_then_increment") == 0,
+         "an opaque call must invalidate retained indexed-record field "
+         "envelopes before arithmetic mutation");
+}
+
 } // namespace
 
 int main() {
@@ -779,6 +886,7 @@ int main() {
   testProofCarryingSafetyCheckElimination();
   testPrefixStorageBoundsRelation();
   testClosedIndexedElementEnvelope();
+  testClosedIndexedRecordFieldEnvelope();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";
     return 1;
