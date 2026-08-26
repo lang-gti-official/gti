@@ -82,6 +82,22 @@ jobs:
             fi
           fi
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt=(apt-get)
+          if command -v sudo >/dev/null 2>&1; then
+            apt=(sudo apt-get)
+          fi
+          "${apt[@]}" update
+          "${apt[@]}" install -y --no-install-recommends \
+            build-essential cmake
+
+      - name: Install CMake
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
       - name: Resolve package platform
         id: platform
         shell: bash
