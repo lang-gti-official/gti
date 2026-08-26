@@ -116,8 +116,11 @@ is a separate future decision with its own ADR, not an incremental drift.
   GTI owns the object schema and never iterates `json::Object` to assign
   protocol meaning.
 - **Link surface.** Only `LLVMSupport`, `LLVMTargetParser`, and
-  `LLVMDemangle` may be linked. `scripts/check_llvm_link_surface.py` (the
-  `llvm_link_surface` test) enforces this in every build.
+  `LLVMDemangle` may be linked from LLVM. libclang — the one Clang library
+  GTI links — is governed by
+  [ADR 021](021-libclang-c-import.md), not by this decision.
+  `scripts/check_llvm_link_surface.py` (the `llvm_link_surface` test)
+  enforces both surfaces in every build.
 - **Exceptions.** LLVM is built without exception support. No GTI callback
   that can throw may be passed into an LLVM API. The parser's `ParseError`
   recovery never crosses an LLVM frame, and the LSP's guarded callback

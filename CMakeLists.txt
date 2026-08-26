@@ -113,6 +113,12 @@ if(GTI_BUNDLE_LLVM)
   # bundling must match them: GTI_BUNDLE_LLVM only changes how the dependency
   # is acquired, never what it provides.
   set(LLVM_ENABLE_RTTI ON CACHE BOOL "GTI links LLVM from RTTI-enabled code" FORCE)
+  # The clang project provides exactly one additional GTI link surface:
+  # libclang, the C API the bindgen reader uses (ADR 021). EXCLUDE_FROM_ALL
+  # keeps the rest of clang's build graph out of GTI's `all`; only libclang
+  # and its implementation dependencies build, on demand.
+  set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING
+      "GTI bindgen links libclang" FORCE)
   set(GTI_LLVM_SOURCE_URL
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
@@ -146,6 +152,9 @@ if(GTI_BUNDLE_LLVM)
   set(GTI_LLVM_VERSION "${GTI_PINNED_LLVM_VERSION}")
   set(GTI_LLVM_INCLUDE_DIRS "${llvm_project_SOURCE_DIR}/llvm/include"
                             "${llvm_project_BINARY_DIR}/include")
+  set(GTI_CLANG_INCLUDE_DIRS
+      "${llvm_project_SOURCE_DIR}/clang/include"
+      "${llvm_project_BINARY_DIR}/tools/clang/include")
   message(STATUS "GTI: bundled LLVM ${GTI_LLVM_VERSION} support libraries enabled")
 else()
   find_package(LLVM CONFIG QUIET)
@@ -170,6 +179,16 @@ else()
   set(GTI_LLVM_VERSION "${LLVM_PACKAGE_VERSION}")
   set(GTI_LLVM_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS})
   message(STATUS "GTI: system LLVM ${GTI_LLVM_VERSION} support libraries enabled")
+  # libclang ships in the Clang CMake package beside the LLVM one (Debian
+  # libclang-*-dev, Homebrew llvm@*). The hint covers installations whose
+  # clang package directory sits beside the LLVM package directory.
+  find_package(Clang CONFIG QUIET HINTS "${LLVM_DIR}/../clang")
+  if(NOT Clang_FOUND)
+    message(
+      FATAL_ERROR
+        "GTI requires the Clang CMake package matching LLVM ${GTI_LLVM_VERSION} for libclang (Debian: libclang-XX-dev; Homebrew llvm@* includes it). Set Clang_DIR to its lib/cmake/clang directory or configure with -DGTI_BUNDLE_LLVM=ON.")
+  endif()
+  set(GTI_CLANG_INCLUDE_DIRS ${CLANG_INCLUDE_DIRS})
 endif()
 
 foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
@@ -186,6 +205,16 @@ foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
     endif()
   endif()
 endforeach()
+
+# The bindgen reader links exactly one clang-project library: libclang, the
+# stable C API (ADR 021). Component libraries (clangAST, clang-cpp, ...) stay
+# out of scope; scripts/check_llvm_link_surface.py enforces this in every
+# build.
+if(NOT TARGET libclang)
+  message(
+    FATAL_ERROR
+      "LLVM ${GTI_LLVM_VERSION} does not provide the libclang target GTI bindgen requires")
+endif()
 
 set(GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES "")
 if(GTI_BUNDLE_LLVM)
@@ -406,7 +435,7 @@ add_library(
   "gti_bindgen" STATIC
   "src/bindgen/bindgen.cpp"
   "src/bindgen/binding_planner.cpp"
-  "src/bindgen/c_reader.cpp"
+  "src/bindgen/clang_reader.cpp"
   "src/bindgen/gti_writer.cpp"
   "src/bindgen/native_model.cpp"
 )
@@ -416,6 +445,12 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
+# clang-c headers stay private to the reader translation unit; installed GTI
+# headers never require them (ADR 021 keeps ADR 006's header posture).
+target_include_directories(
+  "gti_bindgen" SYSTEM PRIVATE ${GTI_CLANG_INCLUDE_DIRS}
+)
+target_link_libraries("gti_bindgen" PRIVATE libclang)
 target_compile_features("gti_bindgen" PUBLIC cxx_std_20)
 
 add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
@@ -516,6 +551,23 @@ if(GTI_BUNDLE_LLVM)
     DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
     COMPONENT gti_toolchain
   )
+  # libclang is deliberately shared — the C API's supported distribution form
+  # — and ships beside the LLVM archives. The installed gti binary locates it
+  # by rpath relative to its own location.
+  install(
+    FILES "$<TARGET_FILE:libclang>"
+    DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
+    COMPONENT gti_toolchain
+  )
+  if(APPLE)
+    set_target_properties(
+      gti PROPERTIES INSTALL_RPATH
+                     "@loader_path/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
+  else()
+    set_target_properties(
+      gti PROPERTIES INSTALL_RPATH
+                     "$ORIGIN/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
+  endif()
 endif()
 install(TARGETS gti_tree_sitter
         LIBRARY DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/parser"
@@ -551,6 +603,12 @@ if(GTI_BUNDLE_LLVM)
   install(FILES "${llvm_project_SOURCE_DIR}/llvm/LICENSE.TXT"
           DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
           RENAME "llvm-LICENSE.txt"
+          COMPONENT gti_toolchain)
+  # Same Apache-2.0-with-LLVM-exception terms; the clang project carries its
+  # own license file, and the bundled libclang ships with it (ADR 021).
+  install(FILES "${llvm_project_SOURCE_DIR}/clang/LICENSE.TXT"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
+          RENAME "clang-LICENSE.txt"
           COMPONENT gti_toolchain)
 endif()
 if(TARGET gti_lsp)

@@ -150,7 +150,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build llvm-18-dev
+          sudo apt-get install -y --no-install-recommends ninja-build llvm-18-dev libclang-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
       - name: Install Ninja and LLVM 22
@@ -215,7 +215,7 @@ jobs:
       - name: Install Ninja and LLVM 18
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build llvm-18-dev
+          sudo apt-get install -y --no-install-recommends ninja-build llvm-18-dev libclang-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
       - name: Configure

@@ -72,12 +72,21 @@ foreach(required_file
           "share/gti/stdlib/std/thread.gti"
           "share/gti/stdlib/std/vector.gti"
           "share/licenses/gti/GTI-LICENSE.txt"
+          "share/licenses/gti/clang-LICENSE.txt"
           "share/licenses/gti/llvm-LICENSE.txt"
           "share/licenses/gti/tomlplusplus-LICENSE.txt")
   if(NOT EXISTS "${GTI_STAGE_DIR}/${required_file}")
     message(FATAL_ERROR "Release staging is missing ${required_file}")
   endif()
 endforeach()
+
+# libclang's file name is platform-shaped (libclang.so.MAJOR / libclang.dylib),
+# so the presence check is a glob rather than one literal path.
+file(GLOB GTI_STAGED_LIBCLANG "${GTI_STAGE_DIR}/lib/gti/llvm/libclang.*")
+if(GTI_STAGED_LIBCLANG STREQUAL "")
+  message(FATAL_ERROR
+          "Release staging is missing lib/gti/llvm/libclang (the bindgen C reader's runtime library)")
+endif()
 
 # Stamp the build identity into the staged toolchain before archiving. On the
 # nightly channel VERSION does not change between builds, so this is the only
