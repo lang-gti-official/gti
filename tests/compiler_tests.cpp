@@ -18209,13 +18209,17 @@ int invoke(Renderable& renderable) {
   return renderable.render(3);
 }
 
+int invoke_direct(Sprite& sprite) {
+  return sprite.render(3);
+}
+
 int main() {
   Sprite sprite{4};
   Box<int> box{3};
   Reader<int>& reader = box;
   int inherited_overload = sprite.tick(1.5);
-  return invoke(sprite) + inherited_overload + sprite.inherited_tick() +
-         reader.read() - 28;
+  return invoke(sprite) + invoke_direct(sprite) + inherited_overload +
+         sprite.inherited_tick() + reader.read() - 33;
 }
 )";
 
@@ -18312,8 +18316,32 @@ int main() {
              callInfo->dispatch == lang::CallDispatch::Virtual,
          "calls through interface references should carry virtual dispatch");
 
+  const lang::FunctionDecl *invokeDirect =
+      findTopLevelFunction(frontend.program, "invoke_direct");
+  const auto *directReturn =
+      invokeDirect == nullptr || invokeDirect->body()->statements().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ReturnStmt *>(
+                invokeDirect->body()->statements().front().get());
+  const auto *directCall =
+      directReturn == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(directReturn->value().get());
+  const lang::ResolvedCallInfo *directCallInfo =
+      directCall == nullptr ? nullptr
+                            : frontend.semantics.findCall(*directCall);
+  expect(directCallInfo != nullptr && implementationInfo != nullptr &&
+             spriteType != nullptr &&
+             directCallInfo->function == implementationInfo->id &&
+             directCallInfo->dispatch == lang::CallDispatch::Virtual &&
+             directCallInfo->dispatchOwner.kind == lang::SemanticType::Class &&
+             directCallInfo->dispatchOwner.classId == spriteType->id,
+         "a concrete override call should retain its exact target, virtual "
+         "dispatch, and concrete dispatch owner in semantics");
+
   const lang::HirClassInstance *spriteHir = nullptr;
   const lang::HirFunctionInstance *invokeHir = nullptr;
+  const lang::HirFunctionInstance *invokeDirectHir = nullptr;
   const lang::HirFunctionInstance *boxReadHir = nullptr;
   for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
     if (instance.source == sprite) {
@@ -18324,6 +18352,9 @@ int main() {
        frontend.hir.functionInstances()) {
     if (instance.source == invoke) {
       invokeHir = &instance;
+    }
+    if (instance.source == invokeDirect) {
+      invokeDirectHir = &instance;
     }
     if (instance.source == boxRead) {
       boxReadHir = &instance;
@@ -18338,17 +18369,78 @@ int main() {
                            value.dispatchOwner.kind ==
                                lang::SemanticType::Class;
                   });
+  const lang::HirValue *directHirCall = nullptr;
+  if (invokeDirectHir != nullptr) {
+    const auto found = std::find_if(
+        invokeDirectHir->body.values.begin(),
+        invokeDirectHir->body.values.end(), [&](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.source == directCall;
+        });
+    if (found != invokeDirectHir->body.values.end()) {
+      directHirCall = &*found;
+    }
+  }
+  const lang::HirFunctionInstance *directHirTarget =
+      directHirCall != nullptr && directHirCall->functionTarget
+          ? frontend.hir.findFunctionInstance(*directHirCall->functionTarget)
+          : nullptr;
   expect(spriteHir != nullptr && spriteHir->bases.size() == 3 &&
              spriteHir->polymorphic && hirHasVirtualCall &&
              boxReadHir != nullptr && boxReadHir->owner &&
              boxReadHir->virtualMethod && boxReadHir->overrideMethod,
          "HIR should retain base instances and virtual call dispatch");
+  expect(directHirCall != nullptr && directHirTarget != nullptr &&
+             spriteHir != nullptr &&
+             directHirCall->dispatch == lang::CallDispatch::Virtual &&
+             directHirCall->dispatchOwner == spriteHir->type &&
+             directHirTarget->source == implementation &&
+             directHirTarget->virtualRoots.size() == 1 &&
+             contractInfo != nullptr &&
+             directHirTarget->virtualRoots.front() == contractInfo->id,
+         "HIR should preserve the concrete override target and its exact "
+         "virtual contract root");
   const lang::MirClassInstance *spriteMir =
       spriteHir == nullptr ? nullptr
                            : frontend.mir.findClassInstance(spriteHir->id);
   expect(spriteMir != nullptr && spriteMir->bases.size() == 3 &&
              spriteMir->polymorphic,
          "MIR should preserve inheritance metadata for future backends");
+  const lang::MirFunctionInstance *invokeDirectMir =
+      invokeDirectHir == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(invokeDirectHir->id);
+  const lang::MirInstruction *directMirCall = nullptr;
+  if (invokeDirectMir != nullptr && directHirTarget != nullptr) {
+    for (const lang::MirBlock &block : invokeDirectMir->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == directHirTarget->id;
+          });
+      if (found != block.instructions.end()) {
+        directMirCall = &*found;
+        break;
+      }
+    }
+  }
+  const lang::MirFunctionInstance *directMirTarget =
+      directMirCall != nullptr && directMirCall->functionTarget
+          ? frontend.mir.findFunctionInstance(*directMirCall->functionTarget)
+          : nullptr;
+  expect(directMirCall != nullptr && directMirTarget != nullptr &&
+             spriteMir != nullptr &&
+             directMirCall->dispatch == lang::CallDispatch::Virtual &&
+             directMirCall->dispatchOwner == spriteMir->type &&
+             directMirCall->definedFailure.propagation ==
+                 lang::FailurePropagationKind::VirtualCall &&
+             directMirTarget->declaration == implementationInfo->id &&
+             directMirTarget->virtualRoots.size() == 1 &&
+             contractInfo != nullptr &&
+             directMirTarget->virtualRoots.front() == contractInfo->id,
+         "MIR should preserve the exact concrete target, virtual owner, and "
+         "contract identity without devirtualizing the call");
 
   const lang::BackendArtifact generatedArtifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
