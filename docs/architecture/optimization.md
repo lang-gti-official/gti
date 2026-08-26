@@ -138,6 +138,10 @@ The admitted operations are deliberately narrow:
 
 - fixed-array scalar reads and writes whose complete index interval is within
   the known extent;
+- private prefix-storage reads whose storage origin and scalar index origin
+  exactly match an earlier successful logical-size check derived from that
+  same storage's length, with no intervening storage mutation, index write,
+  aliasing write, opaque call, or control-flow path lacking the check;
 - private sparse-storage reads and mutable reads whose exact index is both in
   capacity and definitely initialized by a successful construct not invalidated
   by a destroy or mutation barrier; and
@@ -166,9 +170,12 @@ compound operator. Remainder and shifts remain on GTI-owned helpers even after
 a local failure is discharged because native C++ does not represent every GTI
 defined-semantics boundary, including signed-minimum remainder by `-1`.
 
-Array borrows, prefix-storage bounds operations, division, dynamic-divisor
-remainder, shifts, unsupported conversions, and unproved dynamic indices
-remain checked. Place alias facts refine mutable safety state: duplicate
+Array borrows, public logical-size checks, division, dynamic-divisor remainder,
+shifts, unsupported conversions, and unproved or mismatched dynamic indices
+remain checked. A proved prefix read keeps that public check and discharges
+only the private representation recheck. Prefix append, insert, erase, pop,
+relocation, storage/index aliasing, opaque calls, and unsupported joins discard
+the exact relation. Place alias facts refine mutable safety state: duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves
 facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
 invalidated. Alias facts do not themselves discharge a check or infer a
@@ -179,7 +186,9 @@ origin, code, and detail. The optimizer attaches a `MirSafetyDischarge` to the
 instruction but retains the source instruction and failure CFG. This keeps the
 proof inspectable and lets each backend select an unchecked representation
 only after `LoweredProgramBuilder` has independently replayed and sealed the
-transformation.
+transformation. For prefix reads, the C++ backend's unchecked helper is private
+representation vocabulary: it has no GTI declaration, intrinsic identity, or
+trusted-source spelling and is selected only from the verified discharge.
 
 ## Rewrite And Proof Authority
 

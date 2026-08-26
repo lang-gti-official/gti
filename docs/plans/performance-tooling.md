@@ -5,9 +5,10 @@
 
 Status: Milestone 1 remains in progress; the deterministic GTI optimization
 reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
-`O-PERF-00` is complete: the runtime workload set, fixed-native attribution
-mode, bounded successful-path arithmetic proxy, threshold-free CI smoke gate,
-and clean exact-head closure evidence are recorded below.
+`O-PERF-00` through `O-PERF-03` are complete: the runtime workload set,
+fixed-native attribution mode, loop and closed-call safety clients, single-bound
+prefix access, threshold-free CI smoke gate, and clean exact-head closure
+evidence are recorded below. `O-PERF-04` is the active campaign row.
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
@@ -559,6 +560,70 @@ O2 idiomatic: [87919834,87822833,88790208,88983250,87969541,89005792,87491333,87
 O3 GTI: [577177125,578966292,508430250,584664667,484879333,566989042,491549292,487420750,625394292,523772584,543110541,541242500,574319458,542386666,558903667,580959584,594773042,601897459,577460291,625327125]
 O3 semantic: [598112750,602058916,553173542,571467041,581574542,549965083,571274833,569335625,555157667,585732833,592171292,532171125,558867625,574490375,538931417,544835167,597885208,600321292,592711833,524756000]
 O3 idiomatic: [56659125,58029791,57074917,57335875,57419333,57550625,56372000,56744208,56462792,58507041,58107791,57784167,57029500,57727459,56994958,58039000,57522750,57136917,58894291,57589916]
+```
+
+### O-PERF-03 exact-head closure
+
+The row closed on exact clean implementation commit
+`eaaea34df1afb897db5c3299e0ec116d22347b6c` with `gti 0.317.0` and compiler
+SHA-256
+`e60e7df21f887737cd063d1ea0f904a10c6c4e0436195584e43616a49977b2f0`.
+Both reports used Apple Clang 21, C++23, explicit matching GTI/native levels,
+five warmups, twenty seeded interleaved samples, and seed 3108. They are
+schema-3 exact-head, conclusive, and retain
+`GTI-BENCH-1 digest:00000000135e33a6 work-units:2400000000`. Report SHA-256
+values are
+`6e040c345fd0e4d98f4c9aa55e294965c04c1c5d70fadb3d50136b6bd948a7b4`
+for O2 and
+`e15a2f675629a86199be9bcfd022dac09632f63f8a965f2bb2cada1e06067b81`
+for O3.
+
+| GTI/native level | GTI median / MAD (ms) | Semantic C++ median (ms) | Idiomatic C++ median (ms) | GTI / semantic | GTI / idiomatic |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| O2 / O2 | 433.264 / 13.511 | 656.434 | 82.957 | 0.660x | 5.223x |
+| O3 / O3 | 405.981 / 13.682 | 534.093 | 52.481 | 0.760x | 7.736x |
+
+Against `O-PERF-02`, absolute GTI median runtime improved by 22.4% at O2 and
+28.9% at O3. Normalizing to each same-run semantic C++ twin improved the ratio
+by 15.5% and 23.9% respectively, so host-frequency movement does not account
+for the result. Both exceed the row's 5% exit threshold.
+
+The deterministic O2 optimization report has SHA-256
+`4a5f6ce357148905f4467f79660063a4c7f83008f71b2c098a445086822066fe`;
+its emitted C++ has SHA-256
+`076de194957c1082c0098c56df99245e16c0303e21285d955aa9ea7e28a49b2e`.
+It records 44 source, 32 emitted, and 12 statically discharged safety outcomes.
+Bounds are 4/2/2, storage state 1/1/0, arithmetic overflow 15/9/6, and
+arithmetic domain 6/2/4. The full vector surface report has SHA-256
+`ea15b56d91692d79f5321bbab4c170f63b77de88c5b3af0ae30183c7038bca0b`
+and records bounds 21/14/7: read-only and mutable `front`, `back`, `at`, and
+`operator[]` retain one public vector check and omit only their proved private
+prefix recheck. Its emitted C++ SHA-256 is
+`8dcad58bbc3229bde2edc7541e025abab6585c32e0dad798fcd97a1ae9b43e4b`.
+
+The exact O3 control report has SHA-256
+`82185f2177660b0561267eb3a3a3fc978a976f40616cbea8262f00cce227c661`.
+Ratios are normalized to the same-run semantic C++ twin and compared with the
+last exact pre-row evidence. No control regressed by the 5% threshold.
+
+| Control | Current ratio/result | Relative change | Quality note |
+| --- | ---: | ---: | --- |
+| checked scalar chain | 1.0005x | -0.09% | conclusive |
+| fixed-array loop proof | 1.0003x | -0.16% | conclusive |
+| fixed-array overflow | 0.2129x | -6.0% | conclusive improvement |
+| scalar FP update | 1.0082x | +0.19% | conclusive |
+| game update stage | 1.0057x | +1.04% | GTI/semantic stable; overall report is inconclusive only because the 49.363 ms idiomatic median fell below its historical 50 ms sampling floor |
+| managed four-thread speedup | 3.493x | -3.91% | conclusive |
+
+Canonical vector samples, in nanoseconds:
+
+```text
+O2 GTI: [423371042,449481708,413057167,444442375,411085042,429640375,436886625,420889333,452042750,440271667,455641083,422668416,410538083,447161417,446387250,421123333,427911667,411075875,450986916,457482333]
+O2 semantic: [666111125,685023542,645786750,627854750,679883375,672900083,677251958,613310250,632741958,640793416,632221791,652325375,651465709,666939208,670066959,654893625,657973375,670623750,653473084,664498000]
+O2 idiomatic: [82298500,82717375,82105708,82040709,81011625,83284041,81641542,83187583,81693625,84444917,83151125,83457250,83457625,82763041,82425584,83551875,82720958,84114583,84295750,84106375]
+O3 GTI: [387557000,372402166,417194084,389907375,402385542,405820750,386567667,407604917,359709959,428528709,405182833,406140500,384691334,409912750,431050333,431310291,417271667,411266917,423962042,402110083]
+O3 semantic: [534503334,542765833,534360083,549700500,546734500,532643375,512302042,500785166,536804875,514728375,491687584,501061708,494330833,544394917,533826375,480370625,534747167,543372334,515153458,534886917]
+O3 idiomatic: [52883834,53352208,52312083,51922708,51723958,52630375,51592333,52788459,52491333,51873625,52469750,52938834,52591417,51864125,52523375,52810375,52411792,52226041,52263709,52585000]
 ```
 
 ### Independent reproduction of PR #164

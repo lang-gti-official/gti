@@ -311,6 +311,18 @@ int32_t remainder_failure(int32_t value, int32_t divisor) {
   return value % divisor;
 }
 
+int32_t vector_failure(int32_t selector) {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.reserve(std::size_t(1));
+  if (selector == 0) {
+    return values.front();
+  }
+  if (selector == 1) {
+    return values.back();
+  }
+  return values.at(std::size_t(0));
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 2) {
     return bounds_failure(uint64_t(2));
@@ -323,6 +335,15 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 5) {
     return remainder_failure(int32_t(7), int32_t(0));
+  }
+  if (argc == 6) {
+    return vector_failure(int32_t(0));
+  }
+  if (argc == 7) {
+    return vector_failure(int32_t(1));
+  }
+  if (argc == 8) {
+    return vector_failure(int32_t(2));
   }
   if (fixed_success() != 10) { return 1; }
   if (storage_success() != 7) { return 2; }
@@ -655,7 +676,10 @@ int main(int argc, char **argv) {
       {"bounds", " bounds"},
       {"storage", " storage extra"},
       {"overflow", " overflow extra arguments"},
-      {"remainder", " remainder extra arguments here"}};
+      {"remainder", " remainder extra arguments here"},
+      {"vector-front", " vector front public detail here"},
+      {"vector-back", " vector back remains public detail here"},
+      {"vector-at", " vector at remains public detail here now"}};
   std::vector<RunResult> baseline;
   for (const auto &[name, arguments] : scenarios) {
     baseline.push_back(run(binaries[0], directory, "o0-" + name, arguments));
@@ -674,9 +698,18 @@ int main(int argc, char **argv) {
               std::string::npos &&
           baseline[4].exitStatus != 0 &&
           baseline[4].stderrText.find("modulo_by_zero in integer_modulo") !=
+              std::string::npos &&
+          baseline[5].exitStatus != 0 &&
+          baseline[5].stderrText.find("index_out_of_bounds in vector") !=
+              std::string::npos &&
+          baseline[6].exitStatus != 0 &&
+          baseline[6].stderrText.find("index_out_of_bounds in vector") !=
+              std::string::npos &&
+          baseline[7].exitStatus != 0 &&
+          baseline[7].stderrText.find("index_out_of_bounds in vector") !=
               std::string::npos,
       "O0 near misses should expose the exact checked-operation or sealed "
-      "storage-guard identity");
+      "storage-guard identity, including public vector access failures");
 
   for (std::size_t level = 1; level < binaries.size(); ++level) {
     for (std::size_t scenario = 0; scenario < scenarios.size(); ++scenario) {
