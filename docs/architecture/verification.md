@@ -627,6 +627,23 @@ tests, focused compile/run fixtures, and sanitizer/platform coverage remain
 necessary. Fixtures outside `examples/` deliberately supplement the corpus
 without changing its census.
 
+## Repository Build Generator
+
+First-party developer instructions and GitHub/Gitea automation configure CMake
+with the Ninja generator. CMake remains the portable configuration and build
+entry point; workflows invoke `cmake --build` rather than calling `ninja`
+directly. Every fresh first-party build tree, including sanitizer, release, and
+installed-consumer smoke trees, selects `-G Ninja`, and each runner provisions
+Ninja explicitly before configuration. This keeps dependency discovery,
+parallel scheduling, and incremental behavior consistent across local, CI,
+nightly, and stable-release builds.
+
+CMake generators are fixed when a build tree is created. A pre-existing
+Makefile build directory must not be reconfigured in place with Ninja; create a
+new build directory or deliberately remove the old generated tree first. The
+CMake project itself remains generator-agnostic for downstream IDE integration,
+but non-Ninja generators are outside the first-party verification path.
+
 ## Platform Signal
 
 Local verification runs on the macOS/AppleClang host. GitHub CI
