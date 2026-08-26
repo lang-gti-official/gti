@@ -1,0 +1,21 @@
+class cleanup_t {
+public:
+  cleanup_t(int32_t initial) : value(initial) {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() { std::println(this.value); }
+
+  int32_t value;
+};
+
+void consume(cleanup_t first, cleanup_t second) {}
+
+expected<cleanup_t, int32_t> make_failed() {
+  return unexpected(int32_t(7));
+}
+
+int main() {
+  expected<cleanup_t, int32_t> failed = make_failed();
+  consume(cleanup_t(41), std::move(failed).value());
+  return 0;
+}

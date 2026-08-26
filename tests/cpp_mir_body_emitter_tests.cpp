@@ -7343,6 +7343,268 @@ int main() {
          "storage directly to the transformed callee");
 }
 
+void testCleanupOwningTemporaryArgumentTransfer() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-cleanup-temporary-argument.gti", R"(
+class cleanup_t {
+public:
+  cleanup_t(int32_t initial) : value(initial) {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() {}
+
+  int32_t value;
+};
+
+int32_t read(cleanup_t value) { return value.value; }
+
+expected<cleanup_t, int32_t> make_ready(int32_t value) {
+  return cleanup_t(value);
+}
+
+int main() {
+  int32_t direct = read(cleanup_t(3));
+  expected<cleanup_t, int32_t> ready = make_ready(4);
+  return direct + read(std::move(ready).value()) - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-owning constructor and Expected results should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the cleanup-temporary fixture should retain its entry function");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const auto findInstruction = [](const lang::MirBody &body,
+                                  lang::MirInstructionId id) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const lang::MirInstruction *directStage = nullptr;
+  const lang::MirInstruction *expectedStage = nullptr;
+  const lang::MirInstruction *expectedProducer = nullptr;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::CallInput ||
+          instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != lang::MirOperandKind::Value) {
+        continue;
+      }
+      const lang::MirValue *source =
+          entry->body.findValue(instruction.operands.front().value);
+      const lang::MirInstruction *producer =
+          source == nullptr ? nullptr
+                            : findInstruction(entry->body, source->definition);
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Construct) {
+        directStage = &instruction;
+      }
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Call &&
+          producer->intrinsic == lang::IntrinsicKind::ExpectedValue) {
+        expectedStage = &instruction;
+        expectedProducer = producer;
+      }
+    }
+  }
+
+  const lang::MirDropObligation *sourceDrop =
+      expectedStage == nullptr || expectedStage->lifecycle.size() != 1
+          ? nullptr
+          : entry->body.findDropObligation(
+                expectedStage->lifecycle.front().source);
+  const lang::MirDropObligation *preparedDrop =
+      expectedStage == nullptr || !expectedStage->preparedParameterDrop
+          ? nullptr
+          : entry->body.findDropObligation(
+                *expectedStage->preparedParameterDrop);
+  const lang::MirPlace *sourcePlace =
+      sourceDrop == nullptr ? nullptr
+                            : entry->body.findPlace(sourceDrop->place);
+  const lang::MirPlace *preparedPlace =
+      preparedDrop == nullptr ? nullptr
+                              : entry->body.findPlace(preparedDrop->place);
+  const lang::MirPlace *directPlace =
+      directStage == nullptr || !directStage->destination
+          ? nullptr
+          : entry->body.findPlace(*directStage->destination);
+  expect(directStage != nullptr && expectedStage != nullptr &&
+             expectedProducer != nullptr && sourceDrop != nullptr &&
+             preparedDrop != nullptr && sourcePlace != nullptr &&
+             preparedPlace != nullptr && directPlace != nullptr &&
+             sourceDrop->kind == lang::MirDropObligationKind::Value &&
+             preparedDrop->kind ==
+                 lang::MirDropObligationKind::PreparedParameter &&
+             sourcePlace->root == lang::MirPlaceRootKind::Value &&
+             sourcePlace->projections.empty() &&
+             preparedPlace->root == lang::MirPlaceRootKind::Temporary &&
+             preparedPlace->projections.empty() &&
+             sourceDrop->dropType == preparedDrop->dropType &&
+             sourceDrop->dropType.requiresActiveCleanup &&
+             expectedStage->lifecycle.front().kind ==
+                 lang::MirLifecycleEventKind::Reparent &&
+             expectedStage->lifecycle.front().target == preparedDrop->id,
+         "the owning extraction should retain one exact Value-drop to "
+         "PreparedParameter reparent chain");
+  if (directStage == nullptr || expectedStage == nullptr ||
+      expectedProducer == nullptr || sourceDrop == nullptr ||
+      preparedDrop == nullptr || sourcePlace == nullptr ||
+      preparedPlace == nullptr || directPlace == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the verified cleanup-owning transfers should support transformed "
+         "failure emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "cleanup-temporary-argument-v0", 1)
+          .text;
+  const auto count = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  const std::string sourceSlot =
+      "__gti_mir_p_" + std::to_string(sourcePlace->id);
+  const std::string sourceValue =
+      "__gti_mir_v_" + std::to_string(expectedStage->operands.front().value);
+  const std::string preparedSlot =
+      "__gti_mir_p_" + std::to_string(preparedPlace->id);
+  const std::string directSlot =
+      "__gti_mir_p_" + std::to_string(directPlace->id);
+  expect(count("mir_expected_value_move_v1") == 1 &&
+             count("&" + preparedSlot) == 1 &&
+             count("std::move(" + preparedSlot + ".get())") == 1 &&
+             count(preparedSlot + ".destroy();") == 1 &&
+             text.find(sourceSlot) == std::string::npos &&
+             text.find(sourceValue) == std::string::npos,
+         "the Expected extraction should construct the prepared slot once, "
+         "consume and retire it once, and emit no source storage");
+  expect(count(directSlot + ".construct(") == 1 &&
+             count("std::move(" + directSlot + ".get())") == 1 &&
+             count(directSlot + ".destroy();") == 1,
+         "the direct constructor temporary should use one prepared slot and "
+         "one post-call retirement");
+
+  const auto mutableEntry = [&](lang::MirProgram &program) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    const auto found =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const auto &item) { return item.id == entry->id; });
+    return found == functions.end() ? nullptr : &*found;
+  };
+  const auto mutableInstruction = [](lang::MirBody &body,
+                                     lang::MirInstructionId id) {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  const auto rejected = [&](const lang::MirProgram &program) {
+    const lang::CppMirBodyEmissionMap changedMap(completeRows(program));
+    return !lang::CppMirBodyEmitter(program, changedMap)
+                .supportsFailureBodyText(address);
+  };
+
+  lang::MirProgram duplicateUse = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableEntry(duplicateUse)) {
+    if (lang::MirInstruction *stage =
+            mutableInstruction(function->body, expectedStage->id)) {
+      stage->operands.push_back(stage->operands.front());
+      (void)lang::rebuildMirValueUses(function->body);
+    }
+  }
+  expect(rejected(duplicateUse),
+         "an owning extraction with a duplicate staged use should remain "
+         "unsupported");
+
+  lang::MirProgram projectedSource = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableEntry(projectedSource)) {
+    if (lang::MirPlace *place = const_cast<lang::MirPlace *>(
+            function->body.findPlace(sourcePlace->id))) {
+      place->projections.push_back(
+          {.kind = lang::MirProjectionKind::Field, .field = 0});
+    }
+  }
+  expect(rejected(projectedSource),
+         "a projected source drop identity should remain unsupported");
+
+  lang::MirProgram aliasedSource = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableEntry(aliasedSource)) {
+    lang::MirLoanId nextLoan = 1;
+    for (const lang::MirLoan &loan : function->body.loans) {
+      nextLoan = std::max(nextLoan, loan.id + 1);
+    }
+    function->body.loans.push_back({.id = nextLoan,
+                                    .source = sourcePlace->id,
+                                    .access = lang::AccessMode::ReadOnly});
+  }
+  expect(rejected(aliasedSource),
+         "an aliased source drop identity should remain unsupported");
+
+  lang::MirProgram mismatchedDrop = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableEntry(mismatchedDrop)) {
+    for (lang::MirDropObligation &drop : function->body.dropObligations) {
+      if (drop.id == preparedDrop->id) {
+        drop.dropType.type = lang::SemanticType::Int32;
+      }
+    }
+  }
+  expect(rejected(mismatchedDrop),
+         "a prepared parameter with mismatched drop metadata should remain "
+         "unsupported");
+
+  lang::MirProgram unprovenFailure = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableEntry(unprovenFailure)) {
+    if (lang::MirInstruction *producer =
+            mutableInstruction(function->body, expectedProducer->id)) {
+      producer->localFailureSites.clear();
+    }
+  }
+  expect(rejected(unprovenFailure),
+         "an owning extraction without its exact failure proof should remain "
+         "unsupported");
+}
+
 void testPassiveReturnSignedMinimumAndRepresentationSlot() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-passive-return-and-slot.gti", R"(
@@ -9168,6 +9430,8 @@ constexpr NamedTest kTests[] = {
      testDeclarationOnlyMemberCallBoundary},
     {"testExpectedOwningPayloadPublicationAndForwarding",
      testExpectedOwningPayloadPublicationAndForwarding},
+    {"testCleanupOwningTemporaryArgumentTransfer",
+     testCleanupOwningTemporaryArgumentTransfer},
     {"testPassiveReturnSignedMinimumAndRepresentationSlot",
      testPassiveReturnSignedMinimumAndRepresentationSlot},
     {"testContextualSignedMinimumInFailureCaller",
