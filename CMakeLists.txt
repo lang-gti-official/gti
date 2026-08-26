@@ -762,12 +762,12 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  # The binary owns 69 lightweight tests and two aggregate corpus sweeps. Four
+  # The binary owns 70 lightweight tests and two aggregate corpus sweeps. Four
   # interleaved shards keep every lightweight test running exactly once. The
   # Python coordinator below reserves four CTest processors, runs both corpus
   # sweeps once per exact census source, and re-aggregates the original
   # whole-corpus assertions without one indivisible sanitizer test. Invoking
-  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 71 tests.
+  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 72 tests.
   if(Python3_Interpreter_FOUND)
     foreach(shard RANGE 1 4)
       add_test(NAME cpp_mir_body_emitter_${shard}of4
@@ -775,7 +775,7 @@ if(BUILD_TESTING)
     endforeach()
   else()
     # Fail closed when the corpus coordinator cannot run: the no-argument
-    # binary executes all 71 tests, including both aggregate corpus sweeps.
+    # binary executes all 72 tests, including both aggregate corpus sweeps.
     add_test(NAME cpp_mir_body_emitter
              COMMAND gti_cpp_mir_body_emitter_tests)
     set_tests_properties(cpp_mir_body_emitter PROPERTIES PROCESSORS 4)

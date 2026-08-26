@@ -12517,6 +12517,7 @@ returnCopyLoadDefinition(const MirBody &body, MirValueId value) {
       *definition->result != value || definition->operands.size() != 1 ||
       definition->operands.front().kind != MirOperandKind::Copy ||
       definition->operands.front().place == 0 ||
+      definition->operands.front().type != record->info.type ||
       !definition->localFailureSites.empty() ||
       nonRootRecordUses(body, value).size() != 1 ||
       nonRootRecordUses(body, value).front().kind !=
@@ -14880,11 +14881,20 @@ public:
           // at its consuming constructor and has no independent storage.
           continue;
         }
-        if (failureForm &&
-            (returnCopyLoadDefinition(facts.body, value.id) != nullptr ||
-             returnDefaultConstructionDefinition(facts.body, value.id) !=
-                 nullptr)) {
-          // These definitions publish directly into the transformed
+        if (returnCopyLoadDefinition(facts.body, value.id) != nullptr) {
+          const CppMirTypeRepresentation *row =
+              representationTypeRow(representations, value.info.type);
+          if (row == nullptr || !row->copyConstructible) {
+            throw std::logic_error(
+                "verified MIR copy return lost its copy-construction row");
+          }
+          // A plain return copies directly from the source place. A failure
+          // form publishes at the Load into its uninitialized out storage.
+          continue;
+        }
+        if (failureForm && returnDefaultConstructionDefinition(
+                               facts.body, value.id) != nullptr) {
+          // The definition publishes directly into the transformed
           // function's uninitialized result storage.
           continue;
         }
@@ -18323,8 +18333,7 @@ private:
       output << (placementPublication ? "));\n" : ");\n");
       return;
     }
-    if (failureForm && instruction.kind == MirInstructionKind::Load &&
-        instruction.result &&
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
         returnCopyLoadDefinition(facts.body, *instruction.result) ==
             &instruction) {
       const MirPlace *source =
@@ -18334,9 +18343,14 @@ private:
             "verified MIR copy return lost its source place");
       }
       writeIndent();
-      output << "std::construct_at(__gti_mir_out_result, ";
-      emitStoragePlaceValue(facts, *source);
-      output << ");\n";
+      if (failureForm) {
+        output << "std::construct_at(__gti_mir_out_result, ";
+        emitStoragePlaceValue(facts, *source);
+        output << ");\n";
+      } else {
+        output << "// copy return " << *instruction.result
+               << " spells at its Return\n";
+      }
       return;
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
@@ -21401,6 +21415,22 @@ private:
         writeIndent();
         output << "return true;\n";
         return;
+      }
+      if (terminator.value && terminator.value->kind == MirOperandKind::Value) {
+        if (const MirInstruction *copied =
+                returnCopyLoadDefinition(facts.body, terminator.value->value)) {
+          const MirPlace *source =
+              facts.body.findPlace(copied->operands.front().place);
+          if (source == nullptr) {
+            throw std::logic_error(
+                "verified MIR plain copy return lost its source place");
+          }
+          writeIndent();
+          output << "return ";
+          emitStoragePlaceValue(facts, *source);
+          output << ";\n";
+          return;
+        }
       }
       if (terminator.value && terminator.value->kind == MirOperandKind::Value &&
           returnCallDefinition(facts.body, terminator.value->value) !=
@@ -24653,10 +24683,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (definition != nullptr &&
            (returnConstructDefinition(body, value.id) == definition ||
             returnDefaultConstructionDefinition(body, value.id) == definition ||
+            (returnCopyLoadDefinition(body, value.id) == definition &&
+             copyLoadResult()) ||
             (failureForm &&
-             (returnMoveDefinition(body, value.id) == definition ||
-              (returnCopyLoadDefinition(body, value.id) == definition &&
-               copyLoadResult()))) ||
+             returnMoveDefinition(body, value.id) == definition) ||
             returnCallDefinition(body, value.id) == definition)) ||
           (definition != nullptr && copyLoadResult() &&
            classCopyAssignmentFusion(body, *definition)) ||
