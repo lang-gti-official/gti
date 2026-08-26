@@ -354,6 +354,19 @@ trivial cleanup state. Any operation outside the listed vocabulary still
 rejects body admission; initializer emission never falls back to AST/HIR or
 general C++ expression text.
 
+A class-typed fixed-array field uses that schedule only when MIR proves every
+element construction, aggregate transfer, array-result obligation, and
+reparent into the field's `ConstructionRollback` obligation. Passive classes,
+generated moves of cleanup-owning classes, and exact concrete polymorphic
+classes with interface-only bases share this route; state-bearing bases,
+custom moves, and ambiguous class instances do not. A retained rollback
+destructor `Invoke` is representation-only only when its exact source
+destructor body is status-proven unable to fail and its cleanup-failure block
+matches the verified MIR record. Constant element-field projections consume
+the sibling array place and concrete field identities. Dynamic checked
+indices remain on their existing MIR operation route rather than being
+reconstructed from a native spelling.
+
 A failure-form constructor may publish owned fields from its MIR body instead
 of the native C++ member-initializer list when native initialization would
 reorder an earlier operation after a later parameter move. This route requires

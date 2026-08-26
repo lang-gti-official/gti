@@ -4809,6 +4809,136 @@ int32_t main() {
          "verified MIR");
 }
 
+void testPolymorphicClassArrayFieldLifecycleSchedule() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-polymorphic-class-array-field-lifecycle.gti", R"(
+mut int32_t constructed = 0;
+mut int32_t destroyed = 0;
+
+interface readable {
+  int32_t read();
+};
+
+class passive_item : public readable {
+public:
+  passive_item() {}
+  int32_t read() override { return 7; }
+};
+
+class counted_item : public readable {
+public:
+  counted_item() {
+    if (constructed == 0) { constructed = 1; }
+    else { constructed = 2; }
+  }
+  ~counted_item() {
+    if (destroyed == 0) { destroyed = 1; }
+    else { destroyed = 2; }
+  }
+  int32_t read() override { return 9; }
+};
+
+class owner {
+public:
+  owner() {}
+  mut passive_item passive[2] = {};
+  mut counted_item counted[2] = {};
+};
+
+int main() {
+  { mut owner value = owner(); }
+  return constructed == 2 && destroyed == 2 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the polymorphic class-array field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirClassInstance *owner = nullptr;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    if (instance.declaredFields.size() == 2 &&
+        std::all_of(instance.declaredFields.begin(),
+                    instance.declaredFields.end(),
+                    [](const lang::MirClassFieldInfo &field) {
+                      return field.type.kind == lang::SemanticType::Array &&
+                             field.type.arguments.size() == 1 &&
+                             field.type.arguments.front().kind ==
+                                 lang::SemanticType::Class;
+                    })) {
+      owner = &instance;
+      break;
+    }
+  }
+  expect(owner != nullptr,
+         "the fixture should retain one exact two-array field owner");
+  if (owner == nullptr) {
+    return;
+  }
+
+  const lang::MirBodyAddress address{
+      .kind = lang::MirBodyKind::FieldInitializers, .owner = owner->id};
+  const lang::MirBody &body = owner->fieldInitializers;
+  std::size_t aggregates = 0;
+  std::size_t fixedArrayDrops = 0;
+  std::size_t containedDestructorDrops = 0;
+  for (const lang::MirDropObligation &drop : body.dropObligations) {
+    fixedArrayDrops += drop.dropType.fixedArray.has_value();
+  }
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      aggregates += instruction.kind == lang::MirInstructionKind::Compute &&
+                    instruction.operation == lang::MirOperation::Aggregate;
+      containedDestructorDrops +=
+          instruction.kind == lang::MirInstructionKind::Drop &&
+          instruction.definedFailure.propagation ==
+              lang::FailurePropagationKind::Destructor &&
+          instruction.lifecycle.size() == 1 &&
+          instruction.lifecycle.front().failureCleanup;
+    }
+  }
+  expect(aggregates == 2 && fixedArrayDrops == 4 &&
+             containedDestructorDrops == 1,
+         "the field body should retain two array aggregates, their result and "
+         "rollback obligations, and one status-proven destructor cleanup");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirInitializerScheduleText schedule =
+      lang::CppMirBodyEmitter(frontend.mir, map).initializerSchedule(address);
+  expect(schedule.supported && schedule.fields.size() == 2,
+         "interface-only passive and destructor-bearing class arrays should "
+         "publish from one verified field-initializer schedule");
+
+  lang::MirProgram malformed = frontend.mir;
+  lang::MirBody *malformedBody = lang::findMirBody(malformed, address);
+  lang::MirInstruction *malformedDrop = nullptr;
+  if (malformedBody != nullptr) {
+    for (lang::MirBlock &block : malformedBody->blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::Destructor) {
+          malformedDrop = &instruction;
+          break;
+        }
+      }
+      if (malformedDrop != nullptr) {
+        break;
+      }
+    }
+  }
+  if (malformedDrop != nullptr) {
+    malformedDrop->definedFailure.propagation =
+        lang::FailurePropagationKind::DirectCall;
+  }
+  expect(malformedDrop != nullptr && !lang::CppMirBodyEmitter(malformed, map)
+                                          .initializerSchedule(address)
+                                          .supported,
+         "retargeting the contained destructor propagation must fail closed");
+}
+
 void testPassiveClassArrayMoveAssignmentSchedule() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-passive-class-array-move.gti", R"(
@@ -9398,6 +9528,8 @@ constexpr NamedTest kTests[] = {
      testPassiveFixedArrayFailureClosure},
     {"testOwningFixedArrayAggregateAndCheckedMove",
      testOwningFixedArrayAggregateAndCheckedMove},
+    {"testPolymorphicClassArrayFieldLifecycleSchedule",
+     testPolymorphicClassArrayFieldLifecycleSchedule},
     {"testPassiveClassArrayMoveAssignmentSchedule",
      testPassiveClassArrayMoveAssignmentSchedule},
     {"testCheckedClassArrayElementAssignmentFamily",
