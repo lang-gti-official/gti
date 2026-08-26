@@ -404,6 +404,24 @@ transfer-out in the verified constructor prologue. Mixed passive and active
 fields are admitted only when each field independently satisfies its matching
 schedule and no other lifecycle event mentions those obligations.
 
+An exact by-value parameter copy may also publish one field through the native
+member-initializer list when the copied class has generated copy/destruction,
+only passive scalar or enum state, no state-bearing base, and no active cleanup.
+This MIR shape carries one reachable parameter `Load`, one matching initializer
+metadata row, and one full-expression boundary but no field `Initialize`; the
+copied parameter's native scope destruction represents its trivial MIR drop.
+The scalar copy route continues to require its explicit `Load`/`Initialize`
+pair. Custom lifecycle, extra uses, forged ownership, ambiguous fields, and
+mixed initializer schedules fail closed.
+
+Obligation-free class values in a move capture or an owning `Expected` payload
+remain concrete MIR values rather than backend-recognized library types. The
+C++ backend may materialize the exact closure environment, direct payload
+return slot, or unprojected extraction place only after proving unique use,
+matching concrete type, passive lifecycle, and the recorded full-expression
+boundary. Active cleanup and additional projections stay on their existing
+lifetime-slot paths.
+
 Move-only class replacement of one direct mutable receiver field has three
 additional exact representations. A transformed source call may initialize one
 value-rooted obligation, publish it through an unconditional `Replace` into

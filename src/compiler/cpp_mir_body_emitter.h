@@ -535,10 +535,12 @@ std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
 cppMirBaseParameterInitializerBindings(
     const MirProgram &program, const MirConstructorInstance &constructor);
 
-// A scalar field initializer whose argument is one exact copy-load of a
-// constructor parameter. The native member-initializer list may spell the
-// parameter directly and erase only the named Load/Initialize pair; every
-// other expression shape remains in the MIR body schedule.
+// A scalar or passive generated-copy class field initializer whose argument is
+// one exact copy-load of a constructor parameter. The native
+// member-initializer list may spell the parameter directly. Scalar MIR carries
+// the paired Initialize; a passive class copy publishes through initializer
+// metadata and therefore records zero for initializeInstruction. Every other
+// expression shape remains in the MIR body schedule.
 struct CppMirCopyParameterFieldBinding {
   std::size_t initializer = 0;
   SymbolId field = 0;
