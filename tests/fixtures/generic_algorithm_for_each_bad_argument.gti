@@ -1,0 +1,17 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class wrong_argument_observer {
+public:
+  wrong_argument_observer() {}
+
+  void operator()(uint64_t& value) {}
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  wrong_argument_observer operation = wrong_argument_observer();
+  [[discard]] std::for_each(values.begin(), values.end(),
+                            std::move(operation));
+  return 0;
+}

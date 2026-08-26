@@ -1,0 +1,15 @@
+#include <std/iterator>
+
+Function candidate_for_each<Iterator, Function>(mut Iterator first,
+                                                Iterator last,
+                                                mut Function function)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Iterator, Iterator> {
+  while (first != last) {
+    function(*first);
+    ++first;
+  }
+  return std::move(function);
+}
+
+int main() { return 0; }

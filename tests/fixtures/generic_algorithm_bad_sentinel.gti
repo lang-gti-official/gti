@@ -1,0 +1,24 @@
+#include <std/algorithm>
+
+class sentinel {};
+
+class iterator {
+  mut int32_t current;
+
+public:
+  iterator(int32_t initial) : current(initial) {}
+
+  int32_t& operator*() {
+    return this.current;
+  }
+
+  void operator++() mut {
+    this.current++;
+  }
+};
+
+int main() {
+  int32_t needle = 1;
+  std::find(iterator(0), sentinel(), needle);
+  return 0;
+}

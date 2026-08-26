@@ -91,10 +91,13 @@ The current implemented foundation includes:
   `next`; and
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
-  `count_if`, plus `binary_search` over an exact ordered forward-iterator
-  subrange; the predicate algorithms retain a confined mutable local and
-  therefore accept read-callable or mut-callable predicates but not consuming
-  once-callables; and
+  `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
+  plus `binary_search` over an exact ordered forward-iterator subrange. These
+  algorithms accept a distinct exact sentinel type. `find` returns its moved
+  iterator while retaining the concrete borrowed-owner dependency, and
+  `for_each` returns the exact moved callable after repeated confined
+  invocation. Predicate and operation clients accept read-callable or
+  mut-callable targets but not consuming once-callables; and
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
   from specified GTI floating-point operations; and
 - `<std/functional>` source-defined `less<T>`, `greater<T>`, `equal_to<T>`, and

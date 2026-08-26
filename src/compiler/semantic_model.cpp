@@ -1711,9 +1711,26 @@ void SemanticModel::recordCallableRequirement(
     return;
   }
   if (requirement.boundary == CallableBoundary::Owned &&
-      existing->signatures.empty() && existing->forwardings.empty()) {
-    existing->boundary = CallableBoundary::Owned;
-    existing->ownedTransport = std::move(requirement.ownedTransport);
+      requirement.ownedTransport) {
+    const bool transportOnly =
+        existing->signatures.empty() && existing->forwardings.empty();
+    const bool repeatableExactReturn =
+        requirement.ownedTransport->kind ==
+            CallableOwnedTransportKind::ExactReturn &&
+        existing->forwardings.empty() &&
+        existing->access == requirement.access &&
+        std::none_of(existing->signatures.begin(), existing->signatures.end(),
+                     [](const CallableSignatureRequirement &signature) {
+                       return signature.capability ==
+                              CallableInvocationCapability::Once;
+                     });
+    if (transportOnly) {
+      existing->boundary = CallableBoundary::Owned;
+      existing->ownedTransport = std::move(requirement.ownedTransport);
+    } else if (repeatableExactReturn &&
+               existing->boundary == CallableBoundary::Confined) {
+      existing->ownedTransport = std::move(requirement.ownedTransport);
+    }
   }
   for (CallableSignatureRequirement &signature : requirement.signatures) {
     const auto concrete =

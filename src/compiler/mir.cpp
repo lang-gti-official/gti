@@ -9181,7 +9181,7 @@ ownedTransportFailure(const MirProgram &program,
           !exactReturnedMoveFromBinding(
               instance.body, *block.terminator.value,
               instance.parameterBindings[parameter.parameterIndex]) ||
-          !valueTransferredOut(instance.body, *block.terminator.value)) {
+          !valueTransferredOut(instance.body, *block.terminator.value, true)) {
         return "exact-return transport is not rooted in the parameter move";
       }
       continue;
@@ -9802,7 +9802,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                            "target parameter contract",
                            block.id, instruction.id);
           }
-          if (expected[index].boundary == CallableBoundary::Owned) {
+          if (expected[index].ownedTransport) {
             const std::size_t operandIndex = expected[index].parameterIndex;
             if (operandIndex >= instruction.operands.size() ||
                 operandIndex >= functionTarget->parameterTypes.size() ||
@@ -16319,10 +16319,24 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
               instance.parameterTypes[parameter.parameterIndex]) {
         rejectCallableContract("parameter identity or type is invalid");
       }
+      const bool exactReturn = parameter.ownedTransport &&
+                               parameter.ownedTransport->kind ==
+                                   CallableOwnedTransportKind::ExactReturn;
+      const bool repeatableSignatures =
+          std::none_of(parameter.signatures.begin(), parameter.signatures.end(),
+                       [](const MirCallableSignature &signature) {
+                         return signature.requiredCapability ==
+                                CallableInvocationCapability::Once;
+                       });
       if (parameter.boundary == CallableBoundary::Confined) {
-        if (parameter.ownedTransport) {
+        if (parameter.ownedTransport &&
+            (!exactReturn ||
+             parameter.ownedTransport->destinationType ==
+                 SemanticType::Unknown ||
+             parameter.signatures.empty() || !parameter.forwardings.empty() ||
+             !repeatableSignatures)) {
           rejectCallableContract(
-              "confined parameter carries owned transport metadata");
+              "confined exact-return parameter contract is invalid");
         }
       } else if (!parameter.ownedTransport ||
                  parameter.ownedTransport->destinationType ==
@@ -16332,7 +16346,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                  parameter.access != AccessMode::ReadOnly) {
         rejectCallableContract("owned parameter contract is invalid");
       }
-      if (parameter.boundary == CallableBoundary::Owned) {
+      if (parameter.ownedTransport) {
         if (const std::optional<std::string> failure =
                 ownedTransportFailure(program, instance, parameter)) {
           rejectCallableContract(*failure);
