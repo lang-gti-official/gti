@@ -9882,19 +9882,20 @@ private:
       if (scope.front() != "gti_internal") {
         return IntrinsicKind::None;
       }
-      if (name == "thread_handle_empty") {
+      if (name == "thread_handle_empty" ||
+          name == "thread_result_handle_empty") {
         return IntrinsicKind::ThreadHandleEmpty;
       }
-      if (name == "thread_spawn") {
+      if (name == "thread_spawn" || name == "thread_result_spawn") {
         return IntrinsicKind::ThreadSpawn;
       }
-      if (name == "thread_joinable") {
+      if (name == "thread_joinable" || name == "thread_result_joinable") {
         return IntrinsicKind::ThreadJoinable;
       }
-      if (name == "thread_join") {
+      if (name == "thread_join" || name == "thread_result_join") {
         return IntrinsicKind::ThreadJoin;
       }
-      if (name == "thread_auto_join") {
+      if (name == "thread_auto_join" || name == "thread_result_auto_join") {
         return IntrinsicKind::ThreadAutoJoin;
       }
       return IntrinsicKind::None;
@@ -12272,22 +12273,52 @@ private:
   }
 
   [[nodiscard]] bool isThreadHandleType(const SemanticType &type) const {
+    return threadHandleResultType(type).has_value();
+  }
+
+  [[nodiscard]] std::optional<SemanticType>
+  threadHandleResultType(const SemanticType &type) const {
     const SemanticType *candidate = &type;
     if (candidate->kind == SemanticType::Reference &&
         candidate->arguments.size() == 1) {
       candidate = &candidate->arguments.front();
     }
     const ClassInfo *owner = classInfo(*candidate);
-    return owner != nullptr && owner->compilerCapability ==
-                                   CompilerCapabilityTypeKind::ThreadHandle;
+    if (owner == nullptr ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::ThreadHandle) {
+      return std::nullopt;
+    }
+    if (owner->genericParameters.empty() && candidate->arguments.empty()) {
+      return SemanticType::Void;
+    }
+    if (owner->genericParameters.size() == 1 &&
+        candidate->arguments.size() == 1) {
+      return candidate->arguments.front();
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] bool
+  isTransferableThreadResult(const SemanticType &type) const {
+    if (type == SemanticType::Unknown ||
+        type.kind == SemanticType::TypeParameter) {
+      return true;
+    }
+    if (type == SemanticType::Void) {
+      return true;
+    }
+    const SemanticTypeTraits traits = typeTraits(type);
+    return traits.movable && traits.transferCapable &&
+           !traits.containsBorrowedState &&
+           !containsDisallowedCallableCaptureState(type);
   }
 
   [[nodiscard]] std::optional<ResolvedThreadTaskEntry>
-  exactThreadTaskEntry(const SemanticType &type) {
+  exactThreadTaskEntry(const SemanticType &type,
+                       const SemanticType &resultType) {
     if (type.hasLambdaShape()) {
       const SemanticType *result = type.lambdaReturnType();
-      if (type.lambdaId == 0 || result == nullptr ||
-          *result != SemanticType::Void ||
+      if (type.lambdaId == 0 || result == nullptr || *result != resultType ||
           !type.lambdaParameterTypes().empty()) {
         return std::nullopt;
       }
@@ -12315,7 +12346,7 @@ private:
       if (candidate.id == 0 || candidate.declaration == nullptr ||
           candidate.access != AccessModifier::Public ||
           candidate.compilerPrivate || candidate.pureVirtual ||
-          candidate.returnType != SemanticType::Void ||
+          candidate.returnType != resultType ||
           !candidate.parameterTypes.empty() ||
           !candidate.genericParameters.empty() ||
           !candidate.requirements.empty()) {
@@ -12355,22 +12386,20 @@ private:
                                        selected.receiverMutability)};
   }
 
-  [[nodiscard]] bool isExactThreadTaskType(const SemanticType &type) {
+  [[nodiscard]] bool isExactThreadTaskType(const SemanticType &type,
+                                           const SemanticType &resultType) {
     return type.kind == SemanticType::TypeParameter ||
-           exactThreadTaskEntry(type).has_value();
+           exactThreadTaskEntry(type, resultType).has_value();
   }
 
   void analyzeThreadIntrinsicCall(const Call &expr,
                                   const FunctionCandidate &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
+    std::vector<SemanticType> explicitTypeArguments;
+    explicitTypeArguments.reserve(expr.typeArguments().size());
     for (const TypeRef &argument : expr.typeArguments()) {
       validateType(argument);
-    }
-    if (!expr.typeArguments().empty()) {
-      report(expr.paren(),
-             "Managed-thread operations infer their types and do not take "
-             "explicit generic arguments.",
-             "GTI-S2084");
+      explicitTypeArguments.push_back(typeOf(argument));
     }
 
     std::vector<SemanticType> argumentTypes;
@@ -12387,7 +12416,21 @@ private:
         return;
       }
       currentType = declaration.returnType;
+      if (currentType.kind == SemanticType::Class &&
+          currentType.arguments.size() == 1 &&
+          explicitTypeArguments.size() == 1) {
+        currentType.arguments.front() = explicitTypeArguments.front();
+      }
+      if (!threadHandleResultType(currentType)) {
+        report(expr.paren(),
+               "The private empty-handle operation must return an exact "
+               "managed-thread capability.",
+               "GTI-S2084");
+        currentType = SemanticType::Unknown;
+      }
       semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                  .typeArguments = std::move(
+                                                      explicitTypeArguments),
                                                   .intrinsic = intrinsic});
       return;
     }
@@ -12403,7 +12446,9 @@ private:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (!isThreadHandleType(argumentTypes.front())) {
+    const std::optional<SemanticType> resultType =
+        threadHandleResultType(argumentTypes.front());
+    if (!resultType) {
       report(expressionToken(expr.arguments().front()),
              "Managed-thread operations require the compiler-private thread "
              "handle capability.",
@@ -12439,21 +12484,27 @@ private:
       const SemanticTypeTraits traits = typeTraits(task);
       const bool symbolicTask = task.kind == SemanticType::TypeParameter;
       if (!symbolicTask && task != SemanticType::Unknown) {
-        threadTaskEntry = exactThreadTaskEntry(task);
+        threadTaskEntry = exactThreadTaskEntry(task, *resultType);
       }
-      bool validTask =
-          task == SemanticType::Unknown ||
-          (taskInfo != nullptr && taskInfo->category == ValueCategory::Value &&
-           (symbolicTask || threadTaskEntry.has_value()) &&
-           (symbolicTask || (traits.movable && traits.transferCapable &&
-                             !traits.containsBorrowedState &&
-                             !containsDisallowedCallableCaptureState(task))));
-      if (!validTask) {
+      const bool validResult = isTransferableThreadResult(*resultType);
+      const bool validTask =
+          validResult &&
+          (task == SemanticType::Unknown ||
+           (taskInfo != nullptr && taskInfo->category == ValueCategory::Value &&
+            (symbolicTask || threadTaskEntry.has_value()) &&
+            (symbolicTask || (traits.movable && traits.transferCapable &&
+                              !traits.containsBorrowedState &&
+                              !containsDisallowedCallableCaptureState(task)))));
+      if (!validTask || !validResult) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2084", DiagnosticPhase::Semantics,
             expressionToken(expr.arguments()[1]),
-            "A managed thread requires one consumed, transfer-safe exact "
-            "void() task.");
+            *resultType == SemanticType::Void
+                ? "A managed thread requires one consumed, transfer-safe "
+                  "exact void() task."
+                : "A result-bearing managed thread requires one consumed, "
+                  "transfer-safe exact task whose return type matches its "
+                  "owned transferable result.");
         if (const std::optional<TransferCapabilityDenial> denial =
                 transferCapabilityDenial(task);
             denial && denial->source != nullptr) {
@@ -12463,7 +12514,8 @@ private:
         diagnostic.hints.emplace_back(
             "Pass a fresh task value or std::move(task); captures must own "
             "their state and cannot contain references, tracked borrows, or "
-            "raw pointers.");
+            "raw pointers. A result must satisfy the same cross-thread "
+            "transfer boundary.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
       parameterTypes.push_back(task);
@@ -12486,7 +12538,7 @@ private:
                   .boundary = CallableBoundary::Owned,
                   .ownedTransport = CallableOwnedTransport{
                       .kind = CallableOwnedTransportKind::ThreadTask,
-                      .destinationType = SemanticType::Void}});
+                      .destinationType = *resultType}});
         }
       }
     }
@@ -12494,7 +12546,14 @@ private:
     currentType =
         intrinsic == IntrinsicKind::ThreadJoinable   ? SemanticType::Bool
         : intrinsic == IntrinsicKind::ThreadAutoJoin ? SemanticType::Void
+        : intrinsic == IntrinsicKind::ThreadJoin     ? declaration.returnType
                                                      : SemanticType::Int32;
+    if (intrinsic == IntrinsicKind::ThreadJoin &&
+        *resultType != SemanticType::Void &&
+        currentType.kind == SemanticType::Expected &&
+        currentType.arguments.size() == 2) {
+      currentType.arguments.front() = *resultType;
+    }
     semanticModel.record(
         expr, ResolvedCallInfo{.returnType = currentType,
                                .parameterTypes = std::move(parameterTypes),
@@ -15323,6 +15382,12 @@ private:
       return false;
     }
     GenericSubstitution substitution;
+    if (contract.ownedTransport->kind ==
+            CallableOwnedTransportKind::ThreadTask &&
+        function.ownerClass != 0 &&
+        call.dispatchOwner.kind == SemanticType::Class) {
+      substitution = classSubstitution(call.dispatchOwner);
+    }
     std::size_t typeIndex = 0;
     for (const GenericParameterInfo &parameter : function.genericParameters) {
       if (!parameter.value && typeIndex < call.typeArguments.size()) {
@@ -15338,9 +15403,10 @@ private:
         CallableOwnedTransportKind::ThreadTask) {
       const SemanticTypeTraits traits = typeTraits(callableType);
       return contract.ownedTransport->field == 0 &&
-             destination == SemanticType::Void &&
-             isExactThreadTaskType(callableType) && traits.movable &&
-             traits.transferCapable && !traits.containsBorrowedState &&
+             isTransferableThreadResult(destination) &&
+             isExactThreadTaskType(callableType, destination) &&
+             traits.movable && traits.transferCapable &&
+             !traits.containsBorrowedState &&
              !containsDisallowedCallableCaptureState(callableType);
     }
     if (destination != call.returnType) {
@@ -15409,8 +15475,12 @@ private:
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2084", DiagnosticPhase::Semantics,
               expressionToken(argument),
-              "A managed thread requires one consumed, transfer-safe exact "
-              "void() task.");
+              contract.ownedTransport->destinationType == SemanticType::Void
+                  ? "A managed thread requires one consumed, transfer-safe "
+                    "exact void() task."
+                  : "A managed thread requires one consumed, transfer-safe "
+                    "exact task whose return type matches its transferable "
+                    "result.");
           diagnostic.related.push_back(
               {tokenSpan(
                    target->declaration->parameters()[contract.parameterIndex]
@@ -16171,7 +16241,7 @@ private:
     diagnostic.hints.emplace_back(
         target.executionProfile != ExecutionProfile::Concurrent
             ? "Select the concurrent execution profile for programs that "
-              "spawn or join std::jthread values."
+              "spawn or join std::thread values."
             : "Select a target whose runtime capability set includes "
               "threads.");
     diagnostics.emplace_back(std::move(diagnostic));
@@ -19444,11 +19514,22 @@ private:
       return;
     }
     if (compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
-      if (!type.arguments.empty()) {
+      if (type.arguments.size() > 1) {
         report(type.name.last(),
-               "gti_internal::thread_handle does not take generic "
-               "arguments.",
+               "A compiler-private thread handle accepts at most one result "
+               "type.",
                "GTI-S2084");
+      } else if (type.arguments.size() == 1) {
+        validateType(type.arguments.front());
+        const SemanticType resultType = typeOf(type.arguments.front());
+        if (resultType == SemanticType::Void ||
+            resultType.kind == SemanticType::Reference ||
+            resultType.kind == SemanticType::RawPointer) {
+          report(type.arguments.front().name.last(),
+                 "A managed-thread result must be an owned non-void value "
+                 "type.",
+                 "GTI-S2084");
+        }
       }
       return;
     }
@@ -23582,6 +23663,12 @@ private:
         } else if (trustedThreadCapabilityScope &&
                    classDecl->genericParameters().empty() &&
                    classDecl->name().lexeme == "thread_handle") {
+          compilerCapability = CompilerCapabilityTypeKind::ThreadHandle;
+        } else if (trustedThreadCapabilityScope &&
+                   classDecl->genericParameters().size() == 1 &&
+                   !classDecl->genericParameters().front().valueType &&
+                   !classDecl->genericParameters().front().pack &&
+                   classDecl->name().lexeme == "thread_result_handle") {
           compilerCapability = CompilerCapabilityTypeKind::ThreadHandle;
         }
         CapabilityPolicyRegistration capabilityPolicies;

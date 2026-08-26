@@ -77,18 +77,21 @@ advances its four-word state in GTI; only `random_device` crosses the bounded
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
 `<std/thread>` provides the first public managed-thread slice as an ordinary
-source-defined `std::jthread`. `std::jthread::start(task)` consumes one exact
+source-defined `std::thread`. `std::thread::start(task)` consumes one exact
 transfer-safe `void()` lambda or callable object and returns
-`expected<std::jthread, std::thread_errc>`. The move-only handle may be joined
+`expected<std::thread, std::thread_errc>`. The move-only handle may be joined
 explicitly and otherwise autojoins during destruction. Move construction
 transfers its join obligation; move assignment is unavailable in this first
-surface. A recoverable native
+surface. `std::thread_result<Result>` provides the corresponding typed owner:
+`start(task)` consumes one exact transfer-safe `Result()` callable, explicit
+`join()` returns `expected<Result, thread_errc>`, and destruction joins then
+abandons an unobserved result exactly once. A recoverable native
 creation/join condition uses `thread_errc`; a GTI failure in the worker is
 cleaned there, preserved exactly, and re-raised by explicit or automatic join.
 References, borrowed captures, raw pointers, and non-transferable owned
-captures are rejected before lowering. Detach, stop tokens, separate argument
-packs, result-bearing tasks, scoped borrows, atomics, mutexes, and foreign-
-thread entry are outside this first surface. The direct compiler requires
+captures or results are rejected before lowering. Detach, stop tokens,
+separate argument packs, scoped borrows, atomics, mutexes, and foreign-thread
+entry are outside this first surface. The direct compiler requires
 `--execution-profile concurrent`; project profiles use
 `execution-profile = "concurrent"`.
 

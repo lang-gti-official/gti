@@ -72,8 +72,8 @@ void require_partition(int32_t first_row, int32_t row_stride,
                        uint64_t expected_value) {
   uint64_t checksum = render_repeated_partition(first_row, row_stride);
   if (checksum != expected_value) {
-    // A bad result must fail inside the worker because the first managed-task
-    // slice deliberately has no result channel or shared mutable state.
+    // A bad result must fail inside the worker because this workload
+    // deliberately has no result channel or shared mutable state.
     int32_t zero = 0;
     int32_t failure = 1 / zero;
   }

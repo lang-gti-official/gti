@@ -597,7 +597,7 @@ GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler does
 not yet expose public atomics, mutexes, or foreign-thread entry. It does expose
 the first owned managed-thread slice through the ordinary source-defined
-`std::jthread` in `<std/thread>`. The single-threaded profile remains the
+`std::thread` in `<std/thread>`. The single-threaded profile remains the
 default executable profile.
 
 The compiler now has backend-independent HIR/MIR identities for thread
@@ -608,11 +608,11 @@ executable synchronization records while permitting only exact private thread
 intrinsics in lowering-marked dormant standard-library wrapper bodies. This is
 why source may import `<std/thread>` without using it; calling or constructing
 its managed-thread surface still fails semantically before MIR publication.
-These internal records are not source operations. `std::jthread` reaches the
+These internal records are not source operations. `std::thread` reaches the
 implemented spawn and join records through exact trusted private capabilities;
 public atomics and mutexes remain unavailable.
-`std::jthread` is the normal public managed-thread type: GTI does not expose a
-separate C++-style detach-capable `std::thread` in the first concurrent profile.
+`std::thread` is the normal public managed-thread type. Unlike C++'s class with
+the same spelling, it always joins and exposes no detach operation.
 
 The reference toolchain accepts an explicit concurrent-profile selection
 before semantic analysis and retains it in semantic, HIR, and MIR program
@@ -659,14 +659,19 @@ freedom nor C-compatible layout. Later accepted order names are `relaxed`,
 `acquire`, `release`, `acq_rel`, and `seq_cst`; `consume` is absent. Operation-
 specific legality must be checked before lowering.
 
-The first managed thread model transfers only one owned exact `void()` task.
-Its callable object and every capture must be transfer-capable. References,
-borrowed-state carriers, raw pointers, and borrowed captures cannot cross. The
-move-only `std::jthread` handle owns one join obligation, detach is absent, and
-destruction of an outstanding handle automatically joins. Automatic join may
-block or participate in deadlock. A later scoped-borrow model requires a
-represented structured join, child loan, parent suspension, cleanup on every
-exit, and verified reactivation after join.
+The first managed thread model transfers one owned exact `void()` task through
+`std::thread` or one exact `Result()` task through
+`std::thread_result<Result>`. The callable object, every capture, and any
+result crossing back to the joining thread must be transfer-capable owned
+values. References, borrowed-state carriers, raw pointers, and borrowed
+captures or results cannot cross. Both move-only handles own one join
+obligation, detach is absent, and destruction of an outstanding handle
+automatically joins. `std::thread_result<Result>::join()` transfers the result
+exactly once; automatic join explicitly abandons an unobserved result after
+destroying it exactly once. Automatic join may block or participate in
+deadlock. A later scoped-borrow model requires a represented structured join,
+child loan, parent suspension, cleanup on every exit, and verified reactivation
+after join.
 
 Program-wide initialization completes before initial entry and every managed
 spawn. With no detach in the first model, all managed tasks finish before

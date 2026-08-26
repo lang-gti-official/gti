@@ -19,7 +19,7 @@
     "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
     "stdlib/std/string.gti": "c445e1c2a90e6b5f28ec4f1dc5c172593862e13031f645f39bc3f1e3402055ff",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/thread.gti": "a5e99020dfdadb32d4383bd4ecebc412b8a23d97e8fc92d933f3795a09c54ca7",
+    "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
     "stdlib/std/vector.gti": "82ddb21b72ab51c53c665b6628cef320582cd2a671df8d9547969554a19281c3"
   },
@@ -629,10 +629,10 @@
       "id": "thread.executable",
       "source": "stdlib/std/thread.gti",
       "status": "executable",
-      "operations": ["std::jthread::join", "std::jthread::joinable", "std::jthread::start"],
+      "operations": ["std::thread::join", "std::thread::joinable", "std::thread::start", "std::thread_result::join", "std::thread_result::joinable", "std::thread_result::start"],
       "case_ids": ["thread"],
-      "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class"],
-      "evidence": ["examples/66-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py"]
+      "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup"],
+      "evidence": ["examples/66-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
     },
     {
       "id": "utility.pair",

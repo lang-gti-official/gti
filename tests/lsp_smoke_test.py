@@ -3200,12 +3200,19 @@ def test_managed_thread_tooling(executable, root):
     source = (
         "#include <std/thread>\n"
         "int main() {\n"
-        "  auto started = std::jthread::start([]() -> void {});\n"
+        "  auto started = std::thread::start([]() -> void {});\n"
         "  if (!started.has_value()) { return 1; }\n"
-        "  mut std::jthread worker = std::move(started).value();\n"
+        "  mut std::thread worker = std::move(started).value();\n"
         "  bool was_joinable = worker.joinable();\n"
         "  auto joined = worker.join();\n"
         "  if (!joined.has_value() || !was_joinable) { return 2; }\n"
+        "  mut std::thread_result<int32_t> result_worker =\n"
+        "      std::thread_result<int32_t>();\n"
+        "  auto result_started = result_worker.start(\n"
+        "      []() -> int32_t { return 42; });\n"
+        "  if (!result_started.has_value()) { return 3; }\n"
+        "  auto result_joined = result_worker.join();\n"
+        "  if (!result_joined.has_value()) { return 4; }\n"
         "  return 0;\n"
         "}\n"
     )
@@ -3284,7 +3291,7 @@ def test_managed_thread_tooling(executable, root):
                 lambda message: message.get("id") == request_id
             )["result"]
 
-        type_use = source.index("jthread worker")
+        type_use = source.index("thread worker")
         type_hover = position_request(2, "textDocument/hover", type_use + 1)
         assert "move-only managed thread" in type_hover["contents"]["value"]
         definition = position_request(
@@ -3298,6 +3305,19 @@ def test_managed_thread_tooling(executable, root):
         assert "Starts one consumed, transfer-safe exact `void()` task." in (
             start_hover["contents"]["value"]
         )
+
+        result_type_use = source.index("thread_result<int32_t>")
+        result_type_hover = position_request(
+            10, "textDocument/hover", result_type_use + 1
+        )
+        assert "explicit join returns one owned result" in (
+            result_type_hover["contents"]["value"]
+        )
+        result_definition = position_request(
+            11, "textDocument/definition", result_type_use + 1
+        )
+        assert result_definition is not None
+        assert result_definition["uri"].endswith("/stdlib/std/thread.gti")
 
         session.send(
             {
@@ -3317,13 +3337,16 @@ def test_managed_thread_tooling(executable, root):
             (start_use, 6),
             (source.index("joinable()"), 6),
             (source.index("join();"), 6),
+            (result_type_use, 4),
+            (source.index("result_worker.start") + len("result_worker."), 6),
+            (source.index("result_worker.join") + len("result_worker."), 6),
         ):
             position = lsp_position(source, offset)
             assert tokens[(position["line"], position["character"])][
                 "type"
             ] == expected_type
 
-        completion_source = source.replace("std::jthread::start", "std::jthread::st")
+        completion_source = source.replace("std::thread::start", "std::thread::st")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -3347,7 +3370,7 @@ def test_managed_thread_tooling(executable, root):
         start_item = next(
             item for item in completion["items"] if item["label"] == "start"
         )
-        assert "std::jthread::start" in start_item["detail"]
+        assert "std::thread::start" in start_item["detail"]
 
         private_source = (
             "int main() {\n"
@@ -3450,7 +3473,7 @@ def test_standalone_managed_thread_profile(executable, root):
     source = (
         "#include <std/thread>\n"
         "int main() {\n"
-        "  auto started = std::jthread::start([]() -> void {});\n"
+        "  auto started = std::thread::start([]() -> void {});\n"
         "  if (!started.has_value()) { return 1; }\n"
         "  return 0;\n"
         "}\n"
