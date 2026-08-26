@@ -594,6 +594,36 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       valueParents[operand].push_back(&parent);
     }
   }
+  // The source-bearing ArrayInitializer rooting a (possibly nested)
+  // empty-brace default expansion, reached by climbing the synthetic
+  // levels. Every hop must be the exact single-consumer array shape.
+  const auto defaultArrayRootInitializer =
+      [&](const HirValue &value) -> const HirValue * {
+    const HirValue *current = &value;
+    for (std::size_t depth = 0; depth < program.module().values.size();
+         ++depth) {
+      const auto parents = valueParents.find(current->id);
+      if (parents == valueParents.end() || parents->second.size() != 1) {
+        return nullptr;
+      }
+      const HirValue &parent = *parents->second.front();
+      if (parent.kind != HirValueKind::ArrayInitializer ||
+          parent.info.type.kind != SemanticType::Array ||
+          parent.info.type.arguments.size() != 1 ||
+          parent.info.type.arguments.front() != current->info.type ||
+          parent.info.type.arrayLengthParameterId != 0 ||
+          parent.operands.size() != parent.info.type.arrayLength ||
+          std::count(parent.operands.begin(), parent.operands.end(),
+                     current->id) != 1) {
+        return nullptr;
+      }
+      if (parent.source != nullptr) {
+        return &parent;
+      }
+      current = &parent;
+    }
+    return nullptr;
+  };
   const auto exactDefaultArrayElement = [&](const HirValue &value) {
     const auto parents = valueParents.find(value.id);
     if (value.source != nullptr ||
@@ -602,7 +632,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       return false;
     }
     const HirValue &parent = *parents->second.front();
-    const auto *initializer = exprAs<ArrayInitializer>(parent.source);
+    const HirValue *root = defaultArrayRootInitializer(value);
+    const auto *initializer =
+        root == nullptr ? nullptr : exprAs<ArrayInitializer>(root->source);
     const ResolvedConstructionInfo *construction =
         initializer == nullptr
             ? nullptr
@@ -681,8 +713,50 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            !value.enumOwner && !value.enumValue && !value.enumVariant &&
            !value.payloadIndex && !value.ownership && !value.dropObligation;
   };
+  // A synthetic nested level of an empty-brace fixed-array expansion: an
+  // exact fixed-array value whose elements recurse toward the recorded leaf
+  // construction of its rooted source initializer.
+  const auto exactDefaultArrayLevel = [&](const HirValue &value) {
+    if (value.source != nullptr ||
+        value.kind != HirValueKind::ArrayInitializer ||
+        value.info.type.kind != SemanticType::Array ||
+        value.info.type.arguments.size() != 1 ||
+        value.info.type.arrayLengthParameterId != 0 ||
+        value.info.type.arrayLength == 0 ||
+        value.operands.size() != value.info.type.arrayLength ||
+        value.info.category != ValueCategory::Value ||
+        value.info.access != AccessMode::ReadOnly ||
+        value.unsafeOperation != UnsafeOperationKind::None ||
+        !value.parameterTypes.empty() || value.operation || value.constant ||
+        value.programConstantSubstitution ||
+        value.intrinsic != IntrinsicKind::None ||
+        value.synchronization != SynchronizationOperation{} ||
+        !value.definedFailure.empty() ||
+        value.borrowOrigin != BorrowOriginKind::None ||
+        value.borrowArgument != 0 ||
+        value.borrowAccess != AccessMode::ReadOnly || value.borrowPlace ||
+        value.storedReferenceAccess || value.dispatch != CallDispatch::Static ||
+        value.dispatchOwner != SemanticType::Unknown || value.receiver ||
+        value.callPlan || value.packFoldSymbol != 0 ||
+        value.packFoldParameter != 0 || value.packFoldFunction != 0 ||
+        value.packFoldArgument != 0 || !value.packFoldElements.empty() ||
+        !value.packExpansionElements.empty() || value.functionTarget ||
+        value.nativeCallbackAdapter || value.constructorTarget ||
+        value.constructorKind != ConstructorKind::Ordinary ||
+        value.lambdaTarget || !value.callableArguments.empty() ||
+        value.callableBoundary || value.callableInvocation || value.enumOwner ||
+        value.enumValue || value.enumVariant || value.payloadIndex ||
+        value.symbol != 0 || value.literal || value.place) {
+      return false;
+    }
+    const HirValue *root = defaultArrayRootInitializer(value);
+    const auto *initializer =
+        root == nullptr ? nullptr : exprAs<ArrayInitializer>(root->source);
+    return initializer != nullptr &&
+           semantics.findArrayElementConstruction(*initializer) != nullptr;
+  };
   const auto exactSyntheticValue = [&](const HirValue &value) {
-    if (exactDefaultArrayElement(value)) {
+    if (exactDefaultArrayElement(value) || exactDefaultArrayLevel(value)) {
       return true;
     }
     const auto parents = valueParents.find(value.id);

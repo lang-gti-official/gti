@@ -347,31 +347,34 @@ private:
     static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
     for (std::size_t index = Extent; index != 0; --index) {
       auto &element = array[index - 1];
+      // The leaf arm must be the discarded statement of this constexpr
+      // branch: a trailing statement after `continue` would still
+      // instantiate the leaf destructor call against a nested array level.
       if constexpr (sizeof...(Rest) != 0) {
         if (!destroy_fixed_array_level<Rest...>(
                 element, failure_record, cleanup_failure, artifact, success)) {
           return false;
         }
-        continue;
+      } else {
+        ::gti_failure_record_v1 secondary{};
+        const bool already_cleaning = !success;
+        ::gti_failure_record_v1 *element_record =
+            already_cleaning ? &secondary : failure_record;
+        const bool element_success =
+            element.__gti_mir_destruct_failure(element_record);
+        std::destroy_at(&element);
+        if (!element_success && cleanup_failure) {
+          return false;
+        }
+        if (!element_success && already_cleaning) {
+          const ::gti_failure_emergency_v1 emergency{
+              GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *failure_record,
+              secondary};
+          ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact,
+                                                artifact);
+        }
+        success = success && element_success;
       }
-
-      ::gti_failure_record_v1 secondary{};
-      const bool already_cleaning = !success;
-      ::gti_failure_record_v1 *element_record =
-          already_cleaning ? &secondary : failure_record;
-      const bool element_success =
-          element.__gti_mir_destruct_failure(element_record);
-      std::destroy_at(&element);
-      if (!element_success && cleanup_failure) {
-        return false;
-      }
-      if (!element_success && already_cleaning) {
-        const ::gti_failure_emergency_v1 emergency{
-            GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *failure_record,
-            secondary};
-        ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact, artifact);
-      }
-      success = success && element_success;
     }
     return true;
   }

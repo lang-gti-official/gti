@@ -1,0 +1,8 @@
+class no_default {
+  no_default() {}
+};
+
+int main() {
+  mut no_default grid[1][1] = {};
+  return 0;
+}

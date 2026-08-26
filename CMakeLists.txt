@@ -1217,6 +1217,7 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixed_array_class_lifecycle_runtime_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle_negative.gti"
     )
     set_tests_properties(fixed_array_class_lifecycle_runtime
                          PROPERTIES TIMEOUT 180)

@@ -1683,12 +1683,17 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     for (const MirProgramInitializationStep &step :
          mir.programInitializationPlan().steps) {
       const MirPlace *storage = mir.module().findPlace(step.storagePlace);
-      const bool fixedClassArray =
-          storage != nullptr && storage->type.kind == SemanticType::Array &&
-          storage->type.arguments.size() == 1 &&
-          storage->type.arguments.front().kind == SemanticType::Class &&
-          storage->type.arrayLengthParameterId == 0 &&
-          storage->type.arrayLength != 0;
+      // A fixed-array chain of exact extents whose leaf element is a class;
+      // nested levels transfer element-wise exactly like the flat form.
+      const bool fixedClassArray = storage != nullptr && [&] {
+        const SemanticType *level = &storage->type;
+        while (level->kind == SemanticType::Array &&
+               level->arguments.size() == 1 &&
+               level->arrayLengthParameterId == 0 && level->arrayLength != 0) {
+          level = &level->arguments.front();
+        }
+        return level != &storage->type && level->kind == SemanticType::Class;
+      }();
       if (step.role != ProgramInitializationStepRole::Initializer ||
           step.requiresActiveCleanup || storage == nullptr ||
           (storage->type.kind != SemanticType::Class && !fixedClassArray)) {
