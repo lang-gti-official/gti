@@ -47,9 +47,9 @@ memory family) remain measured-defer, while the active interprocedural client
 is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
-Performance-priority update (2026-08-27): `O-PERF-00` closed on exact clean
-commit `a2bd29dc`, `O-PERF-01` closed on exact clean commit `f1a4075f`, and
-`O-PERF-02` closed on exact clean commit `d6374eb9`.
+Performance-priority update (2026-08-27): `O-PERF-00` through `O-PERF-03`
+are complete, and `O-PERF-04` is measured-defer on exact clean commit
+`4dbb50bd`; `O-PERF-05` is the sole active row.
 The fixed-array bounds control remained a measured no-op. The admitted
 complete-state fixed-array overflow workload originally measured 283.568 ms in
 GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
@@ -59,12 +59,15 @@ bounds outcomes. The clean implementation measured 61.807 versus 61.111 ms at
 O2 and 61.055 versus 61.113 ms at O3. No campaign control regressed by more
 than 0.4% relative to its semantic C++ twin. Bounded contextual summaries then
 transported exact scalar and container-element facts through the closed vector
-call family. The O2 vector median fell from 1,213.192 ms to 558.336 ms while
-native, virtual, recursive, owning-transfer, conflicting-context, and
-non-convergent boundaries remained conservative. `O-PERF-03` is now the sole
-active row and owns duplicate prefix-storage checking and vector length
-authority. Exact report identities, raw samples, profiles, MIR/report counters,
-and emitted-code hashes live in
+call family, then established one prefix-storage length authority and removed
+only independently replayed private rechecks. A bounded follow-up carries the
+same scalar envelope through exact indexed return borrows and finite closed-call
+loop bounds; vector medians are now 1.042x idiomatic at O2 and 1.049x at O3.
+The genuinely opaque scalar-loop preflight exposed only 0.34% value, so no
+versioning transform was admitted. Native, virtual, recursive,
+owning-transfer, conflicting-context, mutating-call, and non-convergent
+boundaries remain conservative. Exact report identities, raw samples,
+profiles, MIR/report counters, and emitted-code hashes live in
 [`performance-tooling.md`](performance-tooling.md).
 
 The audit proposal is not adopted verbatim. The live safety analysis already

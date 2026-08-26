@@ -376,9 +376,9 @@ detailed row together; do not copy the sequence into another plan.
 | 1 | `O-PERF-00` | **complete** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Exact clean commit `a2bd29dc` records conclusive checked-array, checked-vector, scalar-chain, scalar-FP, control, game-update, and managed-thread baselines; strict generated arithmetic ceilings; and fixed-native O0/O1/O2/O3 attribution. |
 | 2 | `O-PERF-01` | **complete** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | Exact clean commit `f1a4075f` discharges all five hot arithmetic outcomes and the three hot fixed-array bounds outcomes; GTI measured 1.011x idiomatic C++ at O2 and 0.999x at O3 with no control regression above 0.4%. |
 | 3 | `O-PERF-02` | **complete** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | Exact clean commit `d6374eb9` uses bounded contextual summaries to discharge six overflow outcomes and four arithmetic-domain outcomes; the O2 vector median fell from 1,213.192 ms to 558.336 ms while all conservative near misses and independent replay passed. |
-| 4 | `O-PERF-03` | **complete** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | Exact clean commit `eaaea34d` removes vector's mirrored count and discharges seven public-accessor private prefix rechecks; vector medians improve 22.4% at O2 and 28.9% at O3 with exact public failure identity and no control regression above 1.1%. |
-| 5 | `O-PERF-04` | **active** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
-| 6 | `O-PERF-05` | **blocked on 04** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
+| 4 | `O-PERF-03` | **complete** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | Exact clean commit `eaaea34d` removes vector's mirrored count and discharges seven public-accessor private prefix rechecks. Follow-up exact commit `4dbb50bd` carries the existing scalar envelope through exact indexed return borrows and finite closed-call loop bounds; vector medians are 1.042x idiomatic at O2 and 1.049x at O3. |
+| 5 | `O-PERF-04` | **measured defer** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | Exact clean commit `4dbb50bd` records a semantics-preserving source preflight at 538.225 ms versus 540.055 ms checked GTI, only 0.34% available value; checked GTI is already 1.003x idiomatic, so the required 30% entry gate rejects versioning. |
+| 6 | `O-PERF-05` | **active** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
 | 7 | `O-GAME-01` | **blocked on 05** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
 
 `P-MEASURE-01` benchmark breadth is subsumed into `O-PERF-00` while this gate
@@ -2978,9 +2978,10 @@ in [`performance-tooling.md`](performance-tooling.md).
 
 ### O-PERF-04: Exact Fast Path For Undischargeable Checked Loops
 
-- **State/role:** active after completed `O-PERF-03`; design/proxy gate before
-  any transform. Enter only with a benchmark whose hot inputs are genuinely
-  opaque after the static rows.
+- **State/role:** measured defer on exact clean commit `4dbb50bd`; the required
+  source-proxy gate rejected a transform. Re-enter only with a benchmark whose
+  hot inputs remain genuinely opaque after the static rows and whose exact
+  proxy demonstrates at least 30% available value.
 - **Rejected audit shape:** PR #164's wrapping block plus sticky predicate and
   replay is not accepted as semantics-preserving as written. Its own
   side-effect-free legality rule excludes the flagship `scale` loop because
@@ -3005,10 +3006,29 @@ in [`performance-tooling.md`](performance-tooling.md).
   to at most 1.5x idiomatic C++ or close as measured-defer with the next cause
   identified.
 
+The admitted scalar recurrence performs 200 million checked additions whose
+loop-invariant `argc` operand is runtime opaque. Its source preflight reads no
+mutable state, admits only an exact range that proves the first and every
+subsequent addition, uses public wrapping arithmetic in the proved lane, and
+retains the original checked loop unchanged for every other input. Five
+warmups and twenty seeded interleaved O3/native-O3 samples measured 540.055 ms
+for checked GTI, 538.225 ms for the proxy, 539.767 ms for semantic C++, and
+538.246 ms for idiomatic C++. The 0.34% proxy improvement is far below the 30%
+entry threshold, while checked GTI is already 1.003x idiomatic.
+
+An earlier record/vector experiment was rejected as the row proxy: its 29.28%
+ceiling removed operations whose safety follows from modulo-bounded record
+fields but whose facts are outside the current scalar element envelope, and it
+retained public vector call/check overhead. That result identifies aggregate
+element facts and container call boundaries as separate future profiling
+targets; it does not justify checked-loop versioning. No CFG cloning, sticky
+wrapping, replay machinery, public-name recognition, or backend-specific proof
+was added.
+
 ### O-PERF-05: Residual Backend Representation Hygiene
 
-- **State/role:** blocked on `O-PERF-04`; bounded cleanup, not a backend
-  rewrite.
+- **State/role:** active after measured-defer closure of `O-PERF-04`; bounded
+  cleanup, not a backend rewrite.
 - **Scope:** profile a scalar-FP/update and one closed-call client whose timed
   region exceeds 50 ms. Compare MIR-equivalent emitted C++ and semantic C++ at
   the same native settings. Test only surviving artifacts such as unnecessary

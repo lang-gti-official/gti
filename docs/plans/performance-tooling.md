@@ -5,10 +5,11 @@
 
 Status: Milestone 1 remains in progress; the deterministic GTI optimization
 reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
-`O-PERF-00` through `O-PERF-03` are complete: the runtime workload set,
+`O-PERF-00` through `O-PERF-03` are complete and `O-PERF-04` is measured
+defer: the runtime workload set,
 fixed-native attribution mode, loop and closed-call safety clients, single-bound
 prefix access, threshold-free CI smoke gate, and clean exact-head closure
-evidence are recorded below. `O-PERF-04` is the active campaign row.
+evidence are recorded below. `O-PERF-05` is the active campaign row.
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
@@ -624,6 +625,86 @@ O2 idiomatic: [82298500,82717375,82105708,82040709,81011625,83284041,81641542,83
 O3 GTI: [387557000,372402166,417194084,389907375,402385542,405820750,386567667,407604917,359709959,428528709,405182833,406140500,384691334,409912750,431050333,431310291,417271667,411266917,423962042,402110083]
 O3 semantic: [534503334,542765833,534360083,549700500,546734500,532643375,512302042,500785166,536804875,514728375,491687584,501061708,494330833,544394917,533826375,480370625,534747167,543372334,515153458,534886917]
 O3 idiomatic: [52883834,53352208,52312083,51922708,51723958,52630375,51592333,52788459,52491333,51873625,52469750,52938834,52591417,51864125,52523375,52810375,52411792,52226041,52263709,52585000]
+```
+
+#### O-PERF-03 bounded indexed-loop follow-up
+
+Exact clean commit `4dbb50bdaa0525df7ee29205fa54402a15109a4c`
+extends the existing scalar safety domain rather than adding another pass. It
+admits finite loop bounds proved through exact non-mutating closed calls,
+retains mutating/native/raw/unsafe barriers, constrains prefix length to its
+capacity invariant, and transports one scalar element fact through an exact
+receiver-owned indexed return borrow. The compiler SHA-256 is
+`e4cdf6de5288c1bfa0679f9dbee980ec500dcfa0a409efe0ac9090a56b567b70`.
+Both schema-3 reports are exact-head and conclusive under the same Apple Clang
+21, C++23, strict-FP, seed-3108, five-warmup, twenty-run protocol. Their
+SHA-256 values are
+`8987f0a2a4fb6e60cf87eb3ab4f694689ef73b0d953860af9a511e17c9f259b6`
+for O2 and
+`c2d47aefef190378181c87c368c90e31e65fa3ec8a4053ed1aa3047deb36d208`
+for O3.
+
+| GTI/native level | GTI median / MAD (ms) | Semantic C++ median (ms) | Idiomatic C++ median (ms) | GTI / idiomatic |
+| --- | ---: | ---: | ---: | ---: |
+| O2 / O3 | 53.268 / 0.268 | 516.854 | 51.108 | 1.042x |
+| O3 / O3 | 53.531 / 0.369 | 520.815 | 51.039 | 1.049x |
+
+The deterministic O2 optimization report has SHA-256
+`4b998fbef9ce5db8cc9e59e5eb7e2bef4c56b0fbc6183e4bee563d36650135b4`;
+its emitted C++ has SHA-256
+`59de58633c23a23c112ff7a32ff1365d57009034de3ae6b953b6554b9cd02fc3`.
+It records 44 source, 30 emitted, and 14 statically discharged safety
+outcomes: bounds 4/2/2, storage state 1/1/0, arithmetic overflow 15/7/8, and
+arithmetic domain 6/2/4. Focused negative evidence retains dynamic bounds,
+native calls, exact mutable-reference calls, repeated writes, unknown indexed
+contexts, aliases, and unsupported storage paths.
+
+```text
+O2 GTI: [52990208,53101334,54292958,54027375,54489875,54478000,53228625,54300791,53107792,53179750,52958417,53307000,53182083,53743166,54302542,53052541,54102500,53176417,53065500,53527000]
+O2 semantic: [516745083,511526042,500896041,528249334,533713209,526237166,490783792,539721917,521617417,510762167,521780292,498157167,517489208,534703458,516963125,538706833,490674584,473041084,482350500,496538458]
+O2 idiomatic: [50525917,51635375,50543958,51904917,50711000,50678917,50724625,50775417,50669166,51402584,51124083,51091125,51625209,51781792,51521833,50621542,50571333,51985875,51619916,51623625]
+O3 GTI: [53352875,53345250,54508209,53807916,54938583,54042375,53281708,54333291,53326250,53367166,53100083,53090500,53388542,54057500,54415417,53223834,55012042,53367458,54090542,53673000]
+O3 semantic: [526203125,522031750,513319166,515966875,519598375,539216750,473213500,494973500,532583000,530424750,492747791,540015334,536128750,527919333,530415750,506622625,489351500,512898500,492389291,540015791]
+O3 idiomatic: [51012000,51463458,50575958,52024291,51065167,50826334,50600000,50767125,50710542,51243500,51836666,51299208,51410083,51470333,50932250,50718416,50683000,50909000,51618375,51361541]
+```
+
+### O-PERF-04 exact-head measured defer
+
+The admitted `opaque-checked-update` recurrence executes 200 million checked
+additions with hosted `argc` as the genuinely opaque invariant. Its exact
+source preflight admits only `[-1073741824, 1073741823]`, which proves the
+initial `value + argc`; positive-constant remainder then confines every later
+carried value to `[-1000002, 1000002]`. The admitted lane uses public wrapping
+arithmetic with identical values. Every other input runs the original checked
+loop, so the proxy changes no failure site, order, partial effect, or cleanup.
+
+The schema-3 report is exact-head on clean commit `4dbb50bd`, conclusive, and
+has SHA-256
+`cb97be1c093fa9dff71a9d4261408ed4f45a01c10eb67282a6a659f726daadbe`.
+It uses the same compiler and measurement protocol as the follow-up above and
+retains `GTI-BENCH-1 digest:00000000000f3fec work-units:200000000` in all four
+variants.
+
+| Variant | Median / MAD (ms) | Relative to checked GTI |
+| --- | ---: | ---: |
+| checked GTI | 540.055 / 0.562 | 1.0000x |
+| exact source preflight | 538.225 / 0.497 | 0.9966x |
+| semantic C++ | 539.767 / 0.375 | 0.9995x |
+| idiomatic C++ | 538.246 / 0.600 | 0.9967x |
+
+The source proxy exposes only 0.34% available value, below the row's mandatory
+30% entry gate. Checked GTI is already 1.003x idiomatic and 1.001x semantic
+C++, so O-PERF-04 closes measured-defer without loop cloning or versioning.
+The optimization report has SHA-256
+`9bad3e0dca76671f41d14498a82d2277479f692de20688e96e7db70f53d62088`;
+its emitted C++ has SHA-256
+`ac47e819858de4236b80f153eb42c77f86da3126eaea5ca8e8682cc15c08b0f1`.
+
+```text
+checked GTI: [540022625,544103458,539789458,541255875,541966416,539874167,540720208,540287250,538988625,539337541,540531583,539457375,540086708,540727542,539470334,539514375,538788083,539644375,540236666,540117792]
+preflight GTI: [545063416,538007541,538255667,537991917,538679125,538940250,538244000,539211458,537815500,537012250,537267583,538049625,539675292,537139416,537550042,538764791,538169875,538215834,539034875,538234416]
+semantic C++: [544178667,539802167,540155833,539501084,538935709,544209833,540842500,539780250,539786459,538835917,540161792,539753584,539672084,539361459,539703375,539405292,539013250,539813750,540115500,539211750]
+idiomatic C++: [544912542,538126417,538645625,538849084,537420292,539335917,540899792,537981542,538996000,538161417,538202917,537649708,538560666,538034959,537685167,538997958,538289000,537310166,538873417,537562458]
 ```
 
 ### Independent reproduction of PR #164
