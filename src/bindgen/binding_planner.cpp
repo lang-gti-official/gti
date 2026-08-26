@@ -390,27 +390,6 @@ private:
     return shape;
   }
 
-  // Maps a fixed-array field's ultimate element under the GTI field set.
-  // Two extra restrictions beyond ordinary fields, both verified against the
-  // frontend: GTI rejects `void*` array elements (GTI-S2015), and its layout
-  // pass cannot yet supply by-value record array elements (GTI-S2064), while
-  // the same types are admitted as plain fields.
-  [[nodiscard]] MappedType mapArrayElement(NativeTypeId elementId) const {
-    const NativeType *element = canonical(elementId);
-    if (element != nullptr && element->kind == NativeTypeKind::Pointer) {
-      const NativeType *pointee = canonical(element->pointee);
-      if (pointee != nullptr && pointee->kind == NativeTypeKind::Void) {
-        return unsupportedType("an array of 'void' pointers is outside the "
-                               "current GTI fixed-array field surface");
-      }
-    }
-    if (element != nullptr && element->kind == NativeTypeKind::Record) {
-      return unsupportedType("a by-value record array is outside the current "
-                             "GTI fixed-array field surface");
-    }
-    return mapType(elementId, false, TypeUse::RecordField);
-  }
-
   [[nodiscard]] std::optional<std::string>
   fieldProblem(const NativeRecordField &field) const {
     if (const std::optional<std::string> problem =
@@ -422,7 +401,10 @@ private:
       return "field '" + field.name + "' has an invalid type";
     }
     if (type->kind == NativeTypeKind::Array) {
-      const MappedType element = mapArrayElement(arrayShape(*type).elementId);
+      // The ultimate element uses the ordinary field set: GTI computes array
+      // layout recursively from admitted element facts (decision 013).
+      const MappedType element =
+          mapType(arrayShape(*type).elementId, false, TypeUse::RecordField);
       if (!element.supported) {
         return "array field '" + field.name + "': " + element.reason;
       }
@@ -496,7 +478,8 @@ private:
       const NativeType *type = model_.findType(field.type);
       if (type->kind == NativeTypeKind::Array) {
         const ArrayShape shape = arrayShape(*type);
-        const MappedType element = mapArrayElement(shape.elementId);
+        const MappedType element =
+            mapType(shape.elementId, false, TypeUse::RecordField);
         std::string spelling = element.spelling + " " + field.name;
         for (const std::uint64_t extent : shape.extents) {
           spelling += "[" + std::to_string(extent) + "]";

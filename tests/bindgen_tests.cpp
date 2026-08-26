@@ -185,15 +185,12 @@ int use_plain(struct Plain plain);
 }
 
 void testFieldPositionDegradation() {
-  // GTI's [[c_abi]] field set has no c_string, nested pointer, or
-  // void-pointer-array position; records using them must degrade honestly
-  // rather than generating source the frontend rejects.
+  // GTI's [[c_abi]] field set has no c_string or nested-pointer position;
+  // records using them must degrade honestly rather than generating source
+  // the frontend rejects.
   const lang::bindgen::ReadResult read = readC(R"(
 struct Labeled { const char *text; int code; };
 struct Tails { const char **tails; };
-struct Slots { void *slots[4]; };
-struct Extent { int width; int height; };
-struct Extents { struct Extent extents[2]; };
 )");
   const lang::bindgen::BindingPlan plan =
       lang::bindgen::planBindings(read.model, {});
@@ -207,18 +204,6 @@ struct Extents { struct Extent extents[2]; };
              tails->kind == lang::bindgen::BindingItemKind::Opaque &&
              contains(tails->reason, "nested pointer"),
          "a nested-pointer field should degrade the record with its reason");
-  const lang::bindgen::BindingItem *slots = findItem(plan, "Slots");
-  expect(slots != nullptr &&
-             slots->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(slots->reason, "array of 'void' pointers"),
-         "a void-pointer array field should degrade the record with its "
-         "reason");
-  const lang::bindgen::BindingItem *extents = findItem(plan, "Extents");
-  expect(extents != nullptr &&
-             extents->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(extents->reason, "by-value record array"),
-         "a by-value record array field should degrade the record until the "
-         "frontend can lay it out");
 }
 
 void testRecordFieldExpansion() {
@@ -232,7 +217,8 @@ typedef struct Panel {
   int *cursors[4];
   const float *gains[2];
   Engine *engines[2];
-  Point *corners[4];
+  Point corners[4];
+  void *scratch[2];
   Notify on_change;
   Notify handlers[3];
   enum Mode mode;
@@ -264,8 +250,10 @@ typedef struct Panel {
          "a const-pointee pointer array field should keep its qualifier");
   expect(fieldSpelling("engines") == "Engine* engines[2]",
          "an opaque-handle pointer array field should import");
-  expect(fieldSpelling("corners") == "Point* corners[4]",
-         "a record-pointer array field should import");
+  expect(fieldSpelling("corners") == "Point corners[4]",
+         "a by-value record array field should import");
+  expect(fieldSpelling("scratch") == "void* scratch[2]",
+         "a void-pointer array field should import");
   expect(fieldSpelling("on_change") == "Notify on_change",
          "a callback-alias field should import");
   expect(fieldSpelling("handlers") == "Notify handlers[3]",
@@ -472,7 +460,8 @@ typedef struct Channels {
   int levels[2][3];
   float *taps[4];
   Device *devices[2];
-  Extent *extents[2];
+  Extent extents[2];
+  void *scratch[2];
   DeviceLostCallback on_lost;
   DeviceLostCallback handlers[2];
   enum DeviceState state;
