@@ -306,11 +306,15 @@ lambda-identity results remain rejected.
 
 Confinement applies equally to lexical lambdas and nominal callable objects.
 Once a generic parameter is invoked, it cannot appear within that function's
-return type or pass through a target parameter without another proven
-`Confined` contract. A callable object that is never invoked through the
-generic parameter retains ordinary value-transport semantics. Invalid escape
-and forwarding edges are rejected before HIR, so later phases never receive a
-false confined fact.
+return type unless every reachable valued return is the exact final
+`std::move` of that same parameter, and it cannot pass through a target
+parameter without another proven `Confined` contract. The exact-return case
+retains the confined invocation boundary while recording an independent owned
+transport fact; it permits repeatable read or mutable invocation, but never a
+once-callable requirement or forwarding edge. A callable object that is never
+invoked through the generic parameter retains ordinary value-transport
+semantics. Invalid escape and forwarding edges are rejected before HIR, so
+later phases never receive a false confined fact.
 
 After forwarding contracts reach their declaration-order-independent fixed
 point, semantics first resolves every provisional lexical-lambda argument
@@ -336,16 +340,19 @@ distinct symbols and are not part of the callable contract.
 non-escaping booleans in semantics. Concrete generic reanalysis substitutes
 symbolic result and parameter types before validating the selected target, so
 a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
-`Owned` is produced only for a free function's direct immutable by-value type
-parameter whose one-statement body moves that exact parameter into the
-same-type result, or
-returns a construction whose sole exact generic field is initialized by the
-constructor's matching parameter move. A lambda argument at that boundary must
-use explicit `std::move`, remain exactly typed and movable, and contain no
-reference, tracked-borrow, or raw-pointer capture state. Arbitrary storage,
-wrappers, inferred closure results, and type erasure do not acquire this fact.
-Local closure environment movement and cleanup remain represented
-independently and supply its concrete lifecycle evidence.
+`Owned` is produced for a free function's direct immutable by-value type
+parameter when every reachable valued return moves that exact parameter into
+the same-type result, or when its one-statement body returns a construction
+whose sole exact generic field is initialized by the constructor's matching
+parameter move. An exact same-type return may instead coexist with a
+`Confined` contract when that parameter has repeatable signatures, no
+forwarding edges, and mutable access only when declared `mut`. A callable
+argument at either transporting boundary must use explicit `std::move`, remain
+exactly typed and movable, and contain no reference, tracked-borrow, or raw-
+pointer stored state. Arbitrary storage, wrappers, inferred closure results,
+and type erasure do not acquire this fact. Local closure environment movement
+and cleanup remain represented independently and supply its concrete lifecycle
+evidence.
 
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter

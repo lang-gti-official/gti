@@ -117,11 +117,13 @@ Each closure-producing `HirValue` carries its initializer operands in written
 left-to-right order; an owned capture is an ordinary HIR `Move` with the same
 place/ownership event used elsewhere. Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
-`Confined` boundary retains invocation/forwarding requirements. The bounded
-`Owned` boundary retains either an exact same-type generic return or an exact
-generic owner/field destination, after semantics has required an explicit
-source move. Concrete lowering drops symbolic owned contracts from non-lambda
-instantiations, substitutes the exact closure and destination types, and
+`Confined` boundary retains invocation/forwarding requirements. A confined
+parameter may additionally retain one exact same-type return transport when
+all signatures are repeatable and the body returns only the exact moved
+parameter. The bounded `Owned` boundary retains either an exact same-type
+generic return or an exact generic owner/field destination, after semantics has
+required an explicit source move. Concrete lowering substitutes the exact
+callable and destination types, drops inapplicable symbolic contracts, and
 retains constructor parameter-to-field move evidence. Confined
 signatures retain exact `void`, `bool`, or context-supplied non-reference value
 results without tracked borrowed state or lambda identity after concrete

@@ -2353,8 +2353,11 @@ name recognition.
   boundary records, exact context-supplied value results, repeatable read/mut
   invocation, consuming once-callable cardinality, and ordered local
   copy/move closure environments are done. Exact same-type generic return and
-  the bounded one-field generic owner are also done; broader public
-  callable/predicate capabilities and external owners remain
+  the bounded one-field generic owner are also done. A repeatable confined
+  callable may now carry an independent exact-return transport when every
+  reachable return moves that same parameter; this serves source-defined
+  `std::for_each`. Broader public callable/predicate capabilities and external
+  owners remain
   systems-readiness implementation shared by algorithms, tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
@@ -2362,8 +2365,8 @@ name recognition.
   captures, movement, destruction, and invocation in GTI-owned
   semantic/HIR/MIR records. The completed confined slices already serve
   operation-based `std::accumulate`/`std::inner_product` and unary
-  `std::transform_reduce`, including stateful mutable operation objects,
-  without public-name recognition.
+  `std::transform_reduce`, plus `std::for_each`, including stateful mutable
+  operation objects, without public-name recognition.
 - **Non-goals:** immediately cloning `std::function`, arbitrary reference
   capture, thread transfer, native callback ABI, or hiding ownership in type
   erasure.
@@ -2381,13 +2384,14 @@ name recognition.
   `std::forward_iterator`, source-defined `std::binary_search`, default and
   operation-based `std::accumulate`, homogeneous `std::inner_product`, unary
   `std::transform_reduce`, and the predicate algorithms whose callable shapes
-  are already confined.
-- **Remaining scope:** Add the exact complete-range/callable concepts and
-  implement the remaining `find`, `count`, `for_each`, `transform`, and `sort`
-  families in ordinary GTI source. Further iterator/sentinel overloads require
-  a demonstrated subrange client. The forward-iterator slice does not
-  authorize random access, iterator assignment, implicit conversions,
-  overload ranking, or a parallel C++ iterator-category hierarchy.
+  are already confined. Exact iterator/sentinel `std::find` and `std::count`
+  and repeatable exact-return `std::for_each` are now ordinary GTI source.
+- **Remaining scope:** Add the exact writable-output and
+  bidirectional/random-access concepts needed to implement `copy`, `transform`,
+  `reverse`, and `sort` honestly. Further iterator/sentinel overloads require a
+  demonstrated subrange client. The forward-iterator slice does not authorize
+  random access, iterator assignment, implicit conversions, overload ranking,
+  or a parallel C++ iterator-category hierarchy.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -3148,7 +3152,7 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | L-RANGE-01/02 complete; dynamic-view systems-readiness work remains | `L-RANGE-03` |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |

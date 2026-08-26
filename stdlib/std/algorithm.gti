@@ -1,7 +1,7 @@
-// Algorithms that need only ordering, input iteration, or a confined predicate
-// are implemented here. The remaining declarations require owned callable
-// return, writable-output, or bidirectional/random-access contracts that GTI
-// cannot yet express honestly.
+// Algorithms that need ordering, input iteration, confined predicates, or one
+// exact-return callable are implemented here. The remaining declarations need
+// writable-output or bidirectional/random-access contracts that GTI cannot yet
+// express honestly.
 
 #include <std/iterator>
 
@@ -66,10 +66,32 @@ bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
   return true;
 }
 
-Function for_each<Iterator, Function>(Iterator first, Iterator last,
-                                      Function function);
+Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
+                                                Sentinel last,
+                                                mut Function function)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  while (first != last) {
+    function(*first);
+    ++first;
+  }
+  return std::move(function);
+}
 
-Iterator find<Iterator, T>(Iterator first, Iterator last, T& value);
+Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                     T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) {
+      break;
+    }
+    ++first;
+  }
+  return std::move(first);
+}
 Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Predicate predicate)
@@ -96,7 +118,21 @@ Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
   return std::move(first);
 }
 
-ptrdiff_t count<Iterator, T>(Iterator first, Iterator last, T& value);
+ptrdiff_t count<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                       T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  mut ptrdiff_t result = 0;
+  while (first != last) {
+    if (*first == value) {
+      result++;
+    }
+    ++first;
+  }
+  return result;
+}
 ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                   Sentinel last,
                                                   mut Predicate predicate)

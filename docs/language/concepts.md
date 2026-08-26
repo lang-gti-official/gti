@@ -231,6 +231,39 @@ and advances that copy to each midpoint; it neither subtracts iterators nor
 mutates the end sentinel. This yields logarithmic comparisons and linear total
 iterator increments for forward iterators.
 
+The input-iterator client cluster also includes ordinary source-defined
+`std::find`, `std::count`, and `std::for_each` overloads. `find` and `count`
+use the same exact relationships:
+
+```gti
+Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                     T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T>;
+```
+
+The `dereferences_to` and equality requirements do not admit a convertible
+element or a backend-selected comparison. A distinct sentinel remains an
+independent exact type. Returning `find`'s iterator is an ordinary move of
+`first`: when every reachable return moves that same parameter and its exact
+concrete carrier type holds borrowed state, that parameter is the return's
+owner dependency. This rule does not select an owner when different return
+paths move unrelated parameters; the ordinary ambiguous-dependency diagnostic
+still applies.
+
+`for_each` needs no public callable concept. Its visible body records an exact
+`void` invocation whose parameter is the checked-reference type produced by
+the concrete iterator's dereference operation. The declared mutable callable
+parameter admits either a read-callable or mut-callable selected target. The
+same contract carries one independent exact moved-return proof, so the callable
+may be invoked repeatedly and then returned without changing the confined
+invocation boundary. Callers must transfer a named callable with `std::move`,
+and its stored state must not contain references, tracked borrows, or raw
+pointers. These are semantic and HIR/MIR facts; public algorithm names and
+emitted C++ overloads grant no capability.
+
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,

@@ -1032,6 +1032,18 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(
+      NAME generic_algorithm_cluster
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/generic_algorithm_cluster_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(
+      generic_algorithm_cluster
+      PROPERTIES TIMEOUT 600
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
+    add_test(
       NAME stdlib_surface
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/stdlib_surface_test.py"

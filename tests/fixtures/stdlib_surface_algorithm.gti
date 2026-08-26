@@ -1,6 +1,8 @@
 #include <std/algorithm>
 #include <std/vector>
 
+mut int32_t algorithm_sum = 0;
+
 class audit_iterator {
   mut std::size_t index;
   mut int32_t values[4] = {1, 2, 3, 4};
@@ -32,6 +34,13 @@ class even {
 public:
   bool operator()(int32_t& value) {
     return value % 2 == 0;
+  }
+};
+
+class sum_values {
+public:
+  void operator()(int32_t& value) {
+    algorithm_sum += value;
   }
 };
 
@@ -84,6 +93,25 @@ int main() {
   mut std::vector<int32_t> empty{};
   if (std::binary_search(empty.begin(), empty.end(), first_value)) {
     return 5;
+  }
+
+  int32_t exact_value = 3;
+  mut audit_iterator exact_found = std::find(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      exact_value);
+  if (*exact_found != 3 ||
+      std::count(audit_iterator(std::size_t(0)),
+                 audit_iterator(std::size_t(4)), exact_value) != 1) {
+    return 6;
+  }
+
+  sum_values returned_sum = std::for_each(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      sum_values());
+  int32_t extra = 5;
+  returned_sum(extra);
+  if (algorithm_sum != 15) {
+    return 7;
   }
   return 0;
 }

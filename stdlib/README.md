@@ -283,14 +283,17 @@ Generic callable parameters support confined `void` operations, exact `bool`
 predicates, exact non-reference value results supplied by an explicit source
 context when they carry no tracked borrowed state or lambda identity, and
 proven forwarding through other confined callable parameters. Result inference
-through `auto`, borrowed results, and owned callable escape remain unavailable.
-Implemented predicate and numeric algorithms retain their callable by value in
-one confined mutable local. They accept read-callable and mut-callable targets,
-may invoke them repeatedly, and reject consuming once-callables.
+through `auto`, borrowed callable results, and general owned callable escape
+remain unavailable. One bounded exception permits every reachable return to
+move the same by-value callable parameter after repeated confined invocation;
+`std::for_each` uses that rule without storage or type erasure. Implemented
+predicate and numeric algorithms retain their callable by value in one confined
+mutable local. They accept read-callable and mut-callable targets, may invoke
+them repeatedly, and reject consuming once-callables.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, `count_if`, and forward-iterator `binary_search`; remaining find/count, copy, transform, reverse, and sort declarations |
+| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, `for_each`, and forward-iterator `binary_search`; remaining copy, transform, reverse, and sort declarations |
 | `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
 | `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
 | `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
