@@ -7643,7 +7643,8 @@ failureDestructorTarget(const MirProgram &program, const MirBody &body,
       drop != nullptr && owner != nullptr && drop->dropType.fixedArray &&
       drop->dropType.type.kind == SemanticType::Array &&
       drop->dropType.fixedArray->leafClassInstance == owner->id &&
-      owner->bases.empty() && owner->structuralBases.empty() &&
+      owner->bases == owner->structuralBases &&
+      !classHasStateBearingBase(*owner) &&
       std::none_of(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [](const MirClassFieldInfo &field) {
                      return field.requiresActiveCleanup;
@@ -7701,18 +7702,27 @@ uniqueClassInstanceForType(const MirProgram &program,
 // exact lifecycle-guarded shape, the compiler-generated move disarms the
 // source before its representation-only destructor runs. Requiring every
 // field move to be independently failure-free keeps this narrower than the
-// general class move proof and excludes custom moves, bases, unions, and
-// polymorphic representation.
+// general class move proof and excludes custom moves, state-bearing bases,
+// and unions. Polymorphic representation is admitted only when every base is
+// structural and carries no state: an interface base contributes no owned
+// subobject state, so the generated move still covers the complete concrete
+// element representation.
 [[nodiscard]] const MirClassInstance *
 lifecycleGuardedGeneratedMoveClass(const MirProgram &program,
                                    const SemanticType &type) {
   const MirClassInstance *instance = uniqueClassInstanceForType(program, type);
-  if (instance == nullptr || !instance->destructor.has_value() ||
-      !instance->requiresActiveDropState ||
+  const bool guardedDestructor = instance != nullptr &&
+                                 instance->destructor.has_value() &&
+                                 instance->requiresActiveDropState;
+  const bool passivePolymorphic =
+      instance != nullptr && instance->polymorphic &&
+      !instance->destructor.has_value() && !instance->requiresActiveDropState &&
+      instance->destructorStatus == SpecialMemberStatus::Generated;
+  if (instance == nullptr || (!guardedDestructor && !passivePolymorphic) ||
       instance->moveConstructor != SpecialMemberStatus::Generated ||
       !instance->traits.movable || instance->abstract ||
-      instance->polymorphic || instance->unionLayout ||
-      !instance->bases.empty() || !instance->structuralBases.empty() ||
+      instance->unionLayout || instance->bases != instance->structuralBases ||
+      classHasStateBearingBase(*instance) ||
       !std::all_of(
           instance->declaredFields.begin(), instance->declaredFields.end(),
           [&](const MirClassFieldInfo &field) {
