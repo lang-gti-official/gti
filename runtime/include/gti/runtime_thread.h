@@ -9,6 +9,10 @@
 typedef struct gti_thread_state_v1 gti_thread_state_v1;
 typedef void (*gti_thread_task_entry_v1)(void *context);
 typedef void (*gti_thread_task_destroy_v1)(void *context);
+typedef void *(*gti_thread_task_complete_v1)(void *context);
+typedef void (*gti_thread_task_abandon_v1)(void *context);
+typedef void (*gti_thread_result_take_v1)(void *context, void *destination);
+typedef void (*gti_thread_result_abandon_v1)(void *context);
 
 typedef uint32_t gti_thread_spawn_status_v1;
 enum {
@@ -49,6 +53,13 @@ typedef struct gti_thread_join_result_v1 {
   const gti_failure_artifact_descriptor_v1 *secondary_artifact;
 } gti_thread_join_result_v1;
 
+typedef struct gti_thread_value_join_result_v1 {
+  gti_thread_join_result_v1 join;
+  void *result_context;
+  gti_thread_result_take_v1 take_result;
+  gti_thread_result_abandon_v1 abandon_result;
+} gti_thread_value_join_result_v1;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +74,20 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
                        gti_thread_task_destroy_v1 destroy);
 
 /*
+ * The result-bearing form gives complete_task ownership of task_context after
+ * successful entry; it performs worker-side task cleanup and returns a
+ * non-null, independently owned result context. Spawn or worker failure gives
+ * abandon_task ownership instead. Successful join transfers the result
+ * context plus take/abandon callbacks to the joining caller.
+ */
+gti_thread_spawn_result_v1
+gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
+                             gti_thread_task_complete_v1 complete_task,
+                             gti_thread_task_abandon_v1 abandon_task,
+                             gti_thread_result_take_v1 take_result,
+                             gti_thread_result_abandon_v1 abandon_result);
+
+/*
  * A successful or worker-failure join consumes *state and writes null. A
  * worker failure returns either the exact ordinary record or the exact cleanup
  * emergency envelope together with the immutable artifact descriptors pinned
@@ -70,6 +95,15 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
  * state so its obligation remains owned by the caller.
  */
 gti_thread_join_result_v1 gti_rt_thread_join_v1(gti_thread_state_v1 **state);
+
+/*
+ * A successful value join consumes *state and transfers exactly one result
+ * context to the caller. The caller must invoke either take_result or
+ * abandon_result exactly once. Every non-success outcome returns null result
+ * fields; recoverable native join failure preserves *state.
+ */
+gti_thread_value_join_result_v1
+gti_rt_thread_join_value_v1(gti_thread_state_v1 **state);
 
 #ifdef __cplusplus
 }

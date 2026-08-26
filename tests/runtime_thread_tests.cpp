@@ -91,6 +91,128 @@ void testJoinPublishesWorkerWrites() {
          "successful join should publish ordinary worker writes");
 }
 
+struct ValueCounters {
+  std::atomic<int> entries{0};
+  std::atomic<int> taskCompletions{0};
+  std::atomic<int> taskAbandons{0};
+  std::atomic<int> resultTakes{0};
+  std::atomic<int> resultAbandons{0};
+};
+
+struct ValueTaskContext {
+  ValueCounters *counters = nullptr;
+  int value = 0;
+};
+
+struct ValueResultContext {
+  ValueCounters *counters = nullptr;
+  int value = 0;
+};
+
+void runValueTask(void *opaque) {
+  auto &context = *static_cast<ValueTaskContext *>(opaque);
+  context.counters->entries.fetch_add(1, std::memory_order_relaxed);
+  context.value *= 2;
+}
+
+void *completeValueTask(void *opaque) {
+  auto *task = static_cast<ValueTaskContext *>(opaque);
+  task->counters->taskCompletions.fetch_add(1, std::memory_order_relaxed);
+  auto *result =
+      new ValueResultContext{.counters = task->counters, .value = task->value};
+  delete task;
+  return result;
+}
+
+void abandonValueTask(void *opaque) {
+  auto *task = static_cast<ValueTaskContext *>(opaque);
+  task->counters->taskAbandons.fetch_add(1, std::memory_order_relaxed);
+  delete task;
+}
+
+void takeValueResult(void *opaque, void *destination) {
+  auto *result = static_cast<ValueResultContext *>(opaque);
+  *static_cast<int *>(destination) = result->value;
+  result->counters->resultTakes.fetch_add(1, std::memory_order_relaxed);
+  delete result;
+}
+
+void abandonValueResult(void *opaque) {
+  auto *result = static_cast<ValueResultContext *>(opaque);
+  result->counters->resultAbandons.fetch_add(1, std::memory_order_relaxed);
+  delete result;
+}
+
+gti_thread_spawn_result_v1 spawnValueTask(ValueCounters &counters, int value) {
+  return gti_rt_thread_spawn_value_v1(
+      runValueTask, new ValueTaskContext{.counters = &counters, .value = value},
+      completeValueTask, abandonValueTask, takeValueResult, abandonValueResult);
+}
+
+void testValueJoinTakeAndAbandon() {
+  ValueCounters counters;
+  gti_thread_spawn_result_v1 spawn = spawnValueTask(counters, 21);
+  expect(spawn.status == GTI_THREAD_SPAWN_OK_V1 && spawn.state != nullptr,
+         "value spawn should publish one opaque joinable state");
+  gti_thread_value_join_result_v1 join =
+      gti_rt_thread_join_value_v1(&spawn.state);
+  expect(join.join.status == GTI_THREAD_JOIN_OK_V1 && spawn.state == nullptr &&
+             join.result_context != nullptr && join.take_result != nullptr &&
+             join.abandon_result != nullptr,
+         "value join should transfer one exact result owner");
+  int value = 0;
+  join.take_result(join.result_context, &value);
+  expect(value == 42 && counters.entries.load() == 1 &&
+             counters.taskCompletions.load() == 1 &&
+             counters.taskAbandons.load() == 0 &&
+             counters.resultTakes.load() == 1 &&
+             counters.resultAbandons.load() == 0,
+         "taking a value result should consume task and result owners once");
+
+  spawn = spawnValueTask(counters, 7);
+  join = gti_rt_thread_join_value_v1(&spawn.state);
+  expect(join.join.status == GTI_THREAD_JOIN_OK_V1 &&
+             join.abandon_result != nullptr,
+         "a second value result should remain explicitly abandonable");
+  join.abandon_result(join.result_context);
+  expect(counters.entries.load() == 2 && counters.taskCompletions.load() == 2 &&
+             counters.resultTakes.load() == 1 &&
+             counters.resultAbandons.load() == 1,
+         "abandoning an unobserved result should consume it exactly once");
+}
+
+void testValueSpawnAndJoinFailuresPreserveOwnership() {
+  using gti::runtime::detail::setThreadTestFault;
+  using gti::runtime::detail::ThreadTestFault;
+
+  ValueCounters counters;
+  setThreadTestFault(ThreadTestFault::SpawnResourceUnavailable);
+  gti_thread_spawn_result_v1 spawn = spawnValueTask(counters, 1);
+  expect(spawn.status == GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1 &&
+             spawn.state == nullptr && counters.entries.load() == 0 &&
+             counters.taskCompletions.load() == 0 &&
+             counters.taskAbandons.load() == 1,
+         "value spawn failure should abandon transferred task state once");
+
+  spawn = spawnValueTask(counters, 5);
+  setThreadTestFault(ThreadTestFault::JoinFailed);
+  gti_thread_value_join_result_v1 join =
+      gti_rt_thread_join_value_v1(&spawn.state);
+  expect(join.join.status == GTI_THREAD_JOIN_FAILED_V1 &&
+             spawn.state != nullptr && join.result_context == nullptr &&
+             join.take_result == nullptr && join.abandon_result == nullptr,
+         "recoverable value join failure should preserve all runtime state");
+  join = gti_rt_thread_join_value_v1(&spawn.state);
+  expect(join.join.status == GTI_THREAD_JOIN_OK_V1 && spawn.state == nullptr &&
+             join.result_context != nullptr,
+         "retrying value join should transfer the original result owner");
+  join.abandon_result(join.result_context);
+  expect(counters.entries.load() == 1 && counters.taskCompletions.load() == 1 &&
+             counters.taskAbandons.load() == 1 &&
+             counters.resultAbandons.load() == 1,
+         "value join retry should preserve exact cleanup counts");
+}
+
 void testCreationFailureDestroysExactlyOnce() {
   using gti::runtime::detail::setThreadTestFault;
   using gti::runtime::detail::ThreadTestFault;
@@ -443,13 +565,19 @@ static_assert(std::is_standard_layout_v<gti_thread_spawn_result_v1> &&
               std::is_trivially_copyable_v<gti_thread_spawn_result_v1>);
 static_assert(std::is_standard_layout_v<gti_thread_join_result_v1> &&
               std::is_trivially_copyable_v<gti_thread_join_result_v1>);
+static_assert(std::is_standard_layout_v<gti_thread_value_join_result_v1> &&
+              std::is_trivially_copyable_v<gti_thread_value_join_result_v1>);
 static_assert(offsetof(gti_thread_spawn_result_v1, state) == 8);
 static_assert(offsetof(gti_thread_join_result_v1, failure_kind) == 8);
 static_assert(offsetof(gti_thread_join_result_v1, failure) == 16);
+static_assert(offsetof(gti_thread_value_join_result_v1, result_context) ==
+              sizeof(gti_thread_join_result_v1));
 
 int main() {
   testSpawnJoinAndConsumption();
   testJoinPublishesWorkerWrites();
+  testValueJoinTakeAndAbandon();
+  testValueSpawnAndJoinFailuresPreserveOwnership();
   testCreationFailureDestroysExactlyOnce();
   testRecoverableJoinFailurePreservesOwnership();
   testWorkerFailureHandoff();

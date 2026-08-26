@@ -6,7 +6,7 @@ compiler, and `concurrent` execution profile:
 
 - `gti-sequential` evaluates four interleaved 175-row partitions, four passes
   each, one after another;
-- `gti-four-jthreads` starts four owned `std::jthread` tasks, then joins them.
+- `gti-four-threads` starts four owned `std::thread` tasks, then joins them.
 
 One work unit is one pixel whose escape count contributes to its partition
 checksum in one of four complete passes. Rows are distributed by `row % 4`,
@@ -18,8 +18,9 @@ publish exactly:
 GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
 ```
 
-The first managed-thread slice has no shared mutable state and no task-result
-channel. Each worker therefore computes and validates its checksum privately.
+This workload deliberately uses neither shared mutable state nor the typed
+`std::thread_result<Result>` channel. Each worker therefore computes and
+validates its checksum privately.
 A mismatch raises a defined failure inside that worker, and `join()` re-raises
 it in the parent. The parent adds a partition checksum to the published digest
 only after that worker joins successfully. This keeps the benchmark in safe

@@ -9121,7 +9121,7 @@ ownedTransportFailure(const MirProgram &program,
   const SemanticType &callableType =
       instance.parameterTypes[parameter.parameterIndex];
   if (transport.kind == CallableOwnedTransportKind::ThreadTask) {
-    if (transport.destinationType != SemanticType::Void ||
+    if (transport.destinationType == SemanticType::Unknown ||
         transport.field != 0) {
       return "thread-task transport has an invalid destination contract";
     }
@@ -9134,9 +9134,14 @@ ownedTransportFailure(const MirProgram &program,
         if (instruction.intrinsic != IntrinsicKind::ThreadSpawn) {
           continue;
         }
+        const MirThreadTaskAdapter *adapter =
+            instruction.threadTaskAdapter
+                ? program.findThreadTaskAdapter(*instruction.threadTaskAdapter)
+                : nullptr;
         if (instruction.operands.size() != 2 ||
             instruction.operands[1].type != callableType ||
-            !instruction.threadTaskAdapter ||
+            adapter == nullptr ||
+            adapter->resultType != transport.destinationType ||
             !exactMoveFromBinding(
                 instance.body, instruction.operands[1],
                 instance.parameterBindings[parameter.parameterIndex]) ||
@@ -15799,6 +15804,19 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     const bool functionEntry = adapter.functionTarget.has_value();
     const bool lambdaEntry = adapter.lambdaTarget.has_value();
+    SemanticType spawnResult = SemanticType::Unknown;
+    if (spawn != nullptr && spawn->operands.size() == 2 &&
+        spawn->operands.front().type.kind == SemanticType::Reference &&
+        spawn->operands.front().type.arguments.size() == 1) {
+      const SemanticType &handleType =
+          spawn->operands.front().type.arguments.front();
+      if (handleType.kind == SemanticType::Class &&
+          handleType.arguments.size() <= 1) {
+        spawnResult = handleType.arguments.empty()
+                          ? SemanticType::Void
+                          : handleType.arguments.front();
+      }
+    }
     bool exactEntry = functionEntry != lambdaEntry;
     if (functionEntry) {
       const MirFunctionInstance *target =
@@ -15812,7 +15830,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                    target->definitionKind == MirDefinitionKind::Source &&
                    target->overloadedOperator ==
                        std::optional{OverloadedOperator::Call} &&
-                   target->returnType == SemanticType::Void &&
+                   target->returnType == adapter.resultType &&
                    target->parameterTypes.empty() && !target->pureVirtual &&
                    adapter.targetInvocation ==
                        callableInvocationCapability(target->receiverMutability);
@@ -15822,12 +15840,14 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           program.findLambda(*adapter.lambdaTarget);
       exactEntry =
           exactEntry && target != nullptr && target->type == adapter.taskType &&
-          target->returnType == SemanticType::Void &&
+          target->returnType == adapter.resultType &&
           target->parameterTypes.empty() &&
           adapter.targetInvocation == CallableInvocationCapability::Read;
     }
     if (adapter.id != index + 1 || adapter.taskType == SemanticType::Unknown ||
-        adapter.spawnValue == 0 || adapter.spawnInstruction == 0 ||
+        adapter.resultType == SemanticType::Unknown ||
+        adapter.resultType != spawnResult || adapter.spawnValue == 0 ||
+        adapter.spawnInstruction == 0 ||
         adapter.invocation != CallableInvocationCapability::Once ||
         !adapter.catchesWorkerFailure || !adapter.catchesNativeExceptions ||
         !exactEntry || body == nullptr || spawn == nullptr ||

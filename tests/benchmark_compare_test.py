@@ -1188,7 +1188,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         entry["name"]: entry for entry in thread_workload["variants"]
     }
     require(
-        set(thread_variants) == {"gti-sequential", "gti-four-jthreads"},
+        set(thread_variants) == {"gti-sequential", "gti-four-threads"},
         "managed-thread smoke variant set changed",
     )
     require(
@@ -1283,7 +1283,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             and "stdlib:std/format" in source_paths,
             f"{name} source provenance omitted recursive application/stdlib inputs",
         )
-        if name == "gti-four-jthreads":
+        if name == "gti-four-threads":
             require(
                 "package:threaded.gti" in source_paths
                 and "stdlib:std/thread" in source_paths,

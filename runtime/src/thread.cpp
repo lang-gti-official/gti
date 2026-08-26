@@ -20,6 +20,10 @@ struct gti_thread_state_v1 {
   gti_failure_emergency_v1 cleanupFailure{};
   const gti_failure_artifact_descriptor_v1 *primaryArtifact = nullptr;
   const gti_failure_artifact_descriptor_v1 *secondaryArtifact = nullptr;
+  bool valueBearing = false;
+  void *resultContext = nullptr;
+  gti_thread_result_take_v1 takeResult = nullptr;
+  gti_thread_result_abandon_v1 abandonResult = nullptr;
   gti_thread_state_v1 *quarantineNext = nullptr;
 };
 
@@ -101,6 +105,34 @@ spawnStatus(const std::system_error &error) noexcept {
   const int value = error.code().value();
   return value == EPERM ? GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1
                         : GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+}
+
+[[nodiscard]] gti_thread_join_result_v1 emptyJoinResult() noexcept {
+  return {.abi_version = GTI_THREAD_ABI_VERSION_V1,
+          .status = GTI_THREAD_JOIN_OK_V1,
+          .failure_kind = GTI_THREAD_WORKER_FAILURE_NONE_V1,
+          .reserved = 0,
+          .failure = {},
+          .cleanup_failure = {},
+          .primary_artifact = nullptr,
+          .secondary_artifact = nullptr};
+}
+
+[[nodiscard]] bool workerFailed(gti_thread_state_v1 &state) noexcept {
+  const std::lock_guard lock(state.failureMutex);
+  return state.failureKind != GTI_THREAD_WORKER_FAILURE_NONE_V1;
+}
+
+void releaseTaskContext(void *context,
+                        gti_thread_task_abandon_v1 abandon) noexcept {
+  if (context == nullptr || abandon == nullptr) {
+    return;
+  }
+  try {
+    abandon(context);
+  } catch (...) {
+    std::terminate();
+  }
 }
 
 } // namespace
@@ -276,6 +308,92 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
   return result;
 }
 
+extern "C" gti_thread_spawn_result_v1
+gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
+                             gti_thread_task_complete_v1 complete_task,
+                             gti_thread_task_abandon_v1 abandon_task,
+                             gti_thread_result_take_v1 take_result,
+                             gti_thread_result_abandon_v1 abandon_result) {
+  gti_thread_spawn_result_v1 result{.abi_version = GTI_THREAD_ABI_VERSION_V1,
+                                    .status = GTI_THREAD_SPAWN_OK_V1,
+                                    .state = nullptr};
+  if (entry == nullptr || complete_task == nullptr || abandon_task == nullptr ||
+      take_result == nullptr || abandon_result == nullptr ||
+      task_context == nullptr) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+    return result;
+  }
+  if (consumeTestFault(
+          gti::runtime::detail::ThreadTestFault::SpawnResourceUnavailable)) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+    return result;
+  }
+  if (consumeTestFault(
+          gti::runtime::detail::ThreadTestFault::SpawnOperationNotPermitted)) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1;
+    return result;
+  }
+
+  gti_thread_state_v1 *state = new (std::nothrow) gti_thread_state_v1;
+  if (state == nullptr) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+    return result;
+  }
+  state->valueBearing = true;
+
+  try {
+    state->worker = std::thread([state, entry, task_context, complete_task,
+                                 abandon_task, take_result, abandon_result] {
+      ActiveWorkerScope scope(*state);
+      try {
+        entry(task_context);
+      } catch (const gti_runtime_detail::worker_failure_handoff &) {
+        // Generated adapters normally contain this handoff themselves.
+      } catch (...) {
+        std::terminate();
+      }
+      try {
+        ActiveTaskObjectCleanupScope cleanup;
+        if (workerFailed(*state)) {
+          abandon_task(task_context);
+          return;
+        }
+        void *result_context = complete_task(task_context);
+        if (result_context == nullptr) {
+          std::terminate();
+        }
+        if (workerFailed(*state)) {
+          abandon_result(result_context);
+          return;
+        }
+        state->resultContext = result_context;
+        state->takeResult = take_result;
+        state->abandonResult = abandon_result;
+      } catch (...) {
+        // No native unwind may cross task completion or abandonment.
+        std::terminate();
+      }
+    });
+  } catch (const std::system_error &error) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = spawnStatus(error);
+    delete state;
+    return result;
+  } catch (...) {
+    releaseTaskContext(task_context, abandon_task);
+    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+    delete state;
+    return result;
+  }
+
+  result.state = state;
+  return result;
+}
+
 extern "C" gti_thread_join_result_v1
 gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
   gti_thread_join_result_v1 result{.abi_version = GTI_THREAD_ABI_VERSION_V1,
@@ -293,6 +411,9 @@ gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
   }
 
   gti_thread_state_v1 *state = *stateAddress;
+  if (state->valueBearing) {
+    std::terminate();
+  }
   if (!state->worker.joinable()) {
     // A non-null opaque state is the runtime's ownership proof for exactly
     // one native join obligation.  Losing joinability without consuming and
@@ -326,6 +447,67 @@ gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
       result.primary_artifact = state->primaryArtifact;
       result.secondary_artifact = state->secondaryArtifact;
     }
+  }
+  *stateAddress = nullptr;
+  delete state;
+  return result;
+}
+
+extern "C" gti_thread_value_join_result_v1
+gti_rt_thread_join_value_v1(gti_thread_state_v1 **stateAddress) {
+  gti_thread_value_join_result_v1 result{
+      .join = emptyJoinResult(),
+      .result_context = nullptr,
+      .take_result = nullptr,
+      .abandon_result = nullptr,
+  };
+  if (stateAddress == nullptr || *stateAddress == nullptr) {
+    result.join.status = GTI_THREAD_JOIN_NOT_JOINABLE_V1;
+    return result;
+  }
+
+  gti_thread_state_v1 *state = *stateAddress;
+  if (!state->valueBearing || !state->worker.joinable()) {
+    std::terminate();
+  }
+  if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed)) {
+    result.join.status = GTI_THREAD_JOIN_FAILED_V1;
+    return result;
+  }
+  try {
+    state->worker.join();
+  } catch (...) {
+    if (!state->worker.joinable()) {
+      std::terminate();
+    }
+    result.join.status = GTI_THREAD_JOIN_FAILED_V1;
+    return result;
+  }
+
+  {
+    const std::lock_guard lock(state->failureMutex);
+    if (state->failureKind != GTI_THREAD_WORKER_FAILURE_NONE_V1) {
+      result.join.status = GTI_THREAD_JOIN_WORKER_FAILURE_V1;
+      result.join.failure_kind = state->failureKind;
+      result.join.failure = state->failure;
+      result.join.cleanup_failure = state->cleanupFailure;
+      result.join.primary_artifact = state->primaryArtifact;
+      result.join.secondary_artifact = state->secondaryArtifact;
+    }
+  }
+  const bool hasResult = state->resultContext != nullptr &&
+                         state->takeResult != nullptr &&
+                         state->abandonResult != nullptr;
+  if ((result.join.status == GTI_THREAD_JOIN_OK_V1) != hasResult) {
+    std::terminate();
+  }
+  if (hasResult) {
+    result.result_context = state->resultContext;
+    result.take_result = state->takeResult;
+    result.abandon_result = state->abandonResult;
+    state->resultContext = nullptr;
+    state->takeResult = nullptr;
+    state->abandonResult = nullptr;
   }
   *stateAddress = nullptr;
   delete state;

@@ -6,7 +6,7 @@
 namespace lang {
 
 // Backend-independent synchronization identities. Public library types such
-// as std::jthread remain ordinary GTI classes; trusted private capabilities
+// as std::thread remain ordinary GTI classes; trusted private capabilities
 // attach these records to their resolved calls before MIR lowering.
 enum class SynchronizationOperationKind : std::uint8_t {
   None,

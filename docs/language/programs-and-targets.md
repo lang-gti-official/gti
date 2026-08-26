@@ -333,9 +333,10 @@ semantics.
 The concurrency and memory-model boundary is specified in
 [Execution section 4.9](execution.md#49-concurrency-boundary) and
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The source-defined
-`std::jthread` provides the first public owned managed-thread operation. Public
-atomics, mutexes, signal interaction, detached/asynchronous execution, and
-foreign-thread entry are not currently implemented. An implementation shall not infer the
+`std::thread` and `std::thread_result<Result>` provide the first public owned
+managed-thread operations. Public atomics, mutexes, signal interaction,
+detached/asynchronous execution, and foreign-thread entry are not currently
+implemented. An implementation shall not infer the
 concurrent profile or a `threads` capability solely from the target operating
 system, backend flags, link arguments, or native-library behavior. The profile
 must be selected before semantic analysis by the target/runtime contract and
@@ -359,7 +360,7 @@ runtime derives `threads` only for a supported target. `gti_lsp` accepts the
 same `--execution-profile` option for standalone documents; an explicit startup
 selection overrides a nearest manifest's `dev` profile, while omission uses
 that profile when present and otherwise remains single-threaded. Neither the
-compiler nor the LSP derives capability from `std::jthread` spelling.
+compiler nor the LSP derives capability from `std::thread` spelling.
 
 ## 6.7 Build Systems And Packages
 

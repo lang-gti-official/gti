@@ -103,30 +103,38 @@ names or `std::accumulate`, and application source cannot name the underlying
 
 ## Managed Concurrency Boundary
 
-The public managed-thread type is the ordinary source-defined `std::jthread`
+The public managed-thread type is the ordinary source-defined `std::thread`
 class in `<std/thread>`. The compiler does not recognize that class, its
 constructors, `join`, or its destructor by qualified spelling. Its move-only
 handle state and automatic-join policy belong in GTI source and use the
 ordinary class lifecycle rules. Stop tokens are not part of this first slice.
 
-`std::jthread` is GTI's normal managed-thread model, not a safer companion to a
-detach-capable `std::thread`. The first public concurrency profile does not
-provide a separate `std::thread` or detach operation. Any later unstructured or
-detached task facility requires its own explicit lifetime, shutdown, and
-unobserved-failure contract rather than weakening `std::jthread`.
+`std::thread` is GTI's normal managed-thread model. Unlike C++'s class with the
+same spelling, it always owns a join obligation and has no detach operation.
+Any later unstructured or detached task facility requires its own explicit
+lifetime, shutdown, and unobserved-failure contract rather than weakening
+`std::thread`.
+
+The same source unit defines `std::thread_result<Result>` for a worker that
+returns one owned value. Its `start` consumes an exact `Result()` task, its
+explicit `join` returns `expected<Result, thread_errc>`, and destruction joins
+then abandons an unobserved value exactly once. GTI does not infer either
+public class by qualified spelling.
 
 Only the irreducible host boundary is compiler-private. Its capability surface
-is the identity-bound `gti_internal::thread_handle` plus empty, spawn,
+is the identity-bound `gti_internal::thread_handle` and
+`gti_internal::thread_result_handle<Result>` plus their empty, spawn,
 joinable, explicit-join, and automatic-join operations. These declarations are
 owned by the exact trusted `<std/thread>` unit rather
 than the implicit prelude, so programs that do not import the module retain no
 thread declaration bodies or runtime bridge dependency. A compiler-generated,
 type-specific task-entry adapter erases the exact closure only after semantic
-analysis proves one consumed exact `void()` callable and transfer-capable
-captures. HIR, MIR, `LoweredProgram`, and the C++ backend retain and verify
-that adapter identity. The runtime owns only the native thread, opaque state,
-task destruction, and fixed worker-failure handoff; it does not own public
-class policy or know a GTI standard-library type.
+analysis proves one consumed exact `void()` or `Result()` callable and
+transfer-capable captures and result. HIR, MIR, `LoweredProgram`, and the C++
+backend retain and verify the adapter identity and exact result type. The
+runtime owns only the native thread, opaque state, task destruction, typed
+result take-or-abandon callbacks, and fixed worker-failure handoff; it does not
+own public class policy or know a GTI standard-library type.
 
 The synchronization contract gives a resolved private capability call
 an exact backend-independent synchronization record. HIR and MIR distinguish
@@ -273,7 +281,7 @@ representation guards and legacy terminal operations, not an alternate source-
 body emitter, and they must not be used to bypass a MIR-defined failure edge or
 cleanup schedule. Embedding and foreign-thread callback containment remain
 open. Managed-task ordinary and cleanup-double-failure containment are
-implemented for the exact owned `void()` task boundary.
+implemented for exact owned `void()` and owned-result task boundaries.
 
 ## Source And Tooling Privacy
 

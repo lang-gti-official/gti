@@ -1,9 +1,9 @@
 #include <std/thread>
 
-void consume(std::jthread runner) {}
+void consume(std::thread runner) {}
 
 int main() {
-  auto started = std::jthread::start([]() -> void {});
+  auto started = std::thread::start([]() -> void {});
   if (!started.has_value()) {
     return 1;
   }

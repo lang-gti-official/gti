@@ -35,37 +35,113 @@ public:
 };
 
 int main() {
-  auto first_started = std::jthread::start(
+  auto first_started = std::thread::start(
       []() -> void { std::println("first task"); });
   if (!first_started.has_value()) { return 1; }
-  mut std::jthread first = std::move(first_started).value();
-  mut std::jthread moved = std::move(first);
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread moved = std::move(first);
   auto first_join = moved.join();
   if (!first_join.has_value() || moved.joinable()) { return 2; }
 
   auto owner = std::make_unique<resource>(42);
-  auto second_started = std::jthread::start(
+  auto second_started = std::thread::start(
       [owned = std::move(owner)]() -> void {
         std::println(owned->read());
       });
   if (!second_started.has_value()) { return 3; }
-  mut std::jthread second = std::move(second_started).value();
+  mut std::thread second = std::move(second_started).value();
   auto second_join = second.join();
   if (!second_join.has_value()) { return 4; }
 
   class_task task = class_task();
-  auto third_started = std::jthread::start(std::move(task));
+  auto third_started = std::thread::start(std::move(task));
   if (!third_started.has_value()) { return 5; }
-  mut std::jthread third = std::move(third_started).value();
+  mut std::thread third = std::move(third_started).value();
   auto third_join = third.join();
   if (!third_join.has_value()) { return 6; }
 
   {
-    auto fourth_started = std::jthread::start(fresh_task());
+    auto fourth_started = std::thread::start(fresh_task());
     if (!fourth_started.has_value()) { return 7; }
-    mut std::jthread fourth = std::move(fourth_started).value();
+    mut std::thread fourth = std::move(fourth_started).value();
   }
   std::println("after automatic join");
+  return 0;
+}
+"""
+
+TYPED_RESULT_SOURCE = """\
+#include <std/thread>
+
+class result_task {
+  int32_t value;
+public:
+  result_task(int32_t value) : value(value) {}
+  int32_t operator()() && { return this.value; }
+};
+
+int main() {
+  mut std::thread_result<int32_t> worker =
+      std::thread_result<int32_t>();
+  auto started = worker.start(result_task(42));
+  if (!started.has_value()) { return 1; }
+  auto joined = worker.join();
+  if (!joined.has_value() || joined.value() != 42) { return 2; }
+
+  auto restarted = worker.start([]() -> int32_t { return 7; });
+  if (!restarted.has_value()) { return 3; }
+  auto rejoined = worker.join();
+  if (!rejoined.has_value() || rejoined.value() != 7) { return 4; }
+  return 0;
+}
+"""
+
+TYPED_RESULT_CLEANUP_SOURCE = """\
+#include <std/thread>
+
+[[unsafe_transfer]] class result_value {
+  int32_t value;
+public:
+  result_value(int32_t value) : value(value) {}
+  result_value(result_value& other) = delete;
+  result_value(result_value&& other) = default;
+  ~result_value() { std::println(this.value); }
+};
+
+class result_task {
+public:
+  result_value operator()() && { return result_value(9); }
+};
+
+int main() {
+  {
+    mut std::thread_result<result_value> worker =
+        std::thread_result<result_value>();
+    auto started = worker.start(result_task());
+    if (!started.has_value()) { return 1; }
+  }
+  std::println("after automatic result cleanup");
+  return 0;
+}
+"""
+
+TYPED_RESULT_FAILURE_SOURCE = """\
+#include <std/thread>
+
+class failing_result_task {
+public:
+  int32_t operator()() && {
+    int32_t zero = 0;
+    return 1 / zero;
+  }
+};
+
+int main() {
+  mut std::thread_result<int32_t> worker =
+      std::thread_result<int32_t>();
+  auto started = worker.start(failing_result_task());
+  if (!started.has_value()) { return 1; }
+  auto joined = worker.join();
   return 0;
 }
 """
@@ -83,9 +159,9 @@ public:
 
 int main() {
   failing_task task = failing_task();
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -95,12 +171,12 @@ FAILURE_BODY = """\
 #include <std/thread>
 
 int main() {
-  auto started = std::jthread::start([]() -> void {
+  auto started = std::thread::start([]() -> void {
     int32_t zero = 0;
     int32_t value = 1 / zero;
   });
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
 %s
   return 0;
 }
@@ -120,14 +196,14 @@ public:
 };
 
 int main() {
-  auto started = std::jthread::start([]() -> void {
+  auto started = std::thread::start([]() -> void {
     first_cleanup first = first_cleanup();
     second_cleanup second = second_cleanup();
     int32_t zero = 0;
     int32_t value = 1 / zero;
   });
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -145,13 +221,13 @@ public:
 };
 
 int main() {
-  auto started = std::jthread::start([]() -> void {
+  auto started = std::thread::start([]() -> void {
     cleanup_failure guard = cleanup_failure();
     int32_t zero = 0;
     int32_t primary = 1 % zero;
   });
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -174,9 +250,9 @@ int main() {
     int32_t zero = 0;
     int32_t primary = 1 % zero;
   };
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -196,9 +272,9 @@ public:
 int main() {
   task_cleanup_failure guard = task_cleanup_failure();
   auto task = [owned = std::move(guard)]() -> void {};
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -227,9 +303,9 @@ public:
 int main() {
   task_internal_cleanup_failure guard = task_internal_cleanup_failure();
   auto task = [owned = std::move(guard)]() -> void {};
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   auto joined = worker.join();
   return 0;
 }
@@ -240,9 +316,9 @@ STRESS_SOURCE = """\
 
 int main() {
   for (mut int32_t index = 0; index < 128; index++) {
-    auto started = std::jthread::start([]() -> void {});
+    auto started = std::thread::start([]() -> void {});
     if (!started.has_value()) { return 1; }
-    mut std::jthread worker = std::move(started).value();
+    mut std::thread worker = std::move(started).value();
     auto joined = worker.join();
     if (!joined.has_value()) { return 2; }
   }
@@ -258,9 +334,9 @@ extern "C" {
 }
 
 int main() {
-  auto started = std::jthread::start([]() -> void {});
+  auto started = std::thread::start([]() -> void {});
   if (!started.has_value()) { return 1; }
-  mut std::jthread worker = std::move(started).value();
+  mut std::thread worker = std::move(started).value();
   gti_test_inject_thread_join_failure();
   return 0;
 }
@@ -270,17 +346,17 @@ NESTED_FAILURE_SOURCE = """\
 #include <std/thread>
 
 int main() {
-  auto outer_started = std::jthread::start([]() -> void {
-    auto inner_started = std::jthread::start([]() -> void {
+  auto outer_started = std::thread::start([]() -> void {
+    auto inner_started = std::thread::start([]() -> void {
       int32_t zero = 0;
       int32_t value = 1 / zero;
     });
     if (!inner_started.has_value()) { return; }
-    mut std::jthread inner = std::move(inner_started).value();
+    mut std::thread inner = std::move(inner_started).value();
     auto inner_join = inner.join();
   });
   if (!outer_started.has_value()) { return 1; }
-  mut std::jthread outer = std::move(outer_started).value();
+  mut std::thread outer = std::move(outer_started).value();
   auto outer_join = outer.join();
   return 0;
 }
@@ -385,6 +461,56 @@ def test_success_matrix(
                 optimization=optimization,
             )
             expect_process(binary, code=0, stdout=expected, stderr="")
+
+
+def test_typed_result_matrix(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    for standard in ("c++20", "c++23"):
+        for optimization in ("-O0", "-O3"):
+            suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
+            binary = build(
+                compiler,
+                root,
+                f"managed_thread_result_{suffix}",
+                TYPED_RESULT_SOURCE,
+                standard=standard,
+                optimization=optimization,
+            )
+            expect_process(binary, code=0, stdout="", stderr="")
+
+
+def test_typed_result_cleanup(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    binary = build(
+        compiler,
+        root,
+        "managed_thread_result_cleanup",
+        TYPED_RESULT_CLEANUP_SOURCE,
+        standard="c++23",
+        optimization="-O3",
+    )
+    expect_process(
+        binary,
+        code=0,
+        stdout="9\nafter automatic result cleanup\n",
+        stderr="",
+    )
+
+
+def test_typed_result_failure(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    name = "managed_thread_result_failure"
+    source = TYPED_RESULT_FAILURE_SOURCE
+    binary = build(compiler, root, name, source)
+    line = source_line(source, "return 1 / zero;")
+    expected = (
+        f"{name}.gti:{line}: runtime error[GTI-R0002]: "
+        "division_by_zero in integer_division\n"
+    )
+    expect_process(binary, code=70, stdout="", stderr=expected)
 
 
 def test_failure_handoff(
@@ -608,6 +734,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-managed-thread-") as scratch:
         root = pathlib.Path(scratch)
         test_success_matrix(compiler, root)
+        test_typed_result_matrix(compiler, root)
+        test_typed_result_cleanup(compiler, root)
+        test_typed_result_failure(compiler, root)
         test_failure_handoff(compiler, root)
         test_class_failure_handoff(compiler, root)
         test_cleanup_order(compiler, root)

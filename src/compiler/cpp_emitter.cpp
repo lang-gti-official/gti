@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -1022,7 +1023,7 @@ public:
   }
 
   ~thread_handle() {
-    // The source-defined jthread destructor must discharge this obligation.
+    // The source-defined thread destructor must discharge this obligation.
     // Reaching the representation destructor with a live state would detach
     // ownership from the language's mandatory-join policy.
     if (state_ != nullptr) {
@@ -1050,6 +1051,17 @@ private:
 
 template <typename Task> struct managed_thread_task_box final {
   Task task;
+};
+
+template <typename Task, typename Result>
+struct managed_thread_value_box final {
+  mir_lifetime_slot<Task, true> task;
+  mir_lifetime_slot<Result, true> result;
+
+  template <typename Input>
+  explicit managed_thread_value_box(Input &&input) {
+    task.construct(std::forward<Input>(input));
+  }
 };
 
 template <std::uint64_t Adapter> struct managed_thread_task_adapter;
@@ -1156,6 +1168,45 @@ inline std::int32_t managed_thread_spawn(thread_handle &handle, Task &&task) {
   return static_cast<std::int32_t>(result.status);
 }
 
+template <std::uint64_t Adapter, typename Result, typename Task>
+inline std::int32_t
+managed_thread_spawn_value(thread_handle &handle, Task &&task) {
+  if (handle.joinable()) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1);
+  }
+  using Stored = std::remove_cvref_t<Task>;
+  using Box = managed_thread_value_box<Stored, Result>;
+  auto *context = new (std::nothrow) Box(std::forward<Task>(task));
+  if (context == nullptr) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1);
+  }
+  const ::gti_thread_spawn_result_v1 result =
+      ::gti_rt_thread_spawn_value_v1(
+          &managed_thread_task_adapter<Adapter>::
+              template entry_value<Stored, Result>,
+          context,
+          &managed_thread_task_adapter<Adapter>::
+              template complete_task<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template abandon_task<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template take_result<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template abandon_result<Stored, Result>);
+  if (result.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      !valid_thread_spawn_status(result.status) ||
+      ((result.status == GTI_THREAD_SPAWN_OK_V1) !=
+       (result.state != nullptr))) {
+    malformed_thread_runtime_result();
+  }
+  if (result.status == GTI_THREAD_SPAWN_OK_V1) {
+    handle.adopt(result.state);
+  }
+  return static_cast<std::int32_t>(result.status);
+}
+
 inline ::gti_thread_join_result_v1
 managed_thread_join(thread_handle &handle) noexcept {
   const bool wasJoinable = handle.joinable();
@@ -1178,6 +1229,91 @@ managed_thread_join(thread_handle &handle) noexcept {
     malformed_thread_runtime_result();
   }
   return result;
+}
+
+inline bool valid_thread_value_join_payload(
+    const ::gti_thread_value_join_result_v1 &result) noexcept {
+  if (!valid_thread_join_payload(result.join)) {
+    return false;
+  }
+  const bool ownsResult = result.result_context != nullptr &&
+                          result.take_result != nullptr &&
+                          result.abandon_result != nullptr;
+  const bool ownsNothing = result.result_context == nullptr &&
+                           result.take_result == nullptr &&
+                           result.abandon_result == nullptr;
+  return result.join.status == GTI_THREAD_JOIN_OK_V1 ? ownsResult
+                                                     : ownsNothing;
+}
+
+inline ::gti_thread_value_join_result_v1
+managed_thread_join_value(thread_handle &handle) noexcept {
+  const bool wasJoinable = handle.joinable();
+  ::gti_thread_value_join_result_v1 result =
+      ::gti_rt_thread_join_value_v1(handle.state_address());
+  const bool isJoinable = handle.joinable();
+  if (result.join.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      result.join.reserved != 0 ||
+      !valid_thread_join_status(result.join.status) ||
+      !valid_thread_value_join_payload(result)) {
+    malformed_thread_runtime_result();
+  }
+  if ((!wasJoinable &&
+       (result.join.status != GTI_THREAD_JOIN_NOT_JOINABLE_V1 ||
+        isJoinable)) ||
+      (wasJoinable &&
+       ((result.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) ||
+        ((result.join.status == GTI_THREAD_JOIN_OK_V1 ||
+          result.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) ==
+         isJoinable) ||
+        (result.join.status == GTI_THREAD_JOIN_FAILED_V1 && !isJoinable)))) {
+    malformed_thread_runtime_result();
+  }
+  return result;
+}
+
+template <typename Result, typename Error>
+inline expected_result<Result, Error> managed_thread_take_join_result(
+    ::gti_thread_value_join_result_v1 &joined) {
+  if (joined.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) {
+    return make_unexpected_result(static_cast<Error>(2));
+  }
+  if (joined.join.status == GTI_THREAD_JOIN_FAILED_V1) {
+    return make_unexpected_result(static_cast<Error>(3));
+  }
+  if (joined.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
+    // The paired MIR invoke edge immediately propagates the exact worker
+    // record. This unreachable value only gives the C++ local a total
+    // representation before that edge is emitted.
+    return make_unexpected_result(static_cast<Error>(3));
+  }
+  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
+      joined.result_context == nullptr || joined.take_result == nullptr ||
+      joined.abandon_result == nullptr) {
+    malformed_thread_runtime_result();
+  }
+  mir_lifetime_slot<Result, true> result;
+  void *context = std::exchange(joined.result_context, nullptr);
+  const auto take = std::exchange(joined.take_result, nullptr);
+  joined.abandon_result = nullptr;
+  take(context, result.construction_address());
+  result.mark_constructed();
+  expected_result<Result, Error> output{std::move(result.get())};
+  result.destroy();
+  return output;
+}
+
+inline void managed_thread_abandon_join_result(
+    ::gti_thread_value_join_result_v1 &joined) noexcept {
+  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
+      joined.result_context == nullptr || joined.take_result == nullptr ||
+      joined.abandon_result == nullptr) {
+    malformed_thread_runtime_result();
+  }
+  void *context = std::exchange(joined.result_context, nullptr);
+  joined.take_result = nullptr;
+  const auto abandon = std::exchange(joined.abandon_result, nullptr);
+  abandon(context);
 }
 
 inline void
@@ -5239,6 +5375,55 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << ' ' << callableNormal;
       }
     }
+    if (genericOwner && !function.genericParameters.empty()) {
+      std::vector<HirClassInstanceId> emittedOwners;
+      for (const MirFunctionInstance *instance : instances) {
+        const LoweredFunctionInstance *concrete =
+            loweredFunctionInstance(instance->id);
+        if (!instance->owner || concrete == nullptr ||
+            loweredFunctionInstanceIsNameable(*concrete, *instance) ||
+            std::find(emittedOwners.begin(), emittedOwners.end(),
+                      *instance->owner) != emittedOwners.end()) {
+          continue;
+        }
+
+        std::vector<const MirFunctionInstance *> ownerInstances;
+        std::copy_if(instances.begin(), instances.end(),
+                     std::back_inserter(ownerInstances),
+                     [&](const MirFunctionInstance *candidate) {
+                       return candidate->owner == instance->owner;
+                     });
+        const std::string callableFailure =
+            loweredCallableTemplateBody(function, ownerInstances, true);
+        const std::string callableNormal =
+            loweredCallableTemplateBody(function, ownerInstances, false);
+        if (callableFailure.empty() && callableNormal.empty()) {
+          continue;
+        }
+
+        emittedOwners.push_back(*instance->owner);
+        const std::string ownerSpelling =
+            loweredConcreteClassName(*instance->owner);
+        const bool ownerThreadTaskTemplate =
+            loweredFunctionNeedsThreadTaskTemplate(ownerInstances);
+        const auto emitCallableBody = [&](const std::string &body,
+                                          bool failure) {
+          if (body.empty()) {
+            return;
+          }
+          writeIndent();
+          output << "template <>\n";
+          emitLoweredTemplateDeclaration(function.genericParameters,
+                                         ownerThreadTaskTemplate);
+          writeIndent();
+          emitLoweredFunctionSignature(row, function, instance, failure, false,
+                                       ownerSpelling, true);
+          output << ' ' << body;
+        };
+        emitCallableBody(callableFailure, true);
+        emitCallableBody(callableNormal, false);
+      }
+    }
     for (const MirFunctionInstance *instance : instances) {
       if (!loweredNormalBodySupported(*instance) &&
           !loweredFailureBodySupported(*instance)) {
@@ -6060,7 +6245,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         row == nullptr || owner->type != adapter.taskType ||
         target->definitionKind != MirDefinitionKind::Source ||
         target->overloadedOperator != std::optional{OverloadedOperator::Call} ||
-        target->returnType != SemanticType::Void ||
+        target->returnType != adapter.resultType ||
         !target->parameterTypes.empty() || target->pureVirtual ||
         adapter.targetInvocation !=
             callableInvocationCapability(target->receiverMutability) ||
@@ -6078,7 +6263,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     const MirLambdaInstance *target = mir.findLambda(*adapter.lambdaTarget);
     if (target == nullptr || target->type != adapter.taskType ||
-        target->returnType != SemanticType::Void ||
+        target->returnType != adapter.resultType ||
         !target->parameterTypes.empty() ||
         adapter.targetInvocation != CallableInvocationCapability::Read) {
       throw std::logic_error(
@@ -6087,16 +6272,19 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return target;
   }
 
-  void emitThreadTaskReceiver(CallableInvocationCapability capability) {
+  void emitThreadTaskReceiver(CallableInvocationCapability capability,
+                              bool valueBearing) {
+    const std::string_view task =
+        valueBearing ? "box->task.get()" : "box->task";
     switch (capability) {
     case CallableInvocationCapability::Read:
-      output << "read_only_receiver(box->task)";
+      output << "read_only_receiver(" << task << ')';
       break;
     case CallableInvocationCapability::Mutable:
-      output << "mutable_receiver(box->task)";
+      output << "mutable_receiver(" << task << ')';
       break;
     case CallableInvocationCapability::Once:
-      output << "std::move(box->task)";
+      output << "std::move(" << task << ')';
       break;
     }
   }
@@ -6111,12 +6299,21 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           "verified thread task function lost its declaration spelling");
     }
     const std::string name = cppFunctionSpelling(*declaration, row->name);
+    const bool valueBearing = adapter.resultType != SemanticType::Void;
     if (target.mayRaiseDefinedFailure) {
       output << "      const bool success = ";
-      emitThreadTaskReceiver(adapter.targetInvocation);
-      output << '.' << cppMirFailureSiblingSpelling(name)
-             << "(&failure);\n"
-                "      if (!success) {\n"
+      emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+      output << '.' << cppMirFailureSiblingSpelling(name) << '(';
+      if (valueBearing) {
+        output << "box->result.construction_address(), ";
+      }
+      output << "&failure);\n";
+      if (valueBearing) {
+        output << "      if (success) {\n"
+                  "        box->result.mark_constructed();\n"
+                  "      }\n";
+      }
+      output << "      if (!success) {\n"
                 "        ::gti_runtime_detail::"
                 "handoff_managed_worker_failure(\n"
                 "            failure, "
@@ -6125,8 +6322,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       return;
     }
     output << "      ";
-    emitThreadTaskReceiver(adapter.targetInvocation);
-    output << '.' << name << "();\n";
+    if (valueBearing) {
+      output << "box->result.construct_from([&] { return ";
+    }
+    emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+    output << '.' << name << "()";
+    output << (valueBearing ? "; });\n" : ";\n");
   }
 
   void emitThreadTaskAdapterDefinitions() {
@@ -6155,18 +6356,44 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << "namespace gti_internal::backend {\n\n";
         opened = true;
       }
+      const bool valueBearing = adapter.resultType != SemanticType::Void;
       output << "template <>\n"
                 "struct managed_thread_task_adapter<"
-             << adapter.id
-             << "> final {\n"
-                "  template <typename Task>\n"
-                "  static void entry(void *raw) noexcept {\n"
-                "    auto *box = static_cast<managed_thread_task_box<Task> "
-                "*>(raw);\n"
-                "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
+             << adapter.id << "> final {\n";
+      if (valueBearing) {
+        output << "  template <typename Task, typename Result>\n"
+                  "  static void entry_value(void *raw) noexcept {\n"
+                  "    auto *box = static_cast<"
+                  "managed_thread_value_box<Task, Result> *>(raw);\n";
+      } else {
+        output << "  template <typename Task>\n"
+                  "  static void entry(void *raw) noexcept {\n"
+                  "    auto *box = static_cast<managed_thread_task_box<Task> "
+                  "*>(raw);\n";
+      }
+      output << "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
                 "      ::gti_failure_record_v1 failure{};\n";
       if (functionTarget != nullptr) {
         emitThreadTaskFunctionCall(adapter, *functionTarget);
+      } else if (valueBearing) {
+        output << "      if constexpr (requires { "
+                  "std::move(box->task.get())("
+                  "box->result.construction_address(), &failure); }) {\n"
+                  "        const bool success = "
+                  "std::move(box->task.get())("
+                  "box->result.construction_address(), &failure);\n"
+                  "        if (success) {\n"
+                  "          box->result.mark_constructed();\n"
+                  "        } else {\n"
+                  "          ::gti_runtime_detail::"
+                  "handoff_managed_worker_failure(\n"
+                  "              failure, "
+                  "&__gti_failure_artifact_descriptor_v1);\n"
+                  "        }\n"
+                  "      } else {\n"
+                  "        box->result.construct_from([&] { return "
+                  "read_only_receiver(box->task.get())(); });\n"
+                  "      }\n";
       } else {
         output << "      if constexpr (requires { "
                   "std::move(box->task)(&failure); }) {\n"
@@ -6183,15 +6410,60 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                   "      }\n";
       }
       output << "    });\n"
-                "  }\n\n"
-                "  template <typename Task>\n"
-                "  static void destroy(void *raw) noexcept {\n"
-                "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
-                "      delete static_cast<managed_thread_task_box<Task> "
-                "*>(raw);\n"
-                "    });\n"
-                "  }\n"
-                "};\n\n";
+                "  }\n\n";
+      if (valueBearing) {
+        output << R"(  template <typename Task, typename Result>
+  static void *complete_task(void *raw) noexcept {
+    auto *box =
+        static_cast<managed_thread_value_box<Task, Result> *>(raw);
+    ::gti_runtime_detail::run_managed_task_adapter(
+        [&] { box->task.destroy(); });
+    return box;
+  }
+
+  template <typename Task, typename Result>
+  static void abandon_task(void *raw) noexcept {
+    auto *box =
+        static_cast<managed_thread_value_box<Task, Result> *>(raw);
+    ::gti_runtime_detail::run_managed_task_adapter([&] {
+      box->result.destroy_if_engaged();
+      box->task.destroy_if_engaged();
+      delete box;
+    });
+  }
+
+  template <typename Task, typename Result>
+  static void take_result(void *raw, void *destination) noexcept {
+    auto *box =
+        static_cast<managed_thread_value_box<Task, Result> *>(raw);
+    ::gti_runtime_detail::run_managed_task_adapter([&] {
+      std::construct_at(static_cast<Result *>(destination),
+                        std::move(box->result.get()));
+      box->result.destroy();
+      delete box;
+    });
+  }
+
+  template <typename Task, typename Result>
+  static void abandon_result(void *raw) noexcept {
+    auto *box =
+        static_cast<managed_thread_value_box<Task, Result> *>(raw);
+    ::gti_runtime_detail::run_managed_task_adapter([&] {
+      box->result.destroy();
+      delete box;
+    });
+  }
+)";
+      } else {
+        output << "  template <typename Task>\n"
+                  "  static void destroy(void *raw) noexcept {\n"
+                  "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
+                  "      delete static_cast<managed_thread_task_box<Task> "
+                  "*>(raw);\n"
+                  "    });\n"
+                  "  }\n";
+      }
+      output << "};\n\n";
     }
     if (opened) {
       output << "} // namespace gti_internal::backend\n\n";

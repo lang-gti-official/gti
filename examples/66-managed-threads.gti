@@ -15,38 +15,38 @@ public:
 };
 
 int main() {
-  auto first_started = std::jthread::start(
+  auto first_started = std::thread::start(
       []() -> void { std::println("first task"); });
   if (!first_started.has_value()) {
     return 1;
   }
-  mut std::jthread first = std::move(first_started).value();
-  mut std::jthread moved = std::move(first);
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread moved = std::move(first);
   auto first_joined = moved.join();
   if (!first_joined.has_value() || moved.joinable()) {
     return 2;
   }
 
   auto owned = std::make_unique<message>(42);
-  auto second_started = std::jthread::start(
+  auto second_started = std::thread::start(
       [task_message = std::move(owned)]() -> void {
         std::println(task_message->read());
       });
   if (!second_started.has_value()) {
     return 3;
   }
-  mut std::jthread second = std::move(second_started).value();
+  mut std::thread second = std::move(second_started).value();
   auto second_joined = second.join();
   if (!second_joined.has_value()) {
     return 4;
   }
 
   final_task task = final_task();
-  auto third_started = std::jthread::start(std::move(task));
+  auto third_started = std::thread::start(std::move(task));
   if (!third_started.has_value()) {
     return 5;
   }
-  mut std::jthread third = std::move(third_started).value();
+  mut std::thread third = std::move(third_started).value();
 
   // `third` autojoins at scope exit. GTI intentionally provides no detached
   // public thread handle in this managed-thread slice.
