@@ -30350,7 +30350,12 @@ private:
              .requirements = overload.requirements,
              .substitutedCallable = substitutedCallable,
              .staticMember = overload.staticMember || overload.internalLinkage,
-             .symbol = symbol.toolingSymbol,
+             // An overload set shares one scope Symbol; each overload's own
+             // SymbolRecord — the identity carrying its retained `///`
+             // documentation — resolves through its declaration name.
+             .symbol = overload.declaration == nullptr
+                           ? symbol.toolingSymbol
+                           : symbolForDeclaration(overload.declaration->name()),
              .compilerPrivate = overload.compilerPrivate});
       }
       return;

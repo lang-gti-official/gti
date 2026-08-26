@@ -1288,6 +1288,168 @@ def test_documentation_hover(executable, root):
         session.close()
 
 
+def test_documentation_completion_and_signature_help(executable, root):
+    source = (
+        "/// Calculates an unsigned result.\n"
+        "///\n"
+        "/// Supports **Markdown**, `code`, and Unicode: résumé 🙂.\n"
+        "uint64_t calculate(uint64_t value) { return value; }\n"
+        "uint64_t plain(uint64_t value) { return value; }\n"
+        "int main() {\n"
+        "  uint64_t total = calculate(uint64_t(1)) + plain(uint64_t(2));\n"
+        "  return int32_t(total - 3);\n"
+        "}\n"
+    )
+    path = root / "documentation-consumers.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    documented_fragment = (
+        "Calculates an unsigned result.\n\n"
+        "Supports **Markdown**, `code`, and Unicode: résumé 🙂."
+    )
+
+    def run_session(markdown_capabilities):
+        capabilities = {"textDocument": {}}
+        if markdown_capabilities:
+            capabilities["textDocument"] = {
+                "completion": {
+                    "completionItem": {"documentationFormat": ["markdown"]}
+                },
+                "signatureHelp": {
+                    "signatureInformation": {
+                        "documentationFormat": ["markdown"]
+                    }
+                },
+            }
+        expected_kind = "markdown" if markdown_capabilities else "plaintext"
+        session = LspSession(executable)
+        try:
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"capabilities": capabilities},
+                }
+            )
+            session.receive_until(lambda message: message.get("id") == 1)
+            session.send(
+                {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+            )
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": source,
+                        }
+                    },
+                }
+            )
+            session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == 1
+                and not message["params"]["diagnostics"]
+            )
+
+            call = source.index("calculate(uint64_t(1))")
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "textDocument/signatureHelp",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(
+                            source, call + len("calculate(")
+                        ),
+                    },
+                }
+            )
+            help_result = session.receive_until(
+                lambda message: message.get("id") == 2
+            )["result"]
+            signature = help_result["signatures"][0]
+            assert signature["label"] == (
+                "uint64_t calculate(uint64_t value)"
+            ), help_result
+            assert signature["documentation"]["kind"] == expected_kind, (
+                help_result
+            )
+            assert documented_fragment in signature["documentation"]["value"], (
+                help_result
+            )
+
+            def complete_at(request_id, text, marker):
+                session.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "textDocument/didChange",
+                        "params": {
+                            "textDocument": {
+                                "uri": uri,
+                                "version": request_id,
+                            },
+                            "contentChanges": [{"text": text}],
+                        },
+                    }
+                )
+                offset = text.index(marker) + len(marker)
+                session.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "textDocument/completion",
+                        "params": {
+                            "textDocument": {"uri": uri},
+                            "position": lsp_position(text, offset),
+                        },
+                    }
+                )
+                return session.receive_until(
+                    lambda message: message.get("id") == request_id
+                )["result"]
+
+            documented = complete_at(
+                3,
+                source.replace("calculate(uint64_t(1))", "calc", 1),
+                "= calc",
+            )
+            documented_item = next(
+                item
+                for item in documented["items"]
+                if item["label"] == "calculate"
+            )
+            assert documented_item["documentation"]["kind"] == expected_kind, (
+                documented_item
+            )
+            assert (
+                documented_fragment
+                in documented_item["documentation"]["value"]
+            ), documented_item
+
+            undocumented = complete_at(
+                4, source.replace("plain(uint64_t(2))", "pla", 1), "+ pla"
+            )
+            undocumented_item = next(
+                item
+                for item in undocumented["items"]
+                if item["label"] == "plain"
+            )
+            assert "documentation" not in undocumented_item, undocumented_item
+        finally:
+            session.close()
+
+    run_session(markdown_capabilities=True)
+    run_session(markdown_capabilities=False)
+
+
 def test_callable_contract_hover(executable, root):
     source = (
         "T map<T, Operation>(T value, Operation operation) {\n"
@@ -7688,6 +7850,7 @@ def main():
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
+    test_documentation_completion_and_signature_help(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)
