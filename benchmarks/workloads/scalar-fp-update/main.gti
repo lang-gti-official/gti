@@ -1,0 +1,69 @@
+#include <std/string>
+
+class vector3 {
+public:
+  vector3(double x, double y, double z) : x(x), y(y), z(z) {}
+
+  double dot(vector3& other) {
+    return this.x * other.x + this.y * other.y + this.z * other.z;
+  }
+
+  mut double x;
+  mut double y;
+  mut double z;
+};
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+int main() {
+  mut vector3 left = vector3(1.0d, 2.0d, 3.0d);
+  vector3 right = vector3(0.5d, 0.25d, 0.125d);
+  mut double accumulator = 0.0d;
+
+  for (mut int32_t index = 0; index < 30000000; index++) {
+    left.x = left.x * 0.9999d + 0.0001d;
+    left.y = left.y * 0.9998d + 0.0002d;
+    left.z = left.z * 0.9997d + 0.0003d;
+    accumulator = accumulator + left.dot(right);
+  }
+
+  mut uint64_t digest = uint64_t(accumulator);
+  digest = (digest + uint64_t(left.x * 1000000.0d)) % uint64_t(1000000007);
+  digest = (digest + uint64_t(left.y * 1000000.0d)) % uint64_t(1000000007);
+  digest = (digest + uint64_t(left.z * 1000000.0d)) % uint64_t(1000000007);
+  if (digest != uint64_t(0x1be59f2)) {
+    return 1;
+  }
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:30000000");
+  return 0;
+}

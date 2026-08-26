@@ -1,0 +1,93 @@
+#include <std/vector>
+
+struct entity_state {
+  entity_state() {}
+
+  mut int32_t position_x = 0;
+  mut int32_t position_y = 0;
+  mut int32_t velocity_x = 0;
+  mut int32_t velocity_y = 0;
+};
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+int main() {
+  std::size_t entity_count = std::size_t(1024);
+  mut std::vector<entity_state> entities =
+      std::vector<entity_state>(entity_count);
+
+  for (mut std::size_t index = 0; index < entity_count; index++) {
+    mut entity_state& entity = entities[index];
+    entity.position_x = int32_t(index % std::size_t(257)) - 128;
+    entity.position_y = int32_t(index % std::size_t(193)) - 96;
+    entity.velocity_x = int32_t(index % std::size_t(11)) - 5;
+    entity.velocity_y = int32_t(index % std::size_t(7)) - 3;
+  }
+
+  for (mut int32_t tick = 0; tick < 50000; tick++) {
+    int32_t phase = tick % 17;
+    for (mut std::size_t index = 0; index < entity_count; index++) {
+      mut entity_state& entity = entities[index];
+      int32_t lane = int32_t(index % std::size_t(13));
+      entity.velocity_x = (entity.velocity_x * 3 + phase + lane) % 61 - 30;
+      entity.velocity_y = (entity.velocity_y * 5 + phase + lane) % 67 - 33;
+      entity.position_x =
+          (entity.position_x + entity.velocity_x + 4096) % 8191 - 4095;
+      entity.position_y =
+          (entity.position_y + entity.velocity_y + 4096) % 8191 - 4095;
+    }
+  }
+
+  mut uint64_t digest = uint64_t(146959810);
+  for (mut std::size_t index = 0; index < entity_count; index++) {
+    entity_state& entity = entities[index];
+    digest = (digest * uint64_t(131) +
+              uint64_t(int64_t(entity.position_x) + int64_t(16384))) %
+             uint64_t(1000000007);
+    digest = (digest * uint64_t(131) +
+              uint64_t(int64_t(entity.position_y) + int64_t(16384))) %
+             uint64_t(1000000007);
+    digest = (digest * uint64_t(131) +
+              uint64_t(int64_t(entity.velocity_x) + int64_t(100))) %
+             uint64_t(1000000007);
+    digest = (digest * uint64_t(131) +
+              uint64_t(int64_t(entity.velocity_y) + int64_t(100))) %
+             uint64_t(1000000007);
+  }
+
+  if (digest != uint64_t(0x39624947)) {
+    return 1;
+  }
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:51200000");
+  return 0;
+}

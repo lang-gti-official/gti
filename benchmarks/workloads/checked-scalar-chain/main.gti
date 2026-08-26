@@ -1,0 +1,57 @@
+#include <std/string>
+
+int32_t rounds() { return 20000; }
+int32_t width() { return 5000; }
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+int main() {
+  int32_t round_count = rounds();
+  int32_t width_count = width();
+  mut int64_t accumulator = 0;
+
+  for (mut int32_t round = 0; round < round_count; round++) {
+    mut int32_t value = round % 13;
+    for (mut int32_t index = 0; index < width_count; index++) {
+      value = (value * 3 + index) % 1000003;
+      accumulator += int64_t(value);
+    }
+  }
+
+  uint64_t digest = uint64_t(accumulator % int64_t(1000000007));
+  if (digest != uint64_t(0x2284c2c0)) {
+    return 1;
+  }
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:100000000");
+  return 0;
+}

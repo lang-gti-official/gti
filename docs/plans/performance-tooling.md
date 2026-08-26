@@ -4,7 +4,10 @@
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
 
 Status: Milestone 1 remains in progress; the deterministic GTI optimization
-reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
+reporting and pre/post MIR subset of Milestones 3 and 4 is implemented. The
+O-PERF-00 runtime workload set, fixed-native attribution mode, bounded
+successful-path arithmetic proxy, and threshold-free CI smoke gate are also
+implemented; their clean exact-head evidence is recorded at row closure.
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
@@ -13,7 +16,10 @@ versioned JSON reports, and exact current safety-operation counts are
 implemented. Compiler pass timing and the broader benchmark workload set remain
 independent work. The current harness includes strict schema-1 compatibility,
 schema-2 execution profiles, content-complete GTI/runtime provenance for
-schema-2 builds, and fail-closed exact-head evidence.
+schema-2 builds, fail-closed exact-head evidence, schema-3 fixed-native
+rebuilds derived from validated driver provenance, and schema-4 generated
+arithmetic attribution proxies that are explicitly excluded from semantic
+proof.
 
 This document proposes general performance tooling for the GTI compiler and
 for programs compiled by GTI. It is not tied to CHIP-8 or any other example.
@@ -328,6 +334,15 @@ vector overflow proxy: [11313945,9400736,9582070,8895403,11373695,10254944,99781
 fixed-array checked: [73848407,73744240,73712449,74464948,73407490,73650406,74163365,73943448,73531781,73777782,74059531,73954615,74056740,73655365,73393532,73184407,72764740,73512823,72066532,73264281]
 fixed-array overflow proxy: [15581656,15487448,16184073,16115365,15607907,15677031,15749115,16074240,16044823,16120531,15958573,15682573,15926990,15892198,15872323,15977698,15802198,15785115,15795657,16026949]
 ```
+
+The historical fixed-array probe above did not publish a digest of its
+complete computed state; it established only that its accumulator satisfied a
+success predicate. Its timing remains useful directional provenance for the
+checked-helper hypothesis, but it is not an admissible O-PERF correctness
+baseline and cannot close O-PERF-00. The descriptor-backed
+`fixed-array-overflow` workload supersedes it with a complete accumulator
+digest, scaled work, semantic and idiomatic twins, and the runner-generated
+three-helper proxy.
 
 The audit's original O0/O1/O2/O3 driver comparison changed GTI and native
 optimization together and could not by itself attribute the O0-to-O1 gain.

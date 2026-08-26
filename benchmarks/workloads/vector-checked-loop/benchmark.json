@@ -2,8 +2,8 @@
   "schema": 1,
   "name": "vector-checked-loop",
   "description": "Checked int32 vector scale and left-to-right sum loops",
-  "work_units": 200000000,
-  "minimum_sample_seconds": 0.01,
+  "work_units": 2400000000,
+  "minimum_sample_seconds": 0.05,
   "variants": [
     {
       "name": "gti",

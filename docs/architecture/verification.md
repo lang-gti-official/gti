@@ -89,7 +89,8 @@ assertions.
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
-| `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors, path containment, correctness records, deterministic interleaving, and threshold-free vector plus managed-thread smoke execution |
+| `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
+| `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
 
 The emitter corpus coordinator deliberately adds no shorter per-source timing
 threshold: every worker remains inside the unchanged 1500-second aggregate
@@ -134,6 +135,25 @@ Keys, arrays, objects, and non-nullable scalar types remain exact; only the
 declared optional repository, host-CPU, and toolchain-override scalars normalize
 to their validated JSON union types, with both Git-available and
 Git-unavailable states covered.
+
+Supplying `--native-optimization` selects report schema 3. The runner first
+performs the ordinary GTI build and validates its driver-owned sidecar, then
+derives a second native command from the recorded argument vector. Only the
+single optimization flag, depfile, and output may change; the retained emitted
+C++, runtime archive, headers, compiler, standard, and native policy remain
+bound to the sidecar. This permits GTI O0/O1/O2/O3 comparisons at one fixed
+native level without reconstructing the driver's command.
+
+Supplying a validated `--arithmetic-success-proxy WORKLOAD/VARIANT` selects
+schema 4. The target must be a selected GTI variant and fixed-native mode must
+be active. The runner recognizes exactly the compiler-owned checked
+add/subtract/multiply helper definitions in retained C++, replaces exactly one
+overflow branch in each, and rejects missing, duplicate, or structurally
+unexpected helpers. The generated binary must produce the same successful
+result record and participates in interleaved timing, but is marked
+non-semantic, successful-path-only, and ineligible for exact-head proof. It is
+an attribution ceiling, never optimization correctness evidence.
+
 Schema-1 records omit execution profiles and provenance. Schema-2 GTI records
 consume the driver's versioned `--build-report` sidecar, whose source closure
 is the exact loaded `SourceGraph`/`SourceManager` snapshot and whose runtime
