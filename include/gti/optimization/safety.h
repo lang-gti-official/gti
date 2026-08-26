@@ -73,7 +73,10 @@ struct MirClosedCallSafetyAnalysis {
 // Computes one bounded, non-recursive contextual summary over exact static
 // GTI calls and constructors. Unsupported, open, native, virtual, recursive,
 // owning-argument, or synchronization-capable edges fail closed. Body-local
-// facts remain available even when no contextual summary is admitted.
+// facts remain available even when no contextual summary is admitted. Once
+// the whole analysis converges, contextual proofs established before a
+// conservative call barrier remain usable even when that barrier prevents the
+// enclosing body from exporting a complete summary.
 [[nodiscard]] MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program);
 
