@@ -1,0 +1,67 @@
+class plain_item {
+public:
+  plain_item() {}
+  mut int32_t v = 7;
+};
+
+class moveonly_item {
+public:
+  moveonly_item() {}
+  moveonly_item(moveonly_item&) = delete;
+  mut int32_t v = 4;
+};
+
+class PlainBox {
+public:
+  PlainBox(plain_item value) : held(std::move(value)) {}
+  mut plain_item held;
+};
+
+class CopyBox {
+public:
+  CopyBox(plain_item value) : held(value) {}
+  mut plain_item held;
+};
+
+class MoveBox {
+public:
+  MoveBox(moveonly_item value) : held(std::move(value)) {}
+  mut moveonly_item held;
+};
+
+expected<plain_item, int32_t> make_plain() {
+  return plain_item();
+}
+
+expected<moveonly_item, int32_t> make_moveonly() {
+  return moveonly_item();
+}
+
+int main() {
+  // Field initialized from a by-value constructor parameter.
+  mut plain_item a = plain_item();
+  mut PlainBox b = PlainBox(std::move(a));
+  if (int(b.held.v) != 7) { return 1; }
+  mut plain_item copy_source = plain_item();
+  mut CopyBox copied = CopyBox(std::move(copy_source));
+  if (int(copied.held.v) != 7) { return 7; }
+  mut moveonly_item m = moveonly_item();
+  mut MoveBox mb = MoveBox(std::move(m));
+  if (int(mb.held.v) != 4) { return 2; }
+
+  // Lambda move-capture.
+  mut plain_item c = plain_item();
+  auto reader = [held = std::move(c)]() -> int32_t { return int32_t(held.v); };
+  if (int(reader()) != 7) { return 3; }
+  mut moveonly_item mc = moveonly_item();
+  auto moved_reader =
+      [held = std::move(mc)]() -> int32_t { return int32_t(held.v); };
+  if (int(moved_reader()) != 4) { return 4; }
+
+  // expected<T, E> payload returned from a plain construction.
+  expected<plain_item, int32_t> r = make_plain();
+  if (!r.has_value() || int(r.value().v) != 7) { return 5; }
+  expected<moveonly_item, int32_t> mr = make_moveonly();
+  if (!mr.has_value() || int(mr.value().v) != 4) { return 6; }
+  return 0;
+}
