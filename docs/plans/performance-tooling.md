@@ -512,6 +512,55 @@ O3 semantic: [270671375,267363541,269274542,269761875,267389042,270277875,269216
 O3 idiomatic: [61238500,60981167,61101583,60662625,61478291,60404791,60792708,61161125,60727042,60590625,61124917,60959709,61550500,61226708,61163625,61379500,61149833,61591041,60923291,60614500]
 ```
 
+### O-PERF-02 exact-head closure
+
+The row closed on exact clean implementation commit
+`d6374eb96d284ceee45ef6878a668e65bffbee97` with `gti 0.317.0` and compiler
+SHA-256
+`77a8e1fdf75b4ff88265f7c362ea4952319243d86804419a6033cdf45495d9ca`.
+Both reports used Apple Clang 21, C++23, five warmups, twenty seeded
+interleaved samples, and seed 3108. They are exact-head, conclusive, and retain
+`GTI-BENCH-1 digest:00000000135e33a6 work-units:2400000000`. Report SHA-256
+values are
+`c9365278d19f35921a9afd713b42b899e3a81d0aaf6075939df753c5f2fb7db5`
+for O2 and
+`bca8a49ca443d16bd4d8a8906291c9744a9caaaa041b59b8beafe6e2706dc58c`
+for O3.
+
+| GTI/native level | GTI median / MAD (ms) | Semantic C++ median (ms) | Idiomatic C++ median (ms) | GTI / semantic | GTI / idiomatic |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| O2 / O2 | 558.336 / 33.980 | 715.229 | 87.947 | 0.781x | 6.348x |
+| O3 / O3 | 570.654 / 27.906 | 571.371 | 57.471 | 0.999x | 9.929x |
+
+The O2 GTI median is 54.0% below the 1,213.192 ms `O-PERF-01` exact-head
+vector baseline. Because host frequency moved between campaigns, normalizing
+each GTI median to its same-run semantic C++ twin is the stronger attribution:
+the ratio fell from 2.089x to 0.781x, a 62.6% reduction. Both exceed the row's
+30% exit gate. The exact O2 compile invocation took 856.315 ms; batching proof
+replay avoided the earlier dirty-tree 3.38-second per-claim recomputation.
+
+The deterministic O2 optimization report has SHA-256
+`2f87d5c07b8c515ecf2763d4a1f7bac4d8929410a78b242b060b2cb57d710915`;
+the emitted C++ has SHA-256
+`cb05d687bb7a71749e4bb0101a8a873ff94cc8aa68c911c9d733fcc4004157eb`.
+It records 45 source, 35 emitted, and 10 statically discharged safety
+outcomes. Bounds remain 4/4/0 and storage state 1/1/0. Arithmetic overflow is
+16/10/6 and arithmetic domain is 6/2/4. The admitted vector scale multiply is
+one of the six overflow discharges; native, virtual, recursive, owning-value,
+native-fed, and conflicting-context fixtures retain their checked multiply.
+Signed-minimum compound remainder remains on the GTI helper and returns zero.
+
+Canonical vector samples, in nanoseconds:
+
+```text
+O2 GTI: [585597542,508816750,516663708,532409625,621255083,568744625,617996167,551448666,482877125,565223334,550465250,522894000,601881250,523454916,634819375,521330334,525257583,583289459,572096167,574841583]
+O2 semantic: [743740000,715386208,712375625,685396834,707483875,754362458,710136000,700201500,743843916,718006083,715071917,757705416,699255417,695295625,700252083,694350792,726957167,732001125,717339125,761943416]
+O2 idiomatic: [87919834,87822833,88790208,88983250,87969541,89005792,87491333,87925125,87686792,87884833,87703417,88161292,88081667,88055916,89045042,87903208,88011666,87744250,87537166,88182333]
+O3 GTI: [577177125,578966292,508430250,584664667,484879333,566989042,491549292,487420750,625394292,523772584,543110541,541242500,574319458,542386666,558903667,580959584,594773042,601897459,577460291,625327125]
+O3 semantic: [598112750,602058916,553173542,571467041,581574542,549965083,571274833,569335625,555157667,585732833,592171292,532171125,558867625,574490375,538931417,544835167,597885208,600321292,592711833,524756000]
+O3 idiomatic: [56659125,58029791,57074917,57335875,57419333,57550625,56372000,56744208,56462792,58507041,58107791,57784167,57029500,57727459,56994958,58039000,57522750,57136917,58894291,57589916]
+```
+
 ### Independent reproduction of PR #164
 
 The reproduction used compiler source `4ceaca7`, `gti 0.312.9` with SHA-256
