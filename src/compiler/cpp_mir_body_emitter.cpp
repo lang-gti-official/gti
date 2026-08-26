@@ -2574,7 +2574,8 @@ copyParameterFieldInstructionBinding(const MirProgram &program,
   return bindings &&
          std::count_if(bindings->begin(), bindings->end(),
                        [&](const CppMirCopyParameterFieldBinding &binding) {
-                         return binding.sourcePlace == place.id;
+                         return binding.sourcePlace == place.id &&
+                                binding.initializeInstruction == 0;
                        }) == 1;
 }
 

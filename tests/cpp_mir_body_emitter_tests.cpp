@@ -9018,6 +9018,76 @@ int main() {
            "ownership event drifts");
   }
 
+  // A scalar parameter published through a normal MIR Initialize remains a
+  // body-local place when the constructor reads it again after the member
+  // initializer. Only the metadata-only passive class copy above may elide
+  // that carrier in favor of the native parameter.
+  lang::FrontendResult scalarReuse =
+      analyzeWithStandardLibrary("cpp-mir-scalar-parameter-reuse.gti", R"(
+class ScalarReuse {
+public:
+  int32_t stored;
+  mut int32_t observed = 0;
+
+  ScalarReuse(int32_t value) : stored(value) {
+    observed = value;
+  }
+};
+
+int main() {
+  ScalarReuse value = ScalarReuse(3);
+  return value.observed - 3;
+}
+)");
+  expect(scalarReuse.canGenerateCode(),
+         "the scalar parameter reuse fixture should pass the frontend");
+  if (scalarReuse.canGenerateCode()) {
+    const lang::MirConstructorInstance *reuseConstructor = nullptr;
+    for (const lang::MirConstructorInstance &constructor :
+         scalarReuse.mir.constructorInstances()) {
+      const lang::MirClassInstance *owner =
+          scalarReuse.mir.findClassInstance(constructor.owner);
+      const lang::ClassTypeInfo *info =
+          owner == nullptr
+              ? nullptr
+              : scalarReuse.semantics.findClassType(owner->declaration);
+      if (info != nullptr && info->declaration != nullptr &&
+          info->declaration->name().lexeme == "ScalarReuse") {
+        reuseConstructor = &constructor;
+        break;
+      }
+    }
+    expect(reuseConstructor != nullptr,
+           "the scalar fixture should lower its constructor instance");
+    if (reuseConstructor != nullptr) {
+      const auto bindings = lang::cppMirCopyParameterFieldBindings(
+          scalarReuse.mir, *reuseConstructor);
+      expect(bindings && bindings->size() == 1 &&
+                 bindings->front().initializeInstruction != 0,
+             "the scalar field copy should retain its ordinary MIR "
+             "Initialize publication");
+      const lang::CppMirBodyEmissionMap map(
+          buildRows(scalarReuse, scalarReuse.mir, lang::CppStandard::Cpp23));
+      const lang::CppMirBodyEmitter emitter(scalarReuse.mir, map);
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = reuseConstructor->id};
+      expect(emitter.supportsFailureBodyText(address),
+             "the scalar parameter reuse should enter failure-body "
+             "emission");
+      if (bindings && bindings->size() == 1 &&
+          emitter.supportsFailureBodyText(address)) {
+        const std::string text =
+            emitter.emitFailureBodyText(address, "scalar-parameter-reuse-v0", 1)
+                .text;
+        expect(text.find("std::int32_t __gti_mir_p_" +
+                         std::to_string(bindings->front().sourcePlace) +
+                         " = __gti_mir_arg_0;") != std::string::npos,
+               "a scalar constructor parameter reused in the body must keep "
+               "its MIR place declaration");
+      }
+    }
+  }
+
   // The moved flavor of the same constructor keeps its admitted
   // member-initializer publication.
   lang::FrontendResult moveForm =
