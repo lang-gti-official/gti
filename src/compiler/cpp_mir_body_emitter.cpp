@@ -13509,9 +13509,37 @@ failureFreeVirtualCallee(const MirProgram &program,
            candidate.returnBorrowParameter == target->returnBorrowParameter &&
            candidate.returnBorrowAccess == target->returnBorrowAccess;
   };
+
+  std::vector<const MirFunctionInstance *> roots;
+  for (const FunctionId rootId : target->virtualRoots) {
+    const MirFunctionInstance *found = nullptr;
+    for (const MirFunctionInstance &candidate : program.functionInstances()) {
+      if (candidate.declaration != rootId || !candidate.owner ||
+          !candidate.virtualMethod || candidate.overrideMethod ||
+          candidate.staticMember || !sameContract(candidate) ||
+          std::find(candidate.virtualRoots.begin(),
+                    candidate.virtualRoots.end(),
+                    candidate.declaration) == candidate.virtualRoots.end()) {
+        continue;
+      }
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &candidate;
+    }
+    const MirClassInstance *rootOwner =
+        found == nullptr || !found->owner
+            ? nullptr
+            : program.findClassInstance(*found->owner);
+    if (rootOwner == nullptr ||
+        !classTypeIsOrDerivesFrom(program, owner->type, rootOwner->id)) {
+      return nullptr;
+    }
+    roots.push_back(found);
+  }
+
   for (const MirFunctionInstance &candidate : program.functionInstances()) {
-    if (!candidate.owner || !candidate.virtualMethod ||
-        !sameContract(candidate) ||
+    if (!candidate.virtualMethod || !sameContract(candidate) ||
         std::none_of(candidate.virtualRoots.begin(),
                      candidate.virtualRoots.end(), [&](FunctionId root) {
                        return std::find(target->virtualRoots.begin(),
@@ -13520,11 +13548,33 @@ failureFreeVirtualCallee(const MirProgram &program,
                      })) {
       continue;
     }
+    if (!candidate.owner || candidate.staticMember ||
+        (!candidate.overrideMethod &&
+         std::find(candidate.virtualRoots.begin(), candidate.virtualRoots.end(),
+                   candidate.declaration) == candidate.virtualRoots.end())) {
+      return nullptr;
+    }
     const MirClassInstance *candidateOwner =
         program.findClassInstance(*candidate.owner);
-    if (candidateOwner == nullptr ||
-        !classTypeIsOrDerivesFrom(program, candidateOwner->type, owner->id) ||
-        candidate.pureVirtual || candidate.staticMember ||
+    if (candidateOwner == nullptr) {
+      return nullptr;
+    }
+    const bool validFamilyMember =
+        std::any_of(roots.begin(), roots.end(), [&](const auto *root) {
+          return root->owner &&
+                 std::find(candidate.virtualRoots.begin(),
+                           candidate.virtualRoots.end(),
+                           root->declaration) != candidate.virtualRoots.end() &&
+                 classTypeIsOrDerivesFrom(program, candidateOwner->type,
+                                          *root->owner);
+        });
+    if (!validFamilyMember) {
+      return nullptr;
+    }
+    if (!classTypeIsOrDerivesFrom(program, candidateOwner->type, owner->id)) {
+      continue;
+    }
+    if (candidate.pureVirtual || candidate.staticMember ||
         candidate.mayRaiseDefinedFailure ||
         candidate.definitionKind != MirDefinitionKind::Source ||
         candidate.linkage != LanguageLinkage::Gti) {
@@ -26768,6 +26818,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.functionTarget
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
+          const bool virtualFailureTarget =
+              target != nullptr &&
+              virtualFailureCallee(program_, instruction) == target;
           if (instruction.functionTarget && target == nullptr) {
             {
               return false;
@@ -26786,10 +26839,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 return false;
               }
             }
-          } else if (target != nullptr && target->mayRaiseDefinedFailure &&
+          } else if (target != nullptr &&
+                     (target->mayRaiseDefinedFailure || virtualFailureTarget) &&
                      target->linkage == LanguageLinkage::Gti &&
                      (target->definitionKind == MirDefinitionKind::Source ||
-                      virtualFailureCallee(program_, instruction) == target)) {
+                      virtualFailureTarget)) {
             // A failure-capable callee is reached through the transformed
             // convention: passive values publish into a typed result,
             // while a class value placement-constructs the exact consuming
@@ -26943,7 +26997,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 target->linkage != LanguageLinkage::Gti ||
                 (target->definitionKind !=
                      MirFunctionInstance::DefinitionKind::Source &&
-                 virtualFailureCallee(program_, instruction) != target) ||
+                 !virtualFailureTarget) ||
                 !returnReady) {
               {
                 return false;
@@ -27470,12 +27524,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           producer->functionTarget
               ? program_.findFunctionInstance(*producer->functionTarget)
               : nullptr;
+      const bool virtualFailureTarget =
+          invokeTarget != nullptr &&
+          producer->kind == MirInstructionKind::Call &&
+          virtualFailureCallee(program_, *producer) == invokeTarget;
       const bool transformedGtiCall =
           failureForm && producer->kind == MirInstructionKind::Call &&
-          invokeTarget != nullptr && invokeTarget->mayRaiseDefinedFailure &&
+          invokeTarget != nullptr &&
           invokeTarget->linkage == LanguageLinkage::Gti &&
-          (invokeTarget->definitionKind == MirDefinitionKind::Source ||
-           virtualFailureCallee(program_, *producer) == invokeTarget);
+          ((invokeTarget->mayRaiseDefinedFailure &&
+            invokeTarget->definitionKind == MirDefinitionKind::Source) ||
+           virtualFailureTarget);
       if (producer->kind == MirInstructionKind::Call &&
           failureFreeVirtualCallee(program_, *producer) == invokeTarget) {
         continue;
@@ -27637,7 +27696,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->functionTarget
                 ? program_.findFunctionInstance(*producer->functionTarget)
                 : nullptr;
-        if (target == nullptr || !target->mayRaiseDefinedFailure) {
+        if (target == nullptr ||
+            (!target->mayRaiseDefinedFailure && !virtualFailureTarget)) {
           {
             return false;
           }

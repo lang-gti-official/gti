@@ -378,6 +378,16 @@ verified failure sibling and forwards the original record to the runtime
 terminal boundary. Native exceptions are contained and terminate; the backend
 cannot select another target or weaken that policy.
 
+A call resolved to a concrete override remains virtual in MIR; the C++ backend
+does not infer devirtualization. For a conservatively failure-capable virtual
+call, the backend validates the exact contract roots and candidate owners, then
+classifies only the concrete dispatch owner's subtree. A complete subtree of
+failure-free source definitions uses the ordinary virtual call. If any valid
+descendant can fail, the call and its `Invoke` edge retain the transformed
+status ABI. Valid family members outside that subtree cannot make a direct
+concrete call incomplete, while missing, unrelated, or forged owner/root/target
+metadata fails closed.
+
 Each thread-task item produces one private type-specific adapter rooted by its
 exact verified spawn instruction and exact concrete function-or-lambda entry.
 For an overloaded nominal callable the adapter invokes the already selected
