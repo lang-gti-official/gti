@@ -1,0 +1,20 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class borrowed_observer {
+  int32_t& observed;
+
+public:
+  borrowed_observer(int32_t& target) : observed(target) {}
+
+  void operator()(int32_t& value) {}
+};
+
+int main() {
+  int32_t observed = 0;
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  borrowed_observer operation = borrowed_observer(observed);
+  [[discard]] std::for_each(values.begin(), values.end(),
+                            std::move(operation));
+  return 0;
+}

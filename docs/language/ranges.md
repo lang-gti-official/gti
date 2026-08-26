@@ -1,6 +1,7 @@
 # Ranges and iterators
 
-Status: current through L-RANGE-02 mutable iteration and invalidation
+Status: current through L-RANGE-02 mutable iteration and the bounded
+iterator/sentinel algorithm cluster
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -190,6 +191,31 @@ a bounded iterator/sentinel algorithm surface, not a complete range concept,
 heterogeneous accumulation, iterator category hierarchy, or C++20 ranges
 model.
 
+`<std/algorithm>` additionally defines the ordinary iterator/sentinel
+`std::find`, `std::count`, and `std::for_each` cluster. All three accept an
+`Iterator` and a potentially distinct `Sentinel` under exact
+`input_iterator`/`sentinel_for` requirements. `find` and `count` also require
+exact `dereferences_to<Iterator, T>` and `equality_comparable<T>` facts. They do
+not use implicit conversions, C++ traits, SFINAE, subsumption, partial
+specialization, or public-name recognition.
+
+`find` returns the final iterator by moving the exact `first` parameter. For a
+borrow-carrying concrete iterator, that declaration-linked move selects
+`first`, rather than an unrelated sentinel or other read-only carrier, as the
+return owner. Mixed return paths rooted in different parameters remain
+ambiguous and are rejected. `count` returns an independent `ptrdiff_t`.
+
+`for_each` invokes its by-value callable zero or more times with the exact
+checked-reference type produced by dereference, then returns that same callable
+through one final `std::move`. Its invocation contract remains confined and
+repeatable; exact-return transport is a separate ownership fact. A mutable
+generic callable parameter can select either read-only or mutable
+`operator()` for the exact `void(T&)` signature, but not a once-callable or a
+value-returning/mismatched overload. A named callable must be passed with
+`std::move`, must be movable, and cannot store references, tracked borrowed
+state, or raw pointers. The returned value preserves the exact concrete
+callable type without erasure.
+
 ## Current boundary
 
 This layer establishes syntax, protocol resolution, explicit HIR provenance,
@@ -237,15 +263,18 @@ exact `bool`
 predicates, exact context-supplied non-reference value results without tracked
 borrowed state or lambda identity, and proven forwarding through other
 confined callable parameters are available for algorithm callbacks. Result
-inference through `auto`, borrowed results, and owned escape remain
-unavailable. The bounded input-iterator, sentinel, exact `dereferences_to`,
-lifecycle `copy_constructible`, and source-composed `forward_iterator`
-capabilities are implemented. `std::string(first, last)` uses the input family
-in an ordinary constructor-local generic declaration and copies the selected
-character range without retaining either iterator. Read-only string and vector
-cursors may be copy-constructed: each copy has an independent position while
-retaining the same shared owner loan. They remain non-assignable, and the
-compiler-confined mutable vector iterator remains non-copyable.
+inference through `auto` and borrowed callable results remain unavailable. One
+bounded exact-return transport may be combined with repeated direct invocation
+when every reachable return moves that same callable parameter; arbitrary
+storage, wrappers, and erased callable escape remain unavailable. The bounded
+input-iterator, sentinel, exact `dereferences_to`, lifecycle
+`copy_constructible`, and source-composed `forward_iterator` capabilities are
+implemented. `std::string(first, last)` uses the input family in an ordinary
+constructor-local generic declaration and copies the selected character range
+without retaining either iterator. Read-only string and vector cursors may be
+copy-constructed: each copy has an independent position while retaining the
+same shared owner loan. They remain non-assignable, and the compiler-confined
+mutable vector iterator remains non-copyable.
 
 `std::binary_search(first, last, value)` is the first forward-iterator client.
 It makes one counting pass, then copies and advances cursors to select
@@ -254,6 +283,7 @@ iterator subtraction or numeric iterator operation is required. The algorithm
 performs logarithmic comparisons and linear iterator increments, and requires
 the input to already be sorted according to `operator<`. Complete-range,
 readable/writable element, sized-range, random-access, and public invalidation
-capabilities are still missing. A public range-first `std::for_each` over
-arbitrary structural ranges should wait for those capabilities instead of
+capabilities are still missing. The implemented iterator/sentinel
+`std::for_each` does not imply a range-first overload; a public range-first form
+over arbitrary structural ranges should wait for those capabilities instead of
 teaching the compiler a public container or algorithm name.

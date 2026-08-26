@@ -480,7 +480,7 @@ public:
       const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
           concreteFunction.returnType, concreteFunction.parameterTypes,
           concreteFunction.ownerClass, concreteFunction.staticMember,
-          concreteFunction.intrinsic);
+          concreteFunction.intrinsic, exactMovedReturnParameter(*function));
       concreteFunction.returnBorrowOrigin = borrow.origin;
       concreteFunction.returnBorrowParameter = borrow.parameter;
       concreteFunction.returnBorrowAccess = borrow.access;
@@ -9721,11 +9721,11 @@ private:
            isDirectStoredReferenceType(type);
   }
 
-  [[nodiscard]] FunctionReturnBorrowSummary
-  functionReturnBorrowSummary(const SemanticType &returnType,
-                              const std::vector<SemanticType> &parameterTypes,
-                              ClassId ownerClass, bool staticMember,
-                              IntrinsicKind intrinsic) const {
+  [[nodiscard]] FunctionReturnBorrowSummary functionReturnBorrowSummary(
+      const SemanticType &returnType,
+      const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
+      bool staticMember, IntrinsicKind intrinsic,
+      std::optional<std::size_t> exactReturnParameter = std::nullopt) const {
     FunctionReturnBorrowSummary summary;
     if (!isBorrowReturningType(returnType) ||
         intrinsic != IntrinsicKind::None) {
@@ -9738,8 +9738,7 @@ private:
       return summary;
     }
 
-    for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
-      const SemanticType &parameter = parameterTypes[index];
+    const auto readOnlyDependency = [&](const SemanticType &parameter) {
       const bool readOnlyReference =
           parameter.kind == SemanticType::Reference &&
           parameter.referenceAccess == AccessMode::ReadOnly &&
@@ -9748,15 +9747,37 @@ private:
       const bool readOnlyBorrowedValue =
           isDirectStoredReferenceType(parameter) &&
           borrowAccess(parameter) == AccessMode::ReadOnly;
-      if (readOnlyReference || readOnlyBorrowedValue) {
+      return readOnlyReference || readOnlyBorrowedValue;
+    };
+    const auto mutableDependency = [&](const SemanticType &parameter) {
+      return (parameter.kind == SemanticType::Reference &&
+              parameter.referenceAccess == AccessMode::Mutable) ||
+             (isDirectStoredReferenceType(parameter) &&
+              borrowAccess(parameter) == AccessMode::Mutable);
+    };
+
+    if (exactReturnParameter && *exactReturnParameter < parameterTypes.size() &&
+        returnType == parameterTypes[*exactReturnParameter]) {
+      const SemanticType &parameter = parameterTypes[*exactReturnParameter];
+      if (readOnlyDependency(parameter)) {
+        summary.origin = BorrowOriginKind::Argument;
+        summary.parameter = *exactReturnParameter;
+        return summary;
+      }
+      if (mutableDependency(parameter)) {
+        summary.hasMutableCandidate = true;
+        return summary;
+      }
+    }
+
+    for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+      const SemanticType &parameter = parameterTypes[index];
+      if (readOnlyDependency(parameter)) {
         if (summary.eligibleParameters == 0) {
           summary.parameter = index;
         }
         ++summary.eligibleParameters;
-      } else if ((parameter.kind == SemanticType::Reference &&
-                  parameter.referenceAccess == AccessMode::Mutable) ||
-                 (isDirectStoredReferenceType(parameter) &&
-                  borrowAccess(parameter) == AccessMode::Mutable)) {
+      } else if (mutableDependency(parameter)) {
         summary.hasMutableCandidate = true;
       }
     }
@@ -15245,6 +15266,32 @@ private:
     return std::nullopt;
   }
 
+  [[nodiscard]] std::optional<std::size_t>
+  exactMovedReturnParameter(const FunctionInfo &function) const {
+    if (function.declaration == nullptr ||
+        function.declaration->body() == nullptr) {
+      return std::nullopt;
+    }
+    std::vector<const ExprPtr *> returns;
+    collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+    if (returns.empty()) {
+      return std::nullopt;
+    }
+    std::optional<std::size_t> result;
+    for (const ExprPtr *returned : returns) {
+      if (returned == nullptr || !*returned) {
+        return std::nullopt;
+      }
+      const std::optional<std::size_t> parameter =
+          movedFunctionParameter(*returned, function);
+      if (!parameter || (result && *result != *parameter)) {
+        return std::nullopt;
+      }
+      result = parameter;
+    }
+    return result;
+  }
+
   [[nodiscard]] static const ExprList *
   constructionArguments(const ExprPtr &expression) {
     if (const auto *call = exprAs<Call>(expression.get())) {
@@ -15312,15 +15359,16 @@ private:
     std::vector<PendingOwnedContract> pending;
     for (const auto &[_, function] : semanticModel.functions) {
       if (function.declaration == nullptr || function.ownerClass != 0 ||
-          function.declaration->body() == nullptr ||
-          function.declaration->body()->statements().size() != 1) {
+          function.declaration->body() == nullptr) {
         continue;
       }
-      const auto *returnStatement = stmtAs<ReturnStmt>(
-          function.declaration->body()->statements().front().get());
-      if (returnStatement == nullptr || !returnStatement->value()) {
-        continue;
-      }
+      const ReturnStmt *soleReturn =
+          function.declaration->body()->statements().size() == 1
+              ? stmtAs<ReturnStmt>(
+                    function.declaration->body()->statements().front().get())
+              : nullptr;
+      const std::optional<std::size_t> exactReturn =
+          exactMovedReturnParameter(function);
       for (std::size_t index = 0;
            index < function.parameterTypes.size() &&
            index < function.declaration->parameters().size();
@@ -15328,30 +15376,20 @@ private:
         const Parameter &parameter = function.declaration->parameters()[index];
         const SemanticType &parameterType = function.parameterTypes[index];
         if (parameterType.kind != SemanticType::TypeParameter ||
-            parameter.type.reference || parameter.pack ||
-            parameter.mutability != Mutability::Immutable) {
-          continue;
-        }
-        const auto existing =
-            std::find_if(function.callableParameters.begin(),
-                         function.callableParameters.end(),
-                         [index](const CallableParameterContract &candidate) {
-                           return candidate.parameterIndex == index;
-                         });
-        if (existing != function.callableParameters.end()) {
+            parameter.type.reference || parameter.pack) {
           continue;
         }
 
         std::optional<CallableOwnedTransport> transport;
         if (function.returnType == parameterType &&
-            movedFunctionParameter(returnStatement->value(), function) ==
-                index) {
+            exactReturn == std::optional<std::size_t>{index}) {
           transport = CallableOwnedTransport{
               .kind = CallableOwnedTransportKind::ExactReturn,
               .destinationType = function.returnType};
-        } else {
-          transport = exactOwnedFieldTransport(function, index,
-                                               returnStatement->value());
+        } else if (parameter.mutability == Mutability::Immutable &&
+                   soleReturn != nullptr && soleReturn->value()) {
+          transport =
+              exactOwnedFieldTransport(function, index, soleReturn->value());
         }
         if (!transport) {
           continue;
@@ -15362,7 +15400,9 @@ private:
                  .parameterIndex = index,
                  .genericParameter = parameterType.genericParameterId,
                  .callableType = parameterType,
-                 .access = AccessMode::ReadOnly,
+                 .access = parameter.mutability == Mutability::Mutable
+                               ? AccessMode::Mutable
+                               : AccessMode::ReadOnly,
                  .boundary = CallableBoundary::Owned,
                  .ownedTransport = std::move(transport)}});
       }
@@ -15453,18 +15493,23 @@ private:
         const bool threadTask = contract.ownedTransport &&
                                 contract.ownedTransport->kind ==
                                     CallableOwnedTransportKind::ThreadTask;
-        if (contract.boundary != CallableBoundary::Owned ||
+        const SemanticType *argumentType =
+            contract.parameterIndex < resolved.parameterTypes.size()
+                ? &resolved.parameterTypes[contract.parameterIndex]
+                : nullptr;
+        const bool callableTransport =
+            contract.ownedTransport && argumentType != nullptr &&
+            (threadTask || !contract.signatures.empty() ||
+             containsLambdaType(*argumentType));
+        if (!callableTransport ||
             contract.parameterIndex >= call->arguments().size() ||
-            contract.parameterIndex >= resolved.parameterTypes.size() ||
-            (!threadTask &&
-             !containsLambdaType(
-                 resolved.parameterTypes[contract.parameterIndex]))) {
+            contract.parameterIndex >= resolved.parameterTypes.size()) {
           continue;
         }
         const ExprPtr &argument = call->arguments()[contract.parameterIndex];
-        const SemanticType &argumentType =
+        const SemanticType &concreteArgumentType =
             resolved.parameterTypes[contract.parameterIndex];
-        const SemanticTypeTraits traits = typeTraits(argumentType);
+        const SemanticTypeTraits traits = typeTraits(concreteArgumentType);
         const ExpressionInfo *argumentInfo =
             semanticModel.findExpression(*argument);
         const bool consumed = explicitMoveSource(argument) != nullptr ||
@@ -15499,14 +15544,8 @@ private:
         } else if (!traits.movable) {
           failure = "is not movable";
         } else if (traits.containsBorrowedState ||
-                   (argumentType.hasLambdaShape() &&
-                    std::any_of(argumentType.lambdaCaptureTypes().begin(),
-                                argumentType.lambdaCaptureTypes().end(),
-                                [&](const SemanticType &capture) {
-                                  return containsDisallowedCallableCaptureState(
-                                      capture);
-                                })) ||
-                   (!threadTask && !argumentType.hasLambdaShape())) {
+                   (!threadTask && containsDisallowedCallableCaptureState(
+                                       concreteArgumentType))) {
           failure = "contains borrowed or raw-pointer capture state";
         } else if (!ownedTransportMatchesConcrete(*target, contract,
                                                   resolved)) {
@@ -15527,7 +15566,7 @@ private:
                      .name),
              "Exact owned callable parameter declared here."});
         diagnostic.hints.emplace_back(
-            "Move an exact movable closure whose captures contain no "
+            "Move an exact movable callable whose stored state contains no "
             "references, tracked borrowed state, or raw pointers.");
         ownedDiagnostics.emplace_back(std::move(diagnostic));
       }
@@ -15631,8 +15670,14 @@ private:
       }
       for (const CallableParameterContract &contract :
            function.callableParameters) {
+        const bool exactReturnTransport =
+            contract.ownedTransport &&
+            contract.ownedTransport->kind ==
+                CallableOwnedTransportKind::ExactReturn &&
+            !contract.signatures.empty();
         if (contract.boundary != CallableBoundary::Confined ||
-            !containsExactType(function.returnType, contract.callableType)) {
+            !containsExactType(function.returnType, contract.callableType) ||
+            exactReturnTransport) {
           continue;
         }
         const Parameter *parameter =
@@ -15862,6 +15907,11 @@ private:
       }
       for (const CallableParameterContract &contract :
            function.callableParameters) {
+        const bool exactReturnTransport =
+            contract.ownedTransport &&
+            contract.ownedTransport->kind ==
+                CallableOwnedTransportKind::ExactReturn &&
+            !contract.signatures.empty();
         if (contract.boundary != CallableBoundary::Confined ||
             contract.parameterIndex >=
                 function.declaration->parameters().size()) {
@@ -15869,10 +15919,10 @@ private:
         }
 
         // validateConfinedCallableContracts owns the one focused diagnostic
-        // when the declared result itself transports this callable. Avoid a
-        // second error at the return expression while code generation is
-        // already disabled for the declaration.
-        if (containsExactType(function.returnType, contract.callableType)) {
+        // when a confined callable reaches the declared result without exact
+        // transport. Avoid a second error at the return expression.
+        if (!exactReturnTransport &&
+            containsExactType(function.returnType, contract.callableType)) {
           continue;
         }
 
@@ -15915,6 +15965,21 @@ private:
           if (permitted != nullptr &&
               semanticModel.findResolvedSymbol(*permitted) == binding->symbol) {
             permittedUses.insert(permitted);
+          }
+        }
+        if (exactReturnTransport) {
+          std::vector<const ExprPtr *> returns;
+          collectBorrowReturnExpressions(function.declaration->body().get(),
+                                         returns);
+          for (const ExprPtr *returned : returns) {
+            if (returned == nullptr || !*returned ||
+                movedFunctionParameter(*returned, function) !=
+                    contract.parameterIndex) {
+              continue;
+            }
+            if (const ExprPtr *source = explicitMoveSource(*returned)) {
+              permittedUses.insert(source->get());
+            }
           }
         }
 
@@ -15984,17 +16049,26 @@ private:
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2046", DiagnosticPhase::Semantics,
               expressionToken(*expression),
-              "Confined callable parameter '" + parameter.name.lexeme +
+              (exactReturnTransport ? "Exact-return callable parameter '"
+                                    : "Confined callable parameter '") +
+                  parameter.name.lexeme +
                   "' cannot be used as an ordinary value outside direct "
-                  "invocation or proven confined forwarding.");
+                  "invocation" +
+                  (exactReturnTransport ? " and its final exact move."
+                                        : " or proven confined forwarding."));
           diagnostic.related.push_back(
               {tokenSpan(parameter.name),
-               "Confined callable parameter declared here."});
+               exactReturnTransport
+                   ? "Exact-return callable parameter declared here."
+                   : "Confined callable parameter declared here."});
           diagnostic.hints.emplace_back(
-              "Invoke the callable directly or forward it to a direct "
-              "by-value generic parameter with a proven confined contract; "
-              "assignment, storage, and other value transport require an "
-              "owned callable boundary.");
+              exactReturnTransport
+                  ? "Invoke the callable directly and return it only through "
+                    "the declaration's exact std::move transport."
+                  : "Invoke the callable directly or forward it to a direct "
+                    "by-value generic parameter with a proven confined "
+                    "contract; assignment, storage, and other value "
+                    "transport require an owned callable boundary.");
           useDiagnostics.emplace_back(std::move(diagnostic));
         }
 
@@ -16008,17 +16082,23 @@ private:
             }
             Diagnostic diagnostic = makeDiagnostic(
                 "GTI-S2046", DiagnosticPhase::Semantics, capture.capture,
-                "Confined callable parameter '" + parameter.name.lexeme +
-                    "' cannot be used as an ordinary value outside direct "
-                    "invocation or proven confined forwarding.");
+                (exactReturnTransport ? "Exact-return callable parameter '"
+                                      : "Confined callable parameter '") +
+                    parameter.name.lexeme +
+                    "' cannot be captured or otherwise transported.");
             diagnostic.related.push_back(
                 {tokenSpan(parameter.name),
-                 "Confined callable parameter declared here."});
+                 exactReturnTransport
+                     ? "Exact-return callable parameter declared here."
+                     : "Confined callable parameter declared here."});
             diagnostic.hints.emplace_back(
-                "Invoke the callable directly or forward it to a direct "
-                "by-value generic parameter with a proven confined contract; "
-                "assignment, storage, capture, and other value transport "
-                "require an owned callable boundary.");
+                exactReturnTransport
+                    ? "Invoke the callable directly and return it only "
+                      "through the declaration's exact std::move transport."
+                    : "Invoke the callable directly or forward it to a direct "
+                      "by-value generic parameter with a proven confined "
+                      "contract; assignment, storage, capture, and other "
+                      "value transport require an owned callable boundary.");
             useDiagnostics.emplace_back(std::move(diagnostic));
           }
         }
@@ -17301,7 +17381,10 @@ private:
     const FunctionReturnBorrowSummary concreteBorrow =
         functionReturnBorrowSummary(
             function.returnType, function.parameterTypes, function.ownerClass,
-            function.staticMember, function.intrinsic);
+            function.staticMember, function.intrinsic,
+            declarationInfo == nullptr
+                ? std::nullopt
+                : exactMovedReturnParameter(*declarationInfo));
     const bool declarationOwnsBorrow =
         declarationInfo != nullptr &&
         declarationInfo->returnBorrowOrigin != BorrowOriginKind::None;

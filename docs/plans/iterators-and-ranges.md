@@ -49,8 +49,10 @@ multi-parameter concepts, validity-only trailing `requires`, public
 `std::copy_constructible` lifecycle fact, source-composed
 `std::forward_iterator`, source-defined `std::accumulate`, and
 forward-iterator `std::binary_search` over an iterator plus possibly distinct
-sentinel. These prove the existing exact operator and owner-loan protocol but
-do not complete the range-first surface.
+sentinel. The ordinary input family now also includes `std::find`, `std::count`,
+and `std::for_each`; the last combines repeated exact callable invocation with
+one exact moved return. These prove the existing exact operator, owner-loan,
+and callable transport protocols but do not complete the range-first surface.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -734,6 +736,27 @@ and advances a cursor to each midpoint. It requires no iterator subtraction or
 end mutation, performs logarithmic comparisons and linear iterator increments,
 and assumes the input is already sorted by `operator<`.
 
+The demonstrated ordinary input-iterator cluster is also implemented:
+
+```gti
+Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                     T& value);
+ptrdiff_t count<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                       T& value);
+Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
+                                                Sentinel last,
+                                                mut Function function);
+```
+
+Each uses `std::input_iterator<Iterator>` and
+`std::sentinel_for<Sentinel, Iterator>`. `find` and `count` additionally use
+exact dereference and equality constraints. `find` returns the declaration-
+linked moved `first`, preserving one concrete borrowed owner dependency while
+rejecting mixed unrelated return owners. `for_each` retains a confined exact
+invocation signature and separately proves that every reachable return moves
+the same callable parameter. It therefore supports read-callable and
+mut-callable nominal clients without storing or erasing them.
+
 The confined callable layer supports direct generic `void` operations, exact
 `bool` predicates, and exact context-supplied non-reference value results
 without tracked borrowed state or lambda identity, including
@@ -746,9 +769,29 @@ while rejecting once-callable targets. The
 accepted [owned-callable contract](callable-ownership-and-escape.md) fixes the
 remaining capture, lifecycle, and owned-escape model; this range plan does not
 invent another callable representation.
-`auto` result inference, borrowed results, and owned escape remain unavailable.
-No algorithm may force a lambda to escape or be stored merely to traverse a
-range.
+`auto` result inference and borrowed callable results remain unavailable. Exact
+final return of the repeatedly invoked parameter is implemented, but arbitrary
+owned escape and storage remain unavailable. No algorithm may force a callable
+into storage merely to traverse a range.
+
+### Current public blocker matrix
+
+| Module | Public function family | Status | True blocker category |
+| --- | --- | --- | --- |
+| `<std/algorithm>` | `find`, `count` | Implemented | Exact iterator/sentinel/dereference/equality contracts plus declaration-linked `first` return ownership now suffice. |
+| `<std/algorithm>` | `for_each` | Implemented | Repeated exact `void(T&)` invocation now composes with one exact moved callable return. |
+| `<std/algorithm>` | `copy` | Declaration only | No public writable output-iterator/dereference-assignment relationship exists. |
+| `<std/algorithm>` | `transform` | Declaration only | Needs the writable output relationship plus an exact callable-result-to-output relationship; callable invocation alone is not the blocker. |
+| `<std/algorithm>` | `reverse` | Declaration only | Bidirectional decrement and exact mutable element swap/move-through-reference are both absent. |
+| `<std/algorithm>` | `sort`, `sort(compare)` | Declaration only | Random-access traversal and mutable element swap are absent; the exact comparator contract is already expressible. |
+| `<std/utility>` | `swap`, `exchange` | Declaration only | Moving a value out through `mut T&`, then restoring that place on all paths, is not expressible. |
+| `<std/iterator>` | signed `advance`, signed `next`, `prev` | Declaration only | No bidirectional iterator/decrement capability or implemented prefix decrement operation exists. |
+| `<std/functional>` | primary `hash<T>::operator()` | Declaration only | GTI has no public hashability/customization contract for arbitrary `T`; a generic body would require public-name or backend magic. |
+| `<std/numeric>` | primitive `hash` specializations | Intentionally unsupported | Bodies are latent, but canonical public hash policy and hashability capability are not shipped. Numeric algorithm declarations have no remaining bodyless functions. |
+
+This classification is capability-based. It does not use SFINAE,
+subsumption, implicit conversions, partial specialization, or public function
+names to make a scaffold executable.
 
 ### Views
 
@@ -889,6 +932,9 @@ authoritative until a dedicated optimization architecture is adopted.
   `std` concepts over private exact protocol/lifecycle capabilities, with
   `std::accumulate` as the first input client and `std::binary_search` as the
   first copy-constructible forward-iterator client.
+- The ordinary `std::find`/`std::count`/`std::for_each` iterator/sentinel
+  cluster is implemented for same or distinct sentinels, exact homogeneous
+  comparisons, and exact returned callable ownership.
 - Define the remaining complete-range/readable/writable capabilities after
   range ownership and per-element protocol use are stable.
 - Use the implemented non-escaping operation, exact-predicate, and proven

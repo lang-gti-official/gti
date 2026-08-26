@@ -497,8 +497,10 @@ A `MirBody` owns:
   ordered, unique, within the call's operand list, and identical to the
   concrete target contract; and requires a confined invocation boundary if
   and only if the receiver traces to the matching enclosing callable-parameter
-  binding. An owned call argument must be the exact moved parameter operand.
-  An owned callee must either return that exact moved binding as a single-use
+  binding. An argument carrying owned transport must be the exact moved
+  parameter operand. An exact-return transport may coexist with a confined
+  boundary only when the parameter has repeatable signatures and no forwarding
+  edges. The callee must either return that exact moved binding as a single-use
   result transferred out of local cleanup, or return the exact owner
   construction whose declared field and constructor initializer prove the
   corresponding parameter-to-field move. Direct result/field materialization

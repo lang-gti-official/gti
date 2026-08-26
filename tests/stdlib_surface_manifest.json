@@ -2,7 +2,7 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "2d007b1a2844cc5ac199384bf24e80b1266e8625d9551d9245c4409beddef976",
-    "stdlib/std/algorithm.gti": "895d12a1ee4c2f951aa0da4f0e15410768cea111831eef6fcde6650c20b3432b",
+    "stdlib/std/algorithm.gti": "feda2c56b2d9a5d0f2ee9f9c99e4035ba3d3c6e14c75b4f5a109e3dd59b71203",
     "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
@@ -218,16 +218,19 @@
         "std::any_of",
         "std::binary_search",
         "std::clamp",
+        "std::count",
         "std::count_if",
+        "std::find",
         "std::find_if",
         "std::find_if_not",
+        "std::for_each",
         "std::max",
         "std::min",
         "std::none_of"
       ],
       "case_ids": ["algorithm"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates", "std::vector<int32_t>::iterator/sentinel/int32_t"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "stdlib/std/algorithm.gti"]
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "algorithm.scaffold",
@@ -235,14 +238,11 @@
       "status": "scaffold",
       "operations": [
         "std::copy",
-        "std::count",
-        "std::find",
-        "std::for_each",
         "std::reverse",
         "std::sort",
         "std::transform"
       ],
-      "reason": "These declarations have no GTI bodies and require callable result, output-iterator, or stronger iterator contracts.",
+      "reason": "These declarations have no GTI bodies and require writable-output or stronger bidirectional/random-access iterator contracts.",
       "evidence": ["stdlib/std/algorithm.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
     },
     {
