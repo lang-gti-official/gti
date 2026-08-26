@@ -522,6 +522,14 @@ A fixed array is inline contiguous storage containing exactly its compile-time
 extent. It does not decay to a pointer. Constant out-of-range indexing is
 ill-formed; dynamic out-of-range indexing produces a defined runtime failure.
 
+An array field is initialized as part of its containing object. Its elements
+are constructed in increasing index order; only successfully constructed
+elements participate in rollback, and normal destruction visits every element
+exactly once in reverse index order. Interface implementation does not alter
+the concrete element count or the selected concrete destructor. Moving an
+element or aggregate follows the same ownership and moved-from rules as the
+corresponding local array.
+
 The same distinction applies to checked standard-library owners and views:
 compile-time proof may reject a program, while a dynamic failure follows the
 specified GTI runtime contract rather than native undefined behaviour.

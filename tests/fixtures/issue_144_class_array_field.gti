@@ -1,0 +1,103 @@
+mut int32_t counted_constructed = 0;
+mut int32_t counted_destroyed = 0;
+mut int32_t polymorphic_constructed = 0;
+mut int32_t polymorphic_destroyed = 0;
+
+interface readable_item {
+  int32_t read();
+};
+
+class plain_item {
+public:
+  plain_item() {}
+  mut int32_t v = 7;
+};
+
+class counted_item {
+public:
+  counted_item() {
+    if (counted_constructed == 0) { counted_constructed = 1; }
+    else if (counted_constructed == 1) { counted_constructed = 2; }
+    else if (counted_constructed == 2) { counted_constructed = 3; }
+    else { counted_constructed = 99; }
+  }
+  ~counted_item() {
+    if (counted_destroyed == 0) { counted_destroyed = 1; }
+    else if (counted_destroyed == 1) { counted_destroyed = 2; }
+    else if (counted_destroyed == 2) { counted_destroyed = 3; }
+    else { counted_destroyed = 99; }
+  }
+  mut int32_t v = 5;
+};
+
+class move_only_item {
+public:
+  move_only_item() {}
+  move_only_item(move_only_item&) = delete;
+  mut int32_t v = 3;
+};
+
+class passive_polymorphic_item : public readable_item {
+public:
+  passive_polymorphic_item() {}
+  int32_t read() override { return v; }
+  mut int32_t v = 11;
+};
+
+class counted_polymorphic_item : public readable_item {
+public:
+  counted_polymorphic_item() {
+    if (polymorphic_constructed == 0) { polymorphic_constructed = 1; }
+    else if (polymorphic_constructed == 1) { polymorphic_constructed = 2; }
+    else { polymorphic_constructed = 99; }
+  }
+  ~counted_polymorphic_item() {
+    if (polymorphic_destroyed == 0) { polymorphic_destroyed = 1; }
+    else if (polymorphic_destroyed == 1) { polymorphic_destroyed = 2; }
+    else { polymorphic_destroyed = 99; }
+  }
+  int32_t read() override { return v; }
+  mut int32_t v = 13;
+};
+
+class field_array_owner {
+public:
+  field_array_owner() {}
+  mut plain_item plain[2] = {};
+  mut counted_item counted[3] = {};
+  mut move_only_item owned[2] = {};
+  mut passive_polymorphic_item passive_polymorphic[2] = {};
+  mut counted_polymorphic_item counted_polymorphic[2] = {};
+  mut int32_t nums[2] = {};
+};
+
+int32_t read_item(readable_item& item) { return item.read(); }
+
+int main() {
+  {
+    mut field_array_owner owner = field_array_owner();
+    if (counted_constructed != 3 || counted_destroyed != 0 ||
+        polymorphic_constructed != 2 || polymorphic_destroyed != 0) {
+      return 1;
+    }
+
+    owner.plain[0].v = 17;
+    owner.passive_polymorphic[1].v = 19;
+    if (owner.plain[0].v != 17 || owner.plain[1].v != 7 ||
+        owner.counted[2].v != 5 || owner.owned[1].v != 3 ||
+        read_item(owner.passive_polymorphic[0]) != 11 ||
+        read_item(owner.passive_polymorphic[1]) != 19 ||
+        read_item(owner.counted_polymorphic[1]) != 13 ||
+        owner.nums[0] != 0) {
+      return 2;
+    }
+  }
+
+  if (counted_constructed != 3 || counted_destroyed != 3) {
+    return 3;
+  }
+  if (polymorphic_constructed != 2 || polymorphic_destroyed != 2) {
+    return 4;
+  }
+  return 0;
+}
