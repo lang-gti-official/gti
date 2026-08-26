@@ -17533,6 +17533,15 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.operation == MirOperation::Remainder) {
+      output << "::gti_internal::backend::mir_nonzero_remainder_v1<"
+             << typeSpelling(instruction.info.type) << ">(";
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
     const auto spelling = [&]() -> std::string_view {
       switch (instruction.operation) {
       case MirOperation::Add:
@@ -18413,7 +18422,8 @@ private:
         }
         const std::optional<CheckedArrayElementDestination> checked =
             checkedArrayElementDestination(facts.body, *fusion.destination);
-        if (checked && failureForm && !instruction.localFailureSites.empty()) {
+        if (checked && failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitCheckedArrayParent(facts, *checked);
@@ -18446,7 +18456,8 @@ private:
               "verified fresh class assignment lost its checked array "
               "destination");
         }
-        if (failureForm && !instruction.localFailureSites.empty()) {
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitCheckedArrayParent(facts, *checked);
@@ -18522,7 +18533,8 @@ private:
           throw std::logic_error(
               "verified MIR class move assignment lost its array element");
         }
-        if (failureForm && !instruction.localFailureSites.empty()) {
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitArrayParent(facts, *access);
@@ -18911,7 +18923,8 @@ private:
             facts.body.findPlace(*instruction.destination)) {
       if (const std::optional<BindingArrayFieldElementAccess> access =
               bindingArrayFieldElementAccess(facts.body, *destinationPlace)) {
-        if (failureForm && !instruction.localFailureSites.empty()) {
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitBindingArrayFieldParent(facts, *access);
@@ -18938,7 +18951,8 @@ private:
       }
       if (const std::optional<ReceiverArrayElementAccess> access =
               receiverArrayElementAccess(facts.body, *destinationPlace)) {
-        if (failureForm && !instruction.localFailureSites.empty()) {
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitReceiverArrayParent(facts, *access);
@@ -19021,7 +19035,8 @@ private:
       }
       if (const std::optional<ArrayElementAccess> access =
               arrayElementAccess(facts.body, *destinationPlace)) {
-        if (failureForm && !instruction.localFailureSites.empty()) {
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !allMirLocalFailuresDischarged(instruction)) {
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
           emitArrayParent(facts, *access);

@@ -794,6 +794,9 @@ safetyFamily(DefinedFailureOutcome outcome) {
   if (outcome.code == DefinedFailureCode::IntegerOverflow) {
     return MirSafetyCheckFamily::ArithmeticOverflow;
   }
+  if (outcome.code == DefinedFailureCode::ModuloByZero) {
+    return MirSafetyCheckFamily::ArithmeticDomain;
+  }
   return std::nullopt;
 }
 
@@ -1190,13 +1193,16 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
         MirSafetyCheckFamily::StorageState);
     SafetyCheckEliminationPass overflowChecks(
         MirSafetyCheckFamily::ArithmeticOverflow);
+    SafetyCheckEliminationPass domainChecks(
+        MirSafetyCheckFamily::ArithmeticDomain);
     UnreachableBlockCleanupPass unreachableCleanup;
     DeadUnusedComputationPass deadComputations;
     if (!execute(scalarPromotion) || !execute(literalFolding) ||
         ((request.level == OptimizationLevel::O2 ||
           request.level == OptimizationLevel::O3) &&
          (!execute(sparseConstants) || !execute(boundsChecks) ||
-          !execute(storageChecks) || !execute(overflowChecks))) ||
+          !execute(storageChecks) || !execute(overflowChecks) ||
+          !execute(domainChecks))) ||
         !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }

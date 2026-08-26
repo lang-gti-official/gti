@@ -1090,7 +1090,7 @@ int main() {
   const lang::OptimizationPassReport *ownedFold =
       findPass(optimized.report, "fold-literal-identities");
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.size() == 8 && ownedFold != nullptr &&
+             optimized.report.passes.size() == 9 && ownedFold != nullptr &&
              ownedFold->shadowMismatches == 0,
          "the owned MIR pipeline should verify and report its bounded shadow "
          "transform");
@@ -2372,7 +2372,7 @@ int main() {
                                   .mir = frontend.mir,
                                   .level = level,
                                   .compatibility = &compatibility});
-    bool sharedPassesMatch = optimized.report.passes.size() == 8;
+    bool sharedPassesMatch = optimized.report.passes.size() == 9;
     for (const lang::OptimizationPassReport &expected : o1.report.passes) {
       if (expected.name != "scalar-promotion" &&
           expected.name != "fold-literal-identities") {

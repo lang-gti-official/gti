@@ -7300,6 +7300,21 @@ inline mir_failure_status_v1 mir_checked_remainder_v1(Left left, Right right,
   return mir_failure_success_v1;
 }
 
+template <typename Target, typename Left, typename Right>
+inline Target mir_nonzero_remainder_v1(Left left, Right right) noexcept {
+  static_assert(std::is_integral_v<Target> && std::is_integral_v<Left> &&
+                std::is_integral_v<Right>);
+  const Target promoted_left = static_cast<Target>(left);
+  const Target promoted_right = static_cast<Target>(right);
+  if constexpr (std::is_signed_v<Target>) {
+    if (promoted_left == (std::numeric_limits<Target>::min)() &&
+        promoted_right == -1) {
+      return Target{0};
+    }
+  }
+  return static_cast<Target>(promoted_left % promoted_right);
+}
+
 template <typename Target, typename Value>
 inline mir_failure_status_v1 mir_checked_negate_v1(Value value,
                                                    Target *result) noexcept {

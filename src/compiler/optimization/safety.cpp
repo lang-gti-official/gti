@@ -1,11 +1,14 @@
 #include "gti/optimization/safety.h"
 
 #include "gti/checked_integer.h"
+#include "gti/mir_dominance.h"
 #include "gti/optimization/alias.h"
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/loops.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -28,6 +31,11 @@ struct IntegerFact {
   CheckedIntegerDomain domain;
   CheckedIntegerValue lower;
   CheckedIntegerValue upper;
+  // A result-domain bound that remains valid when loop joins widen the
+  // observed interval. Only operations whose semantics impose the bound
+  // independently of a changing operand may provide this envelope.
+  std::optional<std::pair<CheckedIntegerValue, CheckedIntegerValue>>
+      wideningEnvelope;
   Evidence evidence;
 
   friend bool operator==(const IntegerFact &, const IntegerFact &) = default;
@@ -45,6 +53,8 @@ struct AbstractState {
   bool reachable = false;
   std::map<MirValueId, IntegerFact> integers;
   std::map<MirPlaceId, IntegerFact> integerPlaces;
+  std::map<MirValueId, IntegerFact> arrayValues;
+  std::map<MirPlaceId, IntegerFact> arrayElements;
   std::map<MirValueId, MirPlaceId> loadedOrigins;
   std::map<MirValueId, StorageFact> storageValues;
   std::map<MirValueId, MirPlaceId> storageOrigins;
@@ -53,6 +63,8 @@ struct AbstractState {
   friend bool operator==(const AbstractState &,
                          const AbstractState &) = default;
 };
+
+using PlaceThresholds = std::map<MirPlaceId, IntegerFact>;
 
 struct BlockTransfer {
   AbstractState output;
@@ -186,6 +198,92 @@ evaluatedValue(const std::optional<CheckedIntegerOutcome> &outcome) {
                           : std::optional<CheckedIntegerValue>{*value};
 }
 
+[[nodiscard]] CheckedIntegerValue lesser(CheckedIntegerValue left,
+                                         CheckedIntegerValue right) {
+  return compare(left, right) <= 0 ? left : right;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+remainderFact(const IntegerFact &left, const IntegerFact &right) {
+  if (left.domain != right.domain || right.lower != right.upper) {
+    return std::nullopt;
+  }
+  const CheckedIntegerValue divisor = normalizeCheckedInteger(right.lower);
+  if (divisor.magnitude == 0) {
+    return std::nullopt;
+  }
+
+  const CheckedIntegerValue zero;
+  const CheckedIntegerValue positiveLimit{.magnitude = divisor.magnitude -
+                                                       std::uint64_t{1}};
+  const CheckedIntegerValue negativeLimit = normalizeCheckedInteger(
+      {.negative = true, .magnitude = positiveLimit.magnitude});
+  IntegerFact result{
+      .domain = left.domain,
+      .lower = zero,
+      .upper = positiveLimit,
+      .wideningEnvelope =
+          std::pair{left.domain.signedValue ? negativeLimit : zero,
+                    positiveLimit},
+      .evidence = merged(left.evidence, right.evidence)};
+
+  if (!left.domain.signedValue || compare(left.lower, zero) >= 0) {
+    if (compare(left.upper,
+                CheckedIntegerValue{.magnitude = divisor.magnitude}) < 0) {
+      result.lower = left.lower;
+      result.upper = left.upper;
+    } else {
+      result.upper = lesser(left.upper, positiveLimit);
+    }
+    return result;
+  }
+
+  if (compare(left.upper, zero) <= 0) {
+    if (left.lower.magnitude < divisor.magnitude) {
+      result.lower = left.lower;
+      result.upper = left.upper;
+    } else {
+      result.lower = normalizeCheckedInteger(
+          {.negative = true,
+           .magnitude =
+               std::min(left.lower.magnitude, positiveLimit.magnitude)});
+      result.upper = zero;
+    }
+    return result;
+  }
+
+  result.lower = normalizeCheckedInteger(
+      {.negative = true,
+       .magnitude = std::min(left.lower.magnitude, positiveLimit.magnitude)});
+  result.upper = lesser(left.upper, positiveLimit);
+  return result;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+bitwiseAndFact(const IntegerFact &left, const IntegerFact &right) {
+  if (left.domain != right.domain) {
+    return std::nullopt;
+  }
+  const IntegerFact *mask = nullptr;
+  if (left.lower == left.upper &&
+      !normalizeCheckedInteger(left.lower).negative) {
+    mask = &left;
+  } else if (right.lower == right.upper &&
+             !normalizeCheckedInteger(right.lower).negative) {
+    mask = &right;
+  }
+  if (mask == nullptr) {
+    return std::nullopt;
+  }
+  const CheckedIntegerValue zero;
+  const CheckedIntegerValue upper = normalizeCheckedInteger(mask->lower);
+  return IntegerFact{.domain = left.domain,
+                     .lower = zero,
+                     .upper = upper,
+                     .wideningEnvelope = std::pair{zero, upper},
+                     .evidence = merged(left.evidence, right.evidence)};
+}
+
 [[nodiscard]] std::optional<IntegerFact>
 binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
            const IntegerFact &right) {
@@ -203,6 +301,10 @@ binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
   };
   bool safe = true;
   switch (operation) {
+  case CheckedIntegerOperation::Remainder:
+    return remainderFact(left, right);
+  case CheckedIntegerOperation::BitwiseAnd:
+    return bitwiseAndFact(left, right);
   case CheckedIntegerOperation::Add:
     safe =
         evaluate(left.lower, right.lower) && evaluate(left.upper, right.upper);
@@ -547,7 +649,9 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
     break;
   case MirOperation::Add:
   case MirOperation::Subtract:
-  case MirOperation::Multiply: {
+  case MirOperation::Multiply:
+  case MirOperation::Remainder:
+  case MirOperation::BitwiseAnd: {
     if (instruction.operands.size() != 2) {
       break;
     }
@@ -556,12 +660,25 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
     if (!right) {
       break;
     }
-    const CheckedIntegerOperation operation =
-        instruction.operation == MirOperation::Add
-            ? CheckedIntegerOperation::Add
-        : instruction.operation == MirOperation::Subtract
-            ? CheckedIntegerOperation::Subtract
-            : CheckedIntegerOperation::Multiply;
+    CheckedIntegerOperation operation = CheckedIntegerOperation::BitwiseAnd;
+    switch (instruction.operation) {
+    case MirOperation::Add:
+      operation = CheckedIntegerOperation::Add;
+      break;
+    case MirOperation::Subtract:
+      operation = CheckedIntegerOperation::Subtract;
+      break;
+    case MirOperation::Multiply:
+      operation = CheckedIntegerOperation::Multiply;
+      break;
+    case MirOperation::Remainder:
+      operation = CheckedIntegerOperation::Remainder;
+      break;
+    case MirOperation::BitwiseAnd:
+      break;
+    default:
+      break;
+    }
     result = binaryFact(operation, *left, *right);
     break;
   }
@@ -590,12 +707,119 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
                     projected.projections.begin());
 }
 
+struct FixedArrayProjection {
+  MirPlaceId arrayPlace = 0;
+  MirPlaceId elementPlace = 0;
+  std::uint64_t length = 0;
+  MirPlaceProjection projection;
+};
+
+[[nodiscard]] IntegerFact joinedInteger(const IntegerFact &left,
+                                        const IntegerFact &right, bool widen);
+
+[[nodiscard]] FixedArrayProjection
+fixedArrayProjection(const MirBody &body, MirPlaceId projectedId) {
+  const MirPlace *projected = body.findPlace(projectedId);
+  if (projected == nullptr || projected->projections.empty()) {
+    return {};
+  }
+  const MirPlaceProjection &projection = projected->projections.back();
+  if (projection.kind != MirProjectionKind::Index) {
+    return {};
+  }
+  const auto parent = std::find_if(
+      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+        return candidate.type.kind == SemanticType::Array &&
+               candidate.type.arrayLength != 0 &&
+               candidate.type.arguments.size() == 1 &&
+               constantIntegerDomain(candidate.type.arguments.front()) &&
+               samePlacePrefix(candidate, *projected);
+      });
+  if (parent == body.places.end()) {
+    return {};
+  }
+  return {.arrayPlace = parent->id,
+          .elementPlace = projectedId,
+          .length = parent->type.arrayLength,
+          .projection = projection};
+}
+
+[[nodiscard]] bool
+trackableArrayRoot(const MirPlaceAliasEscapeAnalysis &aliases,
+                   MirPlaceId place) {
+  const MirPlaceEscapeFact *escape = aliases.escape(place);
+  return escape == nullptr || !escape->escapesBody();
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+arrayForOperand(const AbstractState &state,
+                const MirPlaceAliasEscapeAnalysis &aliases,
+                const MirOperand &operand) {
+  if (operand.value != 0) {
+    const auto value = state.arrayValues.find(operand.value);
+    if (value != state.arrayValues.end()) {
+      return value->second;
+    }
+  }
+  if (operand.place != 0) {
+    const auto elements =
+        state.arrayElements.find(canonicalPlace(aliases, operand.place));
+    if (elements != state.arrayElements.end()) {
+      return elements->second;
+    }
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+aggregateArrayFact(const MirBody &body, const AbstractState &state,
+                   const MirInstruction &instruction) {
+  if (!instruction.result || instruction.kind != MirInstructionKind::Compute ||
+      instruction.operation != MirOperation::Aggregate ||
+      instruction.info.type.kind != SemanticType::Array ||
+      instruction.info.type.arrayLength == 0 ||
+      instruction.info.type.arguments.size() != 1) {
+    return std::nullopt;
+  }
+  const std::optional<CheckedIntegerDomain> domain =
+      constantIntegerDomain(instruction.info.type.arguments.front());
+  if (!domain) {
+    return std::nullopt;
+  }
+  Evidence evidence;
+  addInstruction(evidence, instruction.id);
+  addValue(evidence, *instruction.result);
+  IntegerFact elements{.domain = *domain,
+                       .lower = {},
+                       .upper = {},
+                       .evidence = std::move(evidence)};
+  bool initialized = false;
+  for (const MirOperand &operand : instruction.operands) {
+    const std::optional<IntegerFact> fact =
+        integerForOperand(body, state, operand);
+    if (!fact || fact->domain != *domain) {
+      return std::nullopt;
+    }
+    elements = initialized ? joinedInteger(elements, *fact, false) : *fact;
+    initialized = true;
+  }
+  if (!initialized ||
+      instruction.operands.size() < instruction.info.type.arrayLength) {
+    IntegerFact zero{.domain = *domain, .lower = {}, .upper = {}};
+    elements = initialized ? joinedInteger(elements, zero, false) : zero;
+  }
+  addInstruction(elements.evidence, instruction.id);
+  addValue(elements.evidence, *instruction.result);
+  return elements;
+}
+
 void invalidatePlaceRoot(const MirBody &body,
                          const MirPlaceAliasEscapeAnalysis &aliases,
                          AbstractState &state, MirPlaceId destination) {
   const MirPlace *written = body.findPlace(destination);
   if (written == nullptr) {
     state.integerPlaces.clear();
+    state.arrayElements.clear();
     state.loadedOrigins.clear();
     state.storageValues.clear();
     state.storageOrigins.clear();
@@ -606,6 +830,8 @@ void invalidatePlaceRoot(const MirBody &body,
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
   std::erase_if(state.integerPlaces,
+                [&](const auto &entry) { return overlaps(entry.first); });
+  std::erase_if(state.arrayElements,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.loadedOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
@@ -632,50 +858,43 @@ struct FixedArrayIndex {
 [[nodiscard]] FixedArrayIndex
 fixedArrayIndex(const MirBody &body, const AbstractState &state,
                 const MirInstruction &instruction) {
-  if (instruction.kind != MirInstructionKind::Load || !instruction.result ||
-      !isMirBlockParameterType(instruction.info.type) ||
+  MirPlaceId projectedId = 0;
+  if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+      instruction.operands.size() == 1) {
+    projectedId = instruction.operands.front().place;
+  } else if (instruction.kind == MirInstructionKind::Assign &&
+             instruction.destination && instruction.operands.size() == 1) {
+    projectedId = *instruction.destination;
+  }
+  if (projectedId == 0 || !isMirBlockParameterType(instruction.info.type) ||
       instruction.info.traits.drop != DropKind::Trivial ||
-      instruction.info.traits.containsBorrowedState ||
-      instruction.operands.size() != 1 ||
-      instruction.operands.front().place == 0) {
+      instruction.info.traits.containsBorrowedState) {
     return {};
   }
-  const MirPlaceId projectedId = instruction.operands.front().place;
-  const MirPlace *projected = body.findPlace(projectedId);
-  if (projected == nullptr || projected->projections.empty()) {
-    return {};
-  }
-  const MirPlaceProjection &projection = projected->projections.back();
-  if (projection.kind != MirProjectionKind::Index) {
-    return {};
-  }
-  const auto parent = std::find_if(
-      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
-        return candidate.type.kind == SemanticType::Array &&
-               candidate.type.arrayLength != 0 &&
-               samePlacePrefix(candidate, *projected);
-      });
-  if (parent == body.places.end()) {
+  const FixedArrayProjection projected =
+      fixedArrayProjection(body, projectedId);
+  if (projected.arrayPlace == 0) {
     return {};
   }
   std::optional<IntegerFact> index;
-  if (projection.constantIndex) {
+  if (projected.projection.constantIndex) {
     const std::optional<CheckedIntegerDomain> domain =
         constantIntegerDomain(SemanticType::UInt64);
     if (domain) {
       Evidence evidence;
       addPlace(evidence, projectedId);
-      index = IntegerFact{.domain = *domain,
-                          .lower = {.magnitude = *projection.constantIndex},
-                          .upper = {.magnitude = *projection.constantIndex},
-                          .evidence = std::move(evidence)};
+      index = IntegerFact{
+          .domain = *domain,
+          .lower = {.magnitude = *projected.projection.constantIndex},
+          .upper = {.magnitude = *projected.projection.constantIndex},
+          .evidence = std::move(evidence)};
     }
-  } else if (projection.index != 0) {
-    index = integerForValue(body, state, projection.index);
+  } else if (projected.projection.index != 0) {
+    index = integerForValue(body, state, projected.projection.index);
   }
-  return {.arrayPlace = parent->id,
+  return {.arrayPlace = projected.arrayPlace,
           .elementPlace = projectedId,
-          .length = parent->type.arrayLength,
+          .length = projected.length,
           .index = std::move(index)};
 }
 
@@ -731,6 +950,7 @@ storageOriginForOperand(const AbstractState &state,
 
 void killUnknownMemory(AbstractState &state) {
   state.integerPlaces.clear();
+  state.arrayElements.clear();
   state.loadedOrigins.clear();
   state.storageValues.clear();
   state.storages.clear();
@@ -740,7 +960,8 @@ void killUnknownMemory(AbstractState &state) {
 void applyInstruction(const MirBody &body,
                       const MirPlaceAliasEscapeAnalysis &aliases,
                       const MirBlock &block, const MirInstruction &instruction,
-                      AbstractState &state) {
+                      AbstractState &state,
+                      const PlaceThresholds *thresholds = nullptr) {
   if (!state.reachable || instruction.tombstone) {
     return;
   }
@@ -748,6 +969,10 @@ void applyInstruction(const MirBody &body,
     if (const std::optional<IntegerFact> fact =
             computeIntegerFact(body, state, instruction)) {
       state.integers[*instruction.result] = *fact;
+    }
+    if (const std::optional<IntegerFact> elements =
+            aggregateArrayFact(body, state, instruction)) {
+      state.arrayValues[*instruction.result] = *elements;
     }
     if (instruction.result && instruction.operation == MirOperation::Identity &&
         instruction.operands.size() == 1 &&
@@ -765,15 +990,34 @@ void applyInstruction(const MirBody &body,
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
       const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
-      if (const std::optional<IntegerFact> fact =
-              integerForPlace(body, state, sourcePlace)) {
+      const FixedArrayProjection projected =
+          fixedArrayProjection(body, source.place);
+      const MirPlaceId arrayPlace =
+          canonicalPlace(aliases, projected.arrayPlace);
+      const auto arrayElements = state.arrayElements.find(arrayPlace);
+      const std::optional<IntegerFact> fact =
+          projected.arrayPlace != 0 &&
+                  arrayElements != state.arrayElements.end()
+              ? std::optional<IntegerFact>{arrayElements->second}
+              : integerForPlace(body, state, sourcePlace);
+      if (fact) {
         IntegerFact loaded = *fact;
         add(loaded.evidence, block.id);
         addInstruction(loaded.evidence, instruction.id);
         addValue(loaded.evidence, *instruction.result);
         addPlace(loaded.evidence, source.place);
+        addPlace(loaded.evidence, projected.arrayPlace);
         state.integers[*instruction.result] = std::move(loaded);
         state.loadedOrigins[*instruction.result] = sourcePlace;
+      }
+      if (const std::optional<IntegerFact> elements =
+              arrayForOperand(state, aliases, source)) {
+        IntegerFact loaded = *elements;
+        add(loaded.evidence, block.id);
+        addInstruction(loaded.evidence, instruction.id);
+        addValue(loaded.evidence, *instruction.result);
+        addPlace(loaded.evidence, source.place);
+        state.arrayValues[*instruction.result] = std::move(loaded);
       }
       const auto storage = state.storages.find(sourcePlace);
       if (storage != state.storages.end()) {
@@ -789,6 +1033,14 @@ void applyInstruction(const MirBody &body,
       instruction.destination && !instruction.operands.empty()) {
     const MirPlaceId destination =
         canonicalPlace(aliases, *instruction.destination);
+    const FixedArrayProjection projected =
+        fixedArrayProjection(body, *instruction.destination);
+    const MirPlaceId arrayPlace = canonicalPlace(aliases, projected.arrayPlace);
+    const auto previousArray = state.arrayElements.find(arrayPlace);
+    const std::optional<IntegerFact> previousElements =
+        projected.arrayPlace != 0 && previousArray != state.arrayElements.end()
+            ? std::optional<IntegerFact>{previousArray->second}
+            : std::nullopt;
     const MirOperand &source = instruction.operands.front();
     const std::optional<IntegerFact> fact =
         source.place != 0
@@ -797,15 +1049,53 @@ void applyInstruction(const MirBody &body,
             : integerForOperand(body, state, source);
     const std::optional<StorageFact> storage =
         storageForOperand(state, aliases, source);
+    const std::optional<IntegerFact> sourceArray =
+        arrayForOperand(state, aliases, source);
     invalidatePlaceRoot(body, aliases, state, destination);
-    if (fact) {
+    if (fact && projected.arrayPlace == 0) {
       IntegerFact stored = *fact;
       add(stored.evidence, block.id);
       addInstruction(stored.evidence, instruction.id);
       addPlace(stored.evidence, destination);
-      state.integerPlaces[destination] = std::move(stored);
+      const auto threshold = thresholds == nullptr
+                                 ? PlaceThresholds::const_iterator{}
+                                 : thresholds->find(destination);
+      bool valid = true;
+      if (thresholds != nullptr && threshold != thresholds->end()) {
+        valid = intersect(stored, threshold->second.lower,
+                          threshold->second.upper, threshold->second.evidence);
+        if (valid) {
+          stored.wideningEnvelope =
+              std::pair{threshold->second.lower, threshold->second.upper};
+        }
+      }
+      if (valid) {
+        state.integerPlaces[destination] = std::move(stored);
+      } else {
+        state.integerPlaces.erase(destination);
+      }
     } else {
       state.integerPlaces.erase(destination);
+    }
+    if (projected.arrayPlace != 0 && fact &&
+        trackableArrayRoot(aliases, arrayPlace) &&
+        (previousElements || projected.length == 1)) {
+      IntegerFact elements =
+          previousElements ? joinedInteger(*previousElements, *fact, false)
+                           : *fact;
+      add(elements.evidence, block.id);
+      addInstruction(elements.evidence, instruction.id);
+      addPlace(elements.evidence, projected.arrayPlace);
+      addPlace(elements.evidence, projected.elementPlace);
+      state.arrayElements[arrayPlace] = std::move(elements);
+    } else if (const MirPlace *place = body.findPlace(destination);
+               place != nullptr && place->type.kind == SemanticType::Array &&
+               sourceArray && trackableArrayRoot(aliases, destination)) {
+      IntegerFact elements = *sourceArray;
+      add(elements.evidence, block.id);
+      addInstruction(elements.evidence, instruction.id);
+      addPlace(elements.evidence, destination);
+      state.arrayElements[destination] = std::move(elements);
     }
     if (storage) {
       StorageFact stored = *storage;
@@ -921,11 +1211,12 @@ void applyInstruction(const MirBody &body,
 
 [[nodiscard]] BlockTransfer
 transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
-              const MirBlock &block, AbstractState state) {
+              const MirBlock &block, AbstractState state,
+              const PlaceThresholds *thresholds = nullptr) {
   BlockTransfer result;
   for (const MirInstruction &instruction : block.instructions) {
     result.before.insert_or_assign(instruction.id, state);
-    applyInstruction(body, aliases, block, instruction, state);
+    applyInstruction(body, aliases, block, instruction, state, thresholds);
   }
   result.output = std::move(state);
   return result;
@@ -938,13 +1229,43 @@ transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const bool lowerExpanded = compare(right.lower, left.lower) < 0;
   const bool upperExpanded = compare(right.upper, left.upper) > 0;
+  const CheckedIntegerValue joinedLower =
+      lowerExpanded ? right.lower : left.lower;
+  const CheckedIntegerValue joinedUpper =
+      upperExpanded ? right.upper : left.upper;
+  const auto contains = [&](const auto &envelope, const IntegerFact &fact) {
+    return compare(envelope.first, fact.lower) <= 0 &&
+           compare(envelope.second, fact.upper) >= 0;
+  };
+  std::optional<std::pair<CheckedIntegerValue, CheckedIntegerValue>> envelope;
+  if (left.wideningEnvelope && right.wideningEnvelope) {
+    envelope = std::pair{compare(left.wideningEnvelope->first,
+                                 right.wideningEnvelope->first) <= 0
+                             ? left.wideningEnvelope->first
+                             : right.wideningEnvelope->first,
+                         compare(left.wideningEnvelope->second,
+                                 right.wideningEnvelope->second) >= 0
+                             ? left.wideningEnvelope->second
+                             : right.wideningEnvelope->second};
+  } else if (left.wideningEnvelope && contains(*left.wideningEnvelope, right)) {
+    envelope = left.wideningEnvelope;
+  } else if (right.wideningEnvelope &&
+             contains(*right.wideningEnvelope, left)) {
+    envelope = right.wideningEnvelope;
+  }
+  const bool envelopeContainsJoin =
+      envelope && compare(envelope->first, joinedLower) <= 0 &&
+      compare(envelope->second, joinedUpper) >= 0;
   return {.domain = left.domain,
           .lower = widen && lowerExpanded
-                       ? minimumValue(left.domain)
+                       ? (envelopeContainsJoin ? envelope->first
+                                               : minimumValue(left.domain))
                        : (lowerExpanded ? right.lower : left.lower),
           .upper = widen && upperExpanded
-                       ? maximumValue(left.domain)
+                       ? (envelopeContainsJoin ? envelope->second
+                                               : maximumValue(left.domain))
                        : (upperExpanded ? right.upper : left.upper),
+          .wideningEnvelope = envelopeContainsJoin ? envelope : std::nullopt,
           .evidence = merged(left.evidence, right.evidence)};
 }
 
@@ -1022,6 +1343,8 @@ void joinStorageValues(std::map<MirValueId, StorageFact> &target,
   const AbstractState before = target;
   joinIntegers(target.integers, incoming.integers, widen);
   joinIntegers(target.integerPlaces, incoming.integerPlaces, widen);
+  joinIntegers(target.arrayValues, incoming.arrayValues, widen);
+  joinIntegers(target.arrayElements, incoming.arrayElements, widen);
   for (auto iterator = target.loadedOrigins.begin();
        iterator != target.loadedOrigins.end();) {
     const auto found = incoming.loadedOrigins.find(iterator->first);
@@ -1140,15 +1463,414 @@ struct Edge {
   return result;
 }
 
+struct InstructionSite {
+  const MirBlock *block = nullptr;
+  const MirInstruction *instruction = nullptr;
+};
+
+[[nodiscard]] InstructionSite definitionSite(const MirBody &body,
+                                             MirValueId value) {
+  const MirValue *mirValue = body.findValue(value);
+  const MirBlock *block =
+      mirValue == nullptr ? nullptr : body.findBlock(mirValue->definitionBlock);
+  const MirInstruction *instruction = definingInstruction(body, value);
+  return {.block = block, .instruction = instruction};
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+literalOperandFact(const MirBody &body, const MirOperand &operand) {
+  if (operand.literal) {
+    return literalIntegerFact(*operand.literal, operand.type);
+  }
+  if (operand.kind != MirOperandKind::Value || operand.value == 0) {
+    return std::nullopt;
+  }
+  const MirInstruction *definition = definingInstruction(body, operand.value);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::Compute ||
+      definition->operation != MirOperation::Literal || !definition->literal) {
+    return std::nullopt;
+  }
+  return literalIntegerFact(*definition->literal, definition->info.type);
+}
+
+[[nodiscard]] std::optional<MirPlaceId>
+loadedPlace(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+            const MirOperand &operand, std::size_t remaining = 4) {
+  if (remaining == 0 || operand.kind != MirOperandKind::Value ||
+      operand.value == 0) {
+    return std::nullopt;
+  }
+  const MirInstruction *definition = definingInstruction(body, operand.value);
+  if (definition == nullptr) {
+    return std::nullopt;
+  }
+  if (definition->kind == MirInstructionKind::Load &&
+      definition->operands.size() == 1 &&
+      definition->operands.front().place != 0) {
+    return canonicalPlace(aliases, definition->operands.front().place);
+  }
+  if (definition->kind == MirInstructionKind::Compute &&
+      definition->operation == MirOperation::Identity &&
+      definition->operands.size() == 1) {
+    return loadedPlace(body, aliases, definition->operands.front(),
+                       remaining - 1);
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] bool opaqueLoopMutation(const MirInstruction &instruction) {
+  const MirEffectTraits effect = effects(instruction);
+  return instruction.rawMemoryAccess ||
+         instruction.unsafeOperation != UnsafeOperationKind::None ||
+         instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::Construct ||
+         effect.writesUnknownMemory || effect.invokesUserCode ||
+         effect.maySynchronize;
+}
+
+struct ExactLoopCount {
+  MirPlaceId counter = 0;
+  std::uint64_t iterations = 0;
+  Evidence evidence;
+};
+
+[[nodiscard]] std::vector<std::optional<ExactLoopCount>>
+exactLoopCounts(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+                const MirDominanceInfo &dominance,
+                const MirLoopAnalysis &loops) {
+  std::vector<std::optional<ExactLoopCount>> result(loops.loops.size());
+  if (loops.hasIrreducibleControlFlow) {
+    return result;
+  }
+  for (std::size_t loopIndex = 0; loopIndex < loops.loops.size(); ++loopIndex) {
+    const MirNaturalLoop &loop = loops.loops[loopIndex];
+    const MirBlock *header = body.findBlock(loop.header);
+    if (header == nullptr || loop.latches.size() != 1 ||
+        header->terminator.kind != MirTerminatorKind::Branch ||
+        !header->terminator.value ||
+        header->terminator.value->kind != MirOperandKind::Value ||
+        !loop.contains(header->terminator.target) ||
+        loop.contains(header->terminator.elseTarget)) {
+      continue;
+    }
+    const MirInstruction *comparison =
+        definingInstruction(body, header->terminator.value->value);
+    if (comparison == nullptr ||
+        comparison->kind != MirInstructionKind::Compute ||
+        comparison->operands.size() != 2) {
+      continue;
+    }
+    MirOperation relation = comparison->operation;
+    const MirOperand *variable = &comparison->operands[0];
+    const MirOperand *bound = &comparison->operands[1];
+    std::optional<MirPlaceId> counter = loadedPlace(body, aliases, *variable);
+    if (!counter) {
+      variable = &comparison->operands[1];
+      bound = &comparison->operands[0];
+      counter = loadedPlace(body, aliases, *variable);
+      relation = invertedComparison(relation);
+    }
+    const std::optional<IntegerFact> boundFact =
+        literalOperandFact(body, *bound);
+    if (!counter || relation != MirOperation::Less || !boundFact ||
+        !singleton(*boundFact) ||
+        normalizeCheckedInteger(boundFact->lower).negative) {
+      continue;
+    }
+    const MirPlaceEscapeFact *escape = aliases.escape(*counter);
+    if (escape != nullptr && escape->escapesBody()) {
+      continue;
+    }
+
+    std::vector<InstructionSite> insideWrites;
+    std::vector<InstructionSite> outsideWrites;
+    bool opaque = false;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (loop.contains(block.id) && opaqueLoopMutation(instruction)) {
+          opaque = true;
+        }
+        if (!instruction.destination ||
+            aliases.relation(*counter, *instruction.destination) ==
+                MirAliasRelation::NoAlias) {
+          continue;
+        }
+        (loop.contains(block.id) ? insideWrites : outsideWrites)
+            .push_back({.block = &block, .instruction = &instruction});
+      }
+    }
+    if (opaque || insideWrites.size() != 1 || outsideWrites.size() != 1) {
+      continue;
+    }
+    const InstructionSite &initialization = outsideWrites.front();
+    const InstructionSite &update = insideWrites.front();
+    if (initialization.block == nullptr ||
+        initialization.instruction == nullptr || update.block == nullptr ||
+        update.instruction == nullptr ||
+        !dominance.dominates(initialization.block->id, loop.header) ||
+        !dominance.dominates(update.block->id, loop.latches.front()) ||
+        (initialization.instruction->kind != MirInstructionKind::Initialize &&
+         initialization.instruction->kind != MirInstructionKind::Assign) ||
+        update.instruction->kind != MirInstructionKind::Assign ||
+        initialization.instruction->operands.size() != 1 ||
+        update.instruction->operands.size() != 1) {
+      continue;
+    }
+    const std::optional<IntegerFact> initial =
+        literalOperandFact(body, initialization.instruction->operands.front());
+    const MirOperand &updatedValue = update.instruction->operands.front();
+    const MirInstruction *addition =
+        updatedValue.kind == MirOperandKind::Value
+            ? definingInstruction(body, updatedValue.value)
+            : nullptr;
+    if (!initial || !singleton(*initial) ||
+        normalizeCheckedInteger(initial->lower).negative ||
+        initial->domain != boundFact->domain || addition == nullptr ||
+        addition->kind != MirInstructionKind::Compute ||
+        addition->operation != MirOperation::Add ||
+        addition->operands.size() != 2) {
+      continue;
+    }
+    const MirOperand *stepOperand = nullptr;
+    if (loadedPlace(body, aliases, addition->operands[0]) == counter) {
+      stepOperand = &addition->operands[1];
+    } else if (loadedPlace(body, aliases, addition->operands[1]) == counter) {
+      stepOperand = &addition->operands[0];
+    }
+    const std::optional<IntegerFact> step =
+        stepOperand == nullptr ? std::nullopt
+                               : literalOperandFact(body, *stepOperand);
+    if (!step || !singleton(*step) || step->domain != initial->domain ||
+        normalizeCheckedInteger(step->lower).negative ||
+        step->lower.magnitude == 0) {
+      continue;
+    }
+    const std::uint64_t initialValue = initial->lower.magnitude;
+    const std::uint64_t boundValue = boundFact->lower.magnitude;
+    const std::uint64_t stepValue = step->lower.magnitude;
+    const std::uint64_t distance =
+        initialValue >= boundValue ? 0 : boundValue - initialValue;
+    const std::uint64_t iterations =
+        distance == 0 ? 0 : 1 + (distance - 1) / stepValue;
+    Evidence evidence = merged(initial->evidence, boundFact->evidence);
+    evidence = merged(std::move(evidence), step->evidence);
+    add(evidence, loop.header);
+    add(evidence, loop.latches.front());
+    addInstruction(evidence, comparison->id);
+    addInstruction(evidence, initialization.instruction->id);
+    addInstruction(evidence, addition->id);
+    addInstruction(evidence, update.instruction->id);
+    addPlace(evidence, *counter);
+    result[loopIndex] = ExactLoopCount{.counter = *counter,
+                                       .iterations = iterations,
+                                       .evidence = std::move(evidence)};
+  }
+  return result;
+}
+
+[[nodiscard]] std::optional<AbstractState> stateBeforeInstruction(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const std::vector<AbstractState> &incoming, InstructionSite site) {
+  if (site.block == nullptr || site.instruction == nullptr ||
+      site.block->id == 0 || site.block->id > incoming.size() ||
+      !incoming[site.block->id - 1].reachable) {
+    return std::nullopt;
+  }
+  AbstractState state = incoming[site.block->id - 1];
+  for (const MirInstruction &instruction : site.block->instructions) {
+    if (instruction.id == site.instruction->id) {
+      return state;
+    }
+    applyInstruction(body, aliases, *site.block, instruction, state);
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] PlaceThresholds recurrenceThresholds(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirDominanceInfo &dominance, const MirLoopAnalysis &loops,
+    const std::vector<AbstractState> &incoming) {
+  PlaceThresholds result;
+  if (loops.hasIrreducibleControlFlow) {
+    return result;
+  }
+  const std::vector<std::optional<ExactLoopCount>> counts =
+      exactLoopCounts(body, aliases, dominance, loops);
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &assignment : block.instructions) {
+      if (assignment.kind != MirInstructionKind::Assign ||
+          !assignment.destination || assignment.operands.size() != 1) {
+        continue;
+      }
+      const MirPlaceId destination =
+          canonicalPlace(aliases, *assignment.destination);
+      if (destination == 0 || result.contains(destination)) {
+        continue;
+      }
+      const MirPlace *place = body.findPlace(destination);
+      const std::optional<CheckedIntegerDomain> domain =
+          place == nullptr ? std::nullopt : constantIntegerDomain(place->type);
+      const MirOperand &source = assignment.operands.front();
+      const InstructionSite addition = source.kind == MirOperandKind::Value
+                                           ? definitionSite(body, source.value)
+                                           : InstructionSite{};
+      if (!domain || addition.instruction == nullptr ||
+          addition.instruction->kind != MirInstructionKind::Compute ||
+          addition.instruction->operation != MirOperation::Add ||
+          addition.instruction->operands.size() != 2) {
+        continue;
+      }
+      const MirOperand *deltaOperand = nullptr;
+      if (loadedPlace(body, aliases, addition.instruction->operands[0]) ==
+          std::optional<MirPlaceId>{destination}) {
+        deltaOperand = &addition.instruction->operands[1];
+      } else if (loadedPlace(body, aliases,
+                             addition.instruction->operands[1]) ==
+                 std::optional<MirPlaceId>{destination}) {
+        deltaOperand = &addition.instruction->operands[0];
+      }
+      if (deltaOperand == nullptr) {
+        continue;
+      }
+
+      std::optional<std::size_t> innerLoop;
+      for (std::size_t index = 0; index < loops.loops.size(); ++index) {
+        if (loops.loops[index].contains(block.id) && counts[index] &&
+            (!innerLoop ||
+             loops.loops[index].depth > loops.loops[*innerLoop].depth)) {
+          innerLoop = index;
+        }
+      }
+      if (!innerLoop) {
+        continue;
+      }
+      std::vector<std::size_t> containingLoops;
+      bool exact = true;
+      std::uint64_t iterations = 1;
+      for (std::optional<std::size_t> index = innerLoop; index;
+           index = loops.loops[*index].parent) {
+        if (!counts[*index] || loops.loops[*index].latches.size() != 1 ||
+            (counts[*index]->iterations != 0 &&
+             iterations > std::numeric_limits<std::uint64_t>::max() /
+                              counts[*index]->iterations)) {
+          exact = false;
+          break;
+        }
+        iterations *= counts[*index]->iterations;
+        containingLoops.push_back(*index);
+      }
+      if (!exact || containingLoops.empty()) {
+        continue;
+      }
+      const MirNaturalLoop &outer = loops.loops[containingLoops.back()];
+      const MirPlaceEscapeFact *escape = aliases.escape(destination);
+      if (escape != nullptr && escape->escapesBody()) {
+        continue;
+      }
+
+      InstructionSite initialization;
+      bool invalidWrites = false;
+      for (const MirBlock &candidateBlock : body.blocks) {
+        for (const MirInstruction &candidate : candidateBlock.instructions) {
+          if (outer.contains(candidateBlock.id) &&
+              opaqueLoopMutation(candidate)) {
+            invalidWrites = true;
+          }
+          if (!candidate.destination ||
+              aliases.relation(destination, *candidate.destination) ==
+                  MirAliasRelation::NoAlias) {
+            continue;
+          }
+          if (candidate.id == assignment.id) {
+            continue;
+          }
+          if (outer.contains(candidateBlock.id) ||
+              initialization.instruction != nullptr ||
+              (candidate.kind != MirInstructionKind::Initialize &&
+               candidate.kind != MirInstructionKind::Assign) ||
+              candidate.operands.size() != 1 ||
+              !dominance.dominates(candidateBlock.id, outer.header)) {
+            invalidWrites = true;
+            continue;
+          }
+          initialization = {.block = &candidateBlock,
+                            .instruction = &candidate};
+        }
+      }
+      if (invalidWrites || initialization.instruction == nullptr) {
+        continue;
+      }
+      const std::optional<IntegerFact> initial = literalOperandFact(
+          body, initialization.instruction->operands.front());
+      const std::optional<AbstractState> beforeAddition =
+          stateBeforeInstruction(body, aliases, incoming, addition);
+      const std::optional<IntegerFact> delta =
+          beforeAddition
+              ? integerForOperand(body, *beforeAddition, *deltaOperand)
+              : std::nullopt;
+      if (!initial || !singleton(*initial) || initial->domain != *domain ||
+          !delta || delta->domain != *domain || singleton(*delta) ||
+          !checkedIntegerFits(CheckedIntegerValue{.magnitude = iterations},
+                              *domain)) {
+        continue;
+      }
+      const CheckedIntegerValue zero;
+      const CheckedIntegerValue lowerDelta =
+          compare(delta->lower, zero) < 0 ? delta->lower : zero;
+      const CheckedIntegerValue upperDelta =
+          compare(delta->upper, zero) > 0 ? delta->upper : zero;
+      const CheckedIntegerValue count{.magnitude = iterations};
+      const std::optional<CheckedIntegerValue> lowerContribution =
+          evaluatedValue(evaluateCheckedIntegerBinary(
+              CheckedIntegerOperation::Multiply, lowerDelta, count, *domain));
+      const std::optional<CheckedIntegerValue> upperContribution =
+          evaluatedValue(evaluateCheckedIntegerBinary(
+              CheckedIntegerOperation::Multiply, upperDelta, count, *domain));
+      const std::optional<CheckedIntegerValue> lower =
+          lowerContribution ? evaluatedValue(evaluateCheckedIntegerBinary(
+                                  CheckedIntegerOperation::Add, initial->lower,
+                                  *lowerContribution, *domain))
+                            : std::nullopt;
+      const std::optional<CheckedIntegerValue> upper =
+          upperContribution ? evaluatedValue(evaluateCheckedIntegerBinary(
+                                  CheckedIntegerOperation::Add, initial->upper,
+                                  *upperContribution, *domain))
+                            : std::nullopt;
+      if (!lower || !upper || compare(*lower, *upper) > 0) {
+        continue;
+      }
+      Evidence evidence = merged(initial->evidence, delta->evidence);
+      add(evidence, initialization.block->id);
+      add(evidence, block.id);
+      addInstruction(evidence, initialization.instruction->id);
+      addInstruction(evidence, addition.instruction->id);
+      addInstruction(evidence, assignment.id);
+      addPlace(evidence, destination);
+      for (const std::size_t index : containingLoops) {
+        evidence = merged(std::move(evidence), counts[index]->evidence);
+      }
+      result[destination] =
+          IntegerFact{.domain = *domain,
+                      .lower = *lower,
+                      .upper = *upper,
+                      .wideningEnvelope = std::pair{*lower, *upper},
+                      .evidence = std::move(evidence)};
+    }
+  }
+  return result;
+}
+
 [[nodiscard]] std::vector<AbstractState>
-solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases) {
+solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+                const PlaceThresholds *thresholds = nullptr) {
   AbstractState entry;
   entry.reachable = true;
   const MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
       body, std::move(entry),
       [&](const MirBlock &block, const AbstractState &incoming) {
         const BlockTransfer transfer =
-            transferBlock(body, aliases, block, incoming);
+            transferBlock(body, aliases, block, incoming, thresholds);
         std::vector<MirForwardDataflowEdge<AbstractState>> result;
         for (Edge &edge : outgoingEdges(body, block, transfer)) {
           result.push_back({.target = edge.target,
@@ -1171,6 +1893,25 @@ solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases) {
     }
   }
   return incoming;
+}
+
+[[nodiscard]] std::vector<AbstractState>
+solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases) {
+  const std::vector<AbstractState> initial = solveStatesOnce(body, aliases);
+  if (initial.empty()) {
+    return {};
+  }
+  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  if (!dominance) {
+    return initial;
+  }
+  const MirLoopAnalysis loops = analyzeMirLoops(body, *dominance);
+  const PlaceThresholds thresholds =
+      recurrenceThresholds(body, aliases, *dominance, loops, initial);
+  if (thresholds.empty()) {
+    return initial;
+  }
+  return solveStatesOnce(body, aliases, &thresholds);
 }
 
 [[nodiscard]] std::optional<std::size_t>
@@ -1259,6 +2000,13 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
               MirSafetyCheckFamily::ArithmeticOverflow,
               {.code = DefinedFailureCode::IntegerOverflow, .detail = detail},
               result->evidence);
+        }
+        if (result && instruction.operation == MirOperation::Remainder) {
+          appendProof(analysis, address, block, instruction,
+                      MirSafetyCheckFamily::ArithmeticDomain,
+                      {.code = DefinedFailureCode::ModuloByZero,
+                       .detail = DefinedFailureDetail::IntegerModulo},
+                      result->evidence);
         }
       }
 

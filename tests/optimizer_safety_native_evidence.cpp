@@ -243,6 +243,18 @@ int32_t arithmetic_success(int32_t value) {
   return 0;
 }
 
+int32_t remainder_success(int32_t value) {
+  return value % int32_t(-1);
+}
+
+int32_t fixed_write_success(int32_t value) {
+  mut int32_t values[4] = {};
+  for (mut uint64_t index = 0; index < 4; index++) {
+    values[index] = (value & int32_t(255)) + int32_t(1);
+  }
+  return values[0];
+}
+
 int32_t storage_constructor_barrier() {
   if (constructed_value < 10) {
     mut gti_internal::storage<MutatesOnConstruct> values =
@@ -270,6 +282,10 @@ int32_t overflow_failure(int32_t value) {
   return value + 1;
 }
 
+int32_t remainder_failure(int32_t value, int32_t divisor) {
+  return value % divisor;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 2) {
     return bounds_failure(uint64_t(2));
@@ -280,10 +296,15 @@ int main(int argc, std::vector<std::string> argv) {
   if (argc == 4) {
     return overflow_failure(int32_t(2147483647));
   }
+  if (argc == 5) {
+    return remainder_failure(int32_t(7), int32_t(0));
+  }
   if (fixed_success() != 10) { return 1; }
   if (storage_success() != 7) { return 2; }
   if (destroyed != 7) { return 3; }
   if (arithmetic_success(4) != 5) { return 4; }
+  if (remainder_success(int32_t(-2147483647 - 1)) != 0) { return 5; }
+  if (fixed_write_success(511) != 256) { return 6; }
   return 0;
 }
 )";
@@ -330,8 +351,14 @@ int main(int argc, char **argv) {
                              lang::MirSafetyCheckFamily::StorageState) == 1 &&
           functionDischarges(frontend, o2.optimized, "arithmetic_success",
                              lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
-              1,
-      "O2 should prove one native-emitted check from every safety family");
+              1 &&
+          functionDischarges(frontend, o2.optimized, "remainder_success",
+                             lang::MirSafetyCheckFamily::ArithmeticDomain) ==
+              1 &&
+          functionDischarges(frontend, o2.optimized, "fixed_write_success",
+                             lang::MirSafetyCheckFamily::Bounds) > 0,
+      "O2 should prove native-emitted reads, writes, storage guards, integer "
+      "overflow, and exact remainder domains");
   expect(
       functionDischarges(frontend, o2.optimized, "bounds_failure",
                          lang::MirSafetyCheckFamily::Bounds) == 0 &&
@@ -342,7 +369,9 @@ int main(int argc, char **argv) {
               0 &&
           functionDischarges(
               frontend, o2.optimized, "storage_constructor_barrier",
-              lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+              lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0 &&
+          functionDischarges(frontend, o2.optimized, "remainder_failure",
+                             lang::MirSafetyCheckFamily::ArithmeticDomain) == 0,
       "runtime-failing near misses and storage lifecycle mutation barriers "
       "must retain their exact checks");
 
@@ -350,6 +379,12 @@ int main(int argc, char **argv) {
       " = ::gti_internal::backend::mir_checked_array_read_v1(";
   constexpr std::string_view checkedAddCall =
       " = ::gti_internal::backend::mir_checked_add_v1";
+  constexpr std::string_view checkedArrayWriteCall =
+      " = ::gti_internal::backend::mir_checked_array_write_v1(";
+  constexpr std::string_view checkedRemainderCall =
+      "::gti_internal::backend::mir_checked_remainder_v1";
+  constexpr std::string_view nonzeroRemainderCall =
+      "::gti_internal::backend::mir_nonzero_remainder_v1";
   constexpr std::string_view checkedStorageCall =
       "&::gti_internal::backend::storage_read(";
   constexpr std::string_view uncheckedStorageCall =
@@ -358,6 +393,12 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) <
                  occurrences(o0.cpp, checkedAddCall) &&
+             occurrences(o2.cpp, checkedArrayWriteCall) <
+                 occurrences(o0.cpp, checkedArrayWriteCall) &&
+             occurrences(o2.cpp, checkedRemainderCall) <
+                 occurrences(o0.cpp, checkedRemainderCall) &&
+             occurrences(o0.cpp, nonzeroRemainderCall) == 0 &&
+             occurrences(o2.cpp, nonzeroRemainderCall) > 0 &&
              occurrences(o2.cpp, checkedStorageCall) <
                  occurrences(o0.cpp, checkedStorageCall) &&
              occurrences(o0.cpp, uncheckedStorageCall) == 0 &&
@@ -366,6 +407,12 @@ int main(int argc, char **argv) {
                  occurrences(o3.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) ==
                  occurrences(o3.cpp, checkedAddCall) &&
+             occurrences(o2.cpp, checkedArrayWriteCall) ==
+                 occurrences(o3.cpp, checkedArrayWriteCall) &&
+             occurrences(o2.cpp, checkedRemainderCall) ==
+                 occurrences(o3.cpp, checkedRemainderCall) &&
+             occurrences(o2.cpp, nonzeroRemainderCall) ==
+                 occurrences(o3.cpp, nonzeroRemainderCall) &&
              occurrences(o2.cpp, uncheckedStorageCall) ==
                  occurrences(o3.cpp, uncheckedStorageCall),
          "native -O0 source should expose removed safe calls while preserving "
@@ -386,7 +433,8 @@ int main(int argc, char **argv) {
       {"success", ""},
       {"bounds", " bounds"},
       {"storage", " storage extra"},
-      {"overflow", " overflow extra arguments"}};
+      {"overflow", " overflow extra arguments"},
+      {"remainder", " remainder extra arguments here"}};
   std::vector<RunResult> baseline;
   for (const auto &[name, arguments] : scenarios) {
     baseline.push_back(run(binaries[0], directory, "o0-" + name, arguments));
@@ -402,6 +450,9 @@ int main(int argc, char **argv) {
               "accessed an uninitialized storage slot") != std::string::npos &&
           baseline[3].exitStatus != 0 &&
           baseline[3].stderrText.find("integer_overflow in addition") !=
+              std::string::npos &&
+          baseline[4].exitStatus != 0 &&
+          baseline[4].stderrText.find("modulo_by_zero in integer_modulo") !=
               std::string::npos,
       "O0 near misses should expose the exact checked-operation or sealed "
       "storage-guard identity");
