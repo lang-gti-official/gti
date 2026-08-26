@@ -910,6 +910,16 @@ public:
       return std::nullopt;
     }
 
+    // The call-site occurrence resolves to the selected callable's symbol,
+    // so its retained `///` documentation is the same value hover shows.
+    if (selected->symbol != 0) {
+      if (const SymbolRecord *symbol =
+              semantics.database().findSymbol(selected->symbol);
+          symbol != nullptr && symbol->documentationMarkdown) {
+        result.documentationMarkdown = symbol->documentationMarkdown;
+      }
+    }
+
     const SemanticCallGeometry &geometry = *selected->callGeometry;
     std::size_t active = 0;
     for (const std::size_t separator : geometry.argumentSeparators) {
@@ -980,14 +990,13 @@ public:
            semantics.isCompilerPrivateType(record.type))) {
         continue;
       }
-      if (record.symbol != 0) {
-        if (const SymbolRecord *symbol =
-                semantics.database().findSymbol(record.symbol);
-            symbol != nullptr &&
-            !semantics.canPresent(context->sourceUnit, *symbol,
-                                  snapshot.sourceGraph)) {
-          continue;
-        }
+      const SymbolRecord *symbol =
+          record.symbol == 0 ? nullptr
+                             : semantics.database().findSymbol(record.symbol);
+      if (symbol != nullptr &&
+          !semantics.canPresent(context->sourceUnit, *symbol,
+                                snapshot.sourceGraph)) {
+        continue;
       }
       const std::optional<std::size_t> prefixRank =
           completionPrefixRank(record.name, context->prefix);
@@ -1001,7 +1010,9 @@ public:
           .detail = completionDetail(record, semantics, signatures, types),
           .insertion = record.name,
           .snippet = completionSnippet(record, semantics),
-          .replacementRange = context->replacementRange};
+          .replacementRange = context->replacementRange,
+          .documentationMarkdown =
+              symbol == nullptr ? std::nullopt : symbol->documentationMarkdown};
       const std::string duplicateKey =
           std::to_string(static_cast<int>(candidate.kind)) + '\n' +
           candidate.label + '\n' + candidate.detail;

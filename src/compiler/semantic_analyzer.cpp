@@ -19616,8 +19616,10 @@ private:
       }
       return;
     }
-    if (!type.arrayExtents.empty() &&
+    if (!type.arrayExtents.empty() && !type.pointer &&
         baseTypeOf(type, currentNamespace) == SemanticType::Void) {
+      // A pointer declarator makes the element `void*`, a sized pointer
+      // scalar; only a bare `void` element has no object representation.
       report(type.name.last(), "Fixed array elements cannot have type void.",
              "GTI-S2015");
     }
@@ -25655,10 +25657,79 @@ private:
       const SemanticType &fieldType = member->second.symbol.type;
       std::uint64_t fieldSize = 0;
       std::uint32_t fieldAlignment = 0;
-      if (isCAbiScalar(fieldType) ||
-          fieldType.kind == SemanticType::RawPointer ||
-          fieldType.kind == SemanticType::NativeFunction ||
-          fieldType.kind == SemanticType::Array) {
+      // A fixed-array field whose ultimate element is a by-value record takes
+      // its element facts from this pass: the general target-layout evaluator
+      // reads the published semantic model, which does not carry record
+      // layouts while this computation is still producing them.
+      const SemanticType *arrayElement = nullptr;
+      std::uint64_t arrayElementCount = 1;
+      bool arrayCountOverflow = false;
+      if (fieldType.kind == SemanticType::Array) {
+        const SemanticType *node = &fieldType;
+        while (node->kind == SemanticType::Array &&
+               node->arguments.size() == 1 && node->arrayLength != 0 &&
+               node->arrayLengthParameterId == 0) {
+          if (arrayElementCount >
+              std::numeric_limits<std::uint64_t>::max() / node->arrayLength) {
+            arrayCountOverflow = true;
+            break;
+          }
+          arrayElementCount *= node->arrayLength;
+          node = &node->arguments.front();
+        }
+        if (node->kind == SemanticType::Class) {
+          arrayElement = node;
+        }
+      }
+      if (arrayElement != nullptr && arrayElement->classId != 0 &&
+          arrayElement->classId <= classes.size()) {
+        if (arrayCountOverflow) {
+          reportCAbiRecord(field.declaration->name(),
+                           "Layout of C ABI record '" + owner.name.lexeme +
+                               "' exceeds uint64_t while placing field '" +
+                               field.declaration->name().lexeme + "'.");
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        if (state[arrayElement->classId - 1] == 1) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2064", DiagnosticPhase::Semantics,
+              field.declaration->type().name.last(),
+              "C ABI records cannot contain a recursive by-value field.");
+          diagnostic.related.push_back(
+              {tokenSpan(classInfo(arrayElement->classId).name),
+               "The recursive record is declared here; use a one-level raw "
+               "pointer for an opaque or linked record edge."});
+          diagnostic.hints.emplace_back(
+              "Replace the by-value recursion with a one-level raw pointer, "
+              "or move the recursive ownership policy into a safe GTI "
+              "wrapper.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        const std::optional<CAbiRecordLayout> element =
+            computeCAbiRecordLayout(arrayElement->classId, state, shapeValid);
+        if (!element) {
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        if (element->sizeBytes != 0 &&
+            arrayElementCount > std::numeric_limits<std::uint64_t>::max() /
+                                    element->sizeBytes) {
+          reportCAbiRecord(field.declaration->name(),
+                           "Layout of C ABI record '" + owner.name.lexeme +
+                               "' exceeds uint64_t while placing field '" +
+                               field.declaration->name().lexeme + "'.");
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        fieldSize = element->sizeBytes * arrayElementCount;
+        fieldAlignment = element->abiAlignmentBytes;
+      } else if (isCAbiScalar(fieldType) ||
+                 fieldType.kind == SemanticType::RawPointer ||
+                 fieldType.kind == SemanticType::NativeFunction ||
+                 fieldType.kind == SemanticType::Array) {
         const LayoutEvaluation fieldLayout = evaluateLayout(fieldType);
         if (!fieldLayout) {
           reportCAbiRecord(field.declaration->type().name.last(),
@@ -30350,7 +30421,12 @@ private:
              .requirements = overload.requirements,
              .substitutedCallable = substitutedCallable,
              .staticMember = overload.staticMember || overload.internalLinkage,
-             .symbol = symbol.toolingSymbol,
+             // An overload set shares one scope Symbol; each overload's own
+             // SymbolRecord — the identity carrying its retained `///`
+             // documentation — resolves through its declaration name.
+             .symbol = overload.declaration == nullptr
+                           ? symbol.toolingSymbol
+                           : symbolForDeclaration(overload.declaration->name()),
              .compilerPrivate = overload.compilerPrivate});
       }
       return;
