@@ -6,8 +6,9 @@
 
 Status: accepted; Milestones 1 through 5 are implemented for their bounded
 local families. Milestone 6 has verified per-instance effects and exact closed
-call-summary queries, but no interprocedural transformation. Follow-on work is
-tracked as numbered O-MIR milestones in
+call-summary queries, but no interprocedural transformation. The current
+exclusive runtime-performance work and every follow-on optimizer row are
+sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
@@ -42,34 +43,40 @@ and preserves switch-default flow in the migrated safety client. Loop analysis
 rejects repeated-edge block-argument ambiguity. Alias analysis treats union
 fields as overlapping and analysis caches reject cross-program snapshot reuse.
 O-MIR-08 (loop-derived bounds proof) and O-MIR-09 (one measured alias-safe
-memory family) remain available measured clients, while O-MIR-10 owns the
-first bounded interprocedural family. None is implied complete by the analysis
-foundations.
+memory family) remain measured-defer, while the active interprocedural client
+is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
+complete by the analysis foundations.
 
 Performance-priority update (2026-08-26): the exact-main audit selected the
-checked-vector runtime gap, rather than the retained fixed-array checks, as the
-first performance-delivery client. The fixed-array workload was already within
+checked-vector runtime gap, rather than the retained fixed-array bounds checks,
+as the performance-delivery client. The fixed-array bounds workload was within
 0.33% of both comparison variants and a direct-access proxy changed its median
-by -0.16% with identical hot-function assembly. By contrast,
-`vector-checked-loop` measured 109.517 ms for GTI and 50.281 ms for
-semantic-equivalent C++. `O-PERF-01` therefore precedes speculative new pass
-families. Its first candidates are bounded closed-call inlining or
-specialization, backend emission policy where a native proxy proves it is
-sufficient, and removal of redundant container hot-loop state. These are
-measured hypotheses, not permissions to bypass MIR, failure, cleanup, or
-container invariants.
+by -0.16% with identical hot-function assembly. The independently reproduced
+PR #164 experiment then isolated a different fixed-array workload: making only
+overflow-failure branches unreachable reduced it from 73.684 to 15.882 ms,
+while the checked vector fell from 117.285 to 9.519 ms with identical selected
+successful output. Those ablations are semantic-invalid upper bounds, but they
+establish checked arithmetic side exits as the first measured cause.
+
+The audit proposal is not adopted verbatim. The live safety analysis already
+has a loop fixpoint and widening; prefix storage has no unchecked-read
+vocabulary; the flagship vector inputs are statically bounded across difficult
+closed call/container boundaries; and wrapping block speculation does not by
+itself preserve GTI's first failure, left-to-right recurrence, or partial
+effects. The corrected exclusive sequence is `O-PERF-00` through
+`O-GAME-01` in
+[`implementation-sequence.md`](implementation-sequence.md). This architecture
+plan does not own or duplicate that order.
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). Infrastructure
 continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
-and alias facts remain available for measured clients, but they do not dictate
-the next pass. The active order is to profile the vector/container workload,
-test one upper-bound proxy, implement the smallest backend-neutral improvement
-that moves end-to-end runtime, and remeasure. General loop transforms,
-MemorySSA, devirtualization, an LLVM backend, and broad optimizer frameworks
-remain deferred until a measured bottleneck requires them.
+and alias facts remain available for the active performance rows, but they do
+not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
+LLVM backend, and broad optimizer frameworks remain deferred until a measured
+bottleneck and the sole operational sequence require them.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -473,7 +480,7 @@ verbosity are also independent of semantic optimization level.
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
 | devirtualization | deferred | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
-| inlining | first bounded candidate selected; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; `O-PERF-01` profile/proxy evidence |
+| inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
 emission behavior. Add the missing backend-neutral fact first.
@@ -488,10 +495,10 @@ The implemented local sequence is:
 6. range-based check elimination.
 
 Loop/range and place alias/escape analyses are now explicit prerequisites, not
-implemented transforms. `O-PERF-01` selects the next work from end-to-end
-runtime evidence: O-MIR-08 and O-MIR-09 are measured-defer, while O-MIR-10 is
-candidate-only if closed-call profiling and a proxy justify it. The maintained
-sequence in `implementation-sequence.md` does not leave an open-ended "future
+implemented transforms. O-MIR-08 and O-MIR-09 remain measured-defer;
+`O-PERF-02` may consume the bounded O-MIR-10 gates only if closed-call
+profiling selects that mechanism. The maintained sequence in
+`implementation-sequence.md` does not leave an open-ended "future
 propagation" phase.
 
 Each cleanup repetition must be intentional and bounded in the configured
@@ -809,28 +816,31 @@ This prerequisite needs no MIR representation change; existing block
 parameters and edge arguments are sufficient. It does require a change in the
 core MIR implementation, so an optimizer pass must not duplicate it. The
 prerequisite is documented but is not active work merely to improve the
-fixed-array workload. Reconsider it only when `O-PERF-01` or another measured
-client demonstrates that source-MIR loop-carried values are the limiting
-factor. Then rerun the source-MIR induction census and the relevant workload.
-Implement O-MIR-08 only if a replayable loop fact reaches real source MIR and
-the workload shows the required runtime value after native optimization. The
-safety client must consume only loop, dominance, alias, effect, and
-fixed-array facts, record near misses, invalidate safety analysis after edits,
-replay coherently, use `MirProgramEditor`, preserve O0 identity and all checked
-failure behavior, and remain backend-neutral.
+fixed-array bounds workload. It is also not an automatic prerequisite of
+`O-PERF-01`: current safety analysis already carries place facts through a
+fixpoint, and that row first tests a fixed-array content summary plus precise
+widening/transfer functions. Reconsider cyclic scalar promotion only when a
+focused source-MIR probe demonstrates that place-based analysis cannot carry
+the required fact. Implement O-MIR-08 only if a replayable loop fact reaches
+real source MIR and the workload shows runtime value after native
+optimization. The safety client must consume only loop, dominance, alias,
+effect, and fixed-array facts, record near misses, invalidate safety analysis
+after edits, replay coherently, use `MirProgramEditor`, preserve O0 identity
+and all checked failure behavior, and remain backend-neutral.
 
 ### Milestone 6: interprocedural optimization
 
-Status: effect-summary foundation complete; the first candidate client is
-selected but no transform is implemented.
+Status: effect-summary foundation complete; `O-PERF-02` owns the only active
+candidate selection and no transform is implemented.
 
 - Conservative per-instance call effects and exact closed static-summary
   queries are implemented and independently verified.
 - Closed-world reachability, devirtualization, and inlining are not
   implemented.
-- `O-PERF-01` may admit one bounded closed static-call inlining or
-  specialization family if profiling and an upper-bound proxy show material
-  vector/container value. It must reject recursion, native or virtual calls,
+- `O-PERF-02` may select one bounded closed static-call inlining,
+  specialization, or contextual-proof family if profiling and an upper-bound
+  proxy show material vector/container value. It must not store value ranges
+  in effect flags, and must reject recursion, native or virtual calls,
   incomplete cleanup/lifetime cases, and calls outside a deterministic cost
   budget.
 - Devirtualization remains deferred. Do not generalize the selected family

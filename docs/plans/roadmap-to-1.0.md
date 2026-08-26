@@ -132,22 +132,29 @@ while the checked-vector workload measured 109.517 ms for GTI and 50.281 ms
 for semantic-equivalent C++. Managed owned threads also reduced the reference
 workload from 707.012 ms sequential to 200.902 ms with four joined workers.
 
-The operational sequence therefore starts with `O-PERF-01`: profile and close
-the checked-vector call, representation, and hot-loop gap, then prove the
-result in `O-GAME-01`, a deterministic game-style update workload. New
-optimizer infrastructure is not progress unless it changes end-to-end
-runtime. Correctness/security fixes and narrow container, allocator, callable,
-concurrency, or FFI slices required by these workloads may proceed; unrelated
-surface expansion does not outrank the active performance campaign.
+An independent audit then identified arithmetic failure side exits as the
+dominant candidate. A controlled reproduction held native optimization fixed:
+the checked vector measured 117.285 ms versus a 9.519 ms semantic-invalid
+overflow-branch ceiling, and a fixed-array overflow client measured 73.684 ms
+versus 15.882 ms. These results select the problem; they do not authorize
+removing defined failure or importing an unproved speculative transform.
 
-On the published reference configuration, the first container campaign targets
-at least a 30% median improvement and at most 1.25x semantic C++, with no
-conclusive control-workload regression above 5%. The game-style acceptance
-workload targets at most 1.5x semantic C++, and no representative constituent
-may remain more than 2x slower without profiler-backed attribution and a
-numbered follow-up. Idiomatic C++ remains a separate comparison so semantic
-parity cannot conceal a large avoidable safety-policy cost. These gates run on
-stable hardware with raw reports; shared CI remains threshold-free.
+The sole operational order is `O-PERF-00` through `O-PERF-05`, followed by
+`O-GAME-01`, in
+[`implementation-sequence.md`](implementation-sequence.md). That sequence is
+an exclusive compiler gate: unrelated compiler, language, MIR, backend,
+runtime-representation, and standard-library semantics work is parked until
+it closes. Only correctness/security fixes, release/CI unblockers, and exact
+prerequisites of the active row may interrupt it. This roadmap intentionally
+does not duplicate the row details.
+
+On the published reference configuration, the fixed-array overflow client
+targets at most 1.2x idiomatic C++, core checked kernels target at most 1.5x
+idiomatic C++, and the game-style update targets at most 1.5x semantic C++ and
+2x idiomatic C++. Controls may not regress conclusively above 5%. Idiomatic
+C++ remains visible so semantic parity cannot conceal an avoidable safety cost.
+These gates run on stable hardware with raw reports; shared CI remains
+threshold-free.
 
 ## Implemented Baseline
 
@@ -776,10 +783,13 @@ At least one nontrivial application can use only documented public GTI APIs for
 dynamic collections, text processing, ownership, error handling, files, time,
 randomness, formatting, and testing. No example imports `gti_internal`.
 
-## Parallel Track A: MIR, Optimization, And Backend Authority
+## Compiler Track A: MIR, Optimization, And Backend Authority
 
-This work may proceed beside the language milestones, but it must converge
-before the release candidate.
+This was originally organized as a parallel track, but it is not parallel
+while the runtime-performance gate is active. The exact compiler sequence in
+[`implementation-sequence.md`](implementation-sequence.md) parks unrelated
+language, MIR, backend, runtime-representation, and standard-library semantics
+work until `O-GAME-01` closes.
 
 Implemented foundation:
 
@@ -802,20 +812,13 @@ Implemented foundation:
 8. Dominance-derived natural-loop forests with bounded invariant/affine range
    facts, plus body-local place alias/escape facts used by safety invalidation.
 
-Remaining sequence:
-
-1. Execute `O-PERF-01` against the measured checked-vector gap: exact-head
-   baseline, profile, one upper-bound proxy, the smallest sound implementation,
-   and complete remeasurement.
-2. Admit one bounded closed-call inlining or specialization family under
-   `O-MIR-10` only if profiling and its proxy demonstrate material value and
-   the exact lifetime, cleanup, failure, provenance, recursion, and cost gates
-   are satisfied.
-3. Keep `O-MIR-08` loop-derived safety and `O-MIR-09` alias-safe memory work
-   deferred until their own native-runtime clients show value. Widen check
-   elimination only one proof-carrying operation family at a time.
-4. Add general loop transforms, MemorySSA, devirtualization, or a new backend
-   only when a measured workload proves the bounded architecture insufficient.
+Operational sequence: the exclusive row order, prerequisites, stop conditions,
+and implementation exit gates live only in
+[`implementation-sequence.md`](implementation-sequence.md). This roadmap keeps
+the durable requirements: use verified MIR proofs, preserve exact failure and
+partial effects, measure end-to-end runtime, and add general loop transforms,
+MemorySSA, devirtualization, or a new backend only when a selected workload
+proves the bounded architecture insufficient.
 
 Systems readiness requires one checked executable representation to control behavior. It does
 not require an LLVM backend or aggressive `-O3`. Correct `-O0`, deterministic
@@ -974,9 +977,9 @@ standard-library need, and tooling impact.
 
 ## Operational Sequence
 
-The maintained sequence, blockers, parallel lanes, and current ready queue live
-in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the source executable-body cutover is complete. Every body identity
+The maintained sequence, blockers, and current exclusive ready queue live in
+[`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
+the source executable-body cutover is complete. Every body identity
 recorded by `tests/mir_census_baseline.json` uses verified optimized MIR and
 the general C++ body emitter. The no-MIR emitter and executable AST statement
 route are gone; the exact census and two-endpoint corpus oracle guard that
@@ -1052,11 +1055,12 @@ capability or release gate changes.
   standard library, metadata, checksums, and licenses.
 - Release candidates pass a documented compatibility window with no unplanned
   source breakage.
-- On a published reference configuration, core scalar/container kernels reach
-  at most 1.25x semantic-equivalent C++, the game-style update workload reaches
-  at most 1.5x, and no representative constituent remains more than 2x slower
-  without profiler-backed attribution and a numbered follow-up. Correctness
-  digests match and idiomatic-C++ comparisons remain visible.
+- On a published reference configuration, fixed-array overflow reaches at most
+  1.2x idiomatic C++, core checked scalar/container kernels reach at most 1.5x
+  idiomatic C++, and the game-style update reaches at most 1.5x
+  semantic-equivalent and 2x idiomatic C++. Correctness/failure records match,
+  controls stay within the recorded regression policy, and no constituent
+  misses a gate without a completed fix or measured-defer record.
 - Known omissions are documented as omissions rather than silently delegated
   to the C++ backend.
 

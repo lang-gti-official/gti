@@ -107,7 +107,8 @@ delivery state. Completed delivery records are retained in the archive rather
 than mixed into the active queue.
 
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
-  — the sole prompt-sized work queue, prerequisites, status, and exit gates
+  — the sole prompt-sized work queue, prerequisites, status, and exit gates;
+  currently owns the exclusive runtime-performance compiler campaign
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current
