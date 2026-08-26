@@ -1257,6 +1257,16 @@ if(BUILD_TESTING)
     )
     set_tests_properties(issues_117_120_regressions PROPERTIES TIMEOUT 180)
     add_test(
+      NAME issue_147_stored_reference_field_read_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/issue_147_stored_reference_field_read_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/issue_147_stored_reference_field_read.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/issue_147_stored_reference_field_write.gti"
+    )
+    set_tests_properties(issue_147_stored_reference_field_read_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1420,6 +1430,7 @@ if(BUILD_TESTING)
         issue_126_array_element_assignment_runtime
         issue_127_constructor_temporary_field_runtime
         issues_117_120_regressions
+        issue_147_stored_reference_field_read_runtime
         mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
