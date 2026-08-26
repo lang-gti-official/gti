@@ -1,5 +1,6 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
@@ -247,12 +248,36 @@ int32_t remainder_success(int32_t value) {
   return value % int32_t(-1);
 }
 
+int32_t remainder_assign_success(int32_t value) {
+  mut int32_t values[1] = {value};
+  values[0] %= int32_t(-1);
+  return values[0];
+}
+
 int32_t fixed_write_success(int32_t value) {
   mut int32_t values[4] = {};
   for (mut uint64_t index = 0; index < 4; index++) {
     values[index] = (value & int32_t(255)) + int32_t(1);
   }
   return values[0];
+}
+
+void closed_vector_scale(mut std::vector<int32_t>& values,
+                         int32_t multiplier) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+}
+
+int32_t closed_vector_success() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>(std::size_t(4));
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] =
+        int32_t(index % std::size_t(4)) + int32_t(1);
+  }
+  closed_vector_scale(values, int32_t(-1));
+  return values[std::size_t(3)];
 }
 
 int32_t storage_constructor_barrier() {
@@ -304,10 +329,153 @@ int main(int argc, std::vector<std::string> argv) {
   if (destroyed != 7) { return 3; }
   if (arithmetic_success(4) != 5) { return 4; }
   if (remainder_success(int32_t(-2147483647 - 1)) != 0) { return 5; }
-  if (fixed_write_success(511) != 256) { return 6; }
+  if (remainder_assign_success(int32_t(-2147483647 - 1)) != 0) { return 6; }
+  if (fixed_write_success(511) != 256) { return 7; }
+  if (closed_vector_success() != -4) { return 8; }
   return 0;
 }
 )";
+
+constexpr std::string_view closedCallNearMissSource = R"(
+#include <std/vector>
+
+extern "C" {
+  int32_t external_factor();
+}
+
+void conflicting_scale(mut std::vector<int32_t>& values,
+                       int32_t multiplier) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+}
+
+void recursive_scale(mut std::vector<int32_t>& values,
+                     int32_t multiplier,
+                     bool recurse) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+  if (recurse) {
+    recursive_scale(values, multiplier, false);
+  }
+}
+
+void owning_scale(mut std::vector<int32_t> values, int32_t multiplier) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+}
+
+void native_scale(mut std::vector<int32_t>& values, int32_t multiplier) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+}
+
+class VirtualScaler {
+public:
+  virtual void scale(mut std::vector<int32_t>& values,
+                     int32_t multiplier) mut {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      values[index] *= multiplier;
+    }
+  }
+};
+
+int main() {
+  mut std::vector<int32_t> conflicting =
+      std::vector<int32_t>(std::size_t(4));
+  for (mut std::size_t index = 0; index < conflicting.size(); index++) {
+    conflicting[index] =
+        int32_t(index % std::size_t(4)) + int32_t(1);
+  }
+  conflicting_scale(conflicting, int32_t(2));
+  conflicting_scale(conflicting, int32_t(1000000000));
+
+  mut std::vector<int32_t> recursive =
+      std::vector<int32_t>(std::size_t(4));
+  recursive_scale(recursive, int32_t(2), false);
+
+  mut std::vector<int32_t> owned =
+      std::vector<int32_t>(std::size_t(4));
+  owning_scale(std::move(owned), int32_t(2));
+
+  mut std::vector<int32_t> native_values =
+      std::vector<int32_t>(std::size_t(4));
+  native_scale(native_values, external_factor());
+
+  mut std::vector<int32_t> virtual_values =
+      std::vector<int32_t>(std::size_t(4));
+  mut VirtualScaler scaler = VirtualScaler();
+  scaler.scale(virtual_values, int32_t(2));
+  return 0;
+}
+)";
+
+void testClosedCallNearMisses() {
+  const lang::FrontendResult frontend =
+      analyzeTrusted(closedCallNearMissSource);
+  expect(frontend.canGenerateCode(),
+         "closed-call near-miss fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirClosedCallSafetyAnalysis analysis =
+      lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  const auto bodyFor = [&](std::string_view name) {
+    const lang::HirFunctionInstance *function = findFunction(frontend, name);
+    return function == nullptr
+               ? static_cast<const lang::MirClosedCallBodyAnalysis *>(nullptr)
+               : analysis.find({.kind = lang::MirBodyKind::Function,
+                                .owner = function->id});
+  };
+  const auto remainsChecked = [&](std::string_view name) {
+    const lang::MirClosedCallBodyAnalysis *body = bodyFor(name);
+    const lang::MirBody *mirBody =
+        body == nullptr ? nullptr : lang::findMirBody(frontend.mir, body->body);
+    if (body == nullptr || mirBody == nullptr) {
+      return false;
+    }
+    return std::none_of(
+        body->safety.proofs.begin(), body->safety.proofs.end(),
+        [&](const lang::MirSafetyProof &proof) {
+          for (const lang::MirBlock &block : mirBody->blocks) {
+            const auto instruction = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const lang::MirInstruction &candidate) {
+                  return candidate.id == proof.instruction;
+                });
+            if (instruction != block.instructions.end()) {
+              return proof.discharge.family ==
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow &&
+                     instruction->operation ==
+                         lang::MirOperation::MultiplyAssign;
+            }
+          }
+          return false;
+        });
+  };
+
+  const lang::MirClosedCallBodyAnalysis *conflicting =
+      bodyFor("conflicting_scale");
+  const lang::MirClosedCallBodyAnalysis *recursive = bodyFor("recursive_scale");
+  const lang::MirClosedCallBodyAnalysis *owning = bodyFor("owning_scale");
+  const lang::MirClosedCallBodyAnalysis *native = bodyFor("native_scale");
+  const lang::MirClosedCallBodyAnalysis *virtualCall = bodyFor("scale");
+  expect(analysis.converged && analysis.iterations <= 32 &&
+             conflicting != nullptr && recursive != nullptr &&
+             !recursive->closed && owning != nullptr && !owning->closed &&
+             native != nullptr && virtualCall != nullptr &&
+             !virtualCall->closed && remainsChecked("conflicting_scale") &&
+             remainsChecked("recursive_scale") &&
+             remainsChecked("owning_scale") && remainsChecked("native_scale") &&
+             remainsChecked("scale"),
+         "conflicting contexts and recursive, owning-cleanup, native-fed, or "
+         "virtual call families should terminate within the deterministic "
+         "budget and retain their checked arithmetic");
+}
 
 } // namespace
 
@@ -318,6 +486,8 @@ int main(int argc, char **argv) {
       std::filesystem::temp_directory_path() / "gti-optimizer-safety-evidence";
   std::filesystem::remove_all(directory, error);
   std::filesystem::create_directories(directory, error);
+
+  testClosedCallNearMisses();
 
   const lang::FrontendResult frontend = analyzeTrusted(source);
   if (!frontend.canGenerateCode()) {
@@ -342,23 +512,34 @@ int main(int argc, char **argv) {
   const EmittedProgram &o0 = programs[0];
   const EmittedProgram &o2 = programs[1];
   const EmittedProgram &o3 = programs[2];
-  expect(
-      functionDischarges(frontend, o2.optimized, "fixed_success",
-                         lang::MirSafetyCheckFamily::Bounds) == 1 &&
-          functionDischarges(frontend, o2.optimized, "storage_success",
-                             lang::MirSafetyCheckFamily::Bounds) == 1 &&
-          functionDischarges(frontend, o2.optimized, "storage_success",
-                             lang::MirSafetyCheckFamily::StorageState) == 1 &&
-          functionDischarges(frontend, o2.optimized, "arithmetic_success",
-                             lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
-              1 &&
-          functionDischarges(frontend, o2.optimized, "remainder_success",
-                             lang::MirSafetyCheckFamily::ArithmeticDomain) ==
-              1 &&
-          functionDischarges(frontend, o2.optimized, "fixed_write_success",
-                             lang::MirSafetyCheckFamily::Bounds) > 0,
-      "O2 should prove native-emitted reads, writes, storage guards, integer "
-      "overflow, and exact remainder domains");
+  const auto dischargeCount = [&](std::string_view function,
+                                  lang::MirSafetyCheckFamily family) {
+    return functionDischarges(frontend, o2.optimized, function, family);
+  };
+  const auto expectDischarges = [&](std::string_view function,
+                                    lang::MirSafetyCheckFamily family,
+                                    std::size_t expected) {
+    const std::size_t actual = dischargeCount(function, family);
+    expect(actual == expected,
+           std::string(function) + " should have " + std::to_string(expected) +
+               " " + std::string(lang::mirSafetyCheckFamilyName(family)) +
+               " discharge(s), found " + std::to_string(actual));
+  };
+  expectDischarges("fixed_success", lang::MirSafetyCheckFamily::Bounds, 1);
+  expectDischarges("storage_success", lang::MirSafetyCheckFamily::Bounds, 1);
+  expectDischarges("storage_success", lang::MirSafetyCheckFamily::StorageState,
+                   1);
+  expectDischarges("arithmetic_success",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow, 1);
+  expectDischarges("remainder_success",
+                   lang::MirSafetyCheckFamily::ArithmeticDomain, 1);
+  expectDischarges("remainder_assign_success",
+                   lang::MirSafetyCheckFamily::ArithmeticDomain, 1);
+  expectDischarges("closed_vector_scale",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow, 1);
+  expect(dischargeCount("fixed_write_success",
+                        lang::MirSafetyCheckFamily::Bounds) > 0,
+         "O2 should prove at least one native-emitted fixed-array write");
   expect(
       functionDischarges(frontend, o2.optimized, "bounds_failure",
                          lang::MirSafetyCheckFamily::Bounds) == 0 &&
@@ -389,6 +570,9 @@ int main(int argc, char **argv) {
       "&::gti_internal::backend::storage_read(";
   constexpr std::string_view uncheckedStorageCall =
       "&::gti_internal::backend::storage_read_unchecked(";
+  constexpr std::string_view checkedCompoundMultiply =
+      " = ::gti_internal::backend::mir_checked_compound_multiply_v1(";
+  constexpr std::string_view dischargedCompoundMultiply = ") *= ";
   expect(occurrences(o2.cpp, checkedArrayCall) <
                  occurrences(o0.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) <
@@ -403,6 +587,10 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedStorageCall) &&
              occurrences(o0.cpp, uncheckedStorageCall) == 0 &&
              occurrences(o2.cpp, uncheckedStorageCall) > 0 &&
+             occurrences(o2.cpp, checkedCompoundMultiply) <
+                 occurrences(o0.cpp, checkedCompoundMultiply) &&
+             occurrences(o2.cpp, dischargedCompoundMultiply) >
+                 occurrences(o0.cpp, dischargedCompoundMultiply) &&
              occurrences(o2.cpp, checkedArrayCall) ==
                  occurrences(o3.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) ==
@@ -414,7 +602,11 @@ int main(int argc, char **argv) {
              occurrences(o2.cpp, nonzeroRemainderCall) ==
                  occurrences(o3.cpp, nonzeroRemainderCall) &&
              occurrences(o2.cpp, uncheckedStorageCall) ==
-                 occurrences(o3.cpp, uncheckedStorageCall),
+                 occurrences(o3.cpp, uncheckedStorageCall) &&
+             occurrences(o2.cpp, checkedCompoundMultiply) ==
+                 occurrences(o3.cpp, checkedCompoundMultiply) &&
+             occurrences(o2.cpp, dischargedCompoundMultiply) ==
+                 occurrences(o3.cpp, dischargedCompoundMultiply),
          "native -O0 source should expose removed safe calls while preserving "
          "the checked near-miss calls");
 
