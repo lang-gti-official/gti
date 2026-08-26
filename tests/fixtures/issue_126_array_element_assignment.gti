@@ -1,0 +1,18 @@
+class leaf {
+public:
+  leaf() {}
+  mut int32_t v = 1;
+};
+
+int main() {
+  mut leaf items[4] = {};
+  mut leaf source = leaf();
+
+  items[0].v = 2;
+  int32_t observed = items[0].v;
+  items[1] = source;
+  items[2] = std::move(source);
+  items[3] = leaf();
+
+  return int(observed + items[1].v + items[2].v + items[3].v) - 5;
+}

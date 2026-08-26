@@ -1,0 +1,13 @@
+class move_only {
+public:
+  move_only() {}
+  move_only(move_only& other) = delete;
+  move_only(move_only&& other) = default;
+};
+
+int main() {
+  mut move_only items[2] = {};
+  move_only source = move_only();
+  items[1] = source;
+  return 0;
+}

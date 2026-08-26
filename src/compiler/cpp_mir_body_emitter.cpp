@@ -429,6 +429,7 @@ storageRepresentation(const CppMirBodyEmissionMap &representations,
 }
 
 struct ReceiverArrayElementAccess {
+  MirPlaceId array = 0;
   SymbolId field = 0;
   MirPlaceProjection index;
 };
@@ -456,11 +457,82 @@ receiverArrayElementAccess(const MirBody &body, const MirPlace &place) {
       continue;
     }
     if (candidate.type.arguments.front() == place.type) {
-      return ReceiverArrayElementAccess{place.projections[0].field,
-                                        place.projections[1]};
+      return ReceiverArrayElementAccess{
+          candidate.id, place.projections[0].field, place.projections[1]};
     }
   }
   return std::nullopt;
+}
+
+using CheckedArrayElementAccess =
+    std::variant<ArrayElementAccess, BindingArrayFieldElementAccess,
+                 ReceiverArrayElementAccess>;
+
+struct CheckedArrayElementDestination {
+  CheckedArrayElementAccess access;
+  const MirPlace *mutableStorage = nullptr;
+};
+
+// A checked fixed-array assignment may address only one of the three exact
+// element-place families already understood by the body emitter. Mutability
+// comes from the sibling array storage, not from the projected place record.
+[[nodiscard]] std::optional<CheckedArrayElementDestination>
+checkedArrayElementDestination(const MirBody &body,
+                               const MirPlace &destination) {
+  const auto checkedStorage = [&](MirPlaceId id) -> const MirPlace * {
+    const MirPlace *storage = body.findPlace(id);
+    return storage != nullptr && storage->access == AccessMode::Mutable
+               ? storage
+               : nullptr;
+  };
+  if (const std::optional<ArrayElementAccess> access =
+          arrayElementAccess(body, destination)) {
+    if (const MirPlace *storage = checkedStorage(access->array)) {
+      return CheckedArrayElementDestination{.access = *access,
+                                            .mutableStorage = storage};
+    }
+    return std::nullopt;
+  }
+  if (const std::optional<BindingArrayFieldElementAccess> access =
+          bindingArrayFieldElementAccess(body, destination)) {
+    if (const MirPlace *storage = checkedStorage(access->array)) {
+      return CheckedArrayElementDestination{.access = *access,
+                                            .mutableStorage = storage};
+    }
+    return std::nullopt;
+  }
+  if (const std::optional<ReceiverArrayElementAccess> access =
+          receiverArrayElementAccess(body, destination)) {
+    if (const MirPlace *storage = checkedStorage(access->array)) {
+      return CheckedArrayElementDestination{.access = *access,
+                                            .mutableStorage = storage};
+    }
+  }
+  return std::nullopt;
+}
+
+// The checked write owns exactly one fixed-array bounds origin and the
+// artifact assignment must pair that origin with the instruction's one site.
+[[nodiscard]] bool
+checkedArrayAssignmentFailure(const MirProgram &program,
+                              const MirInstruction &instruction) {
+  if (instruction.localFailureSites.size() != 1 ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None) {
+    return false;
+  }
+  const DefinedFailureOrigin &origin =
+      instruction.definedFailure.localOrigins.front();
+  const std::vector<DefinedFailureOutcome> expected = {
+      {.code = DefinedFailureCode::IndexOutOfBounds,
+       .detail = DefinedFailureDetail::FixedArray}};
+  const std::optional<FailureSiteId> assigned =
+      program.failureMetadata().siteFor(origin);
+  const FailureSiteDescriptor *site =
+      program.failureMetadata().findSite(instruction.localFailureSites.front());
+  return assigned && *assigned == instruction.localFailureSites.front() &&
+         origin.outcomes == expected && site != nullptr &&
+         site->outcomes == expected;
 }
 
 struct ClassSubscriptAccess {
@@ -1848,6 +1920,17 @@ struct ClassCopyAssignmentFusion {
   }
 };
 
+struct ClassFreshArrayAssignmentFusion {
+  const MirInstruction *construct = nullptr;
+  const MirInstruction *assignment = nullptr;
+  const MirPlace *destination = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return construct != nullptr && assignment != nullptr &&
+           destination != nullptr;
+  }
+};
+
 struct ClassMoveArrayAssignmentFusion {
   const MirInstruction *move = nullptr;
   const MirInstruction *assignment = nullptr;
@@ -1960,7 +2043,7 @@ classMoveArrayAssignmentFusion(const MirBody &body,
 // binding shape into `destination = source`; materializing an intermediate C++
 // object would invent construction and destruction that MIR does not contain.
 [[nodiscard]] ClassCopyAssignmentFusion
-classCopyAssignmentFusion(const MirBody &body,
+classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
                           const MirInstruction &candidate) {
   const MirInstruction *load = &candidate;
   if (candidate.kind == MirInstructionKind::Assign &&
@@ -2005,6 +2088,14 @@ classCopyAssignmentFusion(const MirBody &body,
   const MirValue *assignmentResult = assignment != nullptr && assignment->result
                                          ? body.findValue(*assignment->result)
                                          : nullptr;
+  const bool bareDestination = destination != nullptr &&
+                               destination->root == MirPlaceRootKind::Binding &&
+                               destination->projections.empty() &&
+                               destination->access == AccessMode::Mutable;
+  const std::optional<CheckedArrayElementDestination> checkedDestination =
+      destination == nullptr
+          ? std::nullopt
+          : checkedArrayElementDestination(body, *destination);
   if (assignment == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
       assignment->kind != MirInstructionKind::Assign ||
@@ -2016,11 +2107,18 @@ classCopyAssignmentFusion(const MirBody &body,
       assignment->info.type != source->type ||
       assignmentResult->definition != assignment->id ||
       assignmentResult->info.type != source->type ||
-      destination->root != MirPlaceRootKind::Binding ||
-      !destination->projections.empty() || destination->type != source->type ||
-      destination->access != AccessMode::Mutable ||
-      !destination->traits.copyable || !assignment->localFailureSites.empty() ||
-      !assignment->definedFailure.empty() || !assignment->lifecycle.empty() ||
+      destination->type != source->type || !destination->traits.copyable ||
+      !destination->traits.copyAssignable ||
+      (!bareDestination && !checkedDestination) ||
+      (bareDestination && (!assignment->localFailureSites.empty() ||
+                           !assignment->definedFailure.empty())) ||
+      (checkedDestination &&
+       (!checkedArrayAssignmentFailure(program, *assignment) ||
+        assignment->fullExpressionEnd != 0 ||
+        assignment->cleanupBoundaryEnd != 0 ||
+        assignment->preparedParameterDrop || assignment->successResultDrop ||
+        assignment->successResultDestination)) ||
+      !assignment->lifecycle.empty() ||
       !nonRootRecordUses(body, assignmentResult->id).empty()) {
     return {};
   }
@@ -2041,6 +2139,134 @@ classCopyAssignmentFusion(const MirBody &body,
         return {.load = load,
                 .assignment = assignment,
                 .source = source,
+                .destination = destination};
+      }
+    }
+  }
+  return {};
+}
+
+// A cleanup-free class prvalue consumed by one adjacent checked fixed-array
+// assignment has no independent MIR storage or cleanup identity. Spell the
+// construction directly in the assignment value position; cleanup-owning
+// temporaries remain under the ordinary value-root/drop protocol.
+[[nodiscard]] ClassFreshArrayAssignmentFusion
+classFreshArrayAssignmentFusion(const MirProgram &program, const MirBody &body,
+                                const MirInstruction &candidate) {
+  const MirInstruction *construct = &candidate;
+  if (candidate.kind == MirInstructionKind::Assign &&
+      candidate.operands.size() == 1 &&
+      candidate.operands.front().kind == MirOperandKind::Value) {
+    const MirValue *operand = body.findValue(candidate.operands.front().value);
+    construct = operand == nullptr ? nullptr
+                                   : findInstruction(body, operand->definition);
+  }
+  const MirConstructorInstance *target =
+      construct != nullptr && construct->constructorTarget
+          ? program.findConstructorInstance(*construct->constructorTarget)
+          : nullptr;
+  const MirClassInstance *owner =
+      target == nullptr ? nullptr : program.findClassInstance(target->owner);
+  if (construct == nullptr ||
+      construct->kind != MirInstructionKind::Construct || !construct->result ||
+      construct->destination || construct->receiver ||
+      construct->operation != MirOperation::None ||
+      construct->intrinsic != IntrinsicKind::None ||
+      construct->constructorKind != ConstructorKind::Ordinary ||
+      !construct->constructorTarget || construct->functionTarget ||
+      construct->bodyTarget || construct->lambdaTarget ||
+      construct->callableInvocation ||
+      construct->info.type.kind != SemanticType::Class ||
+      construct->info.category != ValueCategory::Value ||
+      !construct->info.traits.movable ||
+      construct->info.traits.containsBorrowedState ||
+      !construct->localFailureSites.empty() ||
+      !construct->definedFailure.localOrigins.empty() ||
+      (construct->definedFailure.propagation != FailurePropagationKind::None &&
+       construct->definedFailure.propagation !=
+           FailurePropagationKind::Constructor) ||
+      !construct->lifecycle.empty() || construct->fullExpressionEnd != 0 ||
+      construct->cleanupBoundaryEnd != 0 || construct->preparedParameterDrop ||
+      construct->successResultDrop || construct->successResultDestination ||
+      target == nullptr || owner == nullptr ||
+      owner->type != construct->info.type ||
+      owner->destructorStatus != SpecialMemberStatus::Generated ||
+      owner->destructor || owner->requiresActiveDropState ||
+      owner->requiresActiveCleanup || !owner->traits.movable ||
+      !owner->traits.moveAssignable ||
+      (construct->definedFailure.propagation ==
+           FailurePropagationKind::Constructor &&
+       !failureStatusCannotFail(target->body)) ||
+      construct->parameterTypes != target->parameterTypes ||
+      construct->operands.size() != construct->parameterTypes.size()) {
+    return {};
+  }
+  for (std::size_t index = 0; index < construct->operands.size(); ++index) {
+    if (construct->operands[index].type != construct->parameterTypes[index]) {
+      return {};
+    }
+  }
+
+  const MirValueId freshValue = *construct->result;
+  const MirValue *value = body.findValue(freshValue);
+  const std::vector<MirValueUse> uses = body.usesOf(freshValue);
+  if (value == nullptr || value->definition != construct->id ||
+      value->info != construct->info || uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().operandIndex != 0) {
+    return {};
+  }
+  const MirInstruction *assignment =
+      findInstruction(body, uses.front().instruction);
+  const MirPlace *destination = assignment != nullptr && assignment->destination
+                                    ? body.findPlace(*assignment->destination)
+                                    : nullptr;
+  const MirValue *assignmentResult = assignment != nullptr && assignment->result
+                                         ? body.findValue(*assignment->result)
+                                         : nullptr;
+  if (assignment == nullptr || destination == nullptr ||
+      assignmentResult == nullptr ||
+      assignment->kind != MirInstructionKind::Assign ||
+      assignment->operation != MirOperation::Assign || assignment->receiver ||
+      assignment->operands.size() != 1 ||
+      assignment->operands.front().kind != MirOperandKind::Value ||
+      assignment->operands.front().value != freshValue ||
+      assignment->operands.front().type != value->info.type ||
+      assignment->info.type != value->info.type ||
+      assignmentResult->definition != assignment->id ||
+      assignmentResult->info.type != value->info.type ||
+      destination->type != value->info.type || !destination->traits.movable ||
+      !destination->traits.moveAssignable ||
+      !checkedArrayElementDestination(body, *destination) ||
+      !checkedArrayAssignmentFailure(program, *assignment) ||
+      !assignment->lifecycle.empty() || assignment->fullExpressionEnd != 0 ||
+      assignment->cleanupBoundaryEnd != 0 ||
+      assignment->preparedParameterDrop || assignment->successResultDrop ||
+      assignment->successResultDestination ||
+      !nonRootRecordUses(body, assignmentResult->id).empty()) {
+    return {};
+  }
+  if (std::any_of(body.places.begin(), body.places.end(),
+                  [&](const MirPlace &place) {
+                    return place.root == MirPlaceRootKind::Value &&
+                           (place.value == freshValue ||
+                            place.value == assignmentResult->id);
+                  }) ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.generatedValue == freshValue ||
+                           drop.generatedValue == assignmentResult->id;
+                  })) {
+    return {};
+  }
+
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index + 1 < block.instructions.size();
+         ++index) {
+      if (block.instructions[index].id == construct->id &&
+          block.instructions[index + 1].id == assignment->id) {
+        return {.construct = construct,
+                .assignment = assignment,
                 .destination = destination};
       }
     }
@@ -14888,7 +15114,14 @@ public:
           continue;
         }
         if (valueDefinition != nullptr &&
-            classCopyAssignmentFusion(facts.body, *valueDefinition)) {
+            classFreshArrayAssignmentFusion(program, facts.body,
+                                            *valueDefinition)) {
+          // The adjacent checked array assignment spells this cleanup-free
+          // construction directly in its destination value position.
+          continue;
+        }
+        if (valueDefinition != nullptr &&
+            classCopyAssignmentFusion(program, facts.body, *valueDefinition)) {
           // The adjacent assignment consumes this passive copy directly; MIR
           // gives the loaded SSA record no independent lifetime.
           continue;
@@ -17204,7 +17437,7 @@ private:
         return;
       }
       if (const ClassCopyAssignmentFusion fusion =
-              classCopyAssignmentFusion(facts.body, instruction)) {
+              classCopyAssignmentFusion(program, facts.body, instruction)) {
         output << "// class copy load " << *instruction.result
                << " fuses into assignment " << fusion.assignment->id << "\n";
         return;
@@ -17397,17 +17630,63 @@ private:
         }
       }
       if (const ClassCopyAssignmentFusion fusion =
-              classCopyAssignmentFusion(facts.body, instruction)) {
+              classCopyAssignmentFusion(program, facts.body, instruction)) {
         const CppMirTypeRepresentation *row =
             representationTypeRow(representations, fusion.source->type);
         if (row == nullptr || !row->copyable) {
           throw std::logic_error(
               "verified MIR class copy assignment lost its copyable row");
         }
-        emitStoragePlaceValue(facts, *fusion.destination);
-        output << " = ";
-        emitStoragePlaceValue(facts, *fusion.source);
-        output << ";\n";
+        const std::optional<CheckedArrayElementDestination> checked =
+            checkedArrayElementDestination(facts.body, *fusion.destination);
+        if (checked && failureForm && !instruction.localFailureSites.empty()) {
+          output << "__gti_mir_failure_status_" << instruction.id
+                 << " = ::gti_internal::backend::mir_checked_array_write_v1(";
+          emitCheckedArrayParent(facts, *checked);
+          output << ", ";
+          emitCheckedArrayIndex(*checked);
+          output << ", ";
+          emitStoragePlaceValue(facts, *fusion.source);
+          output << ", ::gti_internal::backend::"
+                    "mir_array_copy_assignment_v1);\n";
+        } else if (checked) {
+          emitCheckedArrayElement(facts, *checked);
+          output << " = ";
+          emitStoragePlaceValue(facts, *fusion.source);
+          output << ";\n";
+        } else {
+          emitStoragePlaceValue(facts, *fusion.destination);
+          output << " = ";
+          emitStoragePlaceValue(facts, *fusion.source);
+          output << ";\n";
+        }
+        return;
+      }
+      if (const ClassFreshArrayAssignmentFusion fusion =
+              classFreshArrayAssignmentFusion(program, facts.body,
+                                              instruction)) {
+        const std::optional<CheckedArrayElementDestination> checked =
+            checkedArrayElementDestination(facts.body, *fusion.destination);
+        if (!checked) {
+          throw std::logic_error(
+              "verified fresh class assignment lost its checked array "
+              "destination");
+        }
+        if (failureForm && !instruction.localFailureSites.empty()) {
+          output << "__gti_mir_failure_status_" << instruction.id
+                 << " = ::gti_internal::backend::mir_checked_array_write_v1(";
+          emitCheckedArrayParent(facts, *checked);
+          output << ", ";
+          emitCheckedArrayIndex(*checked);
+          output << ", ";
+          emitClassConstructionExpression(facts, *fusion.construct);
+          output << ");\n";
+        } else {
+          emitCheckedArrayElement(facts, *checked);
+          output << " = ";
+          emitClassConstructionExpression(facts, *fusion.construct);
+          output << ";\n";
+        }
         return;
       }
       if (instruction.operands.size() == 1 &&
@@ -18634,6 +18913,13 @@ private:
         return;
       }
     }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        classFreshArrayAssignmentFusion(program, facts.body, instruction)) {
+      writeIndent();
+      output << "// construct " << *instruction.result
+             << " fuses into checked array assignment\n";
+      return;
+    }
     if (failureForm && instruction.kind == MirInstructionKind::Construct) {
       if (const MirConstructorInstance *target =
               transformedConstructor(instruction)) {
@@ -18925,52 +19211,9 @@ private:
       // declaration above. Slot-consumed constructs keep the slot
       // protocol's own spelling.
       writeIndent();
-      output << "__gti_mir_v_" << *instruction.result << " = "
-             << typeSpelling(instruction.info.type) << '(';
-      for (std::size_t index = 0; index < instruction.operands.size();
-           ++index) {
-        if (index != 0) {
-          output << ", ";
-        }
-        // An ordered moved-place chain operand spells std::move over
-        // the source place directly.
-        if (const MirPlace *chainSource =
-                instruction.operands[index].kind == MirOperandKind::Value
-                    ? movedPlaceChainSource(facts.body,
-                                            instruction.operands[index].value,
-                                            instruction)
-                    : nullptr) {
-          output << "std::move(";
-          emitStoragePlaceValue(facts, *chainSource);
-          output << ')';
-          continue;
-        }
-        if (instruction.operands[index].kind == MirOperandKind::Value) {
-          if (const MirInstruction *producer =
-                  inlineNestedCallResult(program, representations, facts.body,
-                                         instruction.operands[index].value)) {
-            emitInlineNestedMemberCall(facts, *producer);
-            continue;
-          }
-        }
-        // The construction consumes its arguments: class-typed operands
-        // move so deleted copy constructors cannot reject the call.
-        const bool consumed =
-            instruction.operands[index].type.kind == SemanticType::Class ||
-            instruction.operands[index].type.kind ==
-                SemanticType::UniqueOwner ||
-            instruction.operands[index].type.kind == SemanticType::Storage ||
-            instruction.operands[index].type.kind ==
-                SemanticType::PrefixStorage;
-        if (consumed) {
-          output << "std::move(";
-        }
-        emitOperand(instruction.operands[index]);
-        if (consumed) {
-          output << ')';
-        }
-      }
-      output << ");\n";
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      emitClassConstructionExpression(facts, instruction);
+      output << ";\n";
       return;
     }
     if (instruction.kind != MirInstructionKind::CallInput &&
@@ -21950,6 +22193,111 @@ private:
     output << "__gti_mir_v_" << projection.index;
   }
 
+  void
+  emitCheckedArrayParent(const ScalarBodyFacts &facts,
+                         const CheckedArrayElementDestination &destination) {
+    if (const auto *access =
+            std::get_if<ArrayElementAccess>(&destination.access)) {
+      emitArrayParent(facts, *access);
+      return;
+    }
+    if (const auto *access =
+            std::get_if<BindingArrayFieldElementAccess>(&destination.access)) {
+      emitBindingArrayFieldParent(facts, *access);
+      return;
+    }
+    if (const auto *access =
+            std::get_if<ReceiverArrayElementAccess>(&destination.access)) {
+      emitReceiverArrayParent(facts, *access);
+      return;
+    }
+    throw std::logic_error("verified checked array destination lost its base");
+  }
+
+  void
+  emitCheckedArrayElement(const ScalarBodyFacts &facts,
+                          const CheckedArrayElementDestination &destination) {
+    if (const auto *access =
+            std::get_if<ArrayElementAccess>(&destination.access)) {
+      emitArrayElement(facts, *access);
+      return;
+    }
+    if (const auto *access =
+            std::get_if<BindingArrayFieldElementAccess>(&destination.access)) {
+      emitBindingArrayFieldElement(facts, *access);
+      return;
+    }
+    if (const auto *access =
+            std::get_if<ReceiverArrayElementAccess>(&destination.access)) {
+      emitReceiverArrayElement(facts, *access);
+      return;
+    }
+    throw std::logic_error(
+        "verified checked array destination lost its element");
+  }
+
+  void
+  emitCheckedArrayIndex(const CheckedArrayElementDestination &destination) {
+    if (const auto *access =
+            std::get_if<ArrayElementAccess>(&destination.access)) {
+      emitElementIndexValue(*access);
+      return;
+    }
+    if (const auto *access =
+            std::get_if<BindingArrayFieldElementAccess>(&destination.access)) {
+      emitElementIndexValue(access->terminalIndex());
+      return;
+    }
+    if (const auto *access =
+            std::get_if<ReceiverArrayElementAccess>(&destination.access)) {
+      emitElementIndexValue(access->index);
+      return;
+    }
+    throw std::logic_error("verified checked array destination lost its index");
+  }
+
+  void emitClassConstructionExpression(const ScalarBodyFacts &facts,
+                                       const MirInstruction &instruction) {
+    output << typeSpelling(instruction.info.type) << '(';
+    for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      if (const MirPlace *chainSource =
+              instruction.operands[index].kind == MirOperandKind::Value
+                  ? movedPlaceChainSource(facts.body,
+                                          instruction.operands[index].value,
+                                          instruction)
+                  : nullptr) {
+        output << "std::move(";
+        emitStoragePlaceValue(facts, *chainSource);
+        output << ')';
+        continue;
+      }
+      if (instruction.operands[index].kind == MirOperandKind::Value) {
+        if (const MirInstruction *producer =
+                inlineNestedCallResult(program, representations, facts.body,
+                                       instruction.operands[index].value)) {
+          emitInlineNestedMemberCall(facts, *producer);
+          continue;
+        }
+      }
+      const bool consumed =
+          instruction.operands[index].type.kind == SemanticType::Class ||
+          instruction.operands[index].type.kind == SemanticType::UniqueOwner ||
+          instruction.operands[index].type.kind == SemanticType::Storage ||
+          instruction.operands[index].type.kind == SemanticType::PrefixStorage;
+      if (consumed) {
+        output << "std::move(";
+      }
+      emitOperand(instruction.operands[index]);
+      if (consumed) {
+        output << ')';
+      }
+    }
+    output << ')';
+  }
+
   [[nodiscard]] const MirFunctionInstance *
   transformedCallee(const MirInstruction &instruction) const {
     return transformedFailureCallee(program, representations, instruction);
@@ -24739,7 +25087,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              returnMoveDefinition(body, value.id) == definition) ||
             returnCallDefinition(body, value.id) == definition)) ||
           (definition != nullptr && copyLoadResult() &&
-           classCopyAssignmentFusion(body, *definition)) ||
+           classCopyAssignmentFusion(program_, body, *definition)) ||
+          (definition != nullptr &&
+           classFreshArrayAssignmentFusion(program_, body, *definition)) ||
           (definition != nullptr &&
            classMoveArrayAssignmentFusion(body, *definition)) ||
           (constructDefined && slotConsumed(*definition)) ||
@@ -25033,6 +25383,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       case MirInstructionKind::Construct: {
         if (generatedSpecialMemberConstruction(program_, body, instruction)) {
+          continue;
+        }
+        if (classFreshArrayAssignmentFusion(program_, body, instruction)) {
+          if (!typeRow(instruction.info.type) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand)) {
+            return false;
+          }
           continue;
         }
         if (instruction.result) {
