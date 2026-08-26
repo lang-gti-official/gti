@@ -1,0 +1,19 @@
+class move_only_item {
+public:
+  move_only_item() {}
+  move_only_item(move_only_item&) = delete;
+  move_only_item(move_only_item&&) = default;
+  mut int32_t payload = 5;
+};
+
+class item_box {
+public:
+  item_box() {}
+  mut move_only_item items[2] = {};
+};
+
+int main() {
+  mut item_box source = item_box();
+  move_only_item copied = source.items[0];
+  return copied.payload;
+}
