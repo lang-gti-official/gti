@@ -5,11 +5,11 @@
 
 Status: Milestone 1 remains in progress; the deterministic GTI optimization
 reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
-`O-PERF-00` through `O-PERF-03` are complete and `O-PERF-04` is measured
-defer: the runtime workload set,
+`O-PERF-00` through `O-PERF-03` and `O-PERF-05` are complete and `O-PERF-04`
+is measured defer: the runtime workload set,
 fixed-native attribution mode, loop and closed-call safety clients, single-bound
 prefix access, threshold-free CI smoke gate, and clean exact-head closure
-evidence are recorded below. `O-PERF-05` is the active campaign row.
+evidence are recorded below. `O-GAME-01` is the active campaign row.
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
@@ -705,6 +705,48 @@ checked GTI: [540022625,544103458,539789458,541255875,541966416,539874167,540720
 preflight GTI: [545063416,538007541,538255667,537991917,538679125,538940250,538244000,539211458,537815500,537012250,537267583,538049625,539675292,537139416,537550042,538764791,538169875,538215834,539034875,538234416]
 semantic C++: [544178667,539802167,540155833,539501084,538935709,544209833,540842500,539780250,539786459,538835917,540161792,539753584,539672084,539361459,539703375,539405292,539013250,539813750,540115500,539211750]
 idiomatic C++: [544912542,538126417,538645625,538849084,537420292,539335917,540899792,537981542,538996000,538161417,538202917,537649708,538560666,538034959,537685167,538997958,538289000,537310166,538873417,537562458]
+```
+
+### O-PERF-05 exact-head measured no-op
+
+The row compared the admitted `scalar-fp-update` and `vector-checked-loop`
+clients under one schema-3 run on clean commit `9da44477`. The report has
+SHA-256
+`8175044a73798dc8af516c1d7e8b4526b599be7359b2fb96c3b3a038246ee704`;
+the selected `gti 0.317.0` executable has SHA-256
+`e0c976f6d56a4b91ff2d3dcdd2f96faca88961e9d1abde5236bde447c6771092`.
+It used Apple Clang 21, native O3, strict floating-point flags, seed 3108,
+five warmups, and twenty interleaved samples. Every variant exceeded its 50 ms
+floor and retained its exact `GTI-BENCH-1` record.
+
+| Workload/variant | Median / MAD (ms) | GTI ratio |
+| --- | ---: | ---: |
+| scalar GTI | 80.297 / 0.472 | 1.000x |
+| scalar semantic C++ | 79.885 / 0.474 | 1.005x GTI/semantic |
+| scalar idiomatic C++ | 79.680 / 0.485 | 1.008x GTI/idiomatic |
+| vector GTI | 53.650 / 0.279 | 1.000x |
+| vector semantic C++ | 491.655 / 21.902 | 0.109x GTI/semantic |
+| vector idiomatic C++ | 51.400 / 0.535 | 1.044x GTI/idiomatic |
+
+Native inspection found no residual timed call or failure-ABI boundary in the
+scalar loop: Apple Clang inlined the read-only `dot` call and produced nine
+loop instructions for both GTI and semantic C++, with two vector multiplies,
+four scalar/vector adds or moves, one decrement, and one back edge. The GTI
+vector loops likewise contain direct SIMD loads, arithmetic, stores, and back
+edges; source-level vector and failure helpers do not survive in their hot
+paths. The scalar client is already 1.005x semantic C++, and the closed-call
+client is faster than semantic C++ and 1.044x idiomatic. Both meet the 1.15x
+exit gate, and less than 5% measured value remains, so no `noexcept`, ABI,
+representation, or backend spelling change is justified. O-PERF-05 closes as
+a measured no-op rather than adding speculative backend policy.
+
+```text
+scalar GTI: [80400750,81967875,80932834,80706625,80775333,80762875,81275541,80795292,80252291,80030625,80341250,80228125,80678208,80154333,79780625,79598792,79801250,79770541,79640042,80154542]
+scalar semantic C++: [79787542,80043417,80231792,80411375,79935125,79835500,80462708,80082167,79984792,79587583,79287916,80352208,80186375,80527416,78975458,79403625,79005583,78869541,79232375,79327125]
+scalar idiomatic C++: [80482916,79525250,80971792,80177584,79575541,79652375,80047917,80896208,80184375,79512083,79611542,80385334,80599625,80008166,79207042,79210208,79065833,78976916,79708541,79063125]
+vector GTI: [53159250,53920625,53578542,53644708,53598917,53731458,53128750,54704500,53280083,53565959,53515041,53672500,53655625,54107500,54614416,53937458,54211708,53982584,53182834,53410625]
+vector semantic C++: [462786500,499926291,508878042,511390500,517263667,489585916,527702542,538989084,521212083,524048958,540993500,493723542,472992000,469581417,469924917,468439167,480747250,489514166,486531834,464289500]
+vector idiomatic C++: [50731500,52167584,50687375,51736625,50819709,50746583,50909166,50737291,50917875,51598792,52459708,52020625,52652875,52071334,51188750,51370125,51491333,51429000,51247291,51729000]
 ```
 
 ### Independent reproduction of PR #164

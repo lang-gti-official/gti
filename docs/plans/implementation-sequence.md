@@ -378,8 +378,8 @@ detailed row together; do not copy the sequence into another plan.
 | 3 | `O-PERF-02` | **complete** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | Exact clean commit `d6374eb9` uses bounded contextual summaries to discharge six overflow outcomes and four arithmetic-domain outcomes; the O2 vector median fell from 1,213.192 ms to 558.336 ms while all conservative near misses and independent replay passed. |
 | 4 | `O-PERF-03` | **complete** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | Exact clean commit `eaaea34d` removes vector's mirrored count and discharges seven public-accessor private prefix rechecks. Follow-up exact commit `4dbb50bd` carries the existing scalar envelope through exact indexed return borrows and finite closed-call loop bounds; vector medians are 1.042x idiomatic at O2 and 1.049x at O3. |
 | 5 | `O-PERF-04` | **measured defer** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | Exact clean commit `4dbb50bd` records a semantics-preserving source preflight at 538.225 ms versus 540.055 ms checked GTI, only 0.34% available value; checked GTI is already 1.003x idiomatic, so the required 30% entry gate rejects versioning. |
-| 6 | `O-PERF-05` | **active** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
-| 7 | `O-GAME-01` | **blocked on 05** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
+| 6 | `O-PERF-05` | **complete (measured no-op)** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | Exact clean commit `9da44477` measures scalar GTI at 1.005x semantic C++ and the closed-call vector client at 0.109x semantic and 1.044x idiomatic; native hot loops contain no surviving call/failure boundary, so no backend change is justified. |
+| 7 | `O-GAME-01` | **active** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
 
 `P-MEASURE-01` benchmark breadth is subsumed into `O-PERF-00` while this gate
 is active. `A-CACHE-01` and every other unfinished compiler row are parked
@@ -3027,8 +3027,8 @@ was added.
 
 ### O-PERF-05: Residual Backend Representation Hygiene
 
-- **State/role:** active after measured-defer closure of `O-PERF-04`; bounded
-  cleanup, not a backend rewrite.
+- **State/role:** complete as a measured no-op on exact clean commit
+  `9da44477`; the admitted clients meet the gate without a backend change.
 - **Scope:** profile a scalar-FP/update and one closed-call client whose timed
   region exceeds 50 ms. Compare MIR-equivalent emitted C++ and semantic C++ at
   the same native settings. Test only surviving artifacts such as unnecessary
@@ -3042,9 +3042,20 @@ was added.
   native compiler, MIR/backend differential, failure ABI, and campaign control
   remains correct.
 
+The exact schema-3 campaign used native O3, strict floating-point flags, five
+warmups, and twenty interleaved samples. `scalar-fp-update` measured 80.297 ms
+in GTI versus 79.885 ms in semantic C++ and 79.680 ms in idiomatic C++.
+`vector-checked-loop` measured 53.650 ms in GTI versus 491.655 ms in semantic
+C++ and 51.400 ms in idiomatic C++. Native inspection found a nine-instruction
+call-free hot loop in both scalar variants and fully inlined/vectorized vector
+loops. The 0.5% scalar semantic gap and 4.4% vector idiomatic gap leave less
+than 5% value; no backend annotation, ABI, or representation change was
+admitted. Exact report identity and raw samples live in
+[`performance-tooling.md`](performance-tooling.md).
+
 ### O-GAME-01: Game-Style Runtime Acceptance Workload
 
-- **State/role:** final exclusive-gate row, blocked on `O-PERF-05`. Its first
+- **State/role:** active final exclusive-gate row. Its first
   scalar/container baseline is admitted in `O-PERF-00`; unavailable public
   APIs become explicit staged constituents rather than compiler-private
   simulations.
