@@ -8,5 +8,5 @@ checked integer induction step; no variant reassociates floating-point work.
 Expected record:
 
 ```text
-GTI-BENCH-1 digest:0000000001be59f2 work-units:30000000
+GTI-BENCH-1 digest:00000000034ee502 work-units:60000000
 ```

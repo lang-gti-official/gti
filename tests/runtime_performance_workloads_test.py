@@ -29,7 +29,7 @@ EXPECTED_RECORDS = {
         "GTI-BENCH-1 digest:000000025efeed0b work-units:700000"
     ),
     "scalar-fp-update": (
-        "GTI-BENCH-1 digest:0000000001be59f2 work-units:30000000"
+        "GTI-BENCH-1 digest:00000000034ee502 work-units:60000000"
     ),
 }
 
