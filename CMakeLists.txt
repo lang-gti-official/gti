@@ -1275,6 +1275,15 @@ if(BUILD_TESTING)
     set_tests_properties(issue_144_class_array_field_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME issue_146_class_value_positions_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/issue_146_class_value_positions_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(issue_146_class_value_positions_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
       NAME issue_147_stored_reference_field_read_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/issue_147_stored_reference_field_read_runtime_test.py"
@@ -1450,6 +1459,7 @@ if(BUILD_TESTING)
         issues_117_120_regressions
         issue_143_polymorphic_class_array_runtime
         issue_144_class_array_field_runtime
+        issue_146_class_value_positions_runtime
         issue_147_stored_reference_field_read_runtime
         mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime

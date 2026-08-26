@@ -8910,14 +8910,11 @@ int32_t main() {
 }
 
 void testCopyParameterFieldPublicationAdmission() {
-  // A constructor member initializer that copies a class-typed by-value
-  // parameter into its field has no failure-form spelling: the staged
-  // publication declares only at a Move, and the copy-parameter
-  // member-initializer vocabulary is deliberately scalar-only. The gate
-  // must decline instead of emitting an undeclared staged local and a
-  // default-then-assign body for a field type without a usable default
-  // constructor.
-  const lang::FrontendResult copyForm =
+  // A constructor member initializer may copy a passive generated-copy class
+  // directly from its exact by-value parameter. This MIR shape carries the
+  // parameter Load and full-expression boundary but no field Initialize; the
+  // member-initializer metadata is the publication authority.
+  lang::FrontendResult copyForm =
       analyzeWithStandardLibrary("cpp-mir-copy-parameter-field.gti", R"(
 class Payload {
 public:
@@ -8941,11 +8938,13 @@ int main() {
   if (!copyForm.canGenerateCode()) {
     return;
   }
-  const auto findHolderConstructor = [](const lang::FrontendResult &frontend)
-      -> const lang::MirConstructorInstance * {
-    const lang::MirConstructorInstance *selected = nullptr;
-    for (const lang::MirConstructorInstance &constructor :
-         frontend.mir.constructorInstances()) {
+  const auto findHolderConstructor =
+      [](lang::FrontendResult &frontend) -> lang::MirConstructorInstance * {
+    lang::MirConstructorInstance *selected = nullptr;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            frontend.mir.constructorInstances());
+    for (lang::MirConstructorInstance &constructor : constructors) {
       if (constructor.parameterTypes.size() == 1 &&
           constructor.parameterTypes.front().kind ==
               lang::SemanticType::Class &&
@@ -8955,7 +8954,7 @@ int main() {
     }
     return selected;
   };
-  const lang::MirConstructorInstance *copyConstructor =
+  lang::MirConstructorInstance *copyConstructor =
       findHolderConstructor(copyForm);
   expect(copyConstructor != nullptr,
          "the copy fixture should lower the class-parameter constructor");
@@ -8968,16 +8967,60 @@ int main() {
     const lang::CppMirBodyEmitter emitter(copyForm.mir, map);
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
                                        .owner = copyConstructor->id};
-    expect(!emitter.supportsBodyText(address) &&
-               !emitter.supportsFailureBodyText(address),
-           "the copy-parameter field publication must stay outside the "
-           "vocabulary on both forms until its member-initializer spelling "
-           "exists");
+    const auto bindings =
+        lang::cppMirCopyParameterFieldBindings(copyForm.mir, *copyConstructor);
+    expect(bindings && bindings->size() == 1 &&
+               bindings->front().initializeInstruction == 0,
+           "the copy-parameter field publication should prove the exact "
+           "metadata-only passive class shape");
+    expect(emitter.supportsBodyText(address),
+           "the exact passive class copy must enter the ordinary constructor "
+           "form");
+    expect(emitter.supportsFailureBodyText(address),
+           "the exact passive class copy must enter the failure constructor "
+           "form");
+    if (emitter.supportsBodyText(address)) {
+      const std::string text =
+          emitter.emitBodyText(address, "copy-parameter-field-v0", 1).text;
+      expect(text.find("parameter copy publishes in the member initializer "
+                       "list") != std::string::npos,
+             "the class parameter Load should be consumed by the exact "
+             "member-initializer publication");
+    }
+  }
+
+  lang::MirInstruction *copyLoad = nullptr;
+  for (lang::MirBlock &block : copyConstructor->body.blocks) {
+    for (lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Load &&
+          instruction.result && instruction.ownership) {
+        copyLoad = &instruction;
+      }
+    }
+  }
+  expect(copyLoad != nullptr,
+         "the copy fixture should retain its parameter Load proof input");
+  if (copyLoad != nullptr) {
+    copyLoad->ownership->reachable = false;
+    const auto malformedBindings =
+        lang::cppMirCopyParameterFieldBindings(copyForm.mir, *copyConstructor);
+    expect(malformedBindings && malformedBindings->empty(),
+           "unreachable forged ownership must invalidate the passive class "
+           "copy binding");
+    const lang::CppMirBodyEmissionMap malformedMap(
+        buildRows(copyForm, copyForm.mir, lang::CppStandard::Cpp23));
+    const lang::CppMirBodyEmitter malformedEmitter(copyForm.mir, malformedMap);
+    const lang::MirBodyAddress malformedAddress{
+        .kind = lang::MirBodyKind::Constructor, .owner = copyConstructor->id};
+    expect(!malformedEmitter.supportsBodyText(malformedAddress) &&
+               !malformedEmitter.supportsFailureBodyText(malformedAddress),
+           "the passive class copy route must fail closed when its exact "
+           "ownership event drifts");
   }
 
   // The moved flavor of the same constructor keeps its admitted
   // member-initializer publication.
-  const lang::FrontendResult moveForm =
+  lang::FrontendResult moveForm =
       analyzeWithStandardLibrary("cpp-mir-move-parameter-field.gti", R"(
 class Payload {
 public:
@@ -9001,7 +9044,7 @@ int main() {
   if (!moveForm.canGenerateCode()) {
     return;
   }
-  const lang::MirConstructorInstance *moveConstructor =
+  lang::MirConstructorInstance *moveConstructor =
       findHolderConstructor(moveForm);
   expect(moveConstructor != nullptr,
          "the move fixture should lower the class-parameter constructor");
