@@ -357,9 +357,18 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `P-MEASURE-01` | **in progress** | none | Complete benchmark breadth without weakening backend-authority gates. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 2 | `A-CACHE-01` | **ready** | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
-| 3 | `S-CFG-01` | **done** | `M-BACK-02` done | Add a build-configuration axis to compile-time conditionals: valueless `#define`/`#undef`/`#ifdef`/`#ifndef` and boolean conditions over the existing `target.*` primary, with no substitution and no function-like macros. | Compiler selection tests cover external/source/include flags, dead-branch isolation, inactive syntax, diagnostics, and formatting; direct/project CLI tests cover `-D` and `[build].defines`; Tree-sitter and LSP tests cover syntax and inactive-token toggling; the MIR census is unchanged. Design history in `docs/plans/archive/conditional-compilation.md`; closed ledger row `R-BUILD-CONFIG`. |
+| 1 | `O-PERF-01` | **active priority one** | exact-head audit and current benchmark runner | Close the measured checked-vector lowering/representation gap before adding speculative optimizer breadth. | On the published reference configuration, median runtime improves by at least 30%, reaches at most 1.25x semantic C++, and causes no conclusive regression greater than 5% in the fixed-array or managed-thread controls. |
+| 2 | `P-MEASURE-01` | **in progress** | none | Complete benchmark breadth without weakening backend-authority gates. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 3 | `O-GAME-01` | **ready benchmark client** | current runner; expand with public APIs as they stabilize | Add a deterministic game-style update workload that exposes container, math, dispatch, allocation, and joined-task costs. | GTI, semantic C++, and idiomatic C++ variants produce one complete-state digest; the published reference run records median/tail update time and attributable sub-workloads. |
+| 4 | `A-CACHE-01` | **ready** | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
+| 5 | `S-CFG-01` | **done** | `M-BACK-02` done | Add a build-configuration axis to compile-time conditionals: valueless `#define`/`#undef`/`#ifdef`/`#ifndef` and boolean conditions over the existing `target.*` primary, with no substitution and no function-like macros. | Compiler selection tests cover external/source/include flags, dead-branch isolation, inactive syntax, diagnostics, and formatting; direct/project CLI tests cover `-D` and `[build].defines`; Tree-sitter and LSP tests cover syntax and inactive-token toggling; the MIR census is unchanged. Design history in `docs/plans/archive/conditional-compilation.md`; closed ledger row `R-BUILD-CONFIG`. |
+
+While `O-PERF-01` is active, unrelated language-surface expansion should not
+displace its measured implementation slices. Correctness, security, release,
+and regression fixes remain eligible, as do narrowly scoped container,
+allocator, callable, concurrency, or FFI capabilities required by a named
+performance workload. This ordering is not permission to merge unsafe
+shortcuts or lower the compiler's phase-authority gates.
 
 `M-BACK-02` no longer blocks those outcome rows. The permanent gate is that any
 new executable feature must extend verified MIR, its verifier, and the general
@@ -2738,15 +2747,82 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   cache invalidation and snapshot isolation, disjoint-place fact preservation,
   and overlapping-place fact invalidation have focused evidence.
 
+### O-PERF-01: Container Hot-Path Runtime Closure
+
+- **State/role:** active priority-one systems-readiness campaign; no runtime
+  optimization is complete merely because this row and its instrumentation
+  exist.
+- **User outcome:** a public-GTI container update kernel suitable for a game or
+  renderer loop runs near semantic-equivalent C++ without weakening bounds,
+  overflow, ownership, failure, cleanup, or evaluation-order guarantees.
+- **Starting evidence:** the 2026-08-26 exact-main campaign measured
+  `vector-checked-loop` at 109.517 ms for GTI and 50.281 ms for semantic C++.
+  The fixed-array control measured within 0.33% of all variants, and manually
+  discharging its retained checks changed the median by -0.16% with identical
+  hot-function assembly. O-MIR-08 is therefore not the active client.
+- **Work order:** retain an exact-head baseline; collect profiler attribution,
+  MIR/report counters, and native disassembly for GTI and semantic C++; test
+  one disposable upper-bound proxy; implement the smallest sound change; then
+  rerun the complete campaign. If the proxy does not materially improve
+  runtime, record the rejection and follow the measured next bottleneck.
+- **First hypotheses, not assumed solutions:** closed `scale`/`sum` call
+  specialization or inlining, a deterministic native emission policy where a
+  forced-inline proxy proves sufficient, and collapsing redundant wrapper and
+  prefix-storage logical-length state. Cyclic scalar promotion, a new safety
+  family, memory versioning, or allocator work enters only when profiling
+  selects it.
+- **Architecture gates:** MIR remains executable and transformation authority;
+  failure origin/order, cleanup, ownership, loans, and left-to-right behavior
+  remain exact. Backend attributes are target policy rather than semantic
+  proof. Public standard-library names receive no compiler magic; a private
+  capability change binds by exact declaration identity and preserves the
+  source-defined public contract. Every MIR edit uses stable identity,
+  controlled editing, verification, and independent source-MIR replay.
+- **Exit gate:** on one published stable machine/toolchain/configuration, the
+  exact-head GTI median improves by at least 30% and reaches at most 1.25x the
+  semantic-C++ median. The fixed-array and managed-thread controls have no
+  conclusive regression greater than 5%; correctness digests and O0/O2/O3
+  behavior remain exact; raw samples, profiles, counters, and retained native
+  evidence accompany the result. Cache/pass/check counts alone cannot close
+  the row.
+
+### O-GAME-01: Game-Style Runtime Acceptance Workload
+
+- **State/role:** ready benchmark client. Its first deterministic scalar and
+  container stage may proceed with `O-PERF-01`; unavailable public APIs should
+  be added as later workload stages rather than simulated with
+  compiler-private access.
+- **Bounded scope:** compare GTI, semantic-equivalent C++, and explicitly
+  idiomatic C++ for the same fixed update stream and complete-state digest.
+  Cover data-oriented array-of-structures and structure-of-arrays math,
+  container traversal/mutation, and static/callable dispatch first. Add bounded
+  allocation or pool reuse and joined tasks when their public contracts are
+  available. Keep rendering, file I/O, event generation, and report output
+  outside the timed region. Measure C-FFI call cost separately.
+- **Evidence policy:** record median and tail update latency, logical work
+  units, raw samples, exact compiler/toolchain identity, emitted-code hashes,
+  and correctness records. Shared CI runs only threshold-free correctness and
+  descriptor smoke checks; performance gates run on the published stable
+  machine.
+- **Exit gate:** the combined GTI update reaches at most 1.5x
+  semantic-equivalent C++ on the reference configuration. No constituent
+  workload may remain more than 2x slower without profiler-backed attribution
+  and a numbered follow-up. The idiomatic comparison remains visible so
+  semantic parity does not hide an avoidable safety-policy cost.
+
 ### O-MIR-08: Loop-Derived Safety Proof Client
 
-- **State/role:** client-gated next optimization; not implemented.
+- **State/role:** measured defer; not implemented and not the active optimizer
+  client.
 - **Bounded scope:** consume only `O-MIR-06` single-latch affine facts to prove
   one existing fixed-array bounds family over a reducible loop. Reuse the
   existing safety-discharge transform and replay path; add no loop rewrite.
-- **Entry/exit gate:** a representative checked loop shows removed operations;
-  every induction, bound, overflow, early-exit, mutation, and irreducible
-  near-miss retains checks; O0/O2/O3 runtime and failure-origin parity passes.
+- **Entry/exit gate:** reconsider only when source MIR produces replayable
+  loop-carried affine facts and an upper-bound proxy demonstrates material
+  runtime value after native optimization. Then a representative checked loop
+  must show removed operations and an end-to-end improvement; every induction,
+  bound, overflow, early-exit, mutation, and irreducible near-miss retains
+  checks; O0/O2/O3 runtime and failure-origin parity passes.
 
 ### O-MIR-09: Alias-Safe Local Memory Client
 
@@ -2762,13 +2838,20 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
 ### O-MIR-10: First Interprocedural Transform
 
-- **State/role:** blocked; not implemented.
-- **Bounded scope:** select either one closed exact devirtualization family or
-  one bounded inlining family, not both, after closed-world identity, cleanup,
-  provenance, layout, recursion, and cost policy are explicit.
-- **Entry/exit gate:** measured workload value, deterministic budget, exact
-  source-MIR replay, no open/native/recursive target admission, and identical
-  behavior through every backend.
+- **State/role:** client-selected but prerequisite- and proxy-gated; not
+  implemented.
+- **Bounded scope:** `O-PERF-01` may select one closed exact static-call
+  inlining or specialization family after profiling and an upper-bound proxy
+  show material vector/container value. Admit only concrete, non-recursive,
+  non-native, non-virtual callees whose parameter/result materialization,
+  temporary lifetime, cleanup, failure propagation, provenance, and cost are
+  completely represented. Devirtualization remains outside this slice.
+- **Entry/exit gate:** measured workload value, deterministic size/cost budget,
+  exact source-MIR replay, no open/native/virtual/recursive target admission,
+  exact failure and cleanup behavior, identical behavior through every
+  backend, and the `O-PERF-01` runtime/regression gates. If a deterministic
+  native emission policy reaches the same result without an IR transform, do
+  not build inlining infrastructure solely to satisfy this row.
 
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
 gated. A future LLVM backend remains blocked on complete MIR layout, ABI,
@@ -2914,10 +2997,11 @@ owned by the rows and domain plans above.
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
-| MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-05`; later families require numbered measured clients |
+| Runtime performance | **active priority-one campaign** | `O-PERF-01` checked-vector closure, then `O-GAME-01` game-style acceptance; correctness and performance-enabling prerequisites may proceed, unrelated surface breadth does not outrank the campaign |
+| MIR transformations | **bounded local production pipeline with one selected performance client** | `O-MIR-01` through `O-MIR-07` provide current transforms/analyses; `O-MIR-08/09` are measured-defer; bounded `O-MIR-10` closed-call work is candidate-only under `O-PERF-01` profiling and proxy gates |
 | MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
-| Natural-loop/range facts | **complete bounded analysis** | `O-MIR-06`; first transform client is gated by `O-MIR-08` |
+| Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
