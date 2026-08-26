@@ -11411,8 +11411,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
     case MirLiteralProvenanceKind::ComputeFold:
     case MirLiteralProvenanceKind::SparseConstant:
       // Optimizer literals retain their source operation. Do not strengthen
-      // a function's defined-failure summary merely because an operation
-      // outside this bounded proof folded to a literal.
+      // an executable body's defined-failure summary merely because an
+      // operation outside this bounded proof folded to a literal.
       return scalarOperation(instruction.literalProvenance.sourceOperation);
     case MirLiteralProvenanceKind::Count:
       return false;
@@ -11536,6 +11536,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                           });
           if (!instruction.result || instruction.destination ||
               !scalarInfo(instruction.info) || (!literalForm && !operandForm) ||
+              !stableScalarProvenance(instruction) ||
               !instruction.lifecycle.empty() ||
               instruction.fullExpressionEnd != 0 ||
               instruction.cleanupBoundaryEnd != 0) {
