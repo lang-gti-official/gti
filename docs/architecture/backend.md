@@ -265,6 +265,20 @@ loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
 eligibility from the generated signature.
 
+For an exact cleanup-owning class value consumed by an ordinary by-value call,
+the body emitter uses the caller-owned `PreparedParameter` slot named by MIR.
+A direct `Construct` or admitted cleanup-owning call result publishes once into
+that slot; its source drop remains authoritative until the matching `CallInput`
+reparents it, and the consuming `Call` transfers the prepared drop exactly
+once. An owning `Expected` extraction may use its value-rooted source place as
+representation and drop metadata only when it is the sole unprojected use in
+that exact reparent chain, with matching type, access, drop, call-site,
+ordering, and success/failure facts. That metadata place emits no C++ local or
+default construction. Failure before extraction success never arms the
+prepared slot, and unsupported, aliased, duplicated, projected, or mismatched
+shapes remain rejected rather than receiving backend-invented storage or
+cleanup.
+
 For a verified `MoveBorrowedTemporary` constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
 slot, moves that value into the selected constructor parameter, and ends the

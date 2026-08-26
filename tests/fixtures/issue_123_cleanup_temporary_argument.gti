@@ -1,0 +1,69 @@
+mut int32_t counted_destructions = 0;
+mut int32_t counted_destruction_total = 0;
+mut int32_t generic_destructions = 0;
+
+class empty_dtor_t {
+public:
+  empty_dtor_t() {}
+  empty_dtor_t(empty_dtor_t& other) = delete;
+  empty_dtor_t(empty_dtor_t&& other) = default;
+  ~empty_dtor_t() {}
+
+  int32_t value = 1;
+};
+
+class counted_dtor_t {
+public:
+  counted_dtor_t(int32_t initial) : value(initial) {
+  }
+  counted_dtor_t(counted_dtor_t& other) = delete;
+  counted_dtor_t(counted_dtor_t&& other) = default;
+  ~counted_dtor_t() {
+    counted_destructions += 1;
+    counted_destruction_total += this.value;
+  }
+
+  int32_t value;
+};
+
+class generic_dtor_t<std::default_initializable T> {
+public:
+  generic_dtor_t() {}
+  ~generic_dtor_t() { generic_destructions += 1; }
+
+  mut T value = T();
+};
+
+int32_t read_empty(empty_dtor_t value) { return value.value; }
+
+int32_t read_counted(counted_dtor_t value) { return value.value; }
+
+int32_t read_generic(generic_dtor_t<int32_t> value) { return value.value; }
+
+counted_dtor_t make_counted(int32_t value) {
+  return counted_dtor_t(value);
+}
+
+expected<counted_dtor_t, int32_t> make_ready(int32_t value) {
+  return counted_dtor_t(value);
+}
+
+int main() {
+  mut int32_t total = read_empty(empty_dtor_t());
+  total += read_counted(counted_dtor_t(2));
+  total += read_generic(generic_dtor_t<int32_t>());
+
+  counted_dtor_t local{4};
+  total += read_counted(std::move(local));
+  total += read_counted(make_counted(5));
+
+  expected<counted_dtor_t, int32_t> ready = make_ready(6);
+  total += read_counted(std::move(ready).value());
+
+  if (total != 18 || counted_destructions != 4 ||
+      counted_destruction_total != 17 ||
+      generic_destructions != 1) {
+    return 2;
+  }
+  return 0;
+}
