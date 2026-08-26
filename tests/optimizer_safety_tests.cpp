@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -36,6 +37,18 @@ findFunction(const lang::FrontendResult &frontend, std::string_view name) {
                             function.source->name().lexeme == name;
                    });
   return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+}
+
+lang::FrontendResult analyzeTrusted(std::string_view name,
+                                    const std::string &source) {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const std::filesystem::path entry = standardLibrary / std::string(name);
+  const std::string entryKey =
+      std::filesystem::weakly_canonical(entry).string();
+  return lang::Frontend().analyze(entry, source,
+                                  {standardLibrary / "prelude.gti", entry},
+                                  {{entryKey, source}}, {standardLibrary});
 }
 
 std::size_t countDischarges(const lang::MirProgram &program,
@@ -452,11 +465,160 @@ int32_t main() {
          "bounds discharge");
 }
 
+void testPrefixStorageBoundsRelation() {
+  const std::string source = R"(
+extern "C" {
+  void analysis_barrier();
+}
+
+int32_t exact_checked_read(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t different_index(uint64_t checked, uint64_t accessed) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(checked, live);
+  return gti_internal::prefix_storage_read(values, accessed);
+}
+
+int32_t different_storage(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> checked =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  mut gti_internal::prefix_storage<int32_t> accessed =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(checked, int32_t(7));
+  gti_internal::prefix_storage_append(accessed, int32_t(8));
+  uint64_t live = gti_internal::prefix_storage_length(checked);
+  gti_internal::index_bounds_check(index, live);
+  return gti_internal::prefix_storage_read(accessed, index);
+}
+
+int32_t append_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  gti_internal::prefix_storage_append(values, int32_t(8));
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t pop_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  gti_internal::prefix_storage_append(values, int32_t(8));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  gti_internal::prefix_storage_pop(values);
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t insert_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  gti_internal::prefix_storage_insert(values, uint64_t(0), int32_t(8));
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t erase_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  gti_internal::prefix_storage_append(values, int32_t(8));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  gti_internal::prefix_storage_erase(values, uint64_t(0));
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t relocate_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> source =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  mut gti_internal::prefix_storage<int32_t> destination =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(source, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(source);
+  gti_internal::index_bounds_check(index, live);
+  gti_internal::prefix_storage_relocate(source, destination);
+  return gti_internal::prefix_storage_read(source, index);
+}
+
+int32_t opaque_call_after_check(uint64_t index) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  analysis_barrier();
+  return gti_internal::prefix_storage_read(values, index);
+}
+
+int32_t index_write_after_check(mut uint64_t index, uint64_t replacement) {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, int32_t(7));
+  uint64_t live = gti_internal::prefix_storage_length(values);
+  gti_internal::index_bounds_check(index, live);
+  index = replacement;
+  return gti_internal::prefix_storage_read(values, index);
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-prefix-bounds.gti", source);
+  expect(frontend.canGenerateCode(),
+         "prefix-storage bounds relation fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const auto optimize = [&](lang::OptimizationLevel level) {
+    return pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+  };
+  const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
+  const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
+  const auto bounds = [&](const lang::OptimizedProgram &optimized,
+                          std::string_view name) {
+    return functionDischarges(frontend, optimized, name,
+                              lang::MirSafetyCheckFamily::Bounds);
+  };
+  expect(o2.valid() && o3.valid() && bounds(o2, "exact_checked_read") == 1 &&
+             bounds(o3, "exact_checked_read") == 1,
+         "an exact public index/length check should discharge one matching "
+         "private prefix read at O2 and O3");
+  for (const std::string_view name :
+       {"different_index", "different_storage", "append_after_check",
+        "pop_after_check", "insert_after_check", "erase_after_check",
+        "relocate_after_check", "opaque_call_after_check",
+        "index_write_after_check"}) {
+    expect(bounds(o2, name) == 0 && bounds(o3, name) == 0,
+           std::string(name) +
+               " must retain the private prefix read bounds check");
+  }
+}
+
 } // namespace
 
 int main() {
   lang::installCrashHandlers("gti_optimizer_safety_tests");
   testProofCarryingSafetyCheckElimination();
+  testPrefixStorageBoundsRelation();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";
     return 1;

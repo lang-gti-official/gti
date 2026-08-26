@@ -769,6 +769,14 @@ public:
     return *std::launder(slot(checked_prefix_index(index)));
   }
 
+  [[nodiscard]] const T &read_unchecked(std::uint64_t index) const noexcept {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  [[nodiscard]] T &read_mut_unchecked(std::uint64_t index) noexcept {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
   template <typename... Args>
   void insert_at(std::uint64_t index, Args &&...args) {
     if (index > length_) {
@@ -937,6 +945,18 @@ template <typename T>
 inline T &prefix_storage_read_mut(prefix_storage<T> &value,
                                   std::uint64_t index) {
   return value.read_mut(index);
+}
+
+template <typename T>
+inline const T &prefix_storage_read_unchecked(const prefix_storage<T> &value,
+                                              std::uint64_t index) noexcept {
+  return value.read_unchecked(index);
+}
+
+template <typename T>
+inline T &prefix_storage_read_mut_unchecked(prefix_storage<T> &value,
+                                            std::uint64_t index) noexcept {
+  return value.read_mut_unchecked(index);
 }
 
 template <typename T>

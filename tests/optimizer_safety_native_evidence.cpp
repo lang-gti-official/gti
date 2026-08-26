@@ -570,6 +570,16 @@ int main(int argc, char **argv) {
       "&::gti_internal::backend::storage_read(";
   constexpr std::string_view uncheckedStorageCall =
       "&::gti_internal::backend::storage_read_unchecked(";
+  constexpr std::string_view checkedPrefixStorageCall =
+      "&::gti_internal::backend::prefix_storage_read(";
+  constexpr std::string_view uncheckedPrefixStorageCall =
+      "&::gti_internal::backend::prefix_storage_read_unchecked(";
+  constexpr std::string_view checkedPrefixStorageMutCall =
+      "&::gti_internal::backend::prefix_storage_read_mut(";
+  constexpr std::string_view uncheckedPrefixStorageMutCall =
+      "&::gti_internal::backend::prefix_storage_read_mut_unchecked(";
+  constexpr std::string_view publicPrefixBoundsCall =
+      "::gti_internal::backend::mir_checked_index_bounds_v1(";
   constexpr std::string_view checkedCompoundMultiply =
       " = ::gti_internal::backend::mir_checked_compound_multiply_v1(";
   constexpr std::string_view dischargedCompoundMultiply = ") *= ";
@@ -587,6 +597,15 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedStorageCall) &&
              occurrences(o0.cpp, uncheckedStorageCall) == 0 &&
              occurrences(o2.cpp, uncheckedStorageCall) > 0 &&
+             (occurrences(o2.cpp, checkedPrefixStorageCall) <
+                  occurrences(o0.cpp, checkedPrefixStorageCall) ||
+              occurrences(o2.cpp, checkedPrefixStorageMutCall) <
+                  occurrences(o0.cpp, checkedPrefixStorageMutCall)) &&
+             occurrences(o0.cpp, uncheckedPrefixStorageCall) == 0 &&
+             occurrences(o0.cpp, uncheckedPrefixStorageMutCall) == 0 &&
+             (occurrences(o2.cpp, uncheckedPrefixStorageCall) > 0 ||
+              occurrences(o2.cpp, uncheckedPrefixStorageMutCall) > 0) &&
+             occurrences(o2.cpp, publicPrefixBoundsCall) > 0 &&
              occurrences(o2.cpp, checkedCompoundMultiply) <
                  occurrences(o0.cpp, checkedCompoundMultiply) &&
              occurrences(o2.cpp, dischargedCompoundMultiply) >
@@ -603,6 +622,16 @@ int main(int argc, char **argv) {
                  occurrences(o3.cpp, nonzeroRemainderCall) &&
              occurrences(o2.cpp, uncheckedStorageCall) ==
                  occurrences(o3.cpp, uncheckedStorageCall) &&
+             occurrences(o2.cpp, checkedPrefixStorageCall) ==
+                 occurrences(o3.cpp, checkedPrefixStorageCall) &&
+             occurrences(o2.cpp, uncheckedPrefixStorageCall) ==
+                 occurrences(o3.cpp, uncheckedPrefixStorageCall) &&
+             occurrences(o2.cpp, checkedPrefixStorageMutCall) ==
+                 occurrences(o3.cpp, checkedPrefixStorageMutCall) &&
+             occurrences(o2.cpp, uncheckedPrefixStorageMutCall) ==
+                 occurrences(o3.cpp, uncheckedPrefixStorageMutCall) &&
+             occurrences(o2.cpp, publicPrefixBoundsCall) ==
+                 occurrences(o3.cpp, publicPrefixBoundsCall) &&
              occurrences(o2.cpp, checkedCompoundMultiply) ==
                  occurrences(o3.cpp, checkedCompoundMultiply) &&
              occurrences(o2.cpp, dischargedCompoundMultiply) ==

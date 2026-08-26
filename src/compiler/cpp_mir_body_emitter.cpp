@@ -15096,9 +15096,10 @@ storageReadHelperSpelling(IntrinsicKind intrinsic, bool unchecked = false) {
   case IntrinsicKind::StorageReadMut:
     return unchecked ? "storage_read_mut_unchecked" : "storage_read_mut";
   case IntrinsicKind::PrefixStorageRead:
-    return "prefix_storage_read";
+    return unchecked ? "prefix_storage_read_unchecked" : "prefix_storage_read";
   case IntrinsicKind::PrefixStorageReadMut:
-    return "prefix_storage_read_mut";
+    return unchecked ? "prefix_storage_read_mut_unchecked"
+                     : "prefix_storage_read_mut";
   default:
     return "";
   }

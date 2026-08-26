@@ -3697,7 +3697,9 @@ validFailureInstructionShape(const MirInstruction &instruction) {
                    DefinedFailureDetail::PrivateStorage &&
                instruction.kind == MirInstructionKind::Call &&
                (instruction.intrinsic == IntrinsicKind::StorageRead ||
-                instruction.intrinsic == IntrinsicKind::StorageReadMut);
+                instruction.intrinsic == IntrinsicKind::StorageReadMut ||
+                instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
+                instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut);
       case MirSafetyCheckFamily::StorageState:
         return discharge.outcome.detail ==
                    DefinedFailureDetail::UninitializedAccess &&
