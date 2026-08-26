@@ -350,16 +350,41 @@ logical edge between them.
 
 ## Ready Queue
 
-This is the curated priority queue for future prompts. Rows marked ready
-elsewhere are valid parallel candidates, but should not silently leapfrog this
-queue without recording the reason. Completing a row may reorder the queue;
-update it rather than copying a new sequence elsewhere.
+This is the sole compiler implementation queue. Effective 2026-08-26, the
+runtime-performance campaign is an **exclusive compiler gate**: no unrelated
+compiler, language, MIR, backend, runtime-representation, or standard-library
+semantics feature or refactor starts or merges until every row below is either
+implemented through its exit gate or closed by its stated measured stop
+condition. Rows described as ready elsewhere are parked; another plan cannot
+override this order.
+
+The only exceptions are correctness or security fixes, release/CI unblockers,
+and changes explicitly named as prerequisites of the active row. An exception
+must remain narrowly scoped, preserve the campaign baseline, and state why it
+cannot wait. Documentation and editor-only work may continue when it does not
+change compiler semantics or consume the active compiler ownership boundary.
+This gate does not permit unsafe shortcuts, benchmark special cases, weaker
+failure semantics, or skipped verification.
+
+Complete one row before beginning the next. A failed upper-bound proxy can
+complete a row only when its raw evidence identifies the next bottleneck or
+proves the proposed family has no material value. Update this table and the
+detailed row together; do not copy the sequence into another plan.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `P-MEASURE-01` | **in progress** | none | Complete benchmark breadth without weakening backend-authority gates. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 2 | `A-CACHE-01` | **ready** | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
-| 3 | `S-CFG-01` | **done** | `M-BACK-02` done | Add a build-configuration axis to compile-time conditionals: valueless `#define`/`#undef`/`#ifdef`/`#ifndef` and boolean conditions over the existing `target.*` primary, with no substitution and no function-like macros. | Compiler selection tests cover external/source/include flags, dead-branch isolation, inactive syntax, diagnostics, and formatting; direct/project CLI tests cover `-D` and `[build].defines`; Tree-sitter and LSP tests cover syntax and inactive-token toggling; the MIR census is unchanged. Design history in `docs/plans/archive/conditional-compilation.md`; closed ledger row `R-BUILD-CONFIG`. |
+| 1 | `O-PERF-00` | **active** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Canonical checked-array, checked-vector, scalar-chain, scalar-FP, control, and game-update baselines carry exact identities, raw samples, correctness records, reports, and successful upper-bound proxies. |
+| 2 | `O-PERF-01` | **blocked on 00** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | The admitted fixed-array overflow client discharges its hot checked arithmetic and reaches at most 1.2x idiomatic C++ without semantic or control regressions. |
+| 3 | `O-PERF-02` | **blocked on 01** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | The selected bounded interprocedural family materially improves the vector workload with exact call, failure, cleanup, and snapshot identity. |
+| 4 | `O-PERF-03` | **blocked on 02** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
+| 5 | `O-PERF-04` | **blocked on 03** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
+| 6 | `O-PERF-05` | **blocked on 04** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
+| 7 | `O-GAME-01` | **blocked on 05** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
+
+`P-MEASURE-01` benchmark breadth is subsumed into `O-PERF-00` while this gate
+is active. `A-CACHE-01` and every other unfinished compiler row are parked
+until `O-GAME-01` closes. Completed rows remain historical prerequisites and
+do not occupy the queue.
 
 `M-BACK-02` no longer blocks those outcome rows. The permanent gate is that any
 new executable feature must extend verified MIR, its verifier, and the general
@@ -2738,15 +2763,225 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   cache invalidation and snapshot isolation, disjoint-place fact preservation,
   and overlapping-place fact invalidation have focused evidence.
 
+### O-PERF-00: Evidence Freeze And Benchmark Admission
+
+- **State/role:** active and exclusive. This row reconciles the exact-main
+  O-MIR-08 audit with the independent PR #164 audit before compiler code
+  changes.
+- **User outcome:** every following optimizer decision is tied to a durable,
+  reproducible workload that distinguishes GTI optimization, native
+  optimization, representation overhead, and deliberate safety cost.
+- **Independently reproduced evidence:** with compiler `gti 0.312.9`
+  (`d578914271ab316007cc48042483ec4893b29004eea4fa858ac0cc7ad4427194`)
+  and Apple Clang 21 on arm64 Darwin, fresh emitted vector C++ matched SHA-256
+  `932cfc1f2fddb44c0e23644cb703caf2947fcb83da3c0615b096a12a0e682938`.
+  At fixed native O3, `vector-checked-loop` measured 117.285 ms median and a
+  disposable generated-overflow proxy measured 9.519 ms with the same digest,
+  a 12.32x ceiling; a stricter rebuild limited to the three MIR checked-helper
+  guards confirmed the same order of magnitude. The fixed-array
+  overflow probe measured 73.684 ms versus 15.882 ms, a 4.64x ceiling.
+  Mandelbrot emitted at GTI O0/O1/O2/O3 and rebuilt at the same native O3
+  measured 169.321/169.383/169.622/169.673 ms, establishing no material
+  current GTI-pass runtime effect on that client.
+- **Interpretation boundary:** an ablated binary preserves only the selected
+  successful benchmark result; it deliberately violates GTI behavior for
+  failing inputs. It is an attribution/upper-bound proxy, never proof that a
+  proposed transform preserves semantics. PR #164's separate-native result is
+  accepted; its claim that ordinary O0-to-O1 timing alone attributes gains to
+  Clang is not.
+- **Scope:** admit long-running checked scalar-chain, fixed-array overflow,
+  scalar-FP update, checked-vector, fixed-array/bounds control,
+  managed-thread control, and staged game-update workloads into the canonical
+  harness. Add a runner mode that holds native optimization fixed while GTI
+  optimization changes. Record compiler/runtime/source hashes, exact commands,
+  median/MAD and raw samples, optimization reports, profiles, disassembly, and
+  normalized correctness/failure records. Scale every timing client above its
+  declared process-startup floor; the audit's 3-4 ms FP probe is directional
+  evidence only.
+- **Exit gate:** clean exact-head runs reproduce the two overflow ceilings and
+  the fixed-native optimizer comparison through checked-in workload
+  descriptors and threshold-free CI smoke tests. The initial `O-GAME-01`
+  scalar/container stage has a correctness-equivalent baseline. No compiler
+  transform lands in this row.
+
+### O-PERF-01: Loop-Carried Arithmetic Range Proof
+
+- **State/role:** blocked on `O-PERF-00`; first implementation row.
+- **Corrected starting point:** the canonical safety analysis already runs a
+  deterministic loop fixpoint and widens interval facts after repeated block
+  updates. It does not need a second solver. The current loss comes from
+  widening expanding to the complete integer domain, missing exact
+  remainder/mask transfer, and having no alias-safe fixed-array content
+  summary. SCCP is a separate exact-constant client and is not interval
+  authority.
+- **Bounded scope:** add exact GTI remainder and bit-mask interval transfer for
+  the admitted sign/domain cases; add one scalar fixed-array-root content
+  interval joined on dynamic writes and invalidated on may-alias escape,
+  calls, raw memory, lifetime change, or unknown mutation; then add only the
+  loop-header threshold widening and bounded narrowing required by that
+  client. Reuse `O-MIR-06` loop identity, `O-MIR-07` alias facts, the shared
+  solver, the existing arithmetic discharge records, `MirProgramEditor`, and
+  independent replay. Source-MIR cyclic scalar promotion is not an entry
+  prerequisite unless a focused probe proves the place-based analysis cannot
+  carry the required fact.
+- **Semantics gates:** each intermediate checked operation remains
+  left-to-right. Remainder ranges follow GTI's signed and zero-divisor rules;
+  a later modulo cannot excuse an earlier overflowing multiply/add. Array
+  summaries never become per-element truth and never survive an unproved
+  alias, call, escape, union overlap, or mutation.
+- **Exit gate:** the admitted fixed-array overflow workload discharges more
+  than 90% of its hot arithmetic outcomes and reaches at most 1.2x idiomatic
+  C++ at O2/O3. Near misses for signed ranges, zero divisors, type extrema,
+  alias/escape, unknown calls, irreducible loops, widening, and failure paths
+  retain checks. O0 identity, exact failure origin/order, cleanup, raw reports,
+  and all campaign controls pass with no conclusive regression above 5%. If a
+  source-MIR proxy proves this bounded analysis cannot discharge the admitted
+  client or cannot approach the runtime gate, close the row as measured-defer
+  with that retained evidence rather than adding a broader solver by default.
+
+### O-PERF-02: Closed-Call And Container Fact Transport
+
+- **State/role:** blocked on `O-PERF-01`; this row owns the first
+  interprocedural performance client and subsumes the active part of
+  `O-MIR-10`.
+- **Corrected client:** `vector-checked-loop` is deterministic and its hot
+  values are bounded: initialization yields 1 through 17, the multiplier is
+  selected as -1 or 1, and the complete sum remains in range. It is not
+  evidence that static analysis is impossible. The missing fact crosses
+  closed `scale`, `sum`, vector methods, and the prefix-storage boundary.
+- **Bounded scope:** after profiling, select exactly one concrete,
+  non-recursive static-call family: budgeted MIR inlining, fact-specialized
+  body cloning, or contextual proof summaries. The selected form must carry
+  exact argument, return, and admitted mutable-container content facts needed
+  by this workload and no broader abstract interpretation. A return interval
+  is a distinct revision-keyed interprocedural analysis result, not an effect
+  flag; effect summaries continue to describe behavior rather than values.
+- **Architecture gates:** reject native, virtual, recursive, open, owning-
+  temporary, incomplete-cleanup, or unsupported failure shapes. Remap or key
+  every body/value/place/failure identity within one optimized MIR snapshot;
+  preserve Invoke edges, source provenance, left-to-right parameter/result
+  materialization, loans, partial effects, and cleanup. Do not recognize
+  `std::vector`, `scale`, `sum`, or another public spelling.
+- **Exit gate:** the selected closed-call family moves the admitted vector
+  arithmetic discharge counters and improves median runtime by at least 30%
+  beyond the `O-PERF-01` exact-head baseline. Static/recursive/native/virtual,
+  cleanup-owning, aliasing, and conflicting-call-context near misses remain
+  conservative. Exact source-MIR replay, all backends, failure injection,
+  deterministic budgets, and campaign controls pass. If no candidate proxy
+  moves runtime, close this row with the retained evidence and proceed to the
+  independently attributable prefix-storage row rather than landing
+  interprocedural infrastructure.
+
+### O-PERF-03: Single-Bound Prefix Storage Access
+
+- **State/role:** blocked on `O-PERF-02`; second-order container closure.
+- **Corrected starting point:** current `std::vector` stores `count` while its
+  private `prefix_storage` independently stores `length_`, and every public
+  subscript performs a vector-detail bounds check followed by the prefix read's
+  private bound check. Contrary to PR #164, unchecked read helpers currently
+  exist only for sparse `storage<T>`; prefix storage has no unchecked-read
+  vocabulary, and the safety analysis does not prove prefix reads.
+- **Bounded scope:** establish one logical live-length authority, preferably by
+  deriving vector size from prefix storage and removing duplicated `count`
+  state if the source-defined API and mutation invariants permit it. Add a
+  prefix-read discharge only when MIR proves the exact same index/length fact
+  and no intervening length mutation or alias. A backend-only unchecked prefix
+  representation helper may be added only as the consumer of that verified
+  discharge; it is not a source intrinsic or trusted-library escape hatch.
+- **Exit gate:** native evidence shows one logical check per non-discharged
+  public access and no private recheck after a verified discharge. Vector and
+  prefix lengths cannot drift by construction; append/insert/erase/pop/clear,
+  relocation, failure rollback, move, iteration, empty/boundary access, and
+  exact vector-versus-private-storage failure detail pass. The admitted vector
+  workload improves by at least 5% and controls regress by no more than 5%.
+  Test the duplicate-check proxy first; if it cannot reach that threshold and
+  no correctness invariant requires the representation change, close the row
+  as measured-defer without adding the new discharge vocabulary.
+
+### O-PERF-04: Exact Fast Path For Undischargeable Checked Loops
+
+- **State/role:** blocked on `O-PERF-03`; design/proxy gate before any
+  transform. Enter only with a benchmark whose hot inputs are genuinely opaque
+  after the static rows.
+- **Rejected audit shape:** PR #164's wrapping block plus sticky predicate and
+  replay is not accepted as semantics-preserving as written. Its own
+  side-effect-free legality rule excludes the flagship `scale` loop because
+  that loop mutates the caller's vector. A sticky flag also does not by itself
+  preserve strict left-to-right integer recurrence, reordered intermediate
+  overflow, first failing operation, or already-committed earlier effects.
+  LLVM intrinsics cannot be GTI proof or a C++-backend prerequisite.
+- **Admissible investigation:** compare a side-effect-free buffered block with
+  exact replay against a preflight/versioned fast path that performs no
+  observable mutation, then executes an unchecked block only after proving all
+  of its checked operations safe; retain the original scalar checked block as
+  fallback. Admit no call/user code, allocation, synchronization, raw memory,
+  FP reassociation, loan/drop/lifecycle event, unstable read, escaping write,
+  or may-alias mutation unless a complete snapshot/commit proof exists.
+  Reordered integer evaluation must prove all introduced intermediates and the
+  exact result, not just the original sequential prefixes.
+- **Entry/exit gate:** a disposable source-MIR proxy on the opaque workload
+  improves median runtime by at least 30% before infrastructure lands. The
+  implementation then preserves exact successful output, first-failure site
+  and record, partial mutation trace, cleanup, O0 identity, fallback behavior,
+  and every rejected near miss. It must bring the checked-vector/core-loop gate
+  to at most 1.5x idiomatic C++ or close as measured-defer with the next cause
+  identified.
+
+### O-PERF-05: Residual Backend Representation Hygiene
+
+- **State/role:** blocked on `O-PERF-04`; bounded cleanup, not a backend
+  rewrite.
+- **Scope:** profile a scalar-FP/update and one closed-call client whose timed
+  region exceeds 50 ms. Compare MIR-equivalent emitted C++ and semantic C++ at
+  the same native settings. Test only surviving artifacts such as unnecessary
+  out-of-line failure-ABI boundaries, repeated representation loads, blocked
+  LICM, or missed target policy. `noexcept`, attributes, or C++ spelling are
+  backend policy only after exact MIR effects prove them; strict GTI FP order
+  and `-ffp-contract=off` remain unchanged.
+- **Exit gate:** the admitted residual client reaches at most 1.15x semantic
+  C++, or profiler/disassembly and an upper-bound proxy show less than 5%
+  available value and close the row as a measured no-op. Every supported
+  native compiler, MIR/backend differential, failure ABI, and campaign control
+  remains correct.
+
+### O-GAME-01: Game-Style Runtime Acceptance Workload
+
+- **State/role:** final exclusive-gate row, blocked on `O-PERF-05`. Its first
+  scalar/container baseline is admitted in `O-PERF-00`; unavailable public
+  APIs become explicit staged constituents rather than compiler-private
+  simulations.
+- **Bounded scope:** compare GTI, semantic-equivalent C++, and explicitly
+  idiomatic C++ for the same fixed update stream and complete-state digest.
+  Cover array-of-structures and structure-of-arrays math, container
+  traversal/mutation, static/callable dispatch, bounded allocation/pool reuse,
+  joined tasks, and a separately attributable C-FFI call client as public APIs
+  become available. Keep rendering, file I/O, input generation, and reporting
+  outside the timed region.
+- **Evidence policy:** record median and tail update latency, work units, raw
+  samples, exact compiler/toolchain/source identity, profiles, emitted-code
+  hashes, optimization reports, and correctness/failure records. Shared CI
+  remains threshold-free; gates run on the published stable machine.
+- **Exit gate:** core checked kernels reach at most 1.5x idiomatic C++. The
+  combined update reaches at most 1.5x semantic-equivalent C++ and 2x
+  idiomatic C++, with no constituent above either applicable gate without a
+  completed fix or measured-defer record. Fixed-array, managed-thread,
+  compile-time, code-size, and memory controls have no unexplained regression;
+  full compiler/frontend/backend/runtime and installed-toolchain gates pass.
+  Closing this row releases the exclusive compiler gate.
+
 ### O-MIR-08: Loop-Derived Safety Proof Client
 
-- **State/role:** client-gated next optimization; not implemented.
+- **State/role:** measured defer; not implemented and not the active optimizer
+  client.
 - **Bounded scope:** consume only `O-MIR-06` single-latch affine facts to prove
   one existing fixed-array bounds family over a reducible loop. Reuse the
   existing safety-discharge transform and replay path; add no loop rewrite.
-- **Entry/exit gate:** a representative checked loop shows removed operations;
-  every induction, bound, overflow, early-exit, mutation, and irreducible
-  near-miss retains checks; O0/O2/O3 runtime and failure-origin parity passes.
+- **Entry/exit gate:** reconsider only when source MIR produces replayable
+  loop-carried affine facts and an upper-bound proxy demonstrates material
+  runtime value after native optimization. Then a representative checked loop
+  must show removed operations and an end-to-end improvement; every induction,
+  bound, overflow, early-exit, mutation, and irreducible near-miss retains
+  checks; O0/O2/O3 runtime and failure-origin parity passes.
 
 ### O-MIR-09: Alias-Safe Local Memory Client
 
@@ -2762,13 +2997,16 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
 ### O-MIR-10: First Interprocedural Transform
 
-- **State/role:** blocked; not implemented.
-- **Bounded scope:** select either one closed exact devirtualization family or
-  one bounded inlining family, not both, after closed-world identity, cleanup,
-  provenance, layout, recursion, and cost policy are explicit.
-- **Entry/exit gate:** measured workload value, deterministic budget, exact
-  source-MIR replay, no open/native/recursive target admission, and identical
-  behavior through every backend.
+- **State/role:** parked as a standalone row; its only active client is
+  subsumed by `O-PERF-02`.
+- **Bounded scope:** if `O-PERF-02` selects inlining or body specialization,
+  apply this row's closed concrete, non-recursive, non-native, non-virtual
+  identity, cleanup, provenance, failure, and deterministic cost gates there.
+  A distinct return-range summary remains value analysis rather than an effect
+  flag. Devirtualization remains outside the campaign.
+- **Entry/exit gate:** no separate implementation may start while the
+  exclusive performance sequence is active. The row reopens only after
+  `O-GAME-01` for a new measured client not already served by `O-PERF-02`.
 
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
 gated. A future LLVM backend remains blocked on complete MIR layout, ABI,
@@ -2778,8 +3016,11 @@ imply it.
 ## Parallel Engineering Tracks
 
 These rows improve maintainability, projects, and tooling without changing the
-language critical path. They may run concurrently only when their owned files
-do not overlap an active semantic/lowering phase.
+language critical path. They are parked during the exclusive runtime-
+performance gate unless they qualify for one of the Ready Queue's explicit
+correctness, security, release/CI, or active-prerequisite exceptions. After
+`O-GAME-01`, they may run concurrently only when their owned files do not
+overlap an active semantic/lowering phase.
 
 ### C-MIG: Compiled Compiler Library
 
@@ -2822,7 +3063,7 @@ Prefix-storage execution tracking:
 
 | ID | State | Scope and gate |
 | --- | --- | --- |
-| `P-MEASURE-01` | in progress | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. Complete the integer, fixed-array, dispatch, compiler, LSP, and project-driver workload breadth before marking the milestone done. |
+| `P-MEASURE-01` | subsumed while performance gate is active | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. `O-PERF-00` now owns the fixed-native attribution mode and runtime workload breadth; compiler/LSP/project-driver breadth resumes only after `O-GAME-01`. |
 | `P-STORAGE-01` | complete | Prerequisites delivered: the checked-vector fixture shipped through `P-MEASURE-01`, `M-FAIL-01`'s defined-failure contract is live, and the failure-capable `M-BACK-02` slices landed (0.176.0-0.189.0). Slice 1 shipped in 0.190.0: the identity-bound public logical-size check (`gti_internal::index_bounds_check`, `IntrinsicKind::StorageBoundsCheck`) guards every public vector/string accessor while sparse storage remains, reporting `GTI-R0007` with the enclosing trusted container's detail (`index_out_of_bounds` in `vector`/`string`) rather than leaking `GTI-R0010`. Slice 2 shipped in 0.191.0: the distinct compiler-private prefix-initialized storage capability (`gti_internal::prefix_storage<T>`, `CompilerCapabilityTypeKind::PrefixStorage`, `SemanticType::PrefixStorage`, the seven-intrinsic family, and the length-tracking backend representation with no per-slot bitmap) exists end to end through semantics, HIR, MIR (`mir-v31`), the effects tables, and the compatibility backend, proven by trusted-prelude fixtures; sparse `storage<T>` remains for arbitrary partial slots and the two capabilities reject each other's operations. Slice 3's capability-level evidence shipped in 0.192.0: the dedicated native evidence battery (`prefix_storage_native_evidence`) compiles trusted generated programs across C++20/C++23 and native -O0/-O2/-O3, runs the full behavioral contract (append order, logical-prefix reads and mutation, pop-last destruction, complete-prefix relocation with moved-from shells correctly skipping user destructor bodies, move transfer, reverse destruction at scope exit), trips all five runtime guards on their exact diagnostics, and runs the success path clean under dedicated generated-program AddressSanitizer/UndefinedBehaviorSanitizer builds. The wrapper migration shipped in 0.193.0: `vector` and `string` internals moved wholly onto the prefix capability (fields, iterators' storage borrows, and every operation), with the shift gap filled by two sealed invariant-preserving primitives — `prefix_storage_insert` and `prefix_storage_erase` — whose element shift and construction or destruction happen inside one runtime operation, so no partially initialized slot is ever observable at the language surface; the example corpus stayed byte-identical in stdout and exit codes and the checked-vector benchmark workload passes on the migrated containers. Sparse `storage<T>` remains the arbitrary-slot capability. The later backend slice is complete: the storage capability rows and general-emitter vocabulary admit these storage-gated bodies to verified-MIR emission. Historical: add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
@@ -2914,10 +3155,11 @@ owned by the rows and domain plans above.
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
-| MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-05`; later families require numbered measured clients |
+| Runtime performance | **exclusive active compiler campaign** | Complete `O-PERF-00` through `O-PERF-05`, then `O-GAME-01`, in exact order; all unrelated compiler rows are parked except explicit correctness/security/release/CI exceptions |
+| MIR transformations | **bounded local production pipeline consumed only by the active performance row** | `O-MIR-01` through `O-MIR-07` provide current transforms/analyses; `O-MIR-08/09` are measured-defer; the only active `O-MIR-10` client is subsumed by `O-PERF-02` |
 | MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
-| Natural-loop/range facts | **complete bounded analysis** | `O-MIR-06`; first transform client is gated by `O-MIR-08` |
+| Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |

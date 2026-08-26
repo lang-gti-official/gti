@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "name": "fixed-array-loop-proof",
+  "description": "Checked 64-element fixed-array mutation loop that exposes the loop-range widening near miss",
+  "work_units": 38400000,
+  "minimum_sample_seconds": 0.10,
+  "variants": [
+    {
+      "name": "gti",
+      "kind": "gti",
+      "source": "main.gti"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp"
+    },
+    {
+      "name": "cpp-idiomatic",
+      "kind": "cpp",
+      "source": "idiomatic.cpp"
+    }
+  ]
+}

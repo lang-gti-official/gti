@@ -1,0 +1,63 @@
+#include <std/string>
+#include <std/vector>
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+uint64_t scan(mut int values[64], int rounds) {
+  mut uint64_t digest = uint64_t(146959810);
+  for (mut int round = 0; round < rounds; round++) {
+    for (mut int index = 0; index < 64; index++) {
+      int mixed =
+          (values[index] * 17 + (round % 251) + index) % 251;
+      values[index] = mixed;
+      digest =
+          (digest * uint64_t(131) + uint64_t(mixed)) % uint64_t(1000000007);
+    }
+  }
+  return digest;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int values[64] = {};
+  for (mut int index = 0; index < 64; index++) {
+    values[index] = (index * 17 + argc + 2) % 251;
+  }
+
+  uint64_t digest = scan(values, 599999 + argc);
+  if (digest != uint64_t(618920753)) {
+    return 1;
+  }
+
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:38400000");
+  return 0;
+}

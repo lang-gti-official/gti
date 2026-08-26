@@ -6,8 +6,9 @@
 
 Status: accepted; Milestones 1 through 5 are implemented for their bounded
 local families. Milestone 6 has verified per-instance effects and exact closed
-call-summary queries, but no interprocedural transformation. Follow-on work is
-tracked as numbered O-MIR milestones in
+call-summary queries, but no interprocedural transformation. The current
+exclusive runtime-performance work and every follow-on optimizer row are
+sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
@@ -41,18 +42,41 @@ terminator slots and block-argument arity, rejects executable-edge retraction,
 and preserves switch-default flow in the migrated safety client. Loop analysis
 rejects repeated-edge block-argument ambiguity. Alias analysis treats union
 fields as overlapping and analysis caches reject cross-program snapshot reuse.
-The remaining optimizer sequence is explicitly limited to O-MIR-08
-(loop-derived bounds proof), O-MIR-09 (one measured alias-safe memory family),
-and O-MIR-10 (one measured interprocedural family); none is implied complete by
-the analysis foundations.
+O-MIR-08 (loop-derived bounds proof) and O-MIR-09 (one measured alias-safe
+memory family) remain measured-defer, while the active interprocedural client
+is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
+complete by the analysis foundations.
+
+Performance-priority update (2026-08-26): the exact-main audit selected the
+checked-vector runtime gap, rather than the retained fixed-array bounds checks,
+as the performance-delivery client. The fixed-array bounds workload was within
+0.33% of both comparison variants and a direct-access proxy changed its median
+by -0.16% with identical hot-function assembly. The independently reproduced
+PR #164 experiment then isolated a different fixed-array workload: making only
+overflow-failure branches unreachable reduced it from 73.684 to 15.882 ms,
+while the checked vector fell from 117.285 to 9.519 ms with identical selected
+successful output. Those ablations are semantic-invalid upper bounds, but they
+establish checked arithmetic side exits as the first measured cause.
+
+The audit proposal is not adopted verbatim. The live safety analysis already
+has a loop fixpoint and widening; prefix storage has no unchecked-read
+vocabulary; the flagship vector inputs are statically bounded across difficult
+closed call/container boundaries; and wrapping block speculation does not by
+itself preserve GTI's first failure, left-to-right recurrence, or partial
+effects. The corrected exclusive sequence is `O-PERF-00` through
+`O-GAME-01` in
+[`implementation-sequence.md`](implementation-sequence.md). This architecture
+plan does not own or duplicate that order.
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). Infrastructure
 continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
-facts are the bounded prerequisite for the next measured loop client;
-interprocedural transformations remain deferred.
+and alias facts remain available for the active performance rows, but they do
+not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
+LLVM backend, and broad optimizer frameworks remain deferred until a measured
+bottleneck and the sole operational sequence require them.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -456,7 +480,7 @@ verbosity are also independent of semantic optimization level.
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
 | devirtualization | deferred | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
-| inlining | deferred | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness |
+| inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
 emission behavior. Add the missing backend-neutral fact first.
@@ -471,9 +495,11 @@ The implemented local sequence is:
 6. range-based check elimination.
 
 Loop/range and place alias/escape analyses are now explicit prerequisites, not
-implemented transforms. Their next clients are bounded by O-MIR-08 through
-O-MIR-10 in `implementation-sequence.md`; this document does not leave an
-open-ended "future propagation" phase.
+implemented transforms. O-MIR-08 and O-MIR-09 remain measured-defer;
+`O-PERF-02` may consume the bounded O-MIR-10 gates only if closed-call
+profiling selects that mechanism. The maintained sequence in
+`implementation-sequence.md` does not leave an open-ended "future
+propagation" phase.
 
 Each cleanup repetition must be intentional and bounded in the configured
 pipeline.
@@ -746,16 +772,80 @@ Acceptance criteria:
 - native vectorization remarks and assembly support performance conclusions
   without becoming semantic authority.
 
+#### O-MIR-08 measured gate
+
+The 2026-08-26 exact-main audit deferred the loop-derived fixed-array client.
+It found a broad MIR proof near miss but not an accepted runtime optimization:
+
+- a 4-element affine source loop converges before interval widening and
+  discharges its fixed-array read, while the equivalent 64-element loop widens
+  the loop-carried place fact and retains its read and write checks;
+- ordinary source MIR lowering does not create block parameters or edge
+  arguments. The only production creator is `rewriteMirScalarPlace`, whose
+  current topological-order requirement rejects every cyclic CFG. O-MIR-06's
+  affine induction tests therefore exercise constructed MIR rather than a
+  source-produced optimization client;
+- `examples/12-fixed-arrays.gti` already discharges the canonical short loop,
+  so widening O-MIR-08 around that case would be a no-op;
+- `vector-checked-loop` retains four dynamic vector bounds checks that require
+  interprocedural/inlining facts rather than fixed-array induction;
+- the managed-thread workload retains 34 bounds checks, but its source MIR has
+  no loop-carried block parameters and its checks are not a bounded O-MIR-08
+  fixed-array client;
+- the new `fixed-array-loop-proof` workload records the 64-element widening
+  case. At native O3, current checked emission and a manual direct-access upper
+  bound produced identical hot-function assembly and no runtime improvement.
+
+The smallest sound prerequisite is a core scalar-promotion extension in
+`rewriteMirScalarPlace` (`src/compiler/mir.cpp`) with two inseparable parts.
+First, construct block parameters and matching edge arguments for one
+reducible, single-latch loop at a time. Second, narrowly admit a
+failure-sensitive body when the promoted place is a non-owning trivial scalar
+that is absent from invoke operands/results, cleanup metadata, loans, drop
+obligations, aliases, and failure-path loads, and whose instructions meet the
+existing simple-load/write and trivial-ownership filters. Carry the scalar
+value through both invoke edges wherever a downstream load requires it without
+changing the invoke, failure origin, failure edge, cleanup order, ownership
+event, or checked operation. Keep rejecting all other failure-sensitive,
+cleanup-sensitive, and non-trivial cases. Verify the candidate body, rebuild
+value uses, retain stable provenance, and add positive and near-miss coverage
+for multiple latches, irreducible control flow, failure-path uses, calls
+touching the place, cleanup, checked arithmetic, and mutation barriers.
+
+This prerequisite needs no MIR representation change; existing block
+parameters and edge arguments are sufficient. It does require a change in the
+core MIR implementation, so an optimizer pass must not duplicate it. The
+prerequisite is documented but is not active work merely to improve the
+fixed-array bounds workload. It is also not an automatic prerequisite of
+`O-PERF-01`: current safety analysis already carries place facts through a
+fixpoint, and that row first tests a fixed-array content summary plus precise
+widening/transfer functions. Reconsider cyclic scalar promotion only when a
+focused source-MIR probe demonstrates that place-based analysis cannot carry
+the required fact. Implement O-MIR-08 only if a replayable loop fact reaches
+real source MIR and the workload shows runtime value after native
+optimization. The safety client must consume only loop, dominance, alias,
+effect, and fixed-array facts, record near misses, invalidate safety analysis
+after edits, replay coherently, use `MirProgramEditor`, preserve O0 identity
+and all checked failure behavior, and remain backend-neutral.
+
 ### Milestone 6: interprocedural optimization
 
-Status: effect-summary foundation complete; transforms deferred.
+Status: effect-summary foundation complete; `O-PERF-02` owns the only active
+candidate selection and no transform is implemented.
 
 - Conservative per-instance call effects and exact closed static-summary
   queries are implemented and independently verified.
 - Closed-world reachability, devirtualization, and inlining are not
   implemented.
-- Consider devirtualization and inlining only after temporary lifetime, cleanup,
-  layout, and cost-model requirements are met.
+- `O-PERF-02` may select one bounded closed static-call inlining,
+  specialization, or contextual-proof family if profiling and an upper-bound
+  proxy show material vector/container value. It must not store value ranges
+  in effect flags, and must reject recursion, native or virtual calls,
+  incomplete cleanup/lifetime cases, and calls outside a deterministic cost
+  budget.
+- Devirtualization remains deferred. Do not generalize the selected family
+  until temporary lifetime, cleanup, layout, closed-world, and cost-model
+  requirements are met and another workload measures value.
 
 Acceptance criteria:
 
