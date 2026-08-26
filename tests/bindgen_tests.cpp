@@ -236,6 +236,37 @@ int with_const_array(const int values[], int count);
          "parameter array decay should preserve the element's const");
 }
 
+// ABI-affecting native facts the bounded surface cannot express are refused,
+// never silently misread: packed layouts degrade, assembler labels skip, and
+// typedef'd array parameters decay exactly as C does.
+void testReaderAbiSafetyGates() {
+  const lang::bindgen::ReadResult read = readC(R"(
+struct Squeezed { int a; int b; } __attribute__((packed));
+int renamed_symbol(int value) __asm__("_actual_symbol");
+typedef int Row[4];
+int sum_row(Row row);
+)");
+  expect(read.usable(), "the ABI-safety header should read");
+  const std::string printed = lang::bindgen::printNativeModel(read.model);
+  expect(!contains(printed, "renamed_symbol"),
+         "an assembler-labeled function should not import under its C name");
+  bool sawAsmLabel = false;
+  for (const lang::bindgen::ReaderDiagnostic &diagnostic : read.diagnostics) {
+    sawAsmLabel =
+        sawAsmLabel || contains(diagnostic.message, "assembler label");
+  }
+  expect(sawAsmLabel, "the assembler-label skip should report its reason");
+  expect(contains(printed, "function sum_row(row: ptr(i32)) -> i32"),
+         "a typedef'd array parameter should decay to its element pointer");
+  const lang::bindgen::BindingPlan plan =
+      lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *squeezed = findItem(plan, "Squeezed");
+  expect(squeezed != nullptr &&
+             squeezed->kind == lang::bindgen::BindingItemKind::Opaque &&
+             contains(squeezed->reason, "attribute"),
+         "a packed record should degrade to opaque with its reason");
+}
+
 void testReaderFieldAndQualifierForms() {
   const lang::bindgen::ReadResult read = readC(R"(
 typedef struct Board { int cells[2][3]; int *rows[4]; } Board;
@@ -621,6 +652,7 @@ int main() {
   testReaderRecovery();
   testReaderCorpusGoldens();
   testReaderExpandedSurface();
+  testReaderAbiSafetyGates();
   testReaderFieldAndQualifierForms();
   testRecordDegradation();
   testFieldPositionDegradation();

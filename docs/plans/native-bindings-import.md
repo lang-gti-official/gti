@@ -99,7 +99,11 @@ model (the CLI selects LP64 for supported macOS/Linux targets and LLP64 for
 supported Windows targets); forwarding the pipeline's real triple through the
 seam is C-05/C-06 work. A declaration Clang marks invalid is skipped with its
 native error surfaced verbatim — Clang's recovery types are never imported,
-because recovery would bind the wrong ABI.
+because recovery would bind the wrong ABI. The same conservatism covers
+ABI-affecting native facts the bounded surface cannot yet carry: a function
+whose assembler label renames its link symbol or whose calling convention is
+not C skips with its reason, and a record bearing a layout attribute degrades
+to an opaque handle, until C-06 preserves those facts as model data.
 
 Direct library callers may pass unpreprocessed text, which now has its full
 native meaning: macros expand, conditionals evaluate, and pragmas apply.

@@ -124,6 +124,7 @@ public:
       }
       clang_disposeDiagnostic(diagnostic);
     }
+    std::sort(nativeErrorLines_.begin(), nativeErrorLines_.end());
   }
 
   void run() {
@@ -159,12 +160,9 @@ private:
     const CXSourceRange extent = clang_getCursorExtent(cursor);
     const std::uint32_t first = originOf(clang_getRangeStart(extent)).line;
     const std::uint32_t last = originOf(clang_getRangeEnd(extent)).line;
-    for (const std::uint32_t line : nativeErrorLines_) {
-      if (line >= first && line <= last) {
-        return true;
-      }
-    }
-    return false;
+    const auto begin = std::lower_bound(nativeErrorLines_.begin(),
+                                        nativeErrorLines_.end(), first);
+    return begin != nativeErrorLines_.end() && *begin <= last;
   }
 
   // Visitor callbacks cross a C API frame: no exception may unwind through
@@ -420,19 +418,25 @@ private:
   }
 
   // C parameter arrays decay to pointers; libclang reports the type as
-  // written, so the decay — const pointee preserved — happens here.
+  // written, so the decay — const pointee preserved — happens here. A
+  // typedef of an array type decays identically, which the canonical check
+  // covers.
   [[nodiscard]] NativeTypeId mapParameterType(CXType type) {
     CXType written = type;
     while (written.kind == CXType_Elaborated) {
       written = clang_Type_getNamedType(written);
     }
-    if (written.kind == CXType_ConstantArray ||
-        written.kind == CXType_IncompleteArray ||
-        written.kind == CXType_VariableArray) {
-      const CXType element = clang_getArrayElementType(written);
+    const CXType canonical = clang_getCanonicalType(written);
+    if (canonical.kind == CXType_ConstantArray ||
+        canonical.kind == CXType_IncompleteArray ||
+        canonical.kind == CXType_VariableArray) {
+      const CXType element = clang_getArrayElementType(canonical);
       NativeType pointer;
       pointer.kind = NativeTypeKind::Pointer;
-      pointer.constPointee = clang_isConstQualifiedType(element) != 0;
+      // C applies an array qualifier to the element; the canonical form may
+      // spell it on either node.
+      pointer.constPointee = clang_isConstQualifiedType(element) != 0 ||
+                             clang_isConstQualifiedType(canonical) != 0;
       pointer.pointee = mapType(element);
       return result_.model.addType(std::move(pointer));
     }
@@ -766,7 +770,28 @@ private:
                        "' is not importable and was skipped");
       return;
     }
-    const NativeTypeId type = mapFunctionType(clang_getCursorType(cursor));
+    // An assembler label renames the link symbol; importing the C name
+    // would bind a different function. C-06 may carry such facts as model
+    // data; today they are outside the bounded surface.
+    bool hasAsmLabel = false;
+    for (const CXCursor child : childrenOf(cursor)) {
+      hasAsmLabel =
+          hasAsmLabel || clang_getCursorKind(child) == CXCursor_AsmLabelAttr;
+    }
+    if (hasAsmLabel) {
+      warn(origin, "function '" + name +
+                       "' carries an assembler label that renames its link "
+                       "symbol and was skipped");
+      return;
+    }
+    const CXType cursorType = clang_getCursorType(cursor);
+    if (clang_getFunctionTypeCallingConv(cursorType) != CXCallingConv_C) {
+      warn(origin, "function '" + name +
+                       "' uses a non-C calling convention outside the "
+                       "bounded surface and was skipped");
+      return;
+    }
+    const NativeTypeId type = mapFunctionType(cursorType);
     NativeDeclaration declaration;
     declaration.kind = NativeDeclarationKind::Function;
     declaration.name = name;
