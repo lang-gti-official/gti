@@ -96,6 +96,10 @@ for the current implementation when a document is stale or ambiguous.
 - [020: Exact qualified class specializations](decisions/020-exact-qualified-class-specializations.md)
   — defines exact source syntax, canonical semantic selection, package
   coherence, and backend/tooling preservation without partial specialization.
+- [021: libclang C import adoption](decisions/021-libclang-c-import.md)
+  — makes libclang the mandatory private parser behind `gti bindgen`'s
+  reader seam, bounds the Clang link surface to exactly that library, and
+  defines its acquisition, packaging, and recovery rules.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
