@@ -9,5 +9,5 @@ constituents without changing this baseline's meaning.
 Expected record:
 
 ```text
-GTI-BENCH-1 digest:0000000039624947 work-units:51200000
+GTI-BENCH-1 digest:0000000012e84ad4 work-units:61440000
 ```
