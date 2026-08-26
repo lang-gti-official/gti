@@ -1600,6 +1600,18 @@ private:
            type.arrayLengthParameterId == 0 && type.arrayLength != 0;
   }
 
+  // A fixed-array chain of exact concrete extents whose leaf element is a
+  // class: T[N], T[N][M], and deeper. Every level must carry an exact
+  // non-zero extent.
+  [[nodiscard]] static bool fixedClassLeafArrayType(const SemanticType &type) {
+    const SemanticType *level = &type;
+    while (level->kind == SemanticType::Array && level->arguments.size() == 1 &&
+           level->arrayLengthParameterId == 0 && level->arrayLength != 0) {
+      level = &level->arguments.front();
+    }
+    return level != &type && level->kind == SemanticType::Class;
+  }
+
   [[nodiscard]] bool
   materializesFixedArrayOwnership(const HirValue &value,
                                   const HirBody &body) const {
@@ -1608,7 +1620,7 @@ private:
       return false;
     }
     if (value.kind == HirValueKind::ArrayInitializer &&
-        fixedClassArrayType(value.info.type) &&
+        fixedClassLeafArrayType(value.info.type) &&
         value.operands.size() == value.info.type.arrayLength) {
       return true;
     }
@@ -2882,6 +2894,53 @@ private:
     return id;
   }
 
+  // One element of an empty-brace fixed-array initializer. A class element is
+  // the recorded leaf default construction; an array element is a synthetic
+  // nested ArrayInitializer whose own elements recurse toward that leaf.
+  [[nodiscard]] std::optional<HirValueId> lowerDefaultNestedArrayElement(
+      const SemanticType &type, const ArrayInitializer &initializer,
+      const ResolvedConstructionInfo &construction, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    if (type.kind == SemanticType::Class) {
+      if (type != construction.constructedType) {
+        return std::nullopt;
+      }
+      return lowerDefaultArrayElement(initializer, construction, model,
+                                      classArguments, classValueArguments,
+                                      body);
+    }
+    if (!fixedClassLeafArrayType(type)) {
+      return std::nullopt;
+    }
+    std::vector<HirValueId> elements;
+    elements.reserve(static_cast<std::size_t>(type.arrayLength));
+    for (std::uint64_t index = 0; index < type.arrayLength; ++index) {
+      if (const std::optional<HirValueId> element =
+              lowerDefaultNestedArrayElement(
+                  type.arguments.front(), initializer, construction, model,
+                  classArguments, classValueArguments, body)) {
+        elements.push_back(*element);
+      } else {
+        return std::nullopt;
+      }
+    }
+    HirValue value{
+        .id = nextValueId++,
+        .kind = HirValueKind::ArrayInitializer,
+        // Synthetic nested levels share the parent initializer's source root.
+        .source = nullptr,
+        .info = {.type = type,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits = analyzer->traitsFor(type)},
+        .operands = std::move(elements),
+    };
+    const HirValueId id = value.id;
+    body.values.push_back(std::move(value));
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -3072,15 +3131,16 @@ private:
             model.findArrayElementConstruction(*initializer);
         const ExpressionInfo *arrayInfo = model.findExpression(*initializer);
         if (construction != nullptr && arrayInfo != nullptr &&
-            fixedClassArrayType(arrayInfo->type)) {
+            fixedClassLeafArrayType(arrayInfo->type)) {
           operands.reserve(
               static_cast<std::size_t>(arrayInfo->type.arrayLength));
           for (std::uint64_t index = 0; index < arrayInfo->type.arrayLength;
                ++index) {
             if (const std::optional<HirValueId> element =
-                    lowerDefaultArrayElement(*initializer, *construction, model,
-                                             classArguments,
-                                             classValueArguments, body)) {
+                    lowerDefaultNestedArrayElement(
+                        arrayInfo->type.arguments.front(), *initializer,
+                        *construction, model, classArguments,
+                        classValueArguments, body)) {
               operands.push_back(*element);
             } else {
               lifecycleValid = false;

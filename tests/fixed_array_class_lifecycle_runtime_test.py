@@ -19,13 +19,15 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         raise SystemExit(
-            "usage: fixed_array_class_lifecycle_runtime_test.py <gti> <source>"
+            "usage: fixed_array_class_lifecycle_runtime_test.py "
+            "<gti> <source> <negative-source>"
         )
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
+    negative_source = pathlib.Path(sys.argv[3]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-fixed-array-class-") as temporary:
         root = pathlib.Path(temporary)
         for standard in ("c++20", "c++23"):
@@ -74,12 +76,36 @@ def main() -> int:
                     "mir_lifetime_slot<std::array<::__gti_program::leaf, 2>, true> global_leaves"
                     not in generated_text
                     or "global_leaves.get()[" not in generated_text
+                    or "mir_lifetime_slot<std::array<std::array<::__gti_program::leaf, 2>, 2>, true> global_grid"
+                    not in generated_text
+                    or "global_grid.get()[" not in generated_text
+                    or ".destroy_fixed_array_with_failure<2, 2>("
+                    not in generated_text
                 ):
                     sys.stderr.write(
-                        f"{mode} lost the fixed-array program-storage lifetime "
-                        "slot representation\n"
+                        f"{mode} lost the flat or multidimensional fixed-array "
+                        "lifetime/drop representation\n"
                     )
                     return 1
+
+        rejected = run(
+            [
+                str(compiler),
+                str(negative_source),
+                "--emit-cpp",
+                "-o",
+                str(root / "negative.cpp"),
+            ]
+        )
+        if (
+            rejected.returncode != 65
+            or rejected.stdout != ""
+            or "error[GTI-S2015]" not in rejected.stderr
+            or "requires a default-initializable element type"
+            not in rejected.stderr
+            or "GTI-B0001" in rejected.stderr
+        ):
+            return fail("reject missing nested leaf default constructor", rejected)
 
     return 0
 
