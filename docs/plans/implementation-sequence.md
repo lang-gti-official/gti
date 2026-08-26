@@ -373,8 +373,8 @@ detailed row together; do not copy the sequence into another plan.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `O-PERF-00` | **active** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Canonical checked-array, checked-vector, scalar-chain, scalar-FP, control, and game-update baselines carry exact identities, raw samples, correctness records, reports, and successful upper-bound proxies. |
-| 2 | `O-PERF-01` | **blocked on 00** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | The admitted fixed-array overflow client discharges its hot checked arithmetic and reaches at most 1.2x idiomatic C++ without semantic or control regressions. |
+| 1 | `O-PERF-00` | **complete** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Exact clean commit `a2bd29dc` records conclusive checked-array, checked-vector, scalar-chain, scalar-FP, control, game-update, and managed-thread baselines; strict generated arithmetic ceilings; and fixed-native O0/O1/O2/O3 attribution. |
+| 2 | `O-PERF-01` | **active** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | The admitted fixed-array overflow client discharges its hot checked arithmetic and reaches at most 1.2x idiomatic C++ without semantic or control regressions. |
 | 3 | `O-PERF-02` | **blocked on 01** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | The selected bounded interprocedural family materially improves the vector workload with exact call, failure, cleanup, and snapshot identity. |
 | 4 | `O-PERF-03` | **blocked on 02** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
 | 5 | `O-PERF-04` | **blocked on 03** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
@@ -2776,7 +2776,7 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
 ### O-PERF-00: Evidence Freeze And Benchmark Admission
 
-- **State/role:** active and exclusive. This row reconciles the exact-main
+- **State/role:** complete at exact clean commit `a2bd29dc`. This row reconciles the exact-main
   O-MIR-08 audit with the independent PR #164 audit before compiler code
   changes.
 - **User outcome:** every following optimizer decision is tied to a durable,
@@ -2800,6 +2800,19 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   proposed transform preserves semantics. PR #164's separate-native result is
   accepted; its claim that ordinary O0-to-O1 timing alone attributes gains to
   Clang is not.
+- **Closed evidence:** report schema 4 bound every admitted workload to clean
+  compiler/source commit `a2bd29dce07260697de916fd2a8aa54a59bb9ef1`
+  and compiler SHA-256
+  `5ff0d43de820dbd529525f7daac60fecf522d16134c1cf82afdecf8ff4149b82`.
+  Five warmups and twenty seeded interleaved samples were conclusive for every
+  variant. The complete-state fixed-array client measured 283.568 ms checked
+  versus 60.377 ms for its strict three-helper proxy; the scaled vector client
+  measured 1235.735 versus 83.189 ms. Separate schema-3 runs emitted at GTI
+  O0/O1/O2/O3 and rebuilt at native O3 measured 152.597/152.008/151.073/150.768
+  ms, and all four rebuilt executables had the same SHA-256. Optimization
+  reports, MIR dumps, profiles, native disassembly, report hashes, and raw
+  samples are retained in
+  [`performance-tooling.md`](performance-tooling.md).
 - **Scope:** admit long-running checked scalar-chain, fixed-array overflow,
   scalar-FP update, checked-vector, fixed-array/bounds control,
   managed-thread control, and staged game-update workloads into the canonical
@@ -2817,7 +2830,8 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
 ### O-PERF-01: Loop-Carried Arithmetic Range Proof
 
-- **State/role:** blocked on `O-PERF-00`; first implementation row.
+- **State/role:** active; first implementation row after completed
+  `O-PERF-00`.
 - **Corrected starting point:** the canonical safety analysis already runs a
   deterministic loop fixpoint and widens interval facts after repeated block
   updates. It does not need a second solver. The current loss comes from
