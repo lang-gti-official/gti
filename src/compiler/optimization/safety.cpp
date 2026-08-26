@@ -849,6 +849,23 @@ void refineBranch(const MirBody &body, const MirBlock &block,
     return;
   }
   state.integers[variable->value] = *variableFact;
+  const auto prefixLength = state.prefixLengthValues.find(variable->value);
+  if (prefixLength != state.prefixLengthValues.end()) {
+    const auto storage = state.storages.find(prefixLength->second.storage);
+    if (storage != state.storages.end() && storage->second.length) {
+      IntegerFact length = *storage->second.length;
+      if (!intersect(length, lower, upper, evidence)) {
+        state.reachable = false;
+        return;
+      }
+      storage->second.length = std::move(length);
+      storage->second.length = boundedStorageLength(storage->second);
+      if (!storage->second.length) {
+        state.reachable = false;
+        return;
+      }
+    }
+  }
   const auto loadedOrigin = state.loadedOrigins.find(variable->value);
   if (loadedOrigin != state.loadedOrigins.end()) {
     const MirPlaceId place = loadedOrigin->second;
@@ -3663,6 +3680,25 @@ originFor(const MirInstruction &instruction, DefinedFailureOutcome outcome) {
   return result;
 }
 
+[[nodiscard]] std::optional<DefinedFailureOutcome>
+uniqueOutcomeForCode(const MirInstruction &instruction,
+                     DefinedFailureCode code) {
+  std::optional<DefinedFailureOutcome> result;
+  for (const DefinedFailureOrigin &origin :
+       instruction.definedFailure.localOrigins) {
+    for (const DefinedFailureOutcome outcome : origin.outcomes) {
+      if (outcome.code != code) {
+        continue;
+      }
+      if (result) {
+        return std::nullopt;
+      }
+      result = outcome;
+    }
+  }
+  return result;
+}
+
 void appendProof(MirSafetyAnalysis &analysis, MirBodyAddress address,
                  const MirBlock &block, const MirInstruction &instruction,
                  MirSafetyCheckFamily family, DefinedFailureOutcome outcome,
@@ -3699,6 +3735,22 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.tombstone) {
         continue;
+      }
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
+          instruction.operands.size() == 2) {
+        const std::optional<IntegerFact> index =
+            integerForOperand(body, state, instruction.operands[0]);
+        const std::optional<IntegerFact> length =
+            integerForOperand(body, state, instruction.operands[1]);
+        const std::optional<DefinedFailureOutcome> outcome =
+            uniqueOutcomeForCode(instruction,
+                                 DefinedFailureCode::IndexOutOfBounds);
+        if (index && length && outcome && within(*index, *length)) {
+          appendProof(analysis, address, block, instruction,
+                      MirSafetyCheckFamily::Bounds, *outcome,
+                      merged(index->evidence, length->evidence));
+        }
       }
       const FixedArrayIndex fixed = fixedArrayIndex(body, state, instruction);
       if (fixed.index &&
