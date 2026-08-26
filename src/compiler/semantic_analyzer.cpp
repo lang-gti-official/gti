@@ -3313,9 +3313,13 @@ public:
     } else if (expr.elements().empty() &&
                arrayType.arrayLengthParameterId == 0 &&
                arrayType.arrayLength != 0 &&
-               elementType.kind == SemanticType::Class) {
+               fixedArrayClassLeafType(elementType).kind ==
+                   SemanticType::Class) {
+      // A multidimensional array element is itself a fixed array; the
+      // construction that must be resolved is the leaf class element's.
       if (std::optional<ResolvedConstructionInfo> construction =
-              resolveArrayElementDefaultConstruction(elementType)) {
+              resolveArrayElementDefaultConstruction(
+                  fixedArrayClassLeafType(elementType))) {
         recordDefaultArgumentDependencies(construction->defaultArguments);
         semanticModel.recordArrayElementConstruction(expr,
                                                      std::move(*construction));
@@ -18942,6 +18946,21 @@ private:
     default:
       return false;
     }
+  }
+
+  // The exact concrete class element at the bottom of a fixed-array chain. A
+  // plain class type is its own leaf. A chain broken by a length parameter, a
+  // zero extent, or a non-class leaf yields Unknown.
+  [[nodiscard]] static SemanticType
+  fixedArrayClassLeafType(const SemanticType &type) {
+    const SemanticType *leaf = &type;
+    while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1 &&
+           leaf->arrayLengthParameterId == 0 && leaf->arrayLength != 0) {
+      leaf = &leaf->arguments.front();
+    }
+    return leaf->kind == SemanticType::Class
+               ? *leaf
+               : SemanticType(SemanticType::Unknown);
   }
 
   [[nodiscard]] std::optional<ResolvedConstructionInfo>

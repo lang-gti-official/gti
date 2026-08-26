@@ -44,7 +44,18 @@ public:
   }
 };
 
+mut int32_t counted_constructions = 0;
+mut int32_t counted_destructions = 0;
+
+class counted {
+public:
+  counted() { counted_constructions = counted_constructions + 1; }
+  ~counted() { counted_destructions = counted_destructions + 1; }
+  mut int32_t value = 3;
+};
+
 mut leaf global_leaves[2] = {};
+mut leaf global_grid[2][2] = {};
 
 int main() {
   mut leaf local_leaves[2] = {};
@@ -54,6 +65,27 @@ int main() {
       local_leaves[std::size_t(1)].value != 7 ||
       local_implicit_leaves[std::size_t(0)].value != 11) {
     return 3;
+  }
+
+  // Multidimensional fixed arrays share the flat form's per-leaf default
+  // construction, element access, and reverse-order destruction (issue #145).
+  mut leaf local_grid[2][2] = {};
+  mut leaf local_cube[2][1][2] = {};
+  local_grid[0][1].value = 21;
+  if (global_grid[1][1].value != 7 || local_grid[0][1].value != 21 ||
+      local_grid[1][0].value != 7 || local_cube[1][0][1].value != 7) {
+    return 4;
+  }
+
+  {
+    mut counted counted_grid[2][2] = {};
+    if (counted_constructions != 4 || counted_destructions != 0 ||
+        counted_grid[1][1].value != 3) {
+      return 5;
+    }
+  }
+  if (counted_constructions != 4 || counted_destructions != 4) {
+    return 6;
   }
 
   {
