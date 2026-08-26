@@ -1414,6 +1414,280 @@ int main() {
          "non-empty class field initializers without a vocabulary error");
 }
 
+void testFieldInitializerExpressionVocabulary() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-field-initializer-expressions.gti", R"(
+enum class payload_t { one(int32_t value), none };
+
+int32_t conversion_source = 7;
+
+class expression_owner_t {
+public:
+  expression_owner_t() {}
+  mut int32_t grouped = (7);
+  mut int32_t converted = int32_t(7);
+  mut int32_t converted_expression = int32_t(3 + 4);
+  mut int8_t checked_conversion = int8_t(conversion_source);
+};
+
+class payload_owner_t {
+public:
+  payload_owner_t() {}
+  mut payload_t empty = payload_t::none;
+  mut payload_t valued = payload_t::one(int32_t(9));
+};
+
+int main() {
+  mut expression_owner_t expressions = expression_owner_t();
+  mut payload_owner_t payloads = payload_owner_t();
+  return expressions.grouped - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the field-expression fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirClassInstance *expressionOwner = nullptr;
+  const lang::MirClassInstance *payloadOwner = nullptr;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    if (instance.declaredFields.size() == 4) {
+      expressionOwner = &instance;
+    } else if (instance.declaredFields.size() == 2) {
+      payloadOwner = &instance;
+    }
+  }
+  expect(expressionOwner != nullptr && payloadOwner != nullptr,
+         "the fixture should retain its expression and payload field owners");
+  if (expressionOwner == nullptr || payloadOwner == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMapRows rows =
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress expressionAddress{
+      .kind = lang::MirBodyKind::FieldInitializers,
+      .owner = expressionOwner->id};
+  const lang::MirBodyAddress payloadAddress{
+      .kind = lang::MirBodyKind::FieldInitializers, .owner = payloadOwner->id};
+  const lang::CppMirInitializerScheduleText expressions =
+      emitter.initializerSchedule(expressionAddress);
+  const lang::CppMirInitializerScheduleText payloads =
+      emitter.initializerSchedule(payloadAddress);
+  expect(expressions.supported && expressions.fields.size() == 4 &&
+             expressions.fields[0].spelling == "static_cast<std::int32_t>(7)" &&
+             expressions.fields[1].spelling ==
+                 "static_cast<std::int32_t>(static_cast<std::int32_t>(7))" &&
+             expressions.fields[2].spelling.find(
+                 "static_cast<std::int32_t>(::gti_internal::backend::add(") ==
+                 0 &&
+             expressions.fields[3].spelling.find(
+                 "::gti_internal::backend::numeric_cast<std::int8_t>(") == 0,
+         "Identity and Convert should retain the exact ordered MIR field "
+         "spellings");
+  expect(payloads.supported && payloads.fields.size() == 2 &&
+             std::all_of(payloads.fields.begin(), payloads.fields.end(),
+                         [](const auto &field) {
+                           return field.spelling.find("__gti_variant_") !=
+                                  std::string::npos;
+                         }) &&
+             payloads.fields[1].spelling.find(
+                 "static_cast<std::int32_t>(static_cast<std::int32_t>(9))") !=
+                 std::string::npos,
+         "PayloadConstruct should use copied variant metadata and preserve "
+         "payload operand order");
+
+  std::size_t identities = 0;
+  std::size_t conversions = 0;
+  std::size_t payloadConstructions = 0;
+  for (const lang::MirClassInstance *owner : {expressionOwner, payloadOwner}) {
+    for (const lang::MirBlock &block : owner->fieldInitializers.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        identities += instruction.operation == lang::MirOperation::Identity;
+        conversions += instruction.operation == lang::MirOperation::Convert;
+        payloadConstructions +=
+            instruction.operation == lang::MirOperation::PayloadConstruct;
+      }
+    }
+  }
+  expect(identities == 1 && conversions == 4 && payloadConstructions == 2,
+         "the source fixture should exercise the three newly scheduled MIR "
+         "operations directly");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find(
+             "std::int32_t converted = "
+             "static_cast<std::int32_t>(static_cast<std::int32_t>(7));") !=
+                 std::string::npos &&
+             artifact.contents.find("payload_t empty = ") !=
+                 std::string::npos &&
+             artifact.contents.find("__gti_variant_1{}") != std::string::npos,
+         "the production backend should publish conversion and payload field "
+         "initializers from verified MIR");
+
+  const auto mutableOwner = [](lang::MirProgram &program,
+                               lang::HirClassInstanceId owner) {
+    auto &instances = const_cast<std::vector<lang::MirClassInstance> &>(
+        program.classInstances());
+    const auto found =
+        std::find_if(instances.begin(), instances.end(),
+                     [&](const auto &item) { return item.id == owner; });
+    return found == instances.end() ? nullptr : &*found;
+  };
+  const auto mutableOperation = [](lang::MirBody &body,
+                                   lang::MirOperation operation,
+                                   bool requireOperand = false) {
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == operation &&
+            (!requireOperand || !instruction.operands.empty())) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  const auto rejectedSchedule = [&](const lang::MirProgram &program,
+                                    const lang::CppMirBodyEmissionMap &rows,
+                                    lang::MirBodyAddress address) {
+    return !lang::CppMirBodyEmitter(program, rows)
+                .initializerSchedule(address)
+                .supported;
+  };
+
+  lang::MirProgram duplicateUse = frontend.mir;
+  lang::MirClassInstance *duplicateOwner =
+      mutableOwner(duplicateUse, expressionOwner->id);
+  lang::MirInstruction *identity =
+      duplicateOwner == nullptr
+          ? nullptr
+          : mutableOperation(duplicateOwner->fieldInitializers,
+                             lang::MirOperation::Identity);
+  if (identity != nullptr && identity->result &&
+      *identity->result <= duplicateOwner->fieldInitializers.valueUses.size()) {
+    auto &uses =
+        duplicateOwner->fieldInitializers.valueUses[*identity->result - 1];
+    if (!uses.empty()) {
+      uses.push_back(uses.front());
+    }
+  }
+  expect(identity != nullptr &&
+             rejectedSchedule(duplicateUse, map, expressionAddress),
+         "duplicated Identity result-use metadata must fail closed");
+
+  lang::MirProgram wrongType = frontend.mir;
+  lang::MirClassInstance *wrongTypeOwner =
+      mutableOwner(wrongType, payloadOwner->id);
+  lang::MirInstruction *wrongPayload =
+      wrongTypeOwner == nullptr
+          ? nullptr
+          : mutableOperation(wrongTypeOwner->fieldInitializers,
+                             lang::MirOperation::PayloadConstruct, true);
+  if (wrongPayload != nullptr) {
+    wrongPayload->operands.front().type = lang::SemanticType::UInt32;
+  }
+  expect(wrongPayload != nullptr &&
+             rejectedSchedule(wrongType, map, payloadAddress),
+         "payload operand type drift must fail closed");
+
+  lang::MirProgram cleanupOwning = frontend.mir;
+  lang::MirClassInstance *cleanupOwner =
+      mutableOwner(cleanupOwning, payloadOwner->id);
+  lang::MirInstruction *cleanupPayload =
+      cleanupOwner == nullptr
+          ? nullptr
+          : mutableOperation(cleanupOwner->fieldInitializers,
+                             lang::MirOperation::PayloadConstruct);
+  if (cleanupPayload != nullptr) {
+    cleanupPayload->info.traits.drop = lang::DropKind::Lexical;
+  }
+  expect(cleanupPayload != nullptr &&
+             rejectedSchedule(cleanupOwning, map, payloadAddress),
+         "cleanup-owning payload construction must fail closed");
+
+  lang::MirProgram wrongOrder = frontend.mir;
+  lang::MirClassInstance *wrongOrderOwner =
+      mutableOwner(wrongOrder, expressionOwner->id);
+  bool reordered = false;
+  if (wrongOrderOwner != nullptr) {
+    for (lang::MirBlock &block : wrongOrderOwner->fieldInitializers.blocks) {
+      const auto consumer = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const auto &instruction) {
+            return instruction.operation == lang::MirOperation::Identity;
+          });
+      if (consumer == block.instructions.end() || consumer->operands.empty()) {
+        continue;
+      }
+      const lang::MirValue *source =
+          wrongOrderOwner->fieldInitializers.findValue(
+              consumer->operands.front().value);
+      const auto producer =
+          source == nullptr
+              ? block.instructions.end()
+              : std::find_if(block.instructions.begin(),
+                             block.instructions.end(),
+                             [&](const auto &instruction) {
+                               return instruction.id == source->definition;
+                             });
+      if (producer != block.instructions.end() && producer < consumer) {
+        std::iter_swap(producer, consumer);
+        reordered = true;
+      }
+      break;
+    }
+  }
+  expect(reordered && rejectedSchedule(wrongOrder, map, expressionAddress),
+         "a consumer reordered before its exact producer must fail closed");
+
+  lang::CppMirBodyEmissionMapRows staleRows = rows;
+  const auto payloadEnum =
+      std::find_if(staleRows.enums.begin(), staleRows.enums.end(),
+                   [](const auto &enumeration) {
+                     return !enumeration.payloadVariants.empty();
+                   });
+  if (payloadEnum != staleRows.enums.end()) {
+    payloadEnum->payloadVariants.front().spelling.clear();
+  }
+  expect(payloadEnum != staleRows.enums.end() &&
+             rejectedSchedule(frontend.mir,
+                              lang::CppMirBodyEmissionMap(std::move(staleRows)),
+                              payloadAddress),
+         "stale copied payload metadata must fail closed");
+
+  const lang::FrontendResult unsupported =
+      analyze("cpp-mir-body-unsupported-field-expression.gti", R"(
+class unsupported_t {
+  bool flag = !false;
+};
+
+int main() {
+  unsupported_t value = unsupported_t();
+  return 0;
+}
+)");
+  expect(unsupported.canGenerateCode(),
+         "the unsupported-expression probe should pass the frontend");
+  if (unsupported.canGenerateCode() &&
+      !unsupported.mir.classInstances().empty()) {
+    const lang::CppMirBodyEmissionMap unsupportedMap(
+        buildRows(unsupported, unsupported.mir, lang::CppStandard::Cpp23));
+    const lang::MirClassInstance &owner =
+        unsupported.mir.classInstances().back();
+    expect(rejectedSchedule(unsupported.mir, unsupportedMap,
+                            {.kind = lang::MirBodyKind::FieldInitializers,
+                             .owner = owner.id}),
+           "an unlisted LogicalNot field expression must remain rejected");
+  }
+}
+
 void testDependentFieldInitializerSchedule() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-dependent-field-initializers.gti", R"(
@@ -8296,6 +8570,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningCheckedBodyEmitsWholeCleanupProof",
      testOwningCheckedBodyEmitsWholeCleanupProof},
     {"testRichFieldInitializerSchedule", testRichFieldInitializerSchedule},
+    {"testFieldInitializerExpressionVocabulary",
+     testFieldInitializerExpressionVocabulary},
     {"testDependentFieldInitializerSchedule",
      testDependentFieldInitializerSchedule},
     {"testContainedOwningFieldConstructor",
