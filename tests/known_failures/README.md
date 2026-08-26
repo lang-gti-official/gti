@@ -11,12 +11,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-The current compiler reproducers remain outside CTest until their owning issue
-has a passing regression in the appropriate suite.
-
-| File | Left over from | Symptom |
-| --- | --- | --- |
-| `issue-121-direct-override-call.gti` | [#121](https://github.com/LukeHHA/gti/issues/121) | calling an `override` directly on the concrete object → `GTI-B0001`; the same call through the interface reference works, as does a non-override method |
+There are currently no open compiler reproducers in this directory.
 
 ## Memory-safety reproducers
 
@@ -320,6 +315,7 @@ reproducers were removed from this directory.
 | [#118](https://github.com/LukeHHA/gti/issues/118) lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
 | [#119](https://github.com/LukeHHA/gti/issues/119) compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
 | [#120](https://github.com/LukeHHA/gti/issues/120) generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
+| [#121](https://github.com/LukeHHA/gti/issues/121) direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `reference_parameter_range_runtime` |
 | [#129](https://github.com/LukeHHA/gti/issues/129) passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 | [#137](https://github.com/LukeHHA/gti/issues/137) passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 

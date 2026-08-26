@@ -52,7 +52,58 @@ public:
   int32_t area() override {
     return 5;
   }
+  int32_t plain() {
+    return 2;
+  }
 };
+
+mut Square global_square = Square();
+
+class Holder {
+public:
+  Holder() {}
+  int32_t read() {
+    return this.item.area();
+  }
+
+private:
+  Square item = Square();
+};
+
+class GenericSquare<T> : public Shape {
+public:
+  GenericSquare() {}
+  int32_t area() override {
+    return 6;
+  }
+};
+
+interface Measure {
+  int32_t measure();
+};
+
+class StableMeasure : public Measure {
+public:
+  StableMeasure() {}
+  int32_t measure() override {
+    return 8;
+  }
+};
+
+class CheckedMeasure : public StableMeasure {
+public:
+  CheckedMeasure() : StableMeasure() {}
+  int32_t measure() override {
+    return this.value + 1;
+  }
+
+private:
+  int32_t value = 8;
+};
+
+Square make_square() {
+  return Square();
+}
 
 int32_t read_base(DispatchBase& value) {
   return value.value();
@@ -65,6 +116,14 @@ int32_t read_bound(mut DispatchDerived& value) {
 
 int32_t read_shape(Shape& value) {
   return value.area();
+}
+
+int32_t read_global() {
+  return global_square.area();
+}
+
+int32_t read_concrete(StableMeasure& value) {
+  return value.measure();
 }
 
 int32_t sum(std::vector<int32_t>& values) {
@@ -98,8 +157,17 @@ int32_t main() {
   values.push_back(4);
   mut DispatchDerived derived = DispatchDerived();
   mut Square square = Square();
+  mut Holder holder = Holder();
+  mut GenericSquare<int32_t> generic = GenericSquare<int32_t>();
+  mut Square returned = make_square();
+  mut StableMeasure stable = StableMeasure();
+  mut CheckedMeasure checked = CheckedMeasure();
   return sum(values) - 7 + nested_sum(values) + read_bound(derived) - 3 +
-         read_base(derived) - 3 + read_shape(square) - 5;
+         read_base(derived) - 3 + read_shape(square) - 5 +
+         square.area() - 5 + read_global() - 5 + holder.read() - 5 +
+         generic.area() - 6 + returned.area() - 5 + derived.value() - 3 +
+         square.plain() - 2 + read_concrete(stable) - 8 +
+         read_concrete(checked) - 9;
 }
 """
 

@@ -5330,12 +5330,25 @@ public:
   int32_t stable_value() override { return 7; }
 };
 
+class Unrelated {
+public:
+  Unrelated() {}
+  int32_t marker() { return 9; }
+};
+
+int32_t direct_stable() {
+  mut Counter counter{1};
+  return counter.stable_value();
+}
+
 int32_t main() {
   mut Counter counter{1};
+  Unrelated unrelated{};
   mut Iterator<int32_t>& iterator = counter;
   int32_t first = *iterator;
   ++iterator;
-  return *iterator - first - 1 + iterator.stable_value() - 7;
+  return *iterator - first - 1 + iterator.stable_value() - 7 +
+         direct_stable() - 7 + unrelated.marker() - 9;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -5350,14 +5363,34 @@ int32_t main() {
   const lang::MirFunctionInstance *incrementOverride = nullptr;
   const lang::MirFunctionInstance *stableRoot = nullptr;
   const lang::MirFunctionInstance *stableOverride = nullptr;
+  const lang::MirFunctionInstance *unrelatedMarker = nullptr;
+  const lang::MirFunctionInstance *directCaller = nullptr;
   const lang::MirFunctionInstance *entry = nullptr;
+  lang::HirFunctionInstanceId unrelatedMarkerId = 0;
+  lang::HirFunctionInstanceId directCallerId = 0;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source == nullptr) {
+      continue;
+    }
+    if (function.source->name().lexeme == "marker") {
+      unrelatedMarkerId = function.id;
+    } else if (function.source->name().lexeme == "direct_stable") {
+      directCallerId = function.id;
+    }
+  }
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     if (function.entryKind != lang::ProgramEntryKind::None) {
       entry = &function;
     }
+    if (function.id == directCallerId) {
+      directCaller = &function;
+    }
     if (!function.overloadedOperator) {
-      if (function.pureVirtual) {
+      if (function.id == unrelatedMarkerId) {
+        unrelatedMarker = &function;
+      } else if (function.pureVirtual) {
         stableRoot = &function;
       } else if (function.overrideMethod) {
         stableOverride = &function;
@@ -5375,12 +5408,15 @@ int32_t main() {
   expect(dereferenceRoot != nullptr && dereferenceOverride != nullptr &&
              incrementRoot != nullptr && incrementOverride != nullptr &&
              stableRoot != nullptr && stableOverride != nullptr &&
+             unrelatedMarker != nullptr && directCaller != nullptr &&
              entry != nullptr,
          "the fixture should lower all pure contracts, all overrides, and "
-         "its entry body");
+         "its unrelated control and entry body");
   if (dereferenceRoot == nullptr || dereferenceOverride == nullptr ||
       incrementRoot == nullptr || incrementOverride == nullptr ||
-      stableRoot == nullptr || stableOverride == nullptr || entry == nullptr) {
+      stableRoot == nullptr || stableOverride == nullptr ||
+      unrelatedMarker == nullptr || directCaller == nullptr ||
+      entry == nullptr) {
     return;
   }
   expect(
@@ -5401,9 +5437,45 @@ int32_t main() {
          "the stable override should exercise a failure-free implementation "
          "of a conservatively failure-capable virtual contract");
 
+  const lang::MirInstruction *directStableCall = nullptr;
+  for (const lang::MirBlock &block : directCaller->body.blocks) {
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [&](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Call &&
+                 instruction.functionTarget == stableOverride->id;
+        });
+    if (found != block.instructions.end()) {
+      directStableCall = &*found;
+      break;
+    }
+  }
+  const lang::MirClassInstance *stableOwner =
+      stableOverride->owner
+          ? frontend.mir.findClassInstance(*stableOverride->owner)
+          : nullptr;
+  const lang::MirClassInstance *unrelatedOwner =
+      unrelatedMarker->owner
+          ? frontend.mir.findClassInstance(*unrelatedMarker->owner)
+          : nullptr;
+  expect(directStableCall != nullptr && stableOwner != nullptr &&
+             unrelatedOwner != nullptr &&
+             directStableCall->dispatch == lang::CallDispatch::Virtual &&
+             directStableCall->dispatchOwner == stableOwner->type &&
+             directStableCall->definedFailure.propagation ==
+                 lang::FailurePropagationKind::VirtualCall,
+         "a concrete override call should retain its exact target, virtual "
+         "dispatch owner, and conservative invoke edge in MIR");
+  if (directStableCall == nullptr || stableOwner == nullptr ||
+      unrelatedOwner == nullptr || unrelatedMarker == nullptr) {
+    return;
+  }
+
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress directAddress{.kind = lang::MirBodyKind::Function,
+                                           .owner = directCaller->id};
   for (const lang::MirFunctionInstance *function :
        {dereferenceOverride, incrementOverride, stableOverride, entry}) {
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
@@ -5413,6 +5485,80 @@ int32_t main() {
            "the complete virtual family should support failure-form MIR "
            "emission");
   }
+  expect(emitter.analyze(directAddress).ready() &&
+             (emitter.supportsBodyText(directAddress) ||
+              emitter.supportsFailureBodyText(directAddress)),
+         "the direct concrete override caller should remain inside the "
+         "complete C++ MIR vocabulary");
+
+  const auto mutableFunction = [](lang::MirProgram &program,
+                                  lang::HirFunctionInstanceId id) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    const auto found =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &candidate) {
+                       return candidate.id == id;
+                     });
+    return found == functions.end() ? nullptr : &*found;
+  };
+  const auto mutableInstruction = [&](lang::MirProgram &program,
+                                      lang::MirInstructionId id) {
+    lang::MirFunctionInstance *function =
+        mutableFunction(program, directCaller->id);
+    if (function == nullptr) {
+      return static_cast<lang::MirInstruction *>(nullptr);
+    }
+    for (lang::MirBlock &block : function->body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  const auto rejects = [&](lang::MirProgram program, std::string_view message) {
+    const lang::CppMirBodyEmitter malformed(program, map);
+    expect(!malformed.supportsBodyText(directAddress) &&
+               !malformed.supportsFailureBodyText(directAddress),
+           message);
+  };
+
+  lang::MirProgram missingOwner = frontend.mir;
+  mutableFunction(missingOwner, stableRoot->id)->owner.reset();
+  rejects(std::move(missingOwner),
+          "a virtual-family candidate without an owner must fail closed");
+
+  lang::MirProgram unrelatedTargetOwner = frontend.mir;
+  mutableFunction(unrelatedTargetOwner, stableOverride->id)->owner =
+      unrelatedOwner->id;
+  rejects(std::move(unrelatedTargetOwner),
+          "a concrete virtual target with an unrelated owner must fail "
+          "closed");
+
+  lang::MirProgram forgedRoot = frontend.mir;
+  mutableFunction(forgedRoot, stableOverride->id)->virtualRoots = {
+      unrelatedMarker->declaration};
+  rejects(std::move(forgedRoot),
+          "a concrete virtual target with a forged contract root must fail "
+          "closed");
+
+  lang::MirProgram unrelatedDispatchOwner = frontend.mir;
+  mutableInstruction(unrelatedDispatchOwner, directStableCall->id)
+      ->dispatchOwner = unrelatedOwner->type;
+  rejects(std::move(unrelatedDispatchOwner),
+          "a concrete virtual call with an unrelated dispatch owner must "
+          "fail closed");
+
+  lang::MirProgram forgedTarget = frontend.mir;
+  mutableInstruction(forgedTarget, directStableCall->id)->functionTarget =
+      unrelatedMarker->id;
+  rejects(std::move(forgedTarget),
+          "a concrete virtual call with a forged target must fail closed");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -5441,6 +5587,7 @@ int32_t main() {
              text.find(".__gti_operator_dereference__gti_mir_failure(") !=
                  std::string::npos &&
              text.find("stable_value__gti_mir_failure(") != std::string::npos &&
+             text.find(".stable_value()") != std::string::npos &&
              text.find(".Iterator<std::int32_t>::"
                        "__gti_operator_dereference__gti_mir_failure(") ==
                  std::string::npos,
