@@ -105,6 +105,7 @@ enum class MirSafetyCheckFamily : std::uint8_t {
   Bounds,
   StorageState,
   ArithmeticOverflow,
+  ArithmeticDomain,
   Count,
 };
 
@@ -117,6 +118,8 @@ mirSafetyCheckFamilyName(MirSafetyCheckFamily family) {
     return "storage-state";
   case MirSafetyCheckFamily::ArithmeticOverflow:
     return "arithmetic-overflow";
+  case MirSafetyCheckFamily::ArithmeticDomain:
+    return "arithmetic-domain";
   case MirSafetyCheckFamily::Count:
     return "invalid";
   }

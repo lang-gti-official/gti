@@ -52,6 +52,7 @@ mirSafetyTransformProof(MirSafetyCheckFamily family) {
   case MirSafetyCheckFamily::StorageState:
     return MirTransformProofKind::StorageInitialization;
   case MirSafetyCheckFamily::ArithmeticOverflow:
+  case MirSafetyCheckFamily::ArithmeticDomain:
     return MirTransformProofKind::ArithmeticRange;
   case MirSafetyCheckFamily::Count:
     return MirTransformProofKind::Count;

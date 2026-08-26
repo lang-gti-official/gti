@@ -2077,6 +2077,7 @@ def main():
             "bounds",
             "storage-state",
             "arithmetic-overflow",
+            "arithmetic-domain",
         }
         for counts in report["safetyOperations"]["families"].values():
             assert counts["source"] >= counts["emitted"]

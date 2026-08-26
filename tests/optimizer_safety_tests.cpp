@@ -134,9 +134,87 @@ int32_t guarded_math(int32_t value) {
   return 0;
 }
 
+int32_t exact_remainder(int32_t value) {
+  return value % int32_t(7);
+}
+
+int32_t dynamic_remainder(int32_t value, int32_t divisor) {
+  return value % divisor;
+}
+
+int32_t masked_add(int32_t value) {
+  return (value & int32_t(255)) + int32_t(1);
+}
+
+void analysis_barrier() {}
+
+int64_t bounded_recurrence() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < 100; index++) {
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+int64_t dynamic_recurrence(uint64_t count) {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < count; index++) {
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+int64_t repeated_recurrence_write() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < 100; index++) {
+    total += int64_t(index & uint64_t(255));
+    total += int64_t(1);
+  }
+  return total;
+}
+
+int64_t recurrence_call_barrier() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < 100; index++) {
+    total += int64_t(index & uint64_t(255));
+    analysis_barrier();
+  }
+  return total;
+}
+
+int32_t fixed_array_envelope(int32_t value) {
+  mut int32_t values[4] = {};
+  for (mut uint64_t index = 0; index < 4; index++) {
+    values[index] = (value & int32_t(255)) + int32_t(1);
+  }
+  return values[0] + int32_t(1);
+}
+
+int32_t fixed_array_call_barrier(int32_t value) {
+  mut int32_t values[4] = {};
+  for (mut uint64_t index = 0; index < 4; index++) {
+    values[index] = (value & int32_t(255)) + int32_t(1);
+  }
+  analysis_barrier();
+  return values[0] + int32_t(1);
+}
+
+int32_t fixed_array_alias_write(int32_t value) {
+  mut int32_t values[2] = {1, 2};
+  {
+    mut int32_t& alias = values[0];
+    alias = value;
+  }
+  return values[1] + int32_t(1);
+}
+
 int32_t main() {
   if (fixed_sum() != 10) { return 1; }
   if (guarded_math(4) != -8) { return 2; }
+  if (exact_remainder(17) != 3) { return 3; }
+  if (masked_add(511) != 256) { return 4; }
+  if (bounded_recurrence() != 4950) { return 5; }
+  if (fixed_array_envelope(511) != 257) { return 6; }
   return 0;
 }
 )";
@@ -170,7 +248,7 @@ int32_t main() {
                             lang::MirSafetyCheckFamily::Bounds) == 1 &&
              functionDischarges(
                  frontend, o2, "fixed_sum",
-                 lang::MirSafetyCheckFamily::ArithmeticOverflow) == 1 &&
+                 lang::MirSafetyCheckFamily::ArithmeticOverflow) == 2 &&
              functionDischarges(
                  frontend, o2, "guarded_math",
                  lang::MirSafetyCheckFamily::ArithmeticOverflow) == 4,
@@ -186,27 +264,79 @@ int32_t main() {
                  lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
          "dynamic bounds, unconstrained arithmetic, and user lifecycle "
          "mutation barriers must remain checked");
+  expect(
+      functionDischarges(frontend, o2, "exact_remainder",
+                         lang::MirSafetyCheckFamily::ArithmeticDomain) == 1 &&
+          functionDischarges(frontend, o2, "dynamic_remainder",
+                             lang::MirSafetyCheckFamily::ArithmeticDomain) ==
+              0 &&
+          functionDischarges(frontend, o2, "masked_add",
+                             lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
+              1,
+      "exact nonzero divisors and exact bit masks should refine integer "
+      "facts without proving dynamic divisors");
+
+  const std::size_t boundedRecurrence =
+      functionDischarges(frontend, o2, "bounded_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t dynamicRecurrence =
+      functionDischarges(frontend, o2, "dynamic_recurrence",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t repeatedRecurrence =
+      functionDischarges(frontend, o2, "repeated_recurrence_write",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t callRecurrence =
+      functionDischarges(frontend, o2, "recurrence_call_barrier",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  expect(boundedRecurrence == dynamicRecurrence + 1 &&
+             boundedRecurrence == repeatedRecurrence + 1 &&
+             boundedRecurrence == callRecurrence + 1,
+         "only a finite single-write recurrence without opaque calls should "
+         "gain the accumulator overflow proof");
+
+  const std::size_t arrayEnvelope =
+      functionDischarges(frontend, o2, "fixed_array_envelope",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t arrayBarrier =
+      functionDischarges(frontend, o2, "fixed_array_call_barrier",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t arrayAliasWrite =
+      functionDischarges(frontend, o2, "fixed_array_alias_write",
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  expect(arrayEnvelope == arrayBarrier + 1 && arrayAliasWrite == 0,
+         "a fixed-array element envelope should prove the later scalar add "
+         "and be invalidated by opaque calls or aliasing writes");
   expect(lang::MirPrinter().print(o2.mir) == lang::MirPrinter().print(o3.mir) &&
              countDischarges(o2.mir, lang::MirSafetyCheckFamily::Bounds) ==
                  countDischarges(o3.mir, lang::MirSafetyCheckFamily::Bounds) &&
              countDischarges(o2.mir,
                              lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
                  countDischarges(
-                     o3.mir, lang::MirSafetyCheckFamily::ArithmeticOverflow),
+                     o3.mir, lang::MirSafetyCheckFamily::ArithmeticOverflow) &&
+             countDischarges(o2.mir,
+                             lang::MirSafetyCheckFamily::ArithmeticDomain) ==
+                 countDischarges(o3.mir,
+                                 lang::MirSafetyCheckFamily::ArithmeticDomain),
          "O2 and O3 should derive the same deterministic GTI safety proofs");
 
   const std::size_t bounds =
       static_cast<std::size_t>(lang::MirSafetyCheckFamily::Bounds);
   const std::size_t overflow =
       static_cast<std::size_t>(lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t domain =
+      static_cast<std::size_t>(lang::MirSafetyCheckFamily::ArithmeticDomain);
   expect(o2.report.safety.dischargedByFamily[bounds] > 0 &&
              o2.report.safety.dischargedByFamily[overflow] > 0 &&
+             o2.report.safety.dischargedByFamily[domain] > 0 &&
              o2.report.safety.sourceByFamily[bounds] ==
                  o2.report.safety.emittedByFamily[bounds] +
                      o2.report.safety.dischargedByFamily[bounds] &&
              o2.report.safety.sourceByFamily[overflow] ==
                  o2.report.safety.emittedByFamily[overflow] +
-                     o2.report.safety.dischargedByFamily[overflow],
+                     o2.report.safety.dischargedByFamily[overflow] &&
+             o2.report.safety.sourceByFamily[domain] ==
+                 o2.report.safety.emittedByFamily[domain] +
+                     o2.report.safety.dischargedByFamily[domain],
          "the report should reconcile exact per-family source, emitted, and "
          "discharged checks");
   const std::string report =

@@ -3680,7 +3680,9 @@ validFailureInstructionShape(const MirInstruction &instruction) {
         (discharge.family == MirSafetyCheckFamily::StorageState &&
          discharge.outcome.code == DefinedFailureCode::InvalidStorageState) ||
         (discharge.family == MirSafetyCheckFamily::ArithmeticOverflow &&
-         discharge.outcome.code == DefinedFailureCode::IntegerOverflow);
+         discharge.outcome.code == DefinedFailureCode::IntegerOverflow) ||
+        (discharge.family == MirSafetyCheckFamily::ArithmeticDomain &&
+         discharge.outcome.code == DefinedFailureCode::ModuloByZero);
     if (!familyMatches) {
       return false;
     }
@@ -3688,7 +3690,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
       switch (discharge.family) {
       case MirSafetyCheckFamily::Bounds:
         if (discharge.outcome.detail == DefinedFailureDetail::FixedArray) {
-          return instruction.kind == MirInstructionKind::Load;
+          return instruction.kind == MirInstructionKind::Load ||
+                 instruction.kind == MirInstructionKind::Assign;
         }
         return discharge.outcome.detail ==
                    DefinedFailureDetail::PrivateStorage &&
@@ -3715,6 +3718,10 @@ validFailureInstructionShape(const MirInstruction &instruction) {
                     DefinedFailureDetail::Multiplication) ||
                (instruction.operation == MirOperation::Negate &&
                 discharge.outcome.detail == DefinedFailureDetail::Negation);
+      case MirSafetyCheckFamily::ArithmeticDomain:
+        return instruction.kind == MirInstructionKind::Compute &&
+               instruction.operation == MirOperation::Remainder &&
+               discharge.outcome.detail == DefinedFailureDetail::IntegerModulo;
       case MirSafetyCheckFamily::Count:
         return false;
       }
