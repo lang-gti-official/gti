@@ -15222,8 +15222,27 @@ public:
                        ? "auto &__gti_mir_p_"
                        : "const auto &__gti_mir_p_")
                << place.id << " = (*this)."
-               << fieldSpelling(facts, place.projections.front().field)
-               << ";\n";
+               << fieldSpelling(facts, place.projections.front().field);
+        // A reference member dereferences implicitly, so trailing field
+        // projections read directly through the bound referent.
+        if (place.projections.size() > 2) {
+          const MirClassInstance *receiverOwner =
+              facts.owner ? program.findClassInstance(*facts.owner) : nullptr;
+          const ResolvedMirField reference =
+              receiverOwner == nullptr
+                  ? ResolvedMirField{}
+                  : resolveMirField(program, receiverOwner->type,
+                                    place.projections.front().field);
+          if (!reference ||
+              reference.field->type.kind != SemanticType::Reference ||
+              reference.field->type.arguments.size() != 1) {
+            throw std::logic_error(
+                "verified reference field chain lost its referent type");
+          }
+          emitFieldProjectionChain(reference.field->type.arguments.front(),
+                                   place.projections, 2);
+        }
+        output << ";\n";
         continue;
       }
       // A lambda-typed local declares only under a template emission's
@@ -22294,11 +22313,15 @@ private:
         output << "__gti_mir_p_" << place.id;
         return;
       }
-      if (place.projections.size() == 2 &&
+      if (place.projections.size() >= 2 &&
           place.projections[0].kind == MirProjectionKind::Field &&
-          place.projections[1].kind == MirProjectionKind::Dereference) {
-        // A reference member dereferences implicitly; the bound reference
-        // local already names the referent.
+          place.projections[1].kind == MirProjectionKind::Dereference &&
+          std::all_of(place.projections.begin() + 2, place.projections.end(),
+                      [](const MirPlaceProjection &projection) {
+                        return projection.kind == MirProjectionKind::Field;
+                      })) {
+        // A reference member dereferences implicitly; the bound alias
+        // already names the referent (or its trailing field projection).
         output << "__gti_mir_p_" << place.id;
         return;
       }
@@ -24960,11 +24983,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       // A reference field followed by its dereference binds through the
       // member spelling because C++ reference members dereference
-      // implicitly. A field element carries its staged index separately.
+      // implicitly; trailing field projections then read through the bound
+      // referent. A field element carries its staged index separately.
       const bool referenceFieldChain =
-          place.projections.size() == 2 &&
+          place.projections.size() >= 2 &&
           place.projections[0].kind == MirProjectionKind::Field &&
-          place.projections[1].kind == MirProjectionKind::Dereference;
+          place.projections[1].kind == MirProjectionKind::Dereference &&
+          std::all_of(place.projections.begin() + 2, place.projections.end(),
+                      [](const MirPlaceProjection &projection) {
+                        return projection.kind == MirProjectionKind::Field;
+                      });
       // A field element place carries the staged index value; it spells
       // only inside the fused array_at accessor, never as an alias.
       const bool fieldElementChain =
@@ -24976,6 +25004,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           place.projections.front().kind != MirProjectionKind::Field ||
           !fieldRow(place.projections.front().field)) {
         {
+          return false;
+        }
+      }
+      if (referenceFieldChain && place.projections.size() > 2) {
+        const MirClassInstance *receiverOwner =
+            owner ? program_.findClassInstance(*owner) : nullptr;
+        const ResolvedMirField reference =
+            receiverOwner == nullptr
+                ? ResolvedMirField{}
+                : resolveMirField(program_, receiverOwner->type,
+                                  place.projections.front().field);
+        if (!reference ||
+            reference.field->type.kind != SemanticType::Reference ||
+            reference.field->type.arguments.size() != 1 ||
+            !exactFieldProjectionRows(program_, representations_,
+                                      reference.field->type.arguments.front(),
+                                      place.projections, 2, place.type)) {
           return false;
         }
       }
