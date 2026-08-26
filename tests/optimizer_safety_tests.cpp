@@ -639,6 +639,10 @@ int32_t index_write_after_check(mut uint64_t index, uint64_t replacement) {
   index = replacement;
   return gti_internal::prefix_storage_read(values, index);
 }
+
+int32_t main() {
+  return exact_checked_read(uint64_t(0)) == int32_t(7) ? 0 : 1;
+}
 )";
   const lang::FrontendResult frontend =
       analyzeTrusted("optimizer-prefix-bounds.gti", source);
@@ -663,10 +667,11 @@ int32_t index_write_after_check(mut uint64_t index, uint64_t replacement) {
     return functionDischarges(frontend, optimized, name,
                               lang::MirSafetyCheckFamily::Bounds);
   };
-  expect(o2.valid() && o3.valid() && bounds(o2, "exact_checked_read") == 1 &&
-             bounds(o3, "exact_checked_read") == 1,
-         "an exact public index/length check should discharge one matching "
-         "private prefix read at O2 and O3");
+  expect(o2.valid() && o3.valid() && bounds(o2, "exact_checked_read") == 2 &&
+             bounds(o3, "exact_checked_read") == 2,
+         "an exact closed-call index range should discharge the public "
+         "logical-size check and its matching private prefix read at O2 and "
+         "O3");
   for (const std::string_view name :
        {"different_index", "different_storage", "append_after_check",
         "pop_after_check", "insert_after_check", "erase_after_check",

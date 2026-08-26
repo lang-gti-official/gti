@@ -3693,6 +3693,13 @@ validFailureInstructionShape(const MirInstruction &instruction) {
           return instruction.kind == MirInstructionKind::Load ||
                  instruction.kind == MirInstructionKind::Assign;
         }
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::StorageBoundsCheck) {
+          return discharge.outcome.detail == DefinedFailureDetail::Vector ||
+                 discharge.outcome.detail == DefinedFailureDetail::String ||
+                 discharge.outcome.detail ==
+                     DefinedFailureDetail::PrivateStorage;
+        }
         return discharge.outcome.detail ==
                    DefinedFailureDetail::PrivateStorage &&
                instruction.kind == MirInstructionKind::Call &&

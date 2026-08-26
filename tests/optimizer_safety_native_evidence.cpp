@@ -434,6 +434,53 @@ int main() {
 }
 )";
 
+constexpr std::string_view boundedLogicalSizeSource = R"(
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>(std::size_t(4));
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] = int32_t(index % std::size_t(4));
+  }
+  return 0;
+}
+)";
+
+void testBoundedLogicalSizeEmission(const std::string &compiler,
+                                    const std::filesystem::path &directory) {
+  const lang::FrontendResult frontend =
+      analyzeTrusted(boundedLogicalSizeSource);
+  expect(frontend.canGenerateCode(),
+         "bounded logical-size fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const EmittedProgram o0 = emitProgram(frontend, lang::OptimizationLevel::O0,
+                                        directory, "bounded-o0");
+  const EmittedProgram o2 = emitProgram(frontend, lang::OptimizationLevel::O2,
+                                        directory, "bounded-o2");
+  constexpr std::string_view checkedBounds =
+      "::gti_internal::backend::mir_checked_index_bounds_v1(";
+  expect(occurrences(o2.cpp, checkedBounds) <
+             occurrences(o0.cpp, checkedBounds),
+         "a proved public logical-size check should emit no target operation");
+
+  const std::filesystem::path o0Binary =
+      build(compiler, o0.artifact, directory, "bounded-o0");
+  const std::filesystem::path o2Binary =
+      build(compiler, o2.artifact, directory, "bounded-o2");
+  const RunResult baseline = run(o0Binary, directory, "bounded-o0", "");
+  const RunResult optimized = run(o2Binary, directory, "bounded-o2", "");
+  expect(baseline.built && optimized.built && baseline.exitStatus == 0 &&
+             optimized.exitStatus == baseline.exitStatus &&
+             optimized.stdoutText == baseline.stdoutText &&
+             optimized.stderrText == baseline.stderrText,
+         "a discharged public logical-size check should preserve native O0 "
+         "behavior");
+}
+
 void testClosedCallNearMisses() {
   const lang::FrontendResult frontend =
       analyzeTrusted(closedCallNearMissSource);
@@ -509,6 +556,7 @@ int main(int argc, char **argv) {
   std::filesystem::create_directories(directory, error);
 
   testClosedCallNearMisses();
+  testBoundedLogicalSizeEmission(compiler, directory);
 
   const lang::FrontendResult frontend = analyzeTrusted(source);
   if (!frontend.canGenerateCode()) {
@@ -557,7 +605,7 @@ int main(int argc, char **argv) {
   expectDischarges("remainder_assign_success",
                    lang::MirSafetyCheckFamily::ArithmeticDomain, 1);
   expectDischarges("closed_vector_scale",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow, 1);
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow, 2);
   expect(dischargeCount("fixed_write_success",
                         lang::MirSafetyCheckFamily::Bounds) > 0,
          "O2 should prove at least one native-emitted fixed-array write");

@@ -590,6 +590,11 @@ int main() {
   lang::MirPlace constantRight = bindingPlace(14, 1);
   constantRight.projections.push_back(
       {.kind = lang::MirProjectionKind::Index, .constantIndex = 1});
+  lang::MirPlace receiver = {.id = 17, .root = lang::MirPlaceRootKind::This};
+  receiver.projections.push_back({.kind = lang::MirProjectionKind::Field,
+                                  .field = record->declaredFields[0].symbol});
+  lang::MirPlace symbol = {
+      .id = 18, .root = lang::MirPlaceRootKind::Symbol, .symbol = 1000};
 
   const auto relation = [&](const lang::MirPlace &left,
                             const lang::MirPlace &right) {
@@ -608,15 +613,19 @@ int main() {
           relation(temporary, otherTemporary) ==
               lang::MirAliasRelation::NoAlias &&
           relation(constantLeft, constantRight) ==
-              lang::MirAliasRelation::NoAlias,
+              lang::MirAliasRelation::NoAlias &&
+          relation(root, receiver) == lang::MirAliasRelation::NoAlias &&
+          relation(root, symbol) == lang::MirAliasRelation::NoAlias &&
+          relation(receiver, symbol) == lang::MirAliasRelation::NoAlias,
       "place analysis should distinguish exact roots and disjoint record "
-      "fields while keeping union fields, borrowed, value-rooted, "
-      "dynamic, and raw memory conservative");
+      "fields, receiver fields, globals, and local bindings while keeping "
+      "union fields, borrowed, value-rooted, dynamic, and raw memory "
+      "conservative");
   const std::vector<const lang::MirPlace *> places = {
-      &root,         &same,       &other,       &leftField,      &rightField,
-      &unionLeft,    &unionRight, &dynamicLeft, &dynamicRight,   &raw,
-      &loan,         &value,      &temporary,   &otherTemporary, &constantLeft,
-      &constantRight};
+      &root,          &same,       &other,       &leftField,      &rightField,
+      &unionLeft,     &unionRight, &dynamicLeft, &dynamicRight,   &raw,
+      &loan,          &value,      &temporary,   &otherTemporary, &constantLeft,
+      &constantRight, &receiver,   &symbol};
   bool symmetric = true;
   for (const lang::MirPlace *left : places) {
     for (const lang::MirPlace *right : places) {

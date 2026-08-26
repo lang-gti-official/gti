@@ -150,6 +150,8 @@ The admitted operations are deliberately narrow:
   by a destroy or mutation barrier; and
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
+- public logical-size checks whose integer intervals prove
+  `0 <= index < size`; and
 - integer remainder whose divisor is an exact nonzero value. The proof removes
   only the zero-divisor outcome; the C++ backend still uses a GTI-owned helper
   so signed-minimum remainder `-1` retains GTI's defined zero result instead of
@@ -181,12 +183,16 @@ compound operator. Remainder and shifts remain on GTI-owned helpers even after
 a local failure is discharged because native C++ does not represent every GTI
 defined-semantics boundary, including signed-minimum remainder by `-1`.
 
-Array borrows, public logical-size checks, division, dynamic-divisor remainder,
-shifts, unsupported conversions, and unproved or mismatched dynamic indices
-remain checked. A proved prefix read keeps that public check and discharges
-only the private representation recheck. Prefix append, insert, erase, pop,
-relocation, storage/index aliasing, opaque calls, and unsupported joins discard
-the exact relation. Place alias facts refine mutable safety state: duplicate
+Array borrows, unproved public logical-size checks, division, dynamic-divisor
+remainder, shifts, unsupported conversions, and unproved or mismatched dynamic
+indices remain checked. A proved public logical-size check and its matching
+private prefix read are discharged independently; proving only the first does
+not imply storage identity or initialization. A discharged public check emits
+no target operation and its existing failure edge becomes an unconditional
+success edge. Prefix append, insert, erase, pop, relocation, storage/index
+aliasing, opaque calls, and unsupported joins discard the exact relation.
+Place alias facts refine mutable safety state:
+duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves
 facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
 invalidated. Alias facts do not themselves discharge a check or infer a
@@ -264,11 +270,12 @@ to the header with different block arguments, the recurrence is ambiguous and
 no induction fact is produced.
 
 `analyzeMirPlaceAliasEscape` derives a body-local dense relation over stable
-MIR places. Equal places are `must-alias`; precise disjoint roots, fields, and
-constant indices are `no-alias`; indirect, dynamic-index, raw-memory, or
-otherwise unresolved relationships are `may-alias`. Distinct fields of a
-verified ordinary record are disjoint, while fields of a union overlap and
-remain `may-alias`. Escape reasons record
+MIR places. Equal places are `must-alias`; distinct precise roots, including
+roots of different local, receiver, global, and temporary kinds, plus disjoint
+fields and constant indices are `no-alias`; indirect, loan-rooted,
+value-rooted, dynamic-index, raw-memory, or otherwise unresolved relationships
+are `may-alias`. Distinct fields of a verified ordinary record are disjoint,
+while fields of a union overlap and remain `may-alias`. Escape reasons record
 address taking, returns, retained borrows, non-local stores, raw memory, and
 calls. Only closed exact static call summaries may project receiver or
 argument escape; unresolved, native, virtual, and recursive boundaries remain
