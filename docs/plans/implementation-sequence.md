@@ -376,8 +376,8 @@ detailed row together; do not copy the sequence into another plan.
 | 1 | `O-PERF-00` | **complete** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Exact clean commit `a2bd29dc` records conclusive checked-array, checked-vector, scalar-chain, scalar-FP, control, game-update, and managed-thread baselines; strict generated arithmetic ceilings; and fixed-native O0/O1/O2/O3 attribution. |
 | 2 | `O-PERF-01` | **complete** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | Exact clean commit `f1a4075f` discharges all five hot arithmetic outcomes and the three hot fixed-array bounds outcomes; GTI measured 1.011x idiomatic C++ at O2 and 0.999x at O3 with no control regression above 0.4%. |
 | 3 | `O-PERF-02` | **complete** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | Exact clean commit `d6374eb9` uses bounded contextual summaries to discharge six overflow outcomes and four arithmetic-domain outcomes; the O2 vector median fell from 1,213.192 ms to 558.336 ms while all conservative near misses and independent replay passed. |
-| 4 | `O-PERF-03` | **active** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
-| 5 | `O-PERF-04` | **blocked on 03** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
+| 4 | `O-PERF-03` | **complete** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | Exact clean commit `eaaea34d` removes vector's mirrored count and discharges seven public-accessor private prefix rechecks; vector medians improve 22.4% at O2 and 28.9% at O3 with exact public failure identity and no control regression above 1.1%. |
+| 5 | `O-PERF-04` | **active** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
 | 6 | `O-PERF-05` | **blocked on 04** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
 | 7 | `O-GAME-01` | **blocked on 05** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
 
@@ -2931,8 +2931,8 @@ identities, counters, and raw samples live in
 
 ### O-PERF-03: Single-Bound Prefix Storage Access
 
-- **State/role:** active after completed `O-PERF-02`; second-order container
-  closure and the sole active compiler-performance row.
+- **State/role:** complete on exact clean implementation commit `eaaea34d`;
+  second-order container closure.
 - **Corrected starting point:** current `std::vector` stores `count` while its
   private `prefix_storage` independently stores `length_`, and every public
   subscript performs a vector-detail bounds check followed by the prefix read's
@@ -2956,11 +2956,31 @@ identities, counters, and raw samples live in
   no correctness invariant requires the representation change, close the row
   as measured-defer without adding the new discharge vocabulary.
 
+The implementation removes vector's mirrored `count`; private prefix storage
+is now the sole live-length authority across construction, mutation,
+relocation, iteration, and access. Safety analysis records an exact relation
+between one canonical prefix-storage origin, the scalar origin of an index,
+and a successful logical-size check whose length came from that same storage.
+Prefix mutation/relocation, index writes, may-alias writes, opaque calls, and
+joins without the relation invalidate it. The backend-only unchecked prefix
+helper has no GTI source declaration and is selected only after independent
+verified-MIR replay accepts the bounds discharge.
+
+The exact vector surface records seven bounds discharges covering read-only and
+mutable `front`, `back`, `at`, and `operator[]`; each retains its public vector
+check and omits only the private prefix recheck. Native O0/O2/O3 evidence
+preserves empty `front`, `back`, and `at` as `index_out_of_bounds in vector`,
+while prefix capability evidence retains private guard, move, relocation,
+reverse-destruction, mutation, and sanitizer coverage. At O2 the admitted
+vector median fell from 558.336 ms to 433.264 ms; at O3 it fell from 570.654 ms
+to 405.981 ms. Exact report identities, counters, controls, and raw samples live
+in [`performance-tooling.md`](performance-tooling.md).
+
 ### O-PERF-04: Exact Fast Path For Undischargeable Checked Loops
 
-- **State/role:** blocked on `O-PERF-03`; design/proxy gate before any
-  transform. Enter only with a benchmark whose hot inputs are genuinely opaque
-  after the static rows.
+- **State/role:** active after completed `O-PERF-03`; design/proxy gate before
+  any transform. Enter only with a benchmark whose hot inputs are genuinely
+  opaque after the static rows.
 - **Rejected audit shape:** PR #164's wrapping block plus sticky predicate and
   replay is not accepted as semantics-preserving as written. Its own
   side-effect-free legality rule excludes the flagship `scale` loop because

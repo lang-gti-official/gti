@@ -275,6 +275,15 @@ applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
 asking a backend to inspect names or call stacks.
 
+`std::vector` derives its live size directly from its private
+`prefix_storage<T>` capability. It has no mirrored element count: construction,
+append, insertion, erasure, pop, clear, resize, relocation, movement, iteration,
+and indexed access therefore observe one length authority. Capacity remains a
+separate wrapper policy value. Public accessors perform the identity-bound
+logical vector check; optimized MIR may discharge only the immediately related
+private prefix recheck under the exact proof described in
+[`optimization.md`](optimization.md).
+
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are
 representation guards and legacy terminal operations, not an alternate source-
