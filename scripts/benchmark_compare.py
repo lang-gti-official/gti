@@ -38,6 +38,7 @@ DESCRIPTOR_KEYS = {
 VARIANT_KEYS = {"name", "kind", "source"}
 VARIANT_SCHEMA_2_KEYS = {*VARIANT_KEYS, "execution_profile"}
 EXECUTION_PROFILES = {"single-threaded", "concurrent"}
+OPTIMIZATION_LEVELS = ("0", "1", "2", "3")
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RESULT_PATTERN = re.compile(
     r"GTI-BENCH-1 digest:([0-9a-f]{16}) work-units:([1-9][0-9]{0,19})"
@@ -62,6 +63,23 @@ SAFE_NATIVE_FLAG_PATTERN = re.compile(
 )
 GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ARITHMETIC_SUCCESS_PROXY_KIND = "generated-arithmetic-success-proxy"
+ARITHMETIC_SUCCESS_PROXY_SUFFIX = "-arithmetic-success-proxy"
+ARITHMETIC_SUCCESS_PROXY_HELPERS = (
+    ("gti_internal::backend::mir_checked_add_v1", "mir_checked_add_v1"),
+    (
+        "gti_internal::backend::mir_checked_subtract_v1",
+        "mir_checked_subtract_v1",
+    ),
+    (
+        "gti_internal::backend::mir_checked_multiply_v1",
+        "mir_checked_multiply_v1",
+    ),
+)
+BACKEND_NAMESPACE_OPEN = "namespace gti_internal::backend {"
+BACKEND_NAMESPACE_CLOSE = "} // namespace gti_internal::backend"
+ARITHMETIC_OVERFLOW_GUARD = "if (overflow) {"
+ARITHMETIC_SUCCESS_GUARD = "if (false) {"
 
 
 class BenchmarkError(RuntimeError):
@@ -382,6 +400,69 @@ def load_workload(selection: str) -> Workload:
     )
 
 
+def arithmetic_success_proxy_targets(
+    selections: list[str],
+    workloads: list[Workload],
+    native_optimization: str | None,
+) -> dict[str, tuple[str, ...]]:
+    if not selections:
+        return {}
+    if native_optimization is None:
+        raise BenchmarkError(
+            "--arithmetic-success-proxy requires --native-optimization"
+        )
+
+    workloads_by_name = {workload.name: workload for workload in workloads}
+    selected: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for selection in selections:
+        if selection.count("/") != 1:
+            raise BenchmarkError(
+                "arithmetic success proxy selection must use WORKLOAD/VARIANT"
+            )
+        workload_name, variant_name = selection.split("/", 1)
+        require_name(workload_name, "arithmetic success proxy workload")
+        require_name(variant_name, "arithmetic success proxy variant")
+        identity = (workload_name, variant_name)
+        if identity in seen:
+            raise BenchmarkError(
+                "arithmetic success proxy selection repeats "
+                f"'{workload_name}/{variant_name}'"
+            )
+        seen.add(identity)
+
+        workload = workloads_by_name.get(workload_name)
+        if workload is None:
+            raise BenchmarkError(
+                f"arithmetic success proxy workload '{workload_name}' was not selected"
+            )
+        variants_by_name = {variant.name: variant for variant in workload.variants}
+        variant = variants_by_name.get(variant_name)
+        if variant is None:
+            raise BenchmarkError(
+                f"benchmark '{workload_name}' has no variant '{variant_name}'"
+            )
+        if variant.kind != "gti":
+            raise BenchmarkError(
+                f"arithmetic success proxy target '{workload_name}/{variant_name}' "
+                "must be a GTI variant"
+            )
+        proxy_name = variant_name + ARITHMETIC_SUCCESS_PROXY_SUFFIX
+        if proxy_name in variants_by_name:
+            raise BenchmarkError(
+                f"arithmetic success proxy name '{proxy_name}' collides with a "
+                "declared variant"
+            )
+        targets = selected.setdefault(workload_name, [])
+        if len(workload.variants) + len(targets) + 1 > MAXIMUM_VARIANTS:
+            raise BenchmarkError(
+                f"benchmark '{workload_name}' exceeds the {MAXIMUM_VARIANTS}-variant "
+                "limit after adding arithmetic success proxies"
+            )
+        targets.append(variant_name)
+    return {name: tuple(targets) for name, targets in selected.items()}
+
+
 def canonical_output_root(value: str, workloads: list[Workload]) -> Path:
     requested = Path(value).expanduser()
     if requested.is_symlink():
@@ -512,6 +593,253 @@ def native_argv_contains_file(argv: list[str], expected: Path, cwd: Path) -> boo
         except OSError:
             continue
     return False
+
+
+def fixed_native_rebuild_command(
+    native_argv: list[str],
+    generated_source: Path,
+    driver_executable: Path,
+    executable: Path,
+    dependency_file: Path,
+    cpp_standard: str,
+    gti_optimization: str,
+    native_optimization: str,
+    cwd: Path,
+    replacement_source: Path | None = None,
+) -> list[str]:
+    if gti_optimization not in OPTIMIZATION_LEVELS:
+        raise BenchmarkError("GTI optimization level must be 0, 1, 2, or 3")
+    if native_optimization not in OPTIMIZATION_LEVELS:
+        raise BenchmarkError("native optimization level must be 0, 1, 2, or 3")
+
+    command = list(native_argv)
+    expected_standard = f"-std={cpp_standard}"
+    if len(command) < 3 or command[1] != expected_standard:
+        raise BenchmarkError(
+            "GTI native argv does not begin with the selected C++ standard"
+        )
+    optimization_indices = [
+        index for index, argument in enumerate(command) if argument.startswith("-O")
+    ]
+    if optimization_indices != [2] or command[2] != f"-O{gti_optimization}":
+        raise BenchmarkError(
+            "GTI native argv does not contain exactly its driver-owned optimization flag"
+        )
+
+    def unique_option_value(option: str) -> int:
+        indices = [index for index, argument in enumerate(command) if argument == option]
+        if len(indices) != 1 or indices[0] + 1 >= len(command):
+            raise BenchmarkError(
+                f"GTI native argv must contain exactly one '{option}' value"
+            )
+        return indices[0] + 1
+
+    dependency_index = unique_option_value("-MF")
+    output_index = unique_option_value("-o")
+
+    def resolves_to(argument: str, expected: Path) -> bool:
+        candidate = Path(argument)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        try:
+            return candidate.samefile(expected)
+        except OSError:
+            return False
+
+    source_indices = [
+        index
+        for index, argument in enumerate(command)
+        if not argument.startswith("-") and resolves_to(argument, generated_source)
+    ]
+    if len(source_indices) != 1:
+        raise BenchmarkError(
+            "GTI native argv does not contain exactly one retained generated source"
+        )
+    recorded_output = Path(command[output_index])
+    if not recorded_output.is_absolute():
+        recorded_output = cwd / recorded_output
+    recorded_output = Path(os.path.abspath(recorded_output))
+    canonical_output_parent = driver_executable.parent.resolve(strict=True)
+    staging_name = recorded_output.parent.name
+    staging_prefix = f".{driver_executable.stem}.gti-stage-"
+    staging_suffix = driver_executable.suffix
+    staging_identity = staging_name[
+        len(staging_prefix) : len(staging_name) - len(staging_suffix)
+        if staging_suffix
+        else None
+    ]
+    records_driver_staging_output = (
+        recorded_output.name == driver_executable.name
+        and recorded_output.parent.parent.resolve(strict=False)
+        == canonical_output_parent
+        and staging_name.startswith(staging_prefix)
+        and staging_name.endswith(staging_suffix)
+        and re.fullmatch(r"[0-9]+-[0-9]+-[0-9]+", staging_identity) is not None
+    )
+    if not resolves_to(command[output_index], driver_executable) and not (
+        records_driver_staging_output
+    ):
+        raise BenchmarkError(
+            "GTI native argv output does not identify the driver-built executable"
+        )
+
+    command[2] = f"-O{native_optimization}"
+    command[dependency_index] = str(dependency_file)
+    command[output_index] = str(executable)
+    if replacement_source is not None:
+        try:
+            replacement_source = replacement_source.resolve(strict=True)
+        except OSError as error:
+            raise BenchmarkError(
+                f"fixed-native replacement source is unavailable: {replacement_source}"
+            ) from error
+        if not replacement_source.is_file():
+            raise BenchmarkError(
+                f"fixed-native replacement source is not a file: {replacement_source}"
+            )
+        command[source_indices[0]] = str(replacement_source)
+    return command
+
+
+def matching_cpp_delimiter(
+    source: str, opening_index: int, opening: str, closing: str
+) -> int:
+    if opening_index >= len(source) or source[opening_index] != opening:
+        raise BenchmarkError("generated C++ delimiter scan did not begin at its opening")
+    depth = 0
+    index = opening_index
+    while index < len(source):
+        character = source[index]
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            index = len(source) if newline == -1 else newline + 1
+            continue
+        if source.startswith("/*", index):
+            end = source.find("*/", index + 2)
+            if end == -1:
+                raise BenchmarkError("generated C++ contains an unterminated comment")
+            index = end + 2
+            continue
+        if character in {'"', "'"}:
+            quote = character
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                    continue
+                if source[index] == quote:
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise BenchmarkError("generated C++ contains an unterminated literal")
+            continue
+        if character == opening:
+            depth += 1
+        elif character == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+            if depth < 0:
+                break
+        index += 1
+    raise BenchmarkError("generated C++ contains an unmatched compiler helper delimiter")
+
+
+def backend_namespace_ranges(source: str) -> list[tuple[int, int]]:
+    openings = source.count(BACKEND_NAMESPACE_OPEN)
+    closings = source.count(BACKEND_NAMESPACE_CLOSE)
+    if openings == 0 or openings != closings:
+        raise BenchmarkError(
+            "generated C++ does not contain balanced compiler-owned backend namespaces"
+        )
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for _ in range(openings):
+        start = source.find(BACKEND_NAMESPACE_OPEN, cursor)
+        end = source.find(BACKEND_NAMESPACE_CLOSE, start + len(BACKEND_NAMESPACE_OPEN))
+        if start == -1 or end == -1:
+            raise BenchmarkError(
+                "generated C++ backend namespace markers are not sequential"
+            )
+        ranges.append((start, end + len(BACKEND_NAMESPACE_CLOSE)))
+        cursor = end + len(BACKEND_NAMESPACE_CLOSE)
+    return ranges
+
+
+def arithmetic_success_proxy_source(
+    source: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    namespaces = backend_namespace_ranges(source)
+    edits: list[tuple[int, int, str]] = []
+    replacements: list[dict[str, Any]] = []
+    for qualified_name, helper_name in ARITHMETIC_SUCCESS_PROXY_HELPERS:
+        definition = f"inline mir_failure_status_v1 {helper_name}("
+        definitions: list[int] = []
+        for start, end in namespaces:
+            cursor = start
+            while True:
+                found = source.find(definition, cursor, end)
+                if found == -1:
+                    break
+                definitions.append(found)
+                cursor = found + len(definition)
+        if len(definitions) != 1:
+            raise BenchmarkError(
+                f"generated C++ must contain exactly one compiler-owned definition "
+                f"of '{qualified_name}', found {len(definitions)}"
+            )
+
+        definition_start = definitions[0]
+        parameters_open = definition_start + len(definition) - 1
+        parameters_close = matching_cpp_delimiter(
+            source, parameters_open, "(", ")"
+        )
+        cursor = parameters_close + 1
+        while cursor < len(source) and source[cursor].isspace():
+            cursor += 1
+        if not source.startswith("noexcept", cursor):
+            raise BenchmarkError(
+                f"compiler-owned helper '{qualified_name}' has an unexpected signature"
+            )
+        cursor += len("noexcept")
+        while cursor < len(source) and source[cursor].isspace():
+            cursor += 1
+        if cursor >= len(source) or source[cursor] != "{":
+            raise BenchmarkError(
+                f"compiler-owned helper '{qualified_name}' has no bounded function body"
+            )
+        body_close = matching_cpp_delimiter(source, cursor, "{", "}")
+        body = source[cursor : body_close + 1]
+        guard_count = body.count(ARITHMETIC_OVERFLOW_GUARD)
+        if guard_count != 1:
+            raise BenchmarkError(
+                f"compiler-owned helper '{qualified_name}' must contain exactly one "
+                f"'{ARITHMETIC_OVERFLOW_GUARD}' guard, found {guard_count}"
+            )
+        guard_index = cursor + body.index(ARITHMETIC_OVERFLOW_GUARD)
+        edits.append(
+            (
+                guard_index,
+                guard_index + len(ARITHMETIC_OVERFLOW_GUARD),
+                ARITHMETIC_SUCCESS_GUARD,
+            )
+        )
+        replacements.append(
+            {
+                "function": qualified_name,
+                "from": ARITHMETIC_OVERFLOW_GUARD,
+                "to": ARITHMETIC_SUCCESS_GUARD,
+                "count": 1,
+            }
+        )
+
+    transformed = source
+    for start, end, replacement in sorted(edits, reverse=True):
+        transformed = transformed[:start] + replacement + transformed[end:]
+    if transformed == source or len(edits) != len(ARITHMETIC_SUCCESS_PROXY_HELPERS):
+        raise BenchmarkError("arithmetic success proxy transformation was incomplete")
+    return transformed, replacements
 
 
 def load_build_provenance(
@@ -687,10 +1015,16 @@ def build_variant(
     cpp_standard: str,
     native_flags: list[str],
     timeout: float,
+    native_optimization: str | None = None,
 ) -> dict[str, Any]:
     variant_directory = directory / variant.name
     variant_directory.mkdir(parents=True, exist_ok=False)
     executable = variant_directory / executable_name(variant.name)
+    driver_executable = (
+        variant_directory / executable_name(f"{variant.name}-driver-build")
+        if variant.kind == "gti" and native_optimization is not None
+        else executable
+    )
     build_report = variant_directory / "gti-build-report.json"
     if variant.kind == "gti":
         command = [
@@ -705,15 +1039,16 @@ def build_variant(
         ]
         if variant.execution_profile is not None:
             command.extend(("--execution-profile", variant.execution_profile))
-        if workload.descriptor["schema"] == 2:
+        if workload.descriptor["schema"] == 2 or native_optimization is not None:
             command.extend(("--build-report", str(build_report)))
-        command.extend(("-o", str(executable)))
+        command.extend(("-o", str(driver_executable)))
         if native_flags:
             command.extend(("--", *native_flags))
     else:
+        selected_native_optimization = native_optimization or optimization
         command = [
             str(cxx.resolved),
-            f"-O{optimization}",
+            f"-O{selected_native_optimization}",
             f"-std={cpp_standard}",
             *native_flags,
             *STRICT_NATIVE_FLAGS,
@@ -731,24 +1066,89 @@ def build_variant(
             f"benchmark '{workload.name}' variant '{variant.name}' build failed "
             f"with exit {completed.returncode}; see {stderr_path}"
         )
-    if not executable.is_file():
+    if not driver_executable.is_file():
         raise BenchmarkError(
             f"benchmark '{workload.name}' variant '{variant.name}' produced no executable"
         )
     artifacts: dict[str, Any] = {
-        "executable": file_evidence(executable),
         "build_stdout": file_evidence(stdout_path),
         "build_stderr": file_evidence(stderr_path),
     }
+    provenance: dict[str, Any] | None = None
     if variant.kind == "gti":
-        generated = Path(str(executable) + ".gti.cpp")
+        generated = Path(str(driver_executable) + ".gti.cpp")
         if not generated.is_file():
             raise BenchmarkError(
                 f"GTI benchmark build did not retain emitted C++ at '{generated}'"
             )
         artifacts["emitted_cpp"] = file_evidence(generated)
+        if workload.descriptor["schema"] == 2 or native_optimization is not None:
+            if not build_report.is_file():
+                raise BenchmarkError(
+                    f"GTI benchmark build did not publish provenance at '{build_report}'"
+                )
+            provenance = load_build_provenance(
+                build_report,
+                gti,
+                cxx,
+                variant.source,
+                workload.descriptor_path.parent,
+            )
     else:
         artifacts["native_input"] = file_evidence(variant.source)
+
+    native_rebuild: dict[str, Any] | None = None
+    if variant.kind == "gti" and native_optimization is not None:
+        if provenance is None:
+            raise BenchmarkError(
+                "fixed-native GTI build requires validated driver provenance"
+            )
+        dependency_file = variant_directory / "fixed-native.d"
+        rebuild_stdout_path = variant_directory / "fixed-native.stdout.txt"
+        rebuild_stderr_path = variant_directory / "fixed-native.stderr.txt"
+        rebuild_command = fixed_native_rebuild_command(
+            provenance["build"]["native"]["argv"],
+            generated,
+            driver_executable,
+            executable,
+            dependency_file,
+            cpp_standard,
+            optimization,
+            native_optimization,
+            workload.descriptor_path.parent,
+        )
+        rebuilt, rebuild_duration = invoke(
+            rebuild_command, workload.descriptor_path.parent, timeout
+        )
+        write_text(rebuild_stdout_path, rebuilt.stdout)
+        write_text(rebuild_stderr_path, rebuilt.stderr)
+        if rebuilt.returncode != 0:
+            raise BenchmarkError(
+                f"benchmark '{workload.name}' variant '{variant.name}' fixed-native "
+                f"rebuild failed with exit {rebuilt.returncode}; see {rebuild_stderr_path}"
+            )
+        if not executable.is_file():
+            raise BenchmarkError(
+                f"benchmark '{workload.name}' variant '{variant.name}' fixed-native "
+                "rebuild produced no executable"
+            )
+        if not dependency_file.is_file():
+            raise BenchmarkError(
+                f"benchmark '{workload.name}' variant '{variant.name}' fixed-native "
+                "rebuild produced no dependency file"
+            )
+        artifacts["driver_executable"] = file_evidence(driver_executable)
+        native_rebuild = {
+            "optimization": native_optimization,
+            "command": rebuild_command,
+            "duration_ns": rebuild_duration,
+            "exit_code": rebuilt.returncode,
+            "stdout": file_evidence(rebuild_stdout_path),
+            "stderr": file_evidence(rebuild_stderr_path),
+            "dependency_file": file_evidence(dependency_file),
+        }
+
+    artifacts["executable"] = file_evidence(executable)
     result = {
         "name": variant.name,
         "kind": variant.kind,
@@ -759,22 +1159,140 @@ def build_variant(
         "artifacts": artifacts,
         "executable": str(executable),
     }
+    if native_rebuild is not None:
+        result["native_rebuild"] = native_rebuild
     if workload.descriptor["schema"] == 2:
         result["execution_profile"] = (
             variant.execution_profile if variant.kind == "gti" else None
         )
-        if variant.kind == "gti":
-            if not build_report.is_file():
-                raise BenchmarkError(
-                    f"GTI benchmark build did not publish provenance at '{build_report}'"
-                )
-            result["provenance"] = load_build_provenance(
-                build_report,
-                gti,
-                cxx,
-                variant.source,
-                workload.descriptor_path.parent,
-            )
+    if provenance is not None:
+        result["provenance"] = provenance
+    return result
+
+
+def build_arithmetic_success_proxy(
+    workload: Workload,
+    target: dict[str, Any],
+    directory: Path,
+    cpp_standard: str,
+    gti_optimization: str,
+    native_optimization: str,
+    timeout: float,
+) -> dict[str, Any]:
+    if target.get("kind") != "gti" or "provenance" not in target:
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' arithmetic success proxy target "
+            "is not a provenance-validated GTI build"
+        )
+    artifacts = target.get("artifacts")
+    if not isinstance(artifacts, dict) or not {
+        "emitted_cpp",
+        "driver_executable",
+    }.issubset(artifacts):
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' arithmetic success proxy target "
+            "has no retained fixed-native inputs"
+        )
+
+    generated_record = artifacts["emitted_cpp"]
+    generated_source = Path(generated_record["path"])
+    current_generated = file_evidence(generated_source)
+    if current_generated != generated_record:
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' retained emitted C++ changed before "
+            "arithmetic proxy generation"
+        )
+    driver_record = artifacts["driver_executable"]
+    driver_executable = Path(driver_record["path"])
+    if file_evidence(driver_executable) != driver_record:
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' driver executable changed before "
+            "arithmetic proxy generation"
+        )
+    try:
+        generated_text = generated_source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise BenchmarkError(
+            f"failed to read retained emitted C++ '{generated_source}': {error}"
+        ) from error
+    transformed_text, replacements = arithmetic_success_proxy_source(generated_text)
+
+    proxy_name = target["name"] + ARITHMETIC_SUCCESS_PROXY_SUFFIX
+    proxy_directory = directory / proxy_name
+    proxy_directory.mkdir(parents=True, exist_ok=False)
+    transformed_source = proxy_directory / f"{proxy_name}.gti.cpp"
+    executable = proxy_directory / executable_name(proxy_name)
+    dependency_file = proxy_directory / "arithmetic-success-proxy.d"
+    stdout_path = proxy_directory / "build.stdout.txt"
+    stderr_path = proxy_directory / "build.stderr.txt"
+    write_text(transformed_source, transformed_text)
+
+    provenance = target["provenance"]
+    command = fixed_native_rebuild_command(
+        provenance["build"]["native"]["argv"],
+        generated_source,
+        driver_executable,
+        executable,
+        dependency_file,
+        cpp_standard,
+        gti_optimization,
+        native_optimization,
+        workload.descriptor_path.parent,
+        replacement_source=transformed_source,
+    )
+    completed, duration = invoke(command, workload.descriptor_path.parent, timeout)
+    write_text(stdout_path, completed.stdout)
+    write_text(stderr_path, completed.stderr)
+    if completed.returncode != 0:
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' variant '{proxy_name}' build failed with "
+            f"exit {completed.returncode}; see {stderr_path}"
+        )
+    if not executable.is_file():
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' variant '{proxy_name}' produced no executable"
+        )
+    if not dependency_file.is_file():
+        raise BenchmarkError(
+            f"benchmark '{workload.name}' variant '{proxy_name}' produced no dependency file"
+        )
+
+    transformed_record = file_evidence(transformed_source)
+    replacement_count = sum(replacement["count"] for replacement in replacements)
+    result: dict[str, Any] = {
+        "name": proxy_name,
+        "kind": ARITHMETIC_SUCCESS_PROXY_KIND,
+        "source": transformed_record,
+        "command": command,
+        "duration_ns": duration,
+        "exit_code": completed.returncode,
+        "artifacts": {
+            "source_emitted_cpp": generated_record,
+            "transformed_cpp": transformed_record,
+            "build_stdout": file_evidence(stdout_path),
+            "build_stderr": file_evidence(stderr_path),
+            "dependency_file": file_evidence(dependency_file),
+            "executable": file_evidence(executable),
+        },
+        "executable": str(executable),
+        "semantic": False,
+        "successful_path_only": True,
+        "exact_head_proof_eligible": False,
+        "proxy": {
+            "family": "compiler-owned-checked-arithmetic-success",
+            "derived_from_variant": target["name"],
+            "source_sha256_before": generated_record["sha256"],
+            "source_sha256_after": transformed_record["sha256"],
+            "replacement_family": [
+                qualified_name
+                for qualified_name, _ in ARITHMETIC_SUCCESS_PROXY_HELPERS
+            ],
+            "replacement_count": replacement_count,
+            "replacements": replacements,
+        },
+    }
+    if "execution_profile" in target:
+        result["execution_profile"] = target["execution_profile"]
     return result
 
 
@@ -857,6 +1375,8 @@ def measure_workload(
     seed: int,
     timeout: float,
     smoke: bool,
+    native_optimization: str | None = None,
+    arithmetic_success_proxy_variants: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     directory.mkdir(parents=True, exist_ok=False)
     builds = [
@@ -870,9 +1390,34 @@ def measure_workload(
             cpp_standard,
             native_flags,
             timeout,
+            native_optimization,
         )
         for variant in workload.variants
     ]
+    if arithmetic_success_proxy_variants:
+        if native_optimization is None:
+            raise BenchmarkError(
+                "arithmetic success proxies require fixed native optimization"
+            )
+        builds_by_name = {build["name"]: build for build in builds}
+        for target_name in arithmetic_success_proxy_variants:
+            target = builds_by_name.get(target_name)
+            if target is None:
+                raise BenchmarkError(
+                    f"benchmark '{workload.name}' has no built proxy target "
+                    f"'{target_name}'"
+                )
+            builds.append(
+                build_arithmetic_success_proxy(
+                    workload,
+                    target,
+                    directory,
+                    cpp_standard,
+                    optimization,
+                    native_optimization,
+                    timeout,
+                )
+            )
     validation_builds = list(builds)
     if smoke:
         random.Random(seed).shuffle(validation_builds)
@@ -1022,6 +1567,8 @@ def exact_head_evidence(
     producer_sha256s: list[str] = []
     for workload in workloads:
         for variant in workload["variants"]:
+            if variant.get("exact_head_proof_eligible") is False:
+                continue
             provenance = variant.get("provenance")
             if variant["kind"] != "gti":
                 continue
@@ -1095,6 +1642,13 @@ def tool_record(tool: Tool) -> dict[str, Any]:
 
 
 def markdown_report(report: dict[str, Any]) -> str:
+    configuration = report["configuration"]
+    optimization_summary = f"-O{configuration['optimization']}"
+    if "native_optimization" in configuration:
+        optimization_summary = (
+            f"GTI -O{configuration['optimization']}, "
+            f"native -O{configuration['native_optimization']}"
+        )
     lines = [
         "# GTI benchmark report",
         "",
@@ -1102,11 +1656,16 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
         f"Native compiler: `{report['tools']['cxx']['resolved']}`",
         "",
-        f"Configuration: `-O{report['configuration']['optimization']} "
-        f"-std={report['configuration']['cpp_standard']}`",
+        f"Configuration: `{optimization_summary} "
+        f"-std={configuration['cpp_standard']}`",
         "",
     ]
     for workload in report["workloads"]:
+        proxy_names = [
+            variant["name"]
+            for variant in workload["variants"]
+            if variant["kind"] == ARITHMETIC_SUCCESS_PROXY_KIND
+        ]
         lines.extend(
             [
                 f"## {workload['name']}",
@@ -1115,6 +1674,19 @@ def markdown_report(report: dict[str, Any]) -> str:
                 "",
                 f"Measurement quality: **{workload['quality']}**",
                 "",
+            ]
+        )
+        if proxy_names:
+            lines.extend(
+                [
+                    "Successful-path-only, non-semantic arithmetic proxies "
+                    "(excluded from exact-head proof inputs): "
+                    + ", ".join(f"`{name}`" for name in proxy_names),
+                    "",
+                ]
+            )
+        lines.extend(
+            [
                 "| Variant | Median (ms) | MAD (ms) | Ratio | Samples |",
                 "| --- | ---: | ---: | ---: | ---: |",
             ]
@@ -1150,7 +1722,25 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--gti", required=True, help="GTI compiler executable")
     parser.add_argument("--cxx", required=True, help="native C++ compiler executable")
     parser.add_argument(
-        "--optimization", choices=("0", "1", "2", "3"), default="3"
+        "--optimization", choices=OPTIMIZATION_LEVELS, default="3"
+    )
+    parser.add_argument(
+        "--native-optimization",
+        choices=OPTIMIZATION_LEVELS,
+        help=(
+            "hold native optimization at this level while --optimization "
+            "selects GTI optimization"
+        ),
+    )
+    parser.add_argument(
+        "--arithmetic-success-proxy",
+        action="append",
+        default=[],
+        metavar="WORKLOAD/VARIANT",
+        help=(
+            "derive a successful-path-only arithmetic proxy from one selected "
+            "GTI variant; requires --native-optimization"
+        ),
     )
     parser.add_argument(
         "--cpp-standard", choices=("c++20", "c++23"), default="c++23"
@@ -1197,6 +1787,11 @@ def main() -> int:
         workload_names = [workload.name for workload in workloads]
         if len(workload_names) != len(set(workload_names)):
             raise BenchmarkError("each benchmark workload may be selected only once")
+        proxy_targets = arithmetic_success_proxy_targets(
+            list(arguments.arithmetic_success_proxy),
+            workloads,
+            arguments.native_optimization,
+        )
         has_schema_2 = any(workload.descriptor["schema"] == 2 for workload in workloads)
         repository_before = repository_facts()
         output_root = canonical_output_root(arguments.output, workloads)
@@ -1236,12 +1831,23 @@ def main() -> int:
                     arguments.seed,
                     arguments.timeout,
                     arguments.smoke,
+                    arguments.native_optimization,
+                    proxy_targets.get(workload.name, ()),
                 )
             )
 
         repository_after = repository_facts()
+        report_schema = (
+            4
+            if proxy_targets
+            else (
+                3
+                if arguments.native_optimization is not None
+                else (2 if has_schema_2 else 1)
+            )
+        )
         report = {
-            "schema": 2 if has_schema_2 else 1,
+            "schema": report_schema,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "runner": {
                 "path": str(Path(__file__).resolve()),
@@ -1284,7 +1890,15 @@ def main() -> int:
             "run_directory": str(run_directory),
             "workloads": reports,
         }
-        if has_schema_2:
+        if arguments.native_optimization is not None:
+            report["configuration"]["native_optimization"] = (
+                arguments.native_optimization
+            )
+        if proxy_targets:
+            report["configuration"]["arithmetic_success_proxies"] = list(
+                arguments.arithmetic_success_proxy
+            )
+        if report_schema >= 2:
             report["exact_head_evidence"] = exact_head_evidence(
                 repository_before, repository_after, gti, reports
             )

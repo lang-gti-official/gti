@@ -80,7 +80,7 @@ void print_digest(uint64_t digest) {
 
 int main() {
   std::size_t element_count = std::size_t(5000);
-  std::size_t round_count = std::size_t(20000);
+  std::size_t round_count = std::size_t(240000);
   uint64_t digest_modulus = uint64_t(1000000007);
 
   mut std::vector<int32_t> values =
@@ -110,12 +110,12 @@ int main() {
         digest_modulus;
   }
 
-  if (final_sum != 44985 or digest != uint64_t(347609426)) {
+  if (final_sum != 44985 or digest != uint64_t(324940710)) {
     return 1;
   }
 
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
-  std::println(" work-units:200000000");
+  std::println(" work-units:2400000000");
   return 0;
 }

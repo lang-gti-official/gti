@@ -1413,6 +1413,20 @@ if(BUILD_TESTING)
                    "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
     )
     add_test(
+      NAME runtime_performance_workloads
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_performance_workloads_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/benchmark_compare.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CXX_COMPILER}"
+    )
+    set_tests_properties(
+      runtime_performance_workloads
+      PROPERTIES TIMEOUT 300
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
+    add_test(
       NAME random_engine_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/random_engine_runtime_test.py"
