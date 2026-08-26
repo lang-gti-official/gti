@@ -21,7 +21,7 @@ void expect(bool condition, const std::string &message) {
 lang::bindgen::ReadResult
 readC(std::string_view header,
       lang::bindgen::CTargetProfile profile = lang::bindgen::CTargetProfile{}) {
-  lang::bindgen::BoundedCReader reader(profile);
+  lang::bindgen::ClangCReader reader(profile);
   return reader.read(header);
 }
 
@@ -89,18 +89,48 @@ int always(void);
   expect(contains(printed, "function always() -> i32"),
          "the guarded declaration should survive preprocessing");
   expect(!contains(printed, "win_only"),
-         "the conditional block should be skipped as a unit");
+         "the false conditional should exclude its declarations");
   bool sawInclude = false;
   bool sawMacro = false;
-  bool sawConditional = false;
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : read.diagnostics) {
     sawInclude = sawInclude || contains(diagnostic.message, "#include");
     sawMacro = sawMacro || contains(diagnostic.message, "macro definitions");
-    sawConditional =
-        sawConditional || contains(diagnostic.message, "conditional block");
+    // Conditionals evaluate natively now; the bounded reader's
+    // conditional-block policy note is gone.
+    expect(!contains(diagnostic.message, "conditional block"),
+           "conditionals should evaluate without a policy note");
   }
-  expect(sawInclude && sawMacro && sawConditional,
-         "include, macro, and conditional policies should each report");
+  expect(sawInclude && sawMacro,
+         "include and macro policies should each report");
+}
+
+// Native C errors surface as reader diagnostics, and the declaration that
+// does not parse is skipped rather than imported through Clang's recovery
+// type — recovery would bind the wrong ABI.
+void testReaderInvalidDeclarations() {
+  const lang::bindgen::ReadResult read = readC(R"(
+int rejected_unknown(some_unknown_t value);
+int fine(int value);
+)");
+  expect(read.usable(), "per-declaration native errors keep the model usable");
+  const std::string printed = lang::bindgen::printNativeModel(read.model);
+  expect(!contains(printed, "rejected_unknown"),
+         "a declaration with native C errors should not import");
+  expect(contains(printed, "function fine(value: i32) -> i32"),
+         "declarations after a native error should still model");
+  bool sawNativeError = false;
+  bool sawSkip = false;
+  for (const lang::bindgen::ReaderDiagnostic &diagnostic : read.diagnostics) {
+    sawNativeError =
+        sawNativeError ||
+        contains(diagnostic.message,
+                 "native C error: unknown type name 'some_unknown_t'");
+    sawSkip = sawSkip ||
+              contains(diagnostic.message,
+                       "declaration 'rejected_unknown' has native C errors");
+  }
+  expect(sawNativeError && sawSkip,
+         "the native error and the skip should both report");
 }
 
 void testReaderRecovery() {
@@ -114,6 +144,96 @@ int good_after(int value);
   expect(contains(printed, "function good_before") &&
              contains(printed, "function good_after"),
          "declarations after a recovery should still model");
+  expect(contains(printed, "function bad_one(anonymous: unsupported("),
+         "the anonymous-record parameter should model as unsupported with "
+         "its reason rather than dropping the function");
+}
+
+// Corpus goldens frozen at the C-04 reader switch: the bounded reader
+// produced byte-identical models for these headers through the transitional
+// equivalence gate, and the libclang reader now owns them.
+void testReaderCorpusGoldens() {
+  const lang::bindgen::ReadResult mixed = readC(R"(
+typedef struct Engine Engine;
+typedef struct Vec2 { float x; float y; } Vec2;
+enum Mode { MODE_A, MODE_B = 5, MODE_C };
+typedef unsigned long long Stamp;
+typedef void (*Log)(int level, const char *message);
+Engine *engine_create(int mode);
+int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
+)");
+  expect(lang::bindgen::printNativeModel(mixed.model) ==
+             "record Engine (incomplete)\n"
+             "record Vec2\n"
+             "  field x: f32\n"
+             "  field y: f32\n"
+             "enum Mode\n"
+             "  MODE_A = 0\n"
+             "  MODE_B = 5\n"
+             "  MODE_C = 6\n"
+             "typedef Stamp = u64\n"
+             "typedef Log = fn(i32, ptr(const char)) -> void\n"
+             "function engine_create(mode: i32) -> ptr(record:Engine)\n"
+             "function engine_submit(engine: ptr(record:Engine), "
+             "position: record:Vec2, stamp: alias:Stamp) -> i32\n",
+         "the mixed-declaration corpus golden should hold");
+
+  const lang::bindgen::ReadResult skips = readC(R"(
+static int hidden(void);
+inline int fast(void);
+int variadic_call(const char *format, ...);
+int global_variable;
+struct Fixed { int values[4]; };
+int with_array_param(int values[], int count);
+int definition(void) { return 1; }
+int stdint_names(int8_t a, uint16_t b, int32_t c, uint64_t d, size_t e,
+                 intptr_t f, uintptr_t g, ptrdiff_t h);
+)");
+  expect(lang::bindgen::printNativeModel(skips.model) ==
+             "function variadic_call(format: ptr(const char), ...) -> i32\n"
+             "record Fixed\n"
+             "  field values: array[i32 x 4]\n"
+             "function with_array_param(values: ptr(i32), count: i32) -> "
+             "i32\n"
+             "function stdint_names(a: i8, b: u16, c: i32, d: u64, e: u64, "
+             "f: i64, g: u64, h: i64) -> i32\n",
+         "the skip-class corpus golden should hold");
+  bool sawStatic = false;
+  bool sawInline = false;
+  bool sawVariable = false;
+  bool sawDefinition = false;
+  for (const lang::bindgen::ReaderDiagnostic &diagnostic : skips.diagnostics) {
+    sawStatic = sawStatic || contains(diagnostic.message, "'static'");
+    sawInline = sawInline || contains(diagnostic.message, "'inline'");
+    sawVariable = sawVariable || contains(diagnostic.message,
+                                          "native variable 'global_variable'");
+    sawDefinition =
+        sawDefinition ||
+        contains(diagnostic.message, "function definition 'definition'");
+  }
+  expect(sawStatic && sawInline && sawVariable && sawDefinition,
+         "every skip class should report its note");
+}
+
+// Surface the libclang reader models beyond the bounded reader: nested
+// multi-extent array fields (outermost extent first), retained anonymous
+// enums, and const-preserving parameter array decay.
+void testReaderExpandedSurface() {
+  const lang::bindgen::ReadResult read = readC(R"(
+struct Grid { double cells[2][3]; };
+enum { BARE_A, BARE_B = 9 };
+int with_const_array(const int values[], int count);
+)");
+  expect(read.usable(), "the expanded-surface header should read");
+  const std::string printed = lang::bindgen::printNativeModel(read.model);
+  expect(contains(printed, "field cells: array[array[f64 x 3] x 2]"),
+         "multi-extent array fields should nest outermost-first");
+  expect(contains(printed, "enum \n  BARE_A = 0\n  BARE_B = 9"),
+         "a bare anonymous enum should keep its enumerators under an empty "
+         "name");
+  expect(contains(printed, "function with_const_array(values: ptr(const i32), "
+                           "count: i32) -> i32"),
+         "parameter array decay should preserve the element's const");
 }
 
 // -- Planner ----------------------------------------------------------------
@@ -171,7 +291,6 @@ int rejected_bool(_Bool flag);
 int rejected_char(char letter);
 int rejected_two_level(int **matrix);
 int rejected_const_handle(const Item **out_item);
-int rejected_unknown(some_unknown_t value);
 void template(int value);
 int _Reserved(int value);
 )");
@@ -216,7 +335,6 @@ int _Reserved(int value);
   expectSkip("rejected_char", "plain 'char'");
   expectSkip("rejected_two_level", "two-level pointers are limited");
   expectSkip("rejected_const_handle", "two-level pointers are limited");
-  expectSkip("rejected_unknown", "outside the bounded surface");
   expectSkip("template", "reserved GTI spelling");
   expectSkip("_Reserved", "implementation-reserved");
 }
@@ -363,7 +481,10 @@ void device_on_lost(Device *device, DeviceLostCallback callback);
 int main() {
   testReaderModel();
   testReaderPreprocessing();
+  testReaderInvalidDeclarations();
   testReaderRecovery();
+  testReaderCorpusGoldens();
+  testReaderExpandedSurface();
   testRecordDegradation();
   testTypeMappingMatrix();
   testTargetDataModels();
