@@ -160,9 +160,17 @@ target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
 passive records become `[[c_abi]]` structs, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
-enums become an `int32_t` alias plus `constexpr` constants, function-pointer
+enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
+enum becomes its `constexpr int32_t` constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
-block. Everything the bounded surface cannot express is reported with its
+block. Record import covers the documented field set, including callback
+fields and fixed arrays with multiple extents or record, pointer, callback,
+and scalar elements; `restrict` qualifiers are read and dropped because they
+do not change the caller's contract. Field positions the record surface
+rejects — `char` pointers and nested pointers — degrade the record to an
+opaque handle with the reason recorded, so generated source always satisfies
+this contract's own validation. Everything
+the bounded surface cannot express is reported with its
 reason and listed in the generated file's skip report rather than silently
 dropped. Native preprocessor errors retain Clang's source diagnostics. The
 declaration reader is itself libclang (ADR 021), so a declaration that does
@@ -342,6 +350,7 @@ An admitted field is one of:
 
 - a fixed-width signed or unsigned integer, `float`, or `double`;
 - another valid `[[c_abi]]` record by value; or
+- a named exact native callback alias; or
 - a positive concrete fixed array whose ultimate element is itself an
   admitted field type; or
 - a one-level raw pointer to `void`, an admitted scalar, a valid C ABI record,
@@ -350,10 +359,14 @@ An admitted field is one of:
 Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
 nominal types, references, owners, borrowed values, `expected`, symbolic or
 zero-length arrays, symbolic types, and cleanup-owning values are rejected.
+`c_string` is a function- and callback-boundary type, not a field type.
 Native fixed-array fields emit direct C array declarators in both header
 branches and generated C++, never `std::array`; their ordinary GTI indexing
-remains bounds checked. Empty records and recursive by-value records are
-rejected; a one-level pointer is the bounded linked/opaque edge.
+remains bounds checked. Multiple concrete extents nest in declarator order,
+and an array element takes its layout facts recursively, including by-value
+record elements. Empty records and recursive by-value records — directly or
+through an array element — are rejected; a one-level pointer is the bounded
+linked/opaque edge.
 
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records

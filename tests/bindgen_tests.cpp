@@ -236,6 +236,31 @@ int with_const_array(const int values[], int count);
          "parameter array decay should preserve the element's const");
 }
 
+void testReaderFieldAndQualifierForms() {
+  const lang::bindgen::ReadResult read = readC(R"(
+typedef struct Board { int cells[2][3]; int *rows[4]; } Board;
+enum { FLAG_A = 1, FLAG_B = 2 };
+int copy_board(const Board *restrict destination,
+               const Board *__restrict source);
+int fill(int *__restrict__ buffer, int count);
+)");
+  expect(read.usable(), "field and qualifier forms should read");
+  const std::string printed = lang::bindgen::printNativeModel(read.model);
+  expect(contains(printed, "field cells: array[array[i32 x 3] x 2]"),
+         "a multi-extent array field should model as nested arrays");
+  expect(contains(printed, "field rows: array[ptr(i32) x 4]"),
+         "a pointer-element array field should model faithfully");
+  expect(contains(printed, "enum \n  FLAG_A = 1\n  FLAG_B = 2"),
+         "a bare anonymous enum should model its constants");
+  expect(contains(printed, "function copy_board(destination: "
+                           "ptr(const record:Board), source: "
+                           "ptr(const record:Board)) -> i32"),
+         "'restrict' qualifiers should not disturb pointer parameters");
+  expect(contains(printed, "function fill(buffer: ptr(i32), count: i32) "
+                           "-> i32"),
+         "'__restrict__' should read as an ignorable qualifier");
+}
+
 // -- Planner ----------------------------------------------------------------
 
 void testRecordDegradation() {
@@ -277,6 +302,100 @@ int use_plain(struct Plain plain);
   expect(plainUse != nullptr &&
              plainUse->kind == lang::bindgen::BindingItemKind::Function,
          "a by-value use of a bindable record should import");
+}
+
+void testFieldPositionDegradation() {
+  // GTI's [[c_abi]] field set has no c_string or nested-pointer position;
+  // records using them must degrade honestly rather than generating source
+  // the frontend rejects.
+  const lang::bindgen::ReadResult read = readC(R"(
+struct Labeled { const char *text; int code; };
+struct Tails { const char **tails; };
+)");
+  const lang::bindgen::BindingPlan plan =
+      lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *labeled = findItem(plan, "Labeled");
+  expect(labeled != nullptr &&
+             labeled->kind == lang::bindgen::BindingItemKind::Opaque &&
+             contains(labeled->reason, "c_string crosses only function"),
+         "a 'const char*' field should degrade the record with its reason");
+  const lang::bindgen::BindingItem *tails = findItem(plan, "Tails");
+  expect(tails != nullptr &&
+             tails->kind == lang::bindgen::BindingItemKind::Opaque &&
+             contains(tails->reason, "nested pointer"),
+         "a nested-pointer field should degrade the record with its reason");
+}
+
+void testRecordFieldExpansion() {
+  const lang::bindgen::ReadResult read = readC(R"(
+typedef struct Engine Engine;
+typedef struct Point { float x; float y; } Point;
+typedef void (*Notify)(int code);
+enum Mode { MODE_OFF, MODE_ON };
+typedef struct Panel {
+  int grid[2][3];
+  int *cursors[4];
+  const float *gains[2];
+  Engine *engines[2];
+  Point corners[4];
+  void *scratch[2];
+  Notify on_change;
+  Notify handlers[3];
+  enum Mode mode;
+} Panel;
+)");
+  const lang::bindgen::BindingPlan plan =
+      lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *panel = findItem(plan, "Panel");
+  expect(panel != nullptr &&
+             panel->kind == lang::bindgen::BindingItemKind::Record,
+         "the widened field set should keep Panel a [[c_abi]] record");
+  if (panel == nullptr ||
+      panel->kind != lang::bindgen::BindingItemKind::Record) {
+    return;
+  }
+  const auto fieldSpelling = [&](std::string_view name) -> std::string {
+    for (const lang::bindgen::BindingField &field : panel->fields) {
+      if (field.name == name) {
+        return field.spelling;
+      }
+    }
+    return {};
+  };
+  expect(fieldSpelling("grid") == "int32_t grid[2][3]",
+         "a multi-extent array field should spell every extent in order");
+  expect(fieldSpelling("cursors") == "int32_t* cursors[4]",
+         "a scalar-pointer array field should spell its element pointer");
+  expect(fieldSpelling("gains") == "const float* gains[2]",
+         "a const-pointee pointer array field should keep its qualifier");
+  expect(fieldSpelling("engines") == "Engine* engines[2]",
+         "an opaque-handle pointer array field should import");
+  expect(fieldSpelling("corners") == "Point corners[4]",
+         "a by-value record array field should import");
+  expect(fieldSpelling("scratch") == "void* scratch[2]",
+         "a void-pointer array field should import");
+  expect(fieldSpelling("on_change") == "Notify on_change",
+         "a callback-alias field should import");
+  expect(fieldSpelling("handlers") == "Notify handlers[3]",
+         "a callback-alias array field should import");
+  expect(fieldSpelling("mode") == "Mode mode",
+         "an enum-typed field should spell through its int32_t alias");
+}
+
+void testAnonymousEnumPlanning() {
+  const lang::bindgen::ReadResult read = readC(R"(
+enum { CAP_AUDIO = 1, CAP_VIDEO = 2 };
+)");
+  const lang::bindgen::BindingPlan plan =
+      lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *anonymous = findItem(plan, "");
+  expect(anonymous != nullptr &&
+             anonymous->kind == lang::bindgen::BindingItemKind::Enum &&
+             anonymous->constants.size() == 2 &&
+             anonymous->constants[0].name == "CAP_AUDIO" &&
+             anonymous->constants[0].value == 1 &&
+             anonymous->constants[1].value == 2,
+         "a bare anonymous enum should plan as constants without an alias");
 }
 
 void testTypeMappingMatrix() {
@@ -412,6 +531,7 @@ void testWriterShapeAndDeterminism() {
   const std::string header = R"(
 typedef struct Engine Engine;
 typedef struct Vec2 { float x; float y; } Vec2;
+enum { ENGINE_CAP_BASIC = 1 };
 Engine *engine_create(int mode);
 int engine_variadic(const char *format, ...);
 )";
@@ -429,6 +549,9 @@ int engine_variadic(const char *format, ...);
          "the opaque handle should emit");
   expect(contains(first.gtiSource, "mut float x;"),
          "record fields should emit as mutable");
+  expect(contains(first.gtiSource, "constexpr int32_t ENGINE_CAP_BASIC = 1;") &&
+             !contains(first.gtiSource, "using  ="),
+         "anonymous enum constants should emit without an alias line");
   expect(contains(first.gtiSource, "extern \"C\" {"),
          "functions should emit inside one extern block");
   expect(contains(first.gtiSource, "// Not imported:") &&
@@ -449,10 +572,23 @@ typedef struct Device Device;
 typedef struct Extent { unsigned int width; unsigned int height; } Extent;
 typedef struct Report { long long stamp; Extent extent; void *user; } Report;
 enum DeviceState { DEVICE_OFF, DEVICE_ON = 4 };
+enum { DEVICE_CAP_BASIC = 1, DEVICE_CAP_BURST = 2 };
 typedef void (*DeviceLostCallback)(int code, const char *reason);
+typedef struct Channels {
+  int levels[2][3];
+  float *taps[4];
+  Device *devices[2];
+  Extent extents[2];
+  void *scratch[2];
+  DeviceLostCallback on_lost;
+  DeviceLostCallback handlers[2];
+  enum DeviceState state;
+} Channels;
 Device *device_open(const char *path, enum DeviceState initial);
 void device_close(Device *device);
 int device_report(const Device *device, Report report, Extent *out_extent);
+int device_channels(const Device *restrict device,
+                    Channels *restrict out_channels);
 const char *device_vendor(const Device *device);
 void device_on_lost(Device *device, DeviceLostCallback callback);
 #endif
@@ -485,7 +621,11 @@ int main() {
   testReaderRecovery();
   testReaderCorpusGoldens();
   testReaderExpandedSurface();
+  testReaderFieldAndQualifierForms();
   testRecordDegradation();
+  testFieldPositionDegradation();
+  testRecordFieldExpansion();
+  testAnonymousEnumPlanning();
   testTypeMappingMatrix();
   testTargetDataModels();
   testEnumAndTypedefPlanning();
