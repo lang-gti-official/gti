@@ -7,9 +7,10 @@
 #include <vector>
 
 // The parsing seam. A NativeHeaderReader turns header text into the native
-// model plus diagnostics. BoundedCReader is the first implementation — a
-// hand-written bounded C17 declaration parser; a future ClangReader for
-// C/C++ replaces the implementation, never the pipeline.
+// model plus diagnostics. ClangCReader is the active implementation — a
+// private libclang-backed C17 declaration reader (ADR 021). The pipeline
+// depends only on this seam; a future C++ reader extends the implementation,
+// never the pipeline.
 
 namespace lang::bindgen {
 
@@ -77,6 +78,23 @@ public:
 class BoundedCReader final : public NativeHeaderReader {
 public:
   explicit BoundedCReader(CTargetProfile profile = CTargetProfile{});
+  [[nodiscard]] ReadResult read(std::string_view headerText) override;
+
+private:
+  CTargetProfile profile_;
+};
+
+// The libclang-backed C17 reader (ADR 021). The header text is parsed as one
+// in-memory Clang translation unit for a canonical target matching the
+// requested C data model, so preprocessing, parsing, and integer widths are
+// Clang facts rather than GTI reimplementations. Includes are still not
+// resolved at this seam: declarations come from the given text alone, and
+// every `#include` reports the same unresolved-include note the pipeline has
+// always emitted. libclang stays private to the implementation translation
+// unit; no Clang type crosses this interface.
+class ClangCReader final : public NativeHeaderReader {
+public:
+  explicit ClangCReader(CTargetProfile profile = CTargetProfile{});
   [[nodiscard]] ReadResult read(std::string_view headerText) override;
 
 private:
