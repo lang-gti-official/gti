@@ -16,6 +16,7 @@ using ParseDiagnostic = Diagnostic;
 class Parser::Impl {
 private:
   class ParseError {};
+  class ConditionalBoundary {};
 
   static constexpr std::size_t maximumNestingDepth = 64;
 
@@ -91,6 +92,7 @@ private:
   void reset() {
     current = 0;
     nestingDepth = 0;
+    conditionalDepth = 0;
     diagnostics.clear();
     currentClassName.reset();
     currentClassKind.reset();
@@ -430,7 +432,7 @@ private:
 
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after type body.");
       consume(TokenKind::SEMICOLON, "Expect ';' after type declaration.");
-    } catch (const ParseError &) {
+    } catch (...) {
       currentClassName = enclosingClassName;
       currentClassKind = enclosingClassKind;
       throw;
@@ -1533,6 +1535,10 @@ private:
   }
 
   StmtPtr conditionalCompilation(ItemContext context) {
+    // A conditional is open for the whole of its branch parsing and its
+    // terminating `#endif`, so recovery inside it stops at each boundary and
+    // lets this function consume it. Nested conditionals stack.
+    const NestingGuard conditional(conditionalDepth);
     Token directive = previous();
     std::vector<ConditionalBranch> branches;
     branches.push_back(
@@ -1563,16 +1569,20 @@ private:
 
   StmtList conditionalItems(ItemContext context) {
     StmtList statements;
-    while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
-           !isConditionalBoundary()) {
-      try {
-        statements.emplace_back(item(context));
-      } catch (const ParseError &) {
-        synchronize(context != ItemContext::Declaration,
-                    context == ItemContext::Block,
-                    context == ItemContext::Declaration,
-                    context == ItemContext::ClassMember);
+    try {
+      while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
+             !isConditionalBoundary()) {
+        try {
+          statements.emplace_back(item(context));
+        } catch (const ParseError &) {
+          synchronize(context != ItemContext::Declaration,
+                      context == ItemContext::Block,
+                      context == ItemContext::Declaration,
+                      context == ItemContext::ClassMember);
+        }
       }
+    } catch (const ConditionalBoundary &) {
+      missingTokenError = false;
     }
     return statements;
   }
@@ -2886,8 +2896,10 @@ private:
     while (!isAtEnd()) {
       const bool atRecoveryBoundary = parenthesisDepth == 0 && braceDepth == 0;
       if (atRecoveryBoundary) {
-        if (isConditionalBoundary()) {
-          return;
+        // Unwind nested recovery to the nearest conditional branch collector.
+        // It leaves the directive for conditionalCompilation to consume.
+        if (conditionalDepth > 0 && isConditionalBoundary()) {
+          throw ConditionalBoundary{};
         }
         if (stopAtRightBrace && check(TokenKind::RIGHT_BRACE)) {
           return;
@@ -2958,6 +2970,11 @@ private:
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
+  // Number of compile-time conditionals whose body is currently being parsed.
+  // A conditional-continuation directive (`#elif`/`#else`/`#endif`) is a
+  // recovery boundary only while one is open; nested recovery propagates it to
+  // the conditional parser. A stray directive must instead be advanced past.
+  std::size_t conditionalDepth = 0;
   std::size_t generatedNameCounter = 0;
   std::optional<Token> currentClassName;
   std::optional<ClassKind> currentClassKind;
