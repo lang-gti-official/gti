@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Enforce ADR 006's LLVM link surface.
+"""Enforce the LLVM and Clang link surface of ADR 006 and ADR 021.
 
-GTI may link only the LLVM support libraries: LLVMSupport, LLVMTargetParser,
-and LLVMDemangle. Anything else — llvm/IR, MC, Target, CodeGen, and every
-other component — is out of scope by policy. This scans the build system's
-generated link commands and fails when any other LLVM library appears, so a
-new dependency cannot arrive silently.
+GTI may link only the LLVM support libraries — LLVMSupport, LLVMTargetParser,
+and LLVMDemangle — plus libclang, the stable Clang C API the bindgen reader
+uses. Anything else — llvm/IR, MC, Target, CodeGen, clangAST, clang-cpp, and
+every other component — is out of scope by policy. This scans the build
+system's generated link commands and fails when any other LLVM or Clang
+library appears, so a new dependency cannot arrive silently.
 """
 
 import re
@@ -14,6 +15,38 @@ from pathlib import Path
 
 ALLOWED = {"LLVMSupport", "LLVMTargetParser", "LLVMDemangle"}
 LIBRARY = re.compile(r"\b(?:lib)?(LLVM[A-Za-z0-9_]*)(?:\.(?:a|so|dylib|lib|tbd))?\b")
+CLANG_TOKEN = re.compile(r"(?<![A-Za-z0-9_])(?:-l)?(?:lib)?clang[A-Za-z0-9_.+-]*")
+# The C API library in its platform spellings: libclang.a/.so/.dylib/.tbd,
+# a Debian-style versioned libclang-18.so.18.1, or a plain -lclang.
+ALLOWED_CLANG = re.compile(r"clang(-\d+)?(\.(a|so|dylib|lib|tbd))?(\.[0-9.]+)?$")
+
+
+def clang_component(token: str) -> "str | None":
+    """Return the policed Clang library name, or None for non-library uses."""
+    linker_flag = token.startswith("-l")
+    if linker_flag:
+        token = token[2:]
+    library_prefix = token.startswith("lib")
+    if library_prefix:
+        token = token[3:]
+    if token.startswith("clang_rt"):
+        # compiler-rt archives (libclang_rt.*) are the C compiler's runtime,
+        # not a Clang library.
+        return None
+    if not linker_flag and not library_prefix:
+        # Driver executables and path segments: clang, clang++, clang-18,
+        # lib/cmake/clang. Only library-shaped tokens are policed.
+        return None
+    return token
+
+
+def scan_clang(text: str) -> set[str]:
+    violations: set[str] = set()
+    for match in CLANG_TOKEN.finditer(text):
+        component = clang_component(match.group(0))
+        if component is not None and not ALLOWED_CLANG.match(component):
+            violations.add(component)
+    return violations
 
 
 def scan(path: Path) -> set[str]:
@@ -29,6 +62,7 @@ def scan(path: Path) -> set[str]:
             violations.add(component)
         elif component not in ALLOWED:
             violations.add(component)
+    violations |= scan_clang(text)
     return violations
 
 
@@ -71,10 +105,12 @@ def scan_ninja(path: Path) -> tuple[set[str], int]:
         if not any(is_gti_ninja_output(output) for output in outputs):
             continue
         selected += 1
-        for match in LIBRARY.finditer("\n".join(block)):
+        block_text = "\n".join(block)
+        for match in LIBRARY.finditer(block_text):
             component = match.group(1)
             if component == "LLVM" or component not in ALLOWED:
                 violations.add(component)
+        violations |= scan_clang(block_text)
 
     return violations, selected
 
@@ -113,12 +149,13 @@ def main() -> None:
 
     if violations:
         raise SystemExit(
-            "LLVM link surface violation: "
+            "LLVM/Clang link surface violation: "
             + ", ".join(sorted(violations))
-            + " (allowed: LLVMSupport, LLVMTargetParser, LLVMDemangle; "
-            "see docs/decisions/006-llvm-support-adoption.md)"
+            + " (allowed: LLVMSupport, LLVMTargetParser, LLVMDemangle, "
+            "libclang; see docs/decisions/006-llvm-support-adoption.md and "
+            "docs/decisions/021-libclang-c-import.md)"
         )
-    print("LLVM link surface: only support libraries are linked")
+    print("LLVM/Clang link surface: only support libraries and libclang are linked")
 
 
 if __name__ == "__main__":

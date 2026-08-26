@@ -1,11 +1,12 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-03 implemented (bounded C17 declaration import,
+Status: C-01 through C-04 implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
-translation-unit inputs, and exact opaque-handle out parameters sufficient for
-an end-to-end SQLite open/prepare/step/finalize/close client). A libclang
-declaration reader, build-manifest integration, and C++ import remain bounded
-future milestones below.
+translation-unit inputs, exact opaque-handle out parameters sufficient for an
+end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
+declaration reader of ADR 021 replacing the bootstrap parser). Source
+provenance and include discovery (C-05), build-manifest integration, and C++
+import remain bounded future milestones below.
 
 ## Problem
 
@@ -67,35 +68,53 @@ because the GTI ABI treats it differently (`const char*` is `c_string`; bare
 `char` is not an ABI scalar). A deterministic model printer supports golden
 tests exactly like the lowered-program printer does.
 
-### The reader seam (`header_reader.h`, `c_reader.cpp`)
+### The reader seam (`header_reader.h`, `clang_reader.cpp`)
 
-`NativeHeaderReader` is the virtual boundary; `BoundedCReader` is the
-bootstrap implementation: a hand-written lexer and declaration parser for a
-bounded C17 subset. It established the model, planner, writer, recovery, and
-end-to-end ABI validation without expanding the toolchain dependency. It is
-not the scalable parser strategy. Milestone C-04 replaces it with a private
-libclang reader for C and removes the hand-written implementation after
-equivalence gates pass; it does not preserve two selectable readers.
+`NativeHeaderReader` is the virtual boundary; `ClangCReader` is the single
+active implementation (milestone C-04, ADR 021): the header text parses as
+one in-memory Clang C17 translation unit, privately behind the seam, so
+preprocessing, parsing, native diagnostics, and implementation-defined
+integer widths are Clang facts. The bootstrap `BoundedCReader` — a
+hand-written parser for a bounded C17 subset that established the model,
+planner, writer, recovery, and end-to-end ABI validation — passed a
+deterministic C corpus against the libclang reader with byte-identical
+models and was then deleted; its corpus survives as reader goldens in
+`bindgen_pipeline`. There are not two selectable readers.
 
-Bounded C17 surface read today: `struct`/`union` definitions and forward
+Declaration surface read today: `struct`/`union` definitions and forward
 declarations (including `typedef struct { ... } Name;` and implicit forward
-references from pointer uses), `enum` definitions with literal or
-previous+1 values, object and function-pointer `typedef`s, and function
-prototypes (named or unnamed parameters, `void` lists, `...` recorded as
-variadic, multi-level pointers and `const` qualifiers parsed faithfully).
-`<stdint.h>`/`<stddef.h>` names resolve through a `CTargetProfile`. The CLI
-selects LP64 for supported macOS/Linux targets and LLP64 for supported Windows
-targets, either from the host or an explicit target triple. This is the
-bounded target seam until Clang becomes the source of C target facts.
+references from pointer uses), fields with pointer declarators and one or
+more concrete array extents (nested `Array` model nodes, outermost first),
+`enum` definitions — anonymous ones retained by name adoption or as bare
+constants (an `Enum` declaration with an empty name) — object and
+function-pointer `typedef`s, and function prototypes (named or unnamed
+parameters, `void` lists, `...` recorded as variadic, parameter array decay
+with `const` preserved, and multi-level pointers with `const` qualifiers
+read faithfully; `restrict` never reaches the model because it does not
+change the caller's contract).
+`<stdint.h>`/`<stddef.h>` names resolve through a target-macro prelude, so
+their widths are Clang facts for the selected data model. The reader receives
+a `CTargetProfile` and selects one canonical 64-bit parse target per data
+model (the CLI selects LP64 for supported macOS/Linux targets and LLP64 for
+supported Windows targets); forwarding the pipeline's real triple through the
+seam is C-05/C-06 work. A declaration Clang marks invalid is skipped with its
+native error surfaced verbatim — Clang's recovery types are never imported,
+because recovery would bind the wrong ABI. The same conservatism covers
+ABI-affecting native facts the bounded surface cannot yet carry: a function
+whose assembler label renames its link symbol or whose calling convention is
+not C skips with its reason, and a record bearing a layout attribute degrades
+to an opaque handle, until C-06 preserves those facts as model data.
 
-Direct library callers may still pass unpreprocessed text, where the bootstrap
-reader's deliberately minimal policy strips comments, recognizes `#pragma
-once` and a whole-file include guard, and reports unsupported directives. The
-CLI does not use that policy: C-03 runs the Clang driver in C17 preprocessing
-mode with ordered `-I`, `-D`, `-U`, and target inputs before invoking the
-reader. `-fkeep-system-includes` keeps platform implementation declarations
-out of generated GTI while Clang still evaluates their preprocessing effects.
-This is a bounded bridge to the libclang reader, not a second preprocessor.
+Direct library callers may pass unpreprocessed text, which now has its full
+native meaning: macros expand, conditionals evaluate, and pragmas apply.
+Includes remain deliberately unresolved at the reader seam — every
+`#include` reports the canonical unresolved-include note — until C-05 owns
+include discovery and source provenance. The CLI additionally runs the C-03
+Clang-driver preprocessing step with ordered `-I`, `-D`, `-U`, and target
+inputs before invoking the reader, so user includes resolve with their
+native meaning while `-fkeep-system-includes` keeps platform implementation
+declarations out of generated GTI; C-05 collapses this double preprocessing
+when the reader owns the include graph.
 
 Per-declaration failures are diagnostics plus a skip, never an abort: one
 unparseable declaration must not cost the rest of the header.
@@ -112,13 +131,20 @@ methods, overloads) lands without touching the reader. Two passes:
    disappearing, so every pointer-based API through it stays importable.
    Only by-value uses of a degraded record skip.
 2. Entity mapping. Functions, enums (alias to `int32_t` plus `constexpr`
-   enumerators), object typedefs, and callback typedefs map through one
+   enumerators; a bare anonymous enum contributes constants only), object
+   typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
    fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
    admitted pointees, `const char*` as `c_string`, by-value bindable
    records, named callback shapes, `const char**` as `c_string*`, and one exact
    `OpaqueHandle**` direct function-parameter form. The latter is position
    aware: callback shapes, fields, aliases, and returns do not inherit it.
+   Record-field positions are equally position aware: `c_string` and nested
+   pointers have no GTI field representation, so a record using one degrades
+   to an opaque handle with the reason recorded instead of emitting source
+   the frontend rejects. Fields otherwise cover the frontend's full admitted
+   set, including callback aliases and fixed arrays with multiple extents or
+   record, pointer, callback, and scalar elements.
    Everything else — variadics, plain `char`/`bool`, other multi-level
    pointers, native variables, reserved or GTI-invalid identifiers — becomes a
    `SkippedItem{origin, name, reason}`.
@@ -184,16 +210,14 @@ has a concrete policy, the missing facts must be listed first. LibTooling may
 replace libclang only if those facts cannot be obtained faithfully through
 libclang and the dependency cost is accepted deliberately.
 
-The C-03 bridge invokes a Clang executable and links no new library. It uses
-the native compiler driver's argument-vector/process infrastructure, captures
-Clang diagnostics, and owns temporary preprocessed/dependency artifacts in the
-driver layer. This is a planned extension of, not an exception to,
-[ADR 006](../decisions/006-llvm-support-adoption.md). The current build still
-links only LLVM support libraries. C-04 must add a separate dependency ADR,
-private wrapper, bundled-release acquisition, license/package checks, and
-link-surface gates before libclang becomes mandatory. Until then, new grammar
-surface is not added to `BoundedCReader` unless it fixes recovery or an
-already-supported C declaration.
+The C-03 bridge invokes a Clang executable through the native compiler
+driver's argument-vector/process infrastructure, captures Clang diagnostics,
+and owns temporary preprocessed/dependency artifacts in the driver layer.
+C-04 made libclang itself a mandatory dependency under
+[ADR 021](../decisions/021-libclang-c-import.md): a private wrapper
+translation unit, `find_package(Clang)`/bundled acquisition, license and
+release-packaging checks, and the extended `llvm_link_surface` gate that
+admits exactly `libclang` beside ADR 006's LLVM support libraries.
 
 ## CLI Surface
 
@@ -240,10 +264,13 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    preprocessing with ordered `-I`, `-D`, `-U`, explicit target forwarding,
    system-include preservation, dependency output, deterministic command
    construction, and captured native diagnostics.
-4. **C-04: libclang C reader.** Adopt and package libclang behind a private
-   `NativeHeaderReader`; pass a deterministic C corpus through both readers,
-   close model/diagnostic gaps, switch the pipeline, and remove
-   `BoundedCReader`.
+4. **C-04: libclang C reader (complete).** libclang adopted and packaged
+   behind the private `NativeHeaderReader` (ADR 021); the deterministic C
+   corpus passed both readers with byte-identical models, the remaining
+   diagnostic gaps closed deliberately (native conditional evaluation,
+   invalid-declaration skips with verbatim native errors, const-preserving
+   parameter decay, nested array fields, retained anonymous enums), the
+   pipeline switched, and `BoundedCReader` was removed.
 5. **C-05: source provenance and import policy.** Populate model source IDs
    from Clang, collect the complete transitive dependency set, retain only
    declarations selected by the requested import policy, and use original
