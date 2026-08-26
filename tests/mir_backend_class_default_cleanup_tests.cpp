@@ -268,6 +268,9 @@ void expectSelectedDefinitions(std::string_view generated) {
          "each generated-default Construct should construct its final slot");
   expect(count(selected, ".destroy()") == 2,
          "each normal MIR Drop should explicitly destroy its final slot");
+  expect(selected.find(".destroy_if_engaged()") == std::string_view::npos,
+         "cleanup-owning slots must not replace a missing semantic Drop with "
+         "representation-only rearming");
   expect(selected.find("std::optional<") == std::string_view::npos &&
              selected.find("std::move(") == std::string_view::npos &&
              selected.find("Early early") == std::string_view::npos &&

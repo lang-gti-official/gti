@@ -15512,6 +15512,29 @@ private:
         });
   }
 
+  // Direct publication can execute more than once when its verified block is
+  // revisited through a backedge. A representation-only slot has no semantic
+  // Drop to disengage its C++ carrier between those executions, so retire the
+  // prior representation immediately before constructing the exact paired
+  // Initialize destination. Ordinary owning slots remain guarded by their MIR
+  // Drop schedule and never enter this route.
+  void emitRepresentationOnlyPublicationRearm(const ScalarBodyFacts &facts,
+                                              MirValueId value,
+                                              const MirPlace &destination) {
+    const MirPlace *published = classValueDestinationSlot(facts.body, value);
+    if (published == nullptr || published->id != destination.id) {
+      return;
+    }
+    const MirPlaceId canonical = canonicalSlotPlaceId(facts.body, destination);
+    const MirPlace *canonicalPlace = facts.body.findPlace(canonical);
+    if (canonicalPlace == nullptr || canonicalPlace->id != canonical ||
+        !representationOnlySlotPlace(facts.body, *canonicalPlace)) {
+      return;
+    }
+    output << "__gti_mir_p_" << canonical << ".destroy_if_engaged();\n";
+    writeIndent();
+  }
+
   [[nodiscard]] const std::string &lifetimeSlotSpelling() {
     const auto found = std::find_if(
         representations.capabilities().begin(),
@@ -17598,6 +17621,9 @@ private:
                   "verified MIR class-copy publication lost its source or "
                   "copy-construction capability");
             }
+            emitRepresentationOnlyPublicationRearm(
+                facts, instruction.operands.front().value,
+                *publishedDestination);
             output << "__gti_mir_p_"
                    << canonicalSlotPlaceId(facts.body, *publishedDestination)
                    << ".construct(";
@@ -17679,6 +17705,8 @@ private:
             // slot constructs in place from the construction's own
             // arguments, exactly like the compatibility direct
             // initialization.
+            emitRepresentationOnlyPublicationRearm(
+                facts, instruction.operands.front().value, *slot);
             output << "__gti_mir_p_" << *instruction.destination
                    << ".construct(";
             for (std::size_t index = 0; index < definition->operands.size();
@@ -17753,6 +17781,8 @@ private:
             return;
           }
           if (!builtInSlot) {
+            emitRepresentationOnlyPublicationRearm(
+                facts, instruction.operands.front().value, *slot);
             output << "__gti_mir_p_" << *instruction.destination
                    << ".construct(std::move(__gti_mir_v_"
                    << instruction.operands.front().value << "));\n";
@@ -18364,6 +18394,8 @@ private:
       if (const MirPlace *destination =
               classValuePublicationSlot(facts.body, *instruction.result)) {
         writeIndent();
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *destination);
         output << "__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *destination)
                << ".construct(std::move(";
@@ -18584,6 +18616,10 @@ private:
           }
         };
         writeIndent();
+        if (!publishesReturn && slot != nullptr) {
+          emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                                 *slot);
+        }
         if (expectedPayload) {
           output << "__gti_mir_v_" << *instruction.result
                  << ".construct_from([&]() { return "
@@ -19900,6 +19936,8 @@ private:
       }
       if (const MirPlace *destination =
               classValuePublicationSlot(facts.body, *instruction.result)) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *destination);
         output << "__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *destination)
                << ".construct();\n";
@@ -19976,6 +20014,8 @@ private:
       }
       if (const MirPlace *destination =
               classValuePublicationSlot(facts.body, *instruction.result)) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *destination);
         output << "__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *destination)
                << ".construct();\n";
@@ -20179,6 +20219,10 @@ private:
               ? classSsaLifetimeSlot(program, representations, facts.body,
                                      *instruction.result)
               : ClassSsaLifetimeSlot{};
+      if (classDestination != nullptr && instruction.result) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *classDestination);
+      }
       output << "__gti_mir_call_success_" << instruction.id << " = ";
       if (receiverPlace != nullptr) {
         emitReceiverExpression();
@@ -20402,6 +20446,10 @@ private:
       // the exact constructor-field staging slot. The factory form preserves
       // C++17 guaranteed copy elision for a plain class-returning call without
       // requiring a move constructor.
+      if (classDestination != nullptr && instruction.result) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *classDestination);
+      }
       output << "__gti_mir_p_"
              << canonicalSlotPlaceId(facts.body, *classResultDestination)
              << ".construct_from([&]() { return ";

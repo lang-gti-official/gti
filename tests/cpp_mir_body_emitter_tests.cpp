@@ -7013,6 +7013,95 @@ int main() {
          "one representation-only lifetime slot");
 }
 
+void testRepresentationOnlyPublicationRearmsBeforeConstruction() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-representation-slot-rearm.gti", R"(
+[[c_abi]] struct Pair {
+  mut float x;
+  mut float y;
+};
+
+extern "C" {
+  Pair make_pair_c(float x, float y);
+}
+
+int main() {
+  for (mut int32_t iteration = 0; iteration < 3; iteration++) {
+    Pair pair = make_pair_c(1.0, 2.0);
+    if (pair.x < 0.0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the repeated passive-record publication fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the repeated passive-record fixture should lower its entry");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  const bool failureBody = emitter.supportsFailureBodyText(address);
+  expect(emitter.analyze(address).ready() &&
+             (failureBody || emitter.supportsBodyText(address)),
+         "the repeated passive-record publication should enter transformed "
+         "emission");
+  if (!failureBody && !emitter.supportsBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      failureBody
+          ? emitter.emitFailureBodyText(address, "slot-rearm-test-v0", 1).text
+          : emitter.emitBodyText(address, "slot-rearm-test-v0", 1).text;
+  const std::string constructMarker =
+      ".construct_from([&]() { return make_pair_c(";
+  const std::size_t construction = text.find(constructMarker);
+  const std::size_t slotStart = construction == std::string::npos
+                                    ? std::string::npos
+                                    : text.rfind("__gti_mir_p_", construction);
+  const std::string slot =
+      slotStart == std::string::npos
+          ? std::string{}
+          : text.substr(slotStart, construction - slotStart);
+  const std::string rearmMarker = slot + ".destroy_if_engaged();";
+  const std::string publicationMarker = slot + constructMarker;
+  const std::size_t rearm =
+      slot.empty() ? std::string::npos : text.find(rearmMarker);
+  const std::size_t publication =
+      slot.empty() ? std::string::npos : text.find(publicationMarker);
+  const std::string separator =
+      rearm == std::string::npos || publication == std::string::npos ||
+              rearm + rearmMarker.size() > publication
+          ? std::string{"not-adjacent"}
+          : text.substr(rearm + rearmMarker.size(),
+                        publication - (rearm + rearmMarker.size()));
+  expect(!slot.empty() &&
+             text.find(", true> " + slot + ";") != std::string::npos &&
+             rearm != std::string::npos && publication != std::string::npos &&
+             rearm < publication &&
+             separator.find_first_not_of(" \t\r\n") == std::string::npos,
+         "an exact repeated Initialize should rearm its representation-only "
+         "slot immediately before construct_from");
+}
+
 void testFailureCapableClassReturnTemporaryReceiver() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-class-return-temporary-receiver.gti", R"(
@@ -7959,6 +8048,8 @@ constexpr NamedTest kTests[] = {
      testContextualSignedMinimumInFailureCaller},
     {"testSingleUseClassSsaRepresentationSlot",
      testSingleUseClassSsaRepresentationSlot},
+    {"testRepresentationOnlyPublicationRearmsBeforeConstruction",
+     testRepresentationOnlyPublicationRearmsBeforeConstruction},
     {"testFailureCapableClassReturnTemporaryReceiver",
      testFailureCapableClassReturnTemporaryReceiver},
     {"testFailureCapableClassReturnFieldRead",
