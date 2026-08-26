@@ -34,6 +34,13 @@ def main():
         raise SystemExit("usage: cli_smoke_test.py /path/to/gti")
 
     gti = sys.argv[1]
+    requested_gti = pathlib.Path(gti)
+    resolved_gti = (
+        requested_gti.resolve() if requested_gti.exists() else shutil.which(gti)
+    )
+    if resolved_gti is None:
+        raise AssertionError(f"could not resolve GTI executable: {gti}")
+    gti_executable = pathlib.Path(resolved_gti).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-cli-test-") as directory:
         root = pathlib.Path(directory)
         source = root / "main.gti"
@@ -108,9 +115,9 @@ def main():
         assert sidecar["schema"] == 1
         producer = sidecar["producer"]
         producer_file = producer["executable"]
-        assert pathlib.Path(producer_file["canonical_path"]) == pathlib.Path(gti).resolve()
+        assert pathlib.Path(producer_file["canonical_path"]) == gti_executable
         assert producer_file["sha256"] == hashlib.sha256(
-            pathlib.Path(gti).read_bytes()
+            gti_executable.read_bytes()
         ).hexdigest()
         compiler_build = producer["compiler_build"]
         assert compiler_build["state"] in {"clean", "dirty", "unavailable"}
@@ -192,7 +199,7 @@ def main():
 
         producer_report_alias = root / "producer-report-hardlink"
         try:
-            os.link(gti, producer_report_alias)
+            os.link(gti_executable, producer_report_alias)
         except OSError:
             pass
         else:
@@ -208,7 +215,7 @@ def main():
                 expected=64,
             )
             assert "must not overwrite" in producer_alias_collision.stderr
-            assert producer_report_alias.samefile(gti)
+            assert producer_report_alias.samefile(gti_executable)
 
         hardlink_output = root / "hardlink-output-program"
         hardlink_output.write_text("preserved output\n", encoding="utf-8")
