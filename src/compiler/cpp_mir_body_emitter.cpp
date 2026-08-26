@@ -2504,7 +2504,8 @@ copyParameterFieldInstructionBinding(const MirProgram &program,
       std::find_if(bindings->begin(), bindings->end(),
                    [&](const CppMirCopyParameterFieldBinding &binding) {
                      return binding.loadInstruction == instruction ||
-                            binding.initializeInstruction == instruction;
+                            (binding.initializeInstruction != 0 &&
+                             binding.initializeInstruction == instruction);
                    });
   return matched == bindings->end()
              ? std::nullopt
@@ -2540,6 +2541,39 @@ copyParameterFieldInstructionBinding(const MirProgram &program,
   return bindings &&
          std::count_if(bindings->begin(), bindings->end(),
                        [&](const CppMirOwnedParameterFieldBinding &binding) {
+                         return binding.sourcePlace == place.id;
+                       }) == 1;
+}
+
+// A passive class copy also spells directly from the native by-value
+// parameter. Unlike the owned form it does not consume that parameter, but a
+// second lifetime slot would still manufacture an extra move and change the
+// exact copy/drop schedule.
+[[nodiscard]] bool copyParameterFieldSourcePlace(const MirProgram &program,
+                                                 const MirBody &body,
+                                                 const MirPlace &place) {
+  if (body.kind != MirBodyKind::Constructor ||
+      place.root != MirPlaceRootKind::Binding || !place.projections.empty()) {
+    return false;
+  }
+  const MirConstructorInstance *constructor = nullptr;
+  for (const MirConstructorInstance &candidate :
+       program.constructorInstances()) {
+    if (&candidate.body == &body) {
+      if (constructor != nullptr) {
+        return false;
+      }
+      constructor = &candidate;
+    }
+  }
+  if (constructor == nullptr) {
+    return false;
+  }
+  const std::optional<std::vector<CppMirCopyParameterFieldBinding>> bindings =
+      cppMirCopyParameterFieldBindings(program, *constructor);
+  return bindings &&
+         std::count_if(bindings->begin(), bindings->end(),
+                       [&](const CppMirCopyParameterFieldBinding &binding) {
                          return binding.sourcePlace == place.id;
                        }) == 1;
 }
@@ -7959,6 +7993,38 @@ lifecycleGuardedGeneratedMoveClass(const MirProgram &program,
   return instance;
 }
 
+// A by-value constructor parameter can initialize its matching field in the
+// native member-initializer list when copying the exact class is purely
+// structural. Interface bases add representation but no owned state; every
+// declared field must still have a passive scalar/enum representation. Custom
+// copy/destructor policy and any active cleanup remain outside this route.
+[[nodiscard]] const MirClassInstance *
+passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type) {
+  const MirClassInstance *instance = uniqueClassInstanceForType(program, type);
+  if (instance == nullptr ||
+      instance->copyConstructor != SpecialMemberStatus::Generated ||
+      !instance->traits.copyable || instance->abstract ||
+      instance->cAbiRecord || instance->unionLayout ||
+      instance->destructor.has_value() ||
+      instance->destructorStatus != SpecialMemberStatus::Generated ||
+      instance->requiresActiveDropState || instance->requiresActiveCleanup ||
+      instance->bases != instance->structuralBases ||
+      classHasStateBearingBase(*instance) ||
+      !std::all_of(
+          instance->declaredFields.begin(), instance->declaredFields.end(),
+          [](const MirClassFieldInfo &field) {
+            const auto representation = expectedTypeRepresentation(field.type);
+            return field.field != 0 && field.symbol != 0 &&
+                   field.dropKind == DropKind::Trivial &&
+                   !field.requiresActiveCleanup && representation &&
+                   (*representation == CppMirTypeRepresentationKind::Scalar ||
+                    *representation == CppMirTypeRepresentationKind::Enum);
+          })) {
+    return nullptr;
+  }
+  return instance;
+}
+
 [[nodiscard]] bool
 lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
                                                   const SemanticType &type) {
@@ -10857,8 +10923,10 @@ expectedPayloadReturnSlot(const MirProgram &program,
         return {};
       }
     }
-    return {.value = value, .producer = producer,
-            .returnBlock = producerBlock, .drop = nullptr};
+    return {.value = value,
+            .producer = producer,
+            .returnBlock = producerBlock,
+            .drop = nullptr};
   }
   if (drop->kind != MirDropObligationKind::Value ||
       producer->successResultDrop != drop->id) {
@@ -11034,7 +11102,8 @@ lifetimeSlotPlace(const MirProgram &program,
   if (place.root != MirPlaceRootKind::Binding || !place.projections.empty()) {
     return false;
   }
-  if (ownedParameterFieldSourcePlace(program, body, place)) {
+  if (ownedParameterFieldSourcePlace(program, body, place) ||
+      copyParameterFieldSourcePlace(program, body, place)) {
     return false;
   }
   if (passiveFixedArrayConstructDestination(program, body, place) != nullptr) {
@@ -15314,10 +15383,10 @@ public:
         continue;
       }
       if (facts.kind == MirBodyKind::Constructor &&
-          ownedParameterFieldSourcePlace(program, facts.body, place)) {
-        // The native member-initializer list consumes this parameter before
-        // the body starts; declaring a second carrier would copy or move the
-        // already-consumed argument again.
+          (ownedParameterFieldSourcePlace(program, facts.body, place) ||
+           copyParameterFieldSourcePlace(program, facts.body, place))) {
+        // The native member-initializer list reads this parameter directly;
+        // declaring a second carrier would add a copy or move absent from MIR.
         continue;
       }
       // A storage-rooted place reads or writes its named global directly.
@@ -15701,6 +15770,13 @@ public:
                                             *valueDefinition) != nullptr) {
           // The member-initializer list binds the referent directly from the
           // reference parameter; this initializer-argument load is metadata.
+          continue;
+        }
+        if (facts.kind == MirBodyKind::Constructor &&
+            copyParameterFieldBinding(program, facts.body, facts.id,
+                                      value.id)) {
+          // The exact parameter copy spells in the native member-initializer
+          // list; its metadata-only class Load owns no separate SSA storage.
           continue;
         }
         if (expectedClassMovePropagation(facts.body, value.id)) {
@@ -19045,6 +19121,13 @@ private:
       // The shared owned-parameter proof publishes this exact move in the
       // native member-initializer list. Emitting the generic staged-field
       // assignment as well would move the argument twice.
+      return;
+    }
+    if (instruction.result && facts.kind == MirBodyKind::Constructor &&
+        copyParameterFieldBinding(program, facts.body, facts.id,
+                                  *instruction.result)) {
+      // The shared copy-parameter proof publishes this exact value in the
+      // native member-initializer list; no body assignment remains.
       return;
     }
     const MirConstructorInitializer *initializer =
@@ -23634,6 +23717,10 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
       return false;
     }
   };
+  const auto admittedParameterType = [&](const SemanticType &type) {
+    return scalarParameterType(type) ||
+           passiveGeneratedCopyClass(program, type) != nullptr;
+  };
 
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
   if (owner == nullptr) {
@@ -23650,7 +23737,7 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
         initializer.generatedDefault || initializer.field == 0 ||
         initializer.arguments.size() != 1 ||
         initializer.arguments.front() == 0 ||
-        !scalarParameterType(initializer.targetType)) {
+        !admittedParameterType(initializer.targetType)) {
       continue;
     }
 
@@ -23731,6 +23818,8 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
       continue;
     }
 
+    const bool passiveClassCopy =
+        passiveGeneratedCopyClass(program, initializer.targetType) != nullptr;
     const MirInstruction *initialize = nullptr;
     std::size_t initializeMatches = 0;
     bool malformedInitialize = false;
@@ -23770,11 +23859,16 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
     }
     const std::vector<MirValueUse> uses =
         constructor.body.usesOf(loadedValue->id);
-    if (malformedInitialize || initializeMatches != 1 ||
-        initialize == nullptr || uses.size() != 1 ||
-        uses.front().kind != MirValueUseKind::InstructionOperand ||
-        uses.front().instruction != initialize->id ||
-        uses.front().operandIndex != 0) {
+    const bool scalarPublication =
+        !passiveClassCopy && !malformedInitialize && initializeMatches == 1 &&
+        initialize != nullptr && uses.size() == 1 &&
+        uses.front().kind == MirValueUseKind::InstructionOperand &&
+        uses.front().instruction == initialize->id &&
+        uses.front().operandIndex == 0;
+    const bool passiveClassPublication =
+        passiveClassCopy && !malformedInitialize && initializeMatches == 0 &&
+        initialize == nullptr && uses.empty();
+    if (!scalarPublication && !passiveClassPublication) {
       continue;
     }
 
@@ -23827,19 +23921,22 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
                              binding.sourcePlace == source->id ||
                              binding.loadedValue == loadedValue->id ||
                              binding.loadInstruction == load->id ||
-                             binding.initializeInstruction == initialize->id ||
+                             (initialize != nullptr &&
+                              binding.initializeInstruction ==
+                                  initialize->id) ||
                              binding.boundaryInstruction == boundary->id;
                     })) {
       continue;
     }
-    bindings.push_back({.initializer = initializerIndex,
-                        .field = initializer.field,
-                        .parameter = parameter,
-                        .sourcePlace = source->id,
-                        .loadedValue = loadedValue->id,
-                        .loadInstruction = load->id,
-                        .initializeInstruction = initialize->id,
-                        .boundaryInstruction = boundary->id});
+    bindings.push_back(
+        {.initializer = initializerIndex,
+         .field = initializer.field,
+         .parameter = parameter,
+         .sourcePlace = source->id,
+         .loadedValue = loadedValue->id,
+         .loadInstruction = load->id,
+         .initializeInstruction = initialize == nullptr ? 0 : initialize->id,
+         .boundaryInstruction = boundary->id});
   }
   return bindings;
 }
@@ -25375,9 +25472,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (address.kind == MirBodyKind::Constructor &&
-        ownedParameterFieldSourcePlace(program_, body, place)) {
-      // The native member-initializer list consumes this parameter directly;
-      // a body-local slot would move from the argument a second time.
+        (ownedParameterFieldSourcePlace(program_, body, place) ||
+         copyParameterFieldSourcePlace(program_, body, place))) {
+      // The native member-initializer list reads this parameter directly; a
+      // body-local carrier would add a copy or move absent from MIR.
       continue;
     }
     if (place.root == MirPlaceRootKind::Value &&
@@ -25688,8 +25786,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const MirValue *extraction = body.findValue(place.value);
       if (extraction == nullptr ||
           !exactFieldProjectionRows(program_, representations_,
-                                    extraction->info.type, place.projections,
-                                    0, place.type)) {
+                                    extraction->info.type, place.projections, 0,
+                                    place.type)) {
         return false;
       }
       continue;
@@ -25907,10 +26005,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            copyParameterFieldBinding(program_, body, address.owner,
                                      value.id)) ||
           // A staged field publication spells its declaration at the Move
-          // itself; a Load-defined (copy) publication has no such spelling,
-          // so it must qualify through a declared story instead of this
-          // no-local one (the copy-parameter member-initializer vocabulary
-          // is deliberately scalar-only today).
+          // itself; a Load-defined copy publication qualifies only through
+          // the exact scalar or passive generated-copy member-initializer
+          // story above.
           (definition != nullptr &&
            definition->kind == MirInstructionKind::Move &&
            stagedConstructorFieldPublication(program_, body, address.owner,

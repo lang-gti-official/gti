@@ -17,6 +17,12 @@ public:
   mut plain_item held;
 };
 
+class CopyBox {
+public:
+  CopyBox(plain_item value) : held(value) {}
+  mut plain_item held;
+};
+
 class MoveBox {
 public:
   MoveBox(moveonly_item value) : held(std::move(value)) {}
@@ -36,6 +42,9 @@ int main() {
   mut plain_item a = plain_item();
   mut PlainBox b = PlainBox(std::move(a));
   if (int(b.held.v) != 7) { return 1; }
+  mut plain_item copy_source = plain_item();
+  mut CopyBox copied = CopyBox(std::move(copy_source));
+  if (int(copied.held.v) != 7) { return 7; }
   mut moveonly_item m = moveonly_item();
   mut MoveBox mb = MoveBox(std::move(m));
   if (int(mb.held.v) != 4) { return 2; }
