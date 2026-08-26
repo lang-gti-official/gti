@@ -1,0 +1,15 @@
+class move_only_t {
+public:
+  move_only_t() {}
+  move_only_t(move_only_t& other) = delete;
+  move_only_t(move_only_t&& other) = default;
+  ~move_only_t() {}
+};
+
+void consume(move_only_t value) {}
+
+int main() {
+  move_only_t local = move_only_t();
+  consume(local);
+  return 0;
+}
