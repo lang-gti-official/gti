@@ -316,6 +316,8 @@ reproducers were removed from this directory.
 | [#119](https://github.com/LukeHHA/gti/issues/119) compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
 | [#120](https://github.com/LukeHHA/gti/issues/120) generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
 | [#121](https://github.com/LukeHHA/gti/issues/121) direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `reference_parameter_range_runtime` |
+| [#122](https://github.com/LukeHHA/gti/issues/122) grouped and converted field initializers | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
+| [#124](https://github.com/LukeHHA/gti/issues/124) payload-enum class fields | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
 | [#129](https://github.com/LukeHHA/gti/issues/129) passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 | [#137](https://github.com/LukeHHA/gti/issues/137) passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 
