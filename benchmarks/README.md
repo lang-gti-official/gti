@@ -67,12 +67,21 @@ are not source artifacts.
 
 ## Workloads and variants
 
-Each directory under `workloads/` contains a schema-1 `benchmark.json` and the
-sources named by its `variants` array. Schema 1 deliberately contains only
-structured data; descriptors cannot run shell commands, interpolate the
-environment, or select output paths.
+Each directory under `workloads/` contains a versioned `benchmark.json` and
+the sources named by its `variants` array. Descriptors contain only structured
+data: they cannot run shell commands, interpolate the environment, or select
+output paths.
 
-The normal variants are:
+Schema 1 owns the GTI-versus-C++ comparison shape and requires exactly one GTI
+variant. Schema 2 also permits multiple GTI variants so one language feature
+can be compared against another GTI execution strategy. Every schema-2 GTI
+variant declares `execution_profile` as `single-threaded` or `concurrent`;
+every C++ variant declares it as `null`. The runner validates the field and
+retains the selected profile in the exact GTI build command and schema-2 build
+record. Schema-1 commands and serialized build records retain their original
+shape and do not acquire an `execution_profile` field.
+
+The normal schema-1 variants are:
 
 - `gti`: the checked GTI program compiled by the normal direct driver;
 - `cpp-semantic`: C++ with the relevant GTI checks represented explicitly;
@@ -140,11 +149,55 @@ The alternating multiplier keeps the arithmetic bounded while still making
 the element-wise multiply and reduction checks observable. No variant relies
 on signed overflow, wrapping, disabled checks, or unchecked invalid storage.
 
+## `managed-thread-parallelism`
+
+This schema-2 workload compares four deterministic, row-interleaved
+Mandelbrot partitions, each rendered four times, in two GTI binaries. Both are
+built with the same
+compiler, optimization level, C++ standard, native flags, and explicit
+`concurrent` execution profile.
+`gti-sequential` runs the four partitions in series;
+`gti-four-jthreads` starts all four as owned `std::jthread` tasks and joins
+them.
+
+One work unit is one computed pixel in one pass, for 2,800,000 work units.
+Every repeated partition validates its own checksum, and the parent publishes
+a partition only after ordinary return or a successful join. Both variants
+must produce:
+
+```text
+GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
+```
+
+The sequential variant is the reference. The reciprocal of
+`gti-four-jthreads`'s `median_ratio_to_reference` is the observed speedup.
+The number is machine-specific and should be interpreted with the report's
+CPU identity, raw samples, and variance; the benchmark demonstrates real
+parallel execution, not a universal speedup guarantee. See the workload's
+[`README.md`](workloads/managed-thread-parallelism/README.md) for its
+safe-state and result-validation contract.
+
+## Optimizer-level campaign
+
+[`optimiser/main.gti`](optimiser/main.gti) is the former
+`examples/optimiser` workload. It remains a manual Hyperfine campaign because
+it compares four optimization levels of one GTI source rather than variants
+built under one common optimization policy.
+
 ## Reproduction
 
 The repository runner is the canonical path because its JSON report records
 the resolved GTI and native compiler identities, exact argument vectors, raw
-samples, source digests, randomization seed, and normalized correctness record:
+samples, randomization seed, and normalized correctness record. For schema-2
+GTI variants it requests a versioned `--build-report` sidecar and validates the
+driver-owned record instead of reconstructing includes or toolchain layout.
+That sidecar contains the exact `SourceLoader` graph and consumed source text,
+the native depfile-discovered GTI runtime and compatibility headers, the exact
+runtime archive, the native argument vector, and producer/compiler executable
+hashes. Individual material records retain canonical paths. Aggregate digests
+instead use normalized logical roles/names, flags, graph roots/edges, byte
+counts, and content hashes so moving an otherwise identical source package or
+toolchain does not change its aggregate identity:
 
 ```sh
 python3 scripts/benchmark_compare.py \
@@ -161,6 +214,23 @@ python3 scripts/benchmark_compare.py \
   --markdown build/benchmarks/report.md
 ```
 
+To measure managed-thread parallelism, select its descriptor instead:
+
+```sh
+python3 scripts/benchmark_compare.py \
+  --gti build/gti \
+  --cxx /usr/bin/clang++ \
+  --optimization 3 \
+  --cpp-standard c++23 \
+  --warmup 5 \
+  --runs 20 \
+  --seed 1 \
+  --workload managed-thread-parallelism \
+  --output build/benchmarks \
+  --json build/benchmarks/threading.json \
+  --markdown build/benchmarks/threading.md
+```
+
 `--smoke` builds every variant and executes each once in a seeded order. That
 validation execution is retained as the sole raw sample; smoke mode forces zero
 warmups and does not apply minimum-duration or variance thresholds. Ordinary CI
@@ -170,6 +240,18 @@ never does. Non-smoke reports preserve every raw sample and label data
 the descriptor's minimum, or a variant's sample coefficient of variation
 exceeds `0.20`. The runner does not discard observations or manufacture a
 result.
+
+Schema-2 reports expose `exact_head_evidence.exact` as a mechanically derived
+claim. It is true only when the repository has the same established commit
+before and after measurement, both repository states are clean, every sidecar
+has an established clean compiler build identity at that same commit, and
+every sidecar producer SHA-256 equals the selected `--gti` executable SHA-256.
+Missing facts, dirty state, commit drift or mismatch, inconsistent compiler
+identities, and producer mismatch make the claim false with stable reason
+codes. The identity compiled into `gti` is generated from commit plus worktree
+state at build time. A packaged `BUILD_ID` may be cross-checked independently,
+but does not establish this executable binding and is not used to turn the
+claim true.
 
 For a manual correctness check from the repository root:
 

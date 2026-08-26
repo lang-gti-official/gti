@@ -145,6 +145,51 @@ general cross-compilation option. Compiler-library clients can request another
 supported normalized target for analysis, but the data-layout contract does
 not configure a native compiler, sysroot, runtime, or linker for that target.
 
+### Structured build provenance
+
+Successful direct executable builds may opt into a versioned JSON sidecar with
+`--build-report <path>`. The output path participates in the same collision
+checks as executable and generated-source outputs, must not alias a loaded
+source or the producer executable (including through a hard link), and is
+published atomically only after the driver has completed the native build and
+provenance capture. Emit-only builds reject the option. The public driver
+request/result types expose the structured record; the CLI owns JSON
+presentation.
+
+Source provenance is captured from the exact `SourceGraph` and
+`SourceManager` snapshot returned by `SourceLoader`, before compilation inputs
+move into the frontend. It records every consumed unit's role, canonical and
+available logical/package identities, byte count and SHA-256 over consumed
+text, entry and prelude roots, dependency edges, and dependency-first
+compilation order. The driver reuses its source-identity projection; no report
+consumer resolves includes again. Its aggregate digest uses stable logical
+unit order, role and entry/prelude flags, consumed content size/hash, ordered
+prelude roots, and sorted logical dependency edges. Canonical paths and
+ephemeral source-unit identifiers remain explicit sidecar facts but do not
+enter that relocation-stable aggregate; an external-path logical identity
+remains path-sensitive by design.
+
+When capture is requested, the real generated-C++ compile/link invocation adds
+a driver-owned depfile and bypasses whole-program cache reuse so the report
+always describes a performed invocation. The existing native depfile parser
+selects only dependencies under the resolved runtime and compatibility include
+roots. Only the `gti/...` runtime and `nonstd/...` compatibility subtrees are
+classified, even when an installed toolchain resolves both include roots to
+the same directory. The sidecar records those used headers, the exact runtime
+archive input, their content hashes, the native compiler executable identity,
+and exact native argv. Its runtime aggregate hashes header kind/logical name
+and content facts plus archive content facts, while retaining canonical paths
+only in the individual records. It does not claim which archive members the
+linker selected.
+
+Every build refreshes the compiler source identity from the source repository,
+rather than freezing it at configure time: a 40-hex commit is paired with
+`clean` or `dirty`, while unavailable Git state produces no commit claim. The
+sidecar also hashes and identifies the producer executable supplied by the CLI.
+This executable binding is independent of packaged `BUILD_ID` metadata and is
+the fact benchmark tooling uses to verify that a sidecar came from the selected
+`--gti` binary.
+
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,

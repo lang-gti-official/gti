@@ -1,3 +1,4 @@
+#include "../src/driver/build_source_identity.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
@@ -1591,6 +1592,360 @@ void testNativeDependencyDiscoveryPrimitives() {
          "time-and-date macro spellings");
 }
 
+void testBuildSourceMaterialIdentityProjection() {
+  lang::driver::detail::BuildSourceMaterialProjection baseline;
+  baseline.units = {
+      {.id = 41,
+       .role = lang::SourceUnitRole::Application,
+       .logicalIdentity = "package:main.gti",
+       .entry = true,
+       .bytes = 20,
+       .sha256 = std::string(64, '1')},
+      {.id = 17,
+       .role = lang::SourceUnitRole::Prelude,
+       .logicalIdentity = "prelude:first",
+       .prelude = true,
+       .bytes = 10,
+       .sha256 = std::string(64, '2')},
+      {.id = 23,
+       .role = lang::SourceUnitRole::Prelude,
+       .logicalIdentity = "prelude:second",
+       .prelude = true,
+       .bytes = 11,
+       .sha256 = std::string(64, '3')},
+  };
+  baseline.preludeRoots = {"prelude:first", "prelude:second"};
+  baseline.dependencyEdges = {
+      "package:main.gti\nprelude:first\n1",
+      "package:main.gti\nprelude:second\n1",
+  };
+  const std::string baselineIdentity =
+      lang::driver::detail::buildSourceMaterialsSha256(baseline);
+
+  lang::driver::detail::BuildSourceMaterialProjection relocated = baseline;
+  relocated.units[0].id = 1;
+  relocated.units[1].id = 2;
+  relocated.units[2].id = 3;
+  expect(lang::driver::detail::buildSourceMaterialsSha256(relocated) ==
+             baselineIdentity,
+         "source material identity should exclude ephemeral unit identifiers");
+
+  lang::driver::detail::BuildSourceMaterialProjection contentChanged = baseline;
+  contentChanged.units[0].sha256 = std::string(64, '4');
+  expect(lang::driver::detail::buildSourceMaterialsSha256(contentChanged) !=
+             baselineIdentity,
+         "source material identity should change with consumed content");
+
+  lang::driver::detail::BuildSourceMaterialProjection rootsReordered = baseline;
+  std::reverse(rootsReordered.preludeRoots.begin(),
+               rootsReordered.preludeRoots.end());
+  expect(lang::driver::detail::buildSourceMaterialsSha256(rootsReordered) !=
+             baselineIdentity,
+         "source material identity should preserve prelude-root order");
+
+  lang::driver::detail::BuildSourceMaterialProjection edgeChanged = baseline;
+  edgeChanged.dependencyEdges.back() = "prelude:first\nprelude:second\n0";
+  std::sort(edgeChanged.dependencyEdges.begin(),
+            edgeChanged.dependencyEdges.end());
+  expect(lang::driver::detail::buildSourceMaterialsSha256(edgeChanged) !=
+             baselineIdentity,
+         "source material identity should retain logical dependency edges");
+}
+
+void testBuildProvenance(const std::filesystem::path &testExecutable) {
+  TemporaryDirectory temporary;
+  const lang::driver::ToolchainLayout discovered =
+      lang::driver::discoverToolchainLayout(testExecutable.string().c_str());
+  const std::filesystem::path runtimeInclude = temporary.root() / "runtime";
+  const std::filesystem::path runtimeLibrary =
+      temporary.root() / discovered.runtimeLibrary.filename();
+  std::error_code copyError;
+  std::filesystem::copy(discovered.runtimeInclude, runtimeInclude,
+                        std::filesystem::copy_options::recursive, copyError);
+  if (!copyError) {
+    std::filesystem::copy_file(discovered.runtimeLibrary, runtimeLibrary,
+                               copyError);
+  }
+  if (copyError) {
+    expect(false, "build-provenance runtime fixtures should be copyable: " +
+                      copyError.message());
+    return;
+  }
+
+  const std::filesystem::path project = temporary.root() / "project";
+  const std::filesystem::path dependency = project / "dependency.gti";
+  const std::filesystem::path entry = project / "main.gti";
+  std::filesystem::create_directories(project);
+  expect(writeFile(dependency, "int dependency_value() { return 1; }\n") &&
+             writeFile(entry,
+                       "#include \"dependency.gti\"\n"
+                       "expected<int, int> calculated() { return 1; }\n"
+                       "int main() {\n"
+                       "  expected<int, int> value = calculated();\n"
+                       "  if (!value) { return value.error(); }\n"
+                       "  return dependency_value() + value.value() - 2;\n"
+                       "}\n"),
+         "build-provenance GTI sources should be writable");
+
+  const lang::driver::ToolchainLayout toolchain{
+      .standardLibrary = discovered.standardLibrary,
+      .runtimeInclude = runtimeInclude,
+      .runtimeLibrary = runtimeLibrary,
+      .vendorInclude = discovered.vendorInclude,
+  };
+  lang::driver::NativeInputs nestedNativeInputs;
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+  nestedNativeInputs.compilerArguments = {"-fsanitize=address,undefined",
+                                          "-fno-omit-frame-pointer"};
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+  if (nestedNativeInputs.compilerArguments.empty()) {
+    nestedNativeInputs.compilerArguments = {"-fsanitize=address,undefined",
+                                            "-fno-omit-frame-pointer"};
+  }
+#endif
+  const auto build = [&](std::string_view suffix,
+                         const std::filesystem::path &buildEntry,
+                         const lang::driver::ToolchainLayout &buildToolchain,
+                         lang::CppStandard standard,
+                         lang::ConfigurationFlags flags = {}) {
+    const std::filesystem::path generated =
+        temporary.root() / ("generated-" + std::string(suffix) + ".cpp");
+    const std::filesystem::path output =
+        temporary.root() / ("program-" + std::string(suffix));
+    const std::filesystem::path report =
+        temporary.root() / ("report-" + std::string(suffix) + ".json");
+    return lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+        lang::driver::CompilationRequest(
+            buildEntry, buildToolchain.standardLibrary,
+            lang::TargetInfo::host(), lang::OptimizationLevel::O0, standard, {},
+            std::move(flags)),
+        buildToolchain, generated, output,
+        lang::driver::discoverNativeCompiler(), nestedNativeInputs, false, true,
+        false, std::nullopt, std::nullopt, std::nullopt,
+        lang::driver::BuildReportRequest{
+            .output = report,
+            .producerExecutable = testExecutable,
+        }));
+  };
+
+  const lang::driver::ExecutableBuildResult first =
+      build("first", entry, toolchain, lang::CppStandard::Cpp23);
+  expect(first.succeeded() && first.provenance.has_value(),
+         "an opted-in executable build should capture structured provenance "
+         "(status=" +
+             std::to_string(static_cast<int>(first.status)) + ", detail=" +
+             first.driverDiagnostic.value_or("none") + ", native output=" +
+             (first.nativeProcess ? first.nativeProcess->output : "none") +
+             ")");
+  if (!first.provenance) {
+    return;
+  }
+  const lang::driver::BuildProvenance &firstProvenance = *first.provenance;
+  const bool hasDependency = std::any_of(
+      firstProvenance.source.units.begin(), firstProvenance.source.units.end(),
+      [&](const lang::driver::BuildSourceUnitProvenance &unit) {
+        return unit.material.canonicalPath ==
+                   std::filesystem::weakly_canonical(dependency) &&
+               !unit.material.sha256.empty();
+      });
+  const bool hasRuntimeHeader = std::any_of(
+      firstProvenance.runtime.headers.begin(),
+      firstProvenance.runtime.headers.end(),
+      [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
+        return header.kind == lang::driver::BuildRuntimeHeaderKind::Runtime &&
+               !header.material.sha256.empty();
+      });
+  expect(hasDependency && hasRuntimeHeader &&
+             firstProvenance.runtime.archive.canonicalPath ==
+                 std::filesystem::weakly_canonical(runtimeLibrary) &&
+             firstProvenance.producerExecutable.canonicalPath ==
+                 std::filesystem::weakly_canonical(testExecutable) &&
+             !firstProvenance.nativeCompilerExecutable.sha256.empty() &&
+             std::find(firstProvenance.nativeCommand.begin(),
+                       firstProvenance.nativeCommand.end(),
+                       "-MD") != firstProvenance.nativeCommand.end() &&
+             std::find(firstProvenance.nativeCommand.begin(),
+                       firstProvenance.nativeCommand.end(),
+                       "-MF") != firstProvenance.nativeCommand.end(),
+         "build provenance should retain exact loaded source, used runtime, "
+         "producer, native compiler, and depfile-bearing argv facts");
+  expect((firstProvenance.compilerBuild.state ==
+          lang::driver::CompilerSourceState::Unavailable) ==
+             !firstProvenance.compilerBuild.commit.has_value(),
+         "compiler build identity should claim a commit only with established "
+         "clean/dirty state");
+
+  const std::filesystem::path relocatedProject =
+      temporary.root() / "relocated/project";
+  const std::filesystem::path relocatedDependency =
+      relocatedProject / dependency.filename();
+  const std::filesystem::path relocatedEntry =
+      relocatedProject / entry.filename();
+  std::filesystem::create_directories(relocatedProject);
+  copyError.clear();
+  std::filesystem::copy_file(dependency, relocatedDependency, copyError);
+  if (!copyError) {
+    std::filesystem::copy_file(entry, relocatedEntry, copyError);
+  }
+  expect(!copyError, "relocated provenance sources should be copyable");
+  const lang::driver::ExecutableBuildResult relocatedSource = build(
+      "relocated-source", relocatedEntry, toolchain, lang::CppStandard::Cpp23);
+  const bool relocatedPathRecorded =
+      relocatedSource.provenance &&
+      std::any_of(relocatedSource.provenance->source.units.begin(),
+                  relocatedSource.provenance->source.units.end(),
+                  [&](const lang::driver::BuildSourceUnitProvenance &unit) {
+                    return unit.material.canonicalPath ==
+                           std::filesystem::weakly_canonical(relocatedEntry);
+                  });
+  expect(relocatedSource.succeeded() && relocatedSource.provenance &&
+             relocatedSource.provenance->source.materialsSha256 ==
+                 firstProvenance.source.materialsSha256 &&
+             relocatedPathRecorded,
+         "moving an identical logical source package should preserve its "
+         "aggregate while recording the new canonical paths");
+
+  const std::filesystem::path relocatedRuntimeInclude =
+      temporary.root() / "relocated-toolchain/include";
+  const std::filesystem::path relocatedRuntimeLibrary =
+      temporary.root() / "relocated-toolchain" / runtimeLibrary.filename();
+  std::filesystem::create_directories(relocatedRuntimeLibrary.parent_path());
+  copyError.clear();
+  std::filesystem::copy(runtimeInclude, relocatedRuntimeInclude,
+                        std::filesystem::copy_options::recursive, copyError);
+  if (!copyError) {
+    std::filesystem::copy_file(runtimeLibrary, relocatedRuntimeLibrary,
+                               copyError);
+  }
+  expect(!copyError, "relocated runtime materials should be copyable");
+  const lang::driver::ToolchainLayout relocatedToolchain{
+      .standardLibrary = toolchain.standardLibrary,
+      .runtimeInclude = relocatedRuntimeInclude,
+      .runtimeLibrary = relocatedRuntimeLibrary,
+      .vendorInclude = toolchain.vendorInclude,
+  };
+  const lang::driver::ExecutableBuildResult relocatedRuntime = build(
+      "relocated-runtime", entry, relocatedToolchain, lang::CppStandard::Cpp23);
+  expect(relocatedRuntime.succeeded() && relocatedRuntime.provenance &&
+             relocatedRuntime.provenance->runtime.materialsSha256 ==
+                 firstProvenance.runtime.materialsSha256 &&
+             relocatedRuntime.provenance->runtime.archive.canonicalPath ==
+                 std::filesystem::weakly_canonical(relocatedRuntimeLibrary),
+         "moving identical runtime headers and archive should preserve their "
+         "aggregate while recording new canonical paths");
+
+  const lang::driver::ExecutableBuildResult separateCpp20 =
+      build("cpp20-separate", entry, toolchain, lang::CppStandard::Cpp20);
+  const std::filesystem::path sharedInclude =
+      temporary.root() / "installed/include";
+  std::filesystem::create_directories(sharedInclude);
+  copyError.clear();
+  std::filesystem::copy(runtimeInclude / "gti", sharedInclude / "gti",
+                        std::filesystem::copy_options::recursive, copyError);
+  if (!copyError) {
+    std::filesystem::copy(discovered.vendorInclude / "nonstd",
+                          sharedInclude / "nonstd",
+                          std::filesystem::copy_options::recursive, copyError);
+  }
+  expect(!copyError,
+         "a shared installed runtime/compatibility include root should be "
+         "copyable");
+  const lang::driver::ToolchainLayout sharedRootToolchain{
+      .standardLibrary = toolchain.standardLibrary,
+      .runtimeInclude = sharedInclude,
+      .runtimeLibrary = runtimeLibrary,
+      .vendorInclude = sharedInclude,
+  };
+  const lang::driver::ExecutableBuildResult sharedCpp20 = build(
+      "cpp20-shared", entry, sharedRootToolchain, lang::CppStandard::Cpp20);
+  const bool sharedCompatibility =
+      sharedCpp20.provenance &&
+      std::any_of(
+          sharedCpp20.provenance->runtime.headers.begin(),
+          sharedCpp20.provenance->runtime.headers.end(),
+          [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
+            return header.kind ==
+                       lang::driver::BuildRuntimeHeaderKind::Compatibility &&
+                   header.logicalIdentity.starts_with("nonstd/");
+          });
+  const bool misclassifiedCompatibility =
+      sharedCpp20.provenance &&
+      std::any_of(sharedCpp20.provenance->runtime.headers.begin(),
+                  sharedCpp20.provenance->runtime.headers.end(),
+                  [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
+                    return header.kind ==
+                               lang::driver::BuildRuntimeHeaderKind::Runtime &&
+                           header.logicalIdentity.starts_with("nonstd/");
+                  });
+  const auto runtimeSummary =
+      [](const lang::driver::ExecutableBuildResult &value) {
+        std::string summary;
+        if (!value.provenance) {
+          return summary;
+        }
+        summary = value.provenance->runtime.materialsSha256;
+        for (const lang::driver::BuildRuntimeHeaderProvenance &header :
+             value.provenance->runtime.headers) {
+          summary +=
+              " [" +
+              std::string(
+                  lang::driver::buildRuntimeHeaderKindName(header.kind)) +
+              ":" + header.logicalIdentity + ":" + header.material.sha256 + "]";
+        }
+        return summary;
+      };
+  expect(
+      separateCpp20.succeeded() && separateCpp20.provenance &&
+          sharedCpp20.succeeded() && sharedCpp20.provenance &&
+          sharedCompatibility && !misclassifiedCompatibility &&
+          sharedCpp20.provenance->runtime.materialsSha256 ==
+              separateCpp20.provenance->runtime.materialsSha256,
+      "a shared installed C++20 include root should classify nonstd as "
+      "compatibility and preserve normalized runtime identity (separate "
+      "status=" +
+          std::to_string(static_cast<int>(separateCpp20.status)) +
+          ", shared status=" +
+          std::to_string(static_cast<int>(sharedCpp20.status)) +
+          ", shared detail=" + sharedCpp20.driverDiagnostic.value_or("none") +
+          ", separate materials=" + runtimeSummary(separateCpp20) +
+          ", shared materials=" + runtimeSummary(sharedCpp20) + ")");
+
+  expect(writeFile(dependency, "int dependency_value() { return 2; }\n"),
+         "the included provenance source should be editable");
+  const lang::driver::ExecutableBuildResult sourceChanged =
+      build("source", entry, toolchain, lang::CppStandard::Cpp23);
+  expect(sourceChanged.succeeded() && sourceChanged.provenance &&
+             sourceChanged.provenance->source.materialsSha256 !=
+                 firstProvenance.source.materialsSha256 &&
+             sourceChanged.provenance->runtime.materialsSha256 ==
+                 firstProvenance.runtime.materialsSha256,
+         "changing a consumed included GTI source should alter only source "
+         "material provenance");
+
+  if (firstProvenance.runtime.headers.empty()) {
+    return;
+  }
+  const std::filesystem::path runtimeHeader =
+      firstProvenance.runtime.headers.front().material.canonicalPath;
+  expect(writeFile(runtimeHeader,
+                   readFile(runtimeHeader) + "\n// provenance change\n"),
+         "the copied used runtime header should be editable");
+  const lang::driver::ExecutableBuildResult runtimeChanged =
+      build("runtime", entry, toolchain, lang::CppStandard::Cpp23);
+  expect(runtimeChanged.succeeded() && runtimeChanged.provenance &&
+             sourceChanged.provenance &&
+             runtimeChanged.provenance->runtime.materialsSha256 !=
+                 sourceChanged.provenance->runtime.materialsSha256,
+         "changing a used runtime header should alter runtime provenance "
+         "(status=" +
+             std::to_string(static_cast<int>(runtimeChanged.status)) +
+             ", detail=" + runtimeChanged.driverDiagnostic.value_or("none") +
+             ")");
+}
+
 void testResourcesAndArtifactOwnership() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -1825,6 +2180,8 @@ int main(int argc, char *argv[]) {
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testNativeDependencyDiscoveryPrimitives();
+  testBuildSourceMaterialIdentityProjection();
+  testBuildProvenance(std::filesystem::absolute(argv[0]));
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

@@ -36,6 +36,8 @@ DESCRIPTOR_KEYS = {
     "variants",
 }
 VARIANT_KEYS = {"name", "kind", "source"}
+VARIANT_SCHEMA_2_KEYS = {*VARIANT_KEYS, "execution_profile"}
+EXECUTION_PROFILES = {"single-threaded", "concurrent"}
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RESULT_PATTERN = re.compile(
     r"GTI-BENCH-1 digest:([0-9a-f]{16}) work-units:([1-9][0-9]{0,19})"
@@ -58,6 +60,8 @@ SAFE_NATIVE_FLAGS = {
 SAFE_NATIVE_FLAG_PATTERN = re.compile(
     r"^-(?:march|mcpu|mtune)=[A-Za-z0-9_+.,-]+$"
 )
+GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class BenchmarkError(RuntimeError):
@@ -69,6 +73,7 @@ class Variant:
     name: str
     kind: str
     source: Path
+    execution_profile: str | None
 
 
 @dataclass(frozen=True)
@@ -287,8 +292,15 @@ def load_workload(selection: str) -> Workload:
     if not isinstance(decoded, dict):
         raise BenchmarkError(f"benchmark descriptor '{path}' must contain an object")
     require_exact_keys(decoded, DESCRIPTOR_KEYS, f"benchmark descriptor '{path}'")
-    if decoded["schema"] != 1 or isinstance(decoded["schema"], bool):
-        raise BenchmarkError(f"benchmark descriptor '{path}' requires schema 1")
+    schema = decoded["schema"]
+    if (
+        not isinstance(schema, int)
+        or isinstance(schema, bool)
+        or schema not in {1, 2}
+    ):
+        raise BenchmarkError(
+            f"benchmark descriptor '{path}' requires schema 1 or 2"
+        )
     name = require_name(decoded["name"], "benchmark name")
     if not isinstance(decoded["description"], str) or not decoded["description"].strip():
         raise BenchmarkError(f"benchmark '{name}' requires a nonempty description")
@@ -322,13 +334,15 @@ def load_workload(selection: str) -> Workload:
         context = f"benchmark '{name}' variant {index}"
         if not isinstance(entry, dict):
             raise BenchmarkError(f"{context} must contain an object")
-        require_exact_keys(entry, VARIANT_KEYS, context)
+        require_exact_keys(
+            entry, VARIANT_KEYS if schema == 1 else VARIANT_SCHEMA_2_KEYS, context
+        )
         variant_name = require_name(entry["name"], f"{context} name")
         if variant_name in names:
             raise BenchmarkError(f"benchmark '{name}' repeats variant '{variant_name}'")
         names.add(variant_name)
         kind = entry["kind"]
-        if kind not in {"gti", "cpp"}:
+        if not isinstance(kind, str) or kind not in {"gti", "cpp"}:
             raise BenchmarkError(f"{context} kind must be 'gti' or 'cpp'")
         source = source_path(directory, entry["source"], f"{context} source")
         expected_suffix = ".gti" if kind == "gti" else ".cpp"
@@ -336,9 +350,26 @@ def load_workload(selection: str) -> Workload:
             raise BenchmarkError(
                 f"{context} source must use {expected_suffix}, got {source.name}"
             )
-        variants.append(Variant(variant_name, kind, source))
-    if sum(variant.kind == "gti" for variant in variants) != 1:
+        execution_profile = entry.get("execution_profile")
+        if schema == 2:
+            if kind == "gti" and (
+                not isinstance(execution_profile, str)
+                or execution_profile not in EXECUTION_PROFILES
+            ):
+                raise BenchmarkError(
+                    f"{context} execution_profile must be 'single-threaded' "
+                    "or 'concurrent' for a GTI variant"
+                )
+            if kind == "cpp" and execution_profile is not None:
+                raise BenchmarkError(
+                    f"{context} execution_profile must be null for a C++ variant"
+                )
+        variants.append(Variant(variant_name, kind, source, execution_profile))
+    gti_variants = sum(variant.kind == "gti" for variant in variants)
+    if schema == 1 and gti_variants != 1:
         raise BenchmarkError(f"benchmark '{name}' must declare exactly one GTI variant")
+    if schema == 2 and gti_variants == 0:
+        raise BenchmarkError(f"benchmark '{name}' must declare at least one GTI variant")
     return Workload(
         name=name,
         description=decoded["description"].strip(),
@@ -425,6 +456,227 @@ def executable_name(name: str) -> str:
     return name + (".exe" if os.name == "nt" else "")
 
 
+def require_integer(value: Any, context: str, minimum: int = 0) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise BenchmarkError(f"{context} must be an integer >= {minimum}")
+    return value
+
+
+def validate_build_file(
+    value: Any, context: str, expected: Path | None = None
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise BenchmarkError(f"{context} must contain an object")
+    require_exact_keys(value, {"canonical_path", "bytes", "sha256"}, context)
+    path_value = value["canonical_path"]
+    if not isinstance(path_value, str) or not path_value:
+        raise BenchmarkError(f"{context}.canonical_path must be a nonempty string")
+    path = Path(path_value)
+    if not path.is_absolute():
+        raise BenchmarkError(f"{context}.canonical_path must be absolute")
+    try:
+        canonical = path.resolve(strict=True)
+    except OSError as error:
+        raise BenchmarkError(f"{context} names missing material '{path}'") from error
+    if not canonical.is_file() or canonical != path:
+        raise BenchmarkError(f"{context}.canonical_path is not canonical: {path}")
+    if expected is not None and canonical != expected.resolve(strict=True):
+        raise BenchmarkError(
+            f"{context} identifies '{canonical}', expected '{expected.resolve(strict=True)}'"
+        )
+    recorded_bytes = require_integer(value["bytes"], f"{context}.bytes")
+    sha256 = value["sha256"]
+    if not isinstance(sha256, str) or SHA256_PATTERN.fullmatch(sha256) is None:
+        raise BenchmarkError(f"{context}.sha256 must be 64 lowercase hex digits")
+    actual = file_evidence(canonical)
+    if actual["bytes"] != recorded_bytes or actual["sha256"] != sha256:
+        raise BenchmarkError(f"{context} no longer matches its recorded material")
+    return value
+
+
+def validate_optional_string(value: Any, context: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise BenchmarkError(f"{context} must be a string or null")
+
+
+def native_argv_contains_file(argv: list[str], expected: Path, cwd: Path) -> bool:
+    for argument in argv[1:]:
+        if argument.startswith("-"):
+            continue
+        candidate = Path(argument)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        try:
+            if candidate.samefile(expected):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def load_build_provenance(
+    path: Path,
+    gti: Tool,
+    cxx: Tool,
+    expected_entry: Path,
+    native_cwd: Path | None = None,
+) -> dict[str, Any]:
+    try:
+        raw = path.read_bytes()
+        report = json.loads(raw, object_pairs_hook=strict_json_object)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise BenchmarkError(f"failed to parse GTI build report '{path}': {error}") from error
+    if not isinstance(report, dict):
+        raise BenchmarkError(f"GTI build report '{path}' must contain an object")
+    require_exact_keys(report, {"schema", "producer", "sources", "native"}, "GTI build report")
+    if report["schema"] != 1 or isinstance(report["schema"], bool):
+        raise BenchmarkError("GTI build report requires schema 1")
+
+    producer = report["producer"]
+    if not isinstance(producer, dict):
+        raise BenchmarkError("GTI build report producer must contain an object")
+    require_exact_keys(producer, {"executable", "compiler_build"}, "GTI build report producer")
+    validate_build_file(producer["executable"], "GTI build report producer executable", gti.resolved)
+    compiler_build = producer["compiler_build"]
+    if not isinstance(compiler_build, dict):
+        raise BenchmarkError("GTI compiler build identity must contain an object")
+    require_exact_keys(compiler_build, {"state", "commit"}, "GTI compiler build identity")
+    state = compiler_build["state"]
+    commit = compiler_build["commit"]
+    if state not in {"clean", "dirty", "unavailable"}:
+        raise BenchmarkError("GTI compiler build state is invalid")
+    if state == "unavailable":
+        if commit is not None:
+            raise BenchmarkError("an unavailable compiler build identity must not claim a commit")
+    elif not isinstance(commit, str) or GIT_COMMIT_PATTERN.fullmatch(commit) is None:
+        raise BenchmarkError("a clean or dirty compiler build identity requires a commit")
+
+    sources = report["sources"]
+    if not isinstance(sources, dict):
+        raise BenchmarkError("GTI build report sources must contain an object")
+    require_exact_keys(
+        sources,
+        {"entry_root", "prelude_roots", "compilation_order", "materials_sha256", "units", "dependencies"},
+        "GTI build report sources",
+    )
+    entry_root = require_integer(sources["entry_root"], "GTI source entry_root", 1)
+    materials_sha256 = sources["materials_sha256"]
+    if not isinstance(materials_sha256, str) or SHA256_PATTERN.fullmatch(materials_sha256) is None:
+        raise BenchmarkError("GTI source materials_sha256 is invalid")
+    units = sources["units"]
+    if not isinstance(units, list) or not units:
+        raise BenchmarkError("GTI source provenance requires at least one unit")
+    unit_ids: set[int] = set()
+    units_by_id: dict[int, dict[str, Any]] = {}
+    unit_keys = {
+        "id", "role", "logical_identity", "standard_library_name",
+        "package_identity", "package_relative_path", "entry", "prelude", "material",
+    }
+    for index, unit in enumerate(units):
+        context = f"GTI source unit {index}"
+        if not isinstance(unit, dict):
+            raise BenchmarkError(f"{context} must contain an object")
+        require_exact_keys(unit, unit_keys, context)
+        unit_id = require_integer(unit["id"], f"{context}.id", 1)
+        if unit_id in unit_ids:
+            raise BenchmarkError(f"GTI source provenance repeats unit id {unit_id}")
+        unit_ids.add(unit_id)
+        units_by_id[unit_id] = unit
+        if unit["role"] not in {"application", "prelude", "standard-library"}:
+            raise BenchmarkError(f"{context}.role is invalid")
+        for field in ("logical_identity", "standard_library_name", "package_identity", "package_relative_path"):
+            validate_optional_string(unit[field], f"{context}.{field}")
+        if not isinstance(unit["entry"], bool) or not isinstance(unit["prelude"], bool):
+            raise BenchmarkError(f"{context} entry/prelude markers must be booleans")
+        validate_build_file(unit["material"], f"{context}.material")
+    if entry_root not in units_by_id or not units_by_id[entry_root]["entry"]:
+        raise BenchmarkError("GTI source entry_root does not identify the entry unit")
+    entry_path = Path(units_by_id[entry_root]["material"]["canonical_path"])
+    if entry_path != expected_entry.resolve(strict=True):
+        raise BenchmarkError("GTI source entry_root differs from the benchmark variant source")
+
+    prelude_roots = sources["prelude_roots"]
+    compilation_order = sources["compilation_order"]
+    if not isinstance(prelude_roots, list) or not isinstance(compilation_order, list):
+        raise BenchmarkError("GTI source roots/order must be arrays")
+    parsed_preludes = [require_integer(value, "GTI prelude root", 1) for value in prelude_roots]
+    if len(parsed_preludes) != len(set(parsed_preludes)):
+        raise BenchmarkError("GTI source provenance repeats a prelude root")
+    if any(root not in units_by_id or not units_by_id[root]["prelude"] for root in parsed_preludes):
+        raise BenchmarkError("GTI source provenance has an invalid prelude root")
+    parsed_order = [require_integer(value, "GTI compilation order id", 1) for value in compilation_order]
+    if len(parsed_order) != len(unit_ids) or set(parsed_order) != unit_ids:
+        raise BenchmarkError("GTI compilation order is not an exact permutation of source units")
+
+    dependencies = sources["dependencies"]
+    if not isinstance(dependencies, list):
+        raise BenchmarkError("GTI source dependencies must be an array")
+    dependency_keys = {"source", "target", "kind", "include_spelling", "include_occurrence"}
+    for index, dependency in enumerate(dependencies):
+        context = f"GTI source dependency {index}"
+        if not isinstance(dependency, dict):
+            raise BenchmarkError(f"{context} must contain an object")
+        require_exact_keys(dependency, dependency_keys, context)
+        source = require_integer(dependency["source"], f"{context}.source", 1)
+        target = require_integer(dependency["target"], f"{context}.target", 1)
+        if source not in unit_ids or target not in unit_ids:
+            raise BenchmarkError(f"{context} references an unknown unit")
+        if dependency["kind"] not in {"include", "prelude", "standard-library", "package"}:
+            raise BenchmarkError(f"{context}.kind is invalid")
+        if not isinstance(dependency["include_spelling"], str):
+            raise BenchmarkError(f"{context}.include_spelling must be a string")
+        require_integer(dependency["include_occurrence"], f"{context}.include_occurrence")
+
+    native = report["native"]
+    if not isinstance(native, dict):
+        raise BenchmarkError("GTI native provenance must contain an object")
+    require_exact_keys(native, {"compiler_executable", "argv", "runtime"}, "GTI native provenance")
+    validate_build_file(native["compiler_executable"], "GTI native compiler executable", cxx.resolved)
+    argv = native["argv"]
+    if not isinstance(argv, list) or not argv or any(not isinstance(item, str) or "\0" in item for item in argv):
+        raise BenchmarkError("GTI native argv must be a nonempty string array")
+    if Path(argv[0]).resolve(strict=True) != cxx.resolved:
+        raise BenchmarkError("GTI native argv does not use the selected native compiler")
+    if "-MD" not in argv or "-MF" not in argv:
+        raise BenchmarkError("GTI native argv did not capture compiler-owned dependencies")
+
+    runtime = native["runtime"]
+    if not isinstance(runtime, dict):
+        raise BenchmarkError("GTI runtime provenance must contain an object")
+    require_exact_keys(runtime, {"materials_sha256", "headers", "archive"}, "GTI runtime provenance")
+    runtime_sha256 = runtime["materials_sha256"]
+    if not isinstance(runtime_sha256, str) or SHA256_PATTERN.fullmatch(runtime_sha256) is None:
+        raise BenchmarkError("GTI runtime materials_sha256 is invalid")
+    headers = runtime["headers"]
+    if not isinstance(headers, list) or not headers:
+        raise BenchmarkError("GTI runtime provenance requires used headers")
+    saw_runtime = False
+    for index, header in enumerate(headers):
+        context = f"GTI runtime header {index}"
+        if not isinstance(header, dict):
+            raise BenchmarkError(f"{context} must contain an object")
+        require_exact_keys(header, {"kind", "logical_identity", "material"}, context)
+        if header["kind"] not in {"runtime", "compatibility"}:
+            raise BenchmarkError(f"{context}.kind is invalid")
+        saw_runtime = saw_runtime or header["kind"] == "runtime"
+        if not isinstance(header["logical_identity"], str) or not header["logical_identity"]:
+            raise BenchmarkError(f"{context}.logical_identity must be nonempty")
+        validate_build_file(header["material"], f"{context}.material")
+    if not saw_runtime:
+        raise BenchmarkError("GTI runtime provenance contains no runtime header")
+    archive = validate_build_file(runtime["archive"], "GTI runtime archive")
+    if not native_argv_contains_file(
+        argv,
+        Path(archive["canonical_path"]),
+        native_cwd if native_cwd is not None else expected_entry.parent,
+    ):
+        raise BenchmarkError("GTI runtime archive is not present in the exact native argv")
+    return {
+        "sidecar": {"path": str(path), "sha256": sha256_bytes(raw), "bytes": len(raw)},
+        "build": report,
+    }
+
+
 def build_variant(
     workload: Workload,
     variant: Variant,
@@ -439,6 +691,7 @@ def build_variant(
     variant_directory = directory / variant.name
     variant_directory.mkdir(parents=True, exist_ok=False)
     executable = variant_directory / executable_name(variant.name)
+    build_report = variant_directory / "gti-build-report.json"
     if variant.kind == "gti":
         command = [
             str(gti.resolved),
@@ -449,9 +702,12 @@ def build_variant(
             "--cxx",
             str(cxx.resolved),
             "--keep-cpp",
-            "-o",
-            str(executable),
         ]
+        if variant.execution_profile is not None:
+            command.extend(("--execution-profile", variant.execution_profile))
+        if workload.descriptor["schema"] == 2:
+            command.extend(("--build-report", str(build_report)))
+        command.extend(("-o", str(executable)))
         if native_flags:
             command.extend(("--", *native_flags))
     else:
@@ -493,7 +749,7 @@ def build_variant(
         artifacts["emitted_cpp"] = file_evidence(generated)
     else:
         artifacts["native_input"] = file_evidence(variant.source)
-    return {
+    result = {
         "name": variant.name,
         "kind": variant.kind,
         "source": file_evidence(variant.source),
@@ -503,6 +759,23 @@ def build_variant(
         "artifacts": artifacts,
         "executable": str(executable),
     }
+    if workload.descriptor["schema"] == 2:
+        result["execution_profile"] = (
+            variant.execution_profile if variant.kind == "gti" else None
+        )
+        if variant.kind == "gti":
+            if not build_report.is_file():
+                raise BenchmarkError(
+                    f"GTI benchmark build did not publish provenance at '{build_report}'"
+                )
+            result["provenance"] = load_build_provenance(
+                build_report,
+                gti,
+                cxx,
+                variant.source,
+                workload.descriptor_path.parent,
+            )
+    return result
 
 
 def execute_variant(
@@ -725,6 +998,77 @@ def repository_facts() -> dict[str, Any]:
     }
 
 
+def exact_head_evidence(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    gti: Tool,
+    workloads: list[dict[str, Any]],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    benchmarked_head = before["commit"]
+    recorded_head = after["commit"]
+    if not isinstance(benchmarked_head, str) or GIT_COMMIT_PATTERN.fullmatch(benchmarked_head) is None:
+        reasons.append("benchmarked_head_unavailable")
+    if not isinstance(recorded_head, str) or GIT_COMMIT_PATTERN.fullmatch(recorded_head) is None:
+        reasons.append("recorded_head_unavailable")
+    if before["dirty"] is not False:
+        reasons.append("repository_not_clean_before_benchmark")
+    if after["dirty"] is not False:
+        reasons.append("repository_not_clean_after_benchmark")
+    if benchmarked_head != recorded_head:
+        reasons.append("recorded_head_differs_from_benchmarked_head")
+
+    compiler_builds: list[dict[str, Any]] = []
+    producer_sha256s: list[str] = []
+    for workload in workloads:
+        for variant in workload["variants"]:
+            provenance = variant.get("provenance")
+            if variant["kind"] != "gti":
+                continue
+            if provenance is None:
+                reasons.append("gti_build_provenance_unavailable")
+                continue
+            build = provenance["build"]
+            compiler_builds.append(build["producer"]["compiler_build"])
+            producer_sha256s.append(build["producer"]["executable"]["sha256"])
+    if not compiler_builds or any(
+        identity["state"] == "unavailable"
+        or not isinstance(identity["commit"], str)
+        or GIT_COMMIT_PATTERN.fullmatch(identity["commit"]) is None
+        for identity in compiler_builds
+    ):
+        reasons.append("compiler_build_identity_unavailable")
+    if any(identity["state"] == "dirty" for identity in compiler_builds):
+        reasons.append("compiler_build_identity_dirty")
+    compiler_commits = sorted(
+        {identity["commit"] for identity in compiler_builds if identity["commit"] is not None}
+    )
+    if len(compiler_commits) > 1:
+        reasons.append("compiler_build_identity_inconsistent")
+    if compiler_commits and compiler_commits[0] != benchmarked_head:
+        reasons.append("compiler_commit_differs_from_benchmarked_head")
+    selected_compiler_sha256 = file_evidence(gti.resolved)["sha256"]
+    if not producer_sha256s or any(
+        sha256 != selected_compiler_sha256 for sha256 in producer_sha256s
+    ):
+        reasons.append("sidecar_producer_differs_from_selected_compiler")
+    reasons = sorted(set(reasons))
+    return {
+        "exact": not reasons,
+        "benchmarked_head": benchmarked_head,
+        "recorded_head": recorded_head,
+        "repository_dirty_before": before["dirty"],
+        "repository_dirty_after": after["dirty"],
+        "compiler_build_states": sorted(
+            {identity["state"] for identity in compiler_builds}
+        ),
+        "compiler_source_commits": compiler_commits,
+        "selected_compiler_sha256": selected_compiler_sha256,
+        "sidecar_producer_sha256s": sorted(set(producer_sha256s)),
+        "reasons": reasons,
+    }
+
+
 def cpu_model() -> str | None:
     processor = platform.processor().strip()
     if processor:
@@ -853,6 +1197,8 @@ def main() -> int:
         workload_names = [workload.name for workload in workloads]
         if len(workload_names) != len(set(workload_names)):
             raise BenchmarkError("each benchmark workload may be selected only once")
+        has_schema_2 = any(workload.descriptor["schema"] == 2 for workload in workloads)
+        repository_before = repository_facts()
         output_root = canonical_output_root(arguments.output, workloads)
         run_name = (
             "run-"
@@ -893,14 +1239,15 @@ def main() -> int:
                 )
             )
 
+        repository_after = repository_facts()
         report = {
-            "schema": 1,
+            "schema": 2 if has_schema_2 else 1,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "runner": {
                 "path": str(Path(__file__).resolve()),
                 "sha256": file_evidence(Path(__file__).resolve())["sha256"],
             },
-            "repository": repository_facts(),
+            "repository": repository_after,
             "tools": {"gti": tool_record(gti), "cxx": tool_record(cxx)},
             "environment": {
                 "os": platform.system(),
@@ -937,6 +1284,10 @@ def main() -> int:
             "run_directory": str(run_directory),
             "workloads": reports,
         }
+        if has_schema_2:
+            report["exact_head_evidence"] = exact_head_evidence(
+                repository_before, repository_after, gti, reports
+            )
         write_atomic(json_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
         write_atomic(markdown_path, markdown_report(report))
         print(f"Benchmark JSON: {json_path}")

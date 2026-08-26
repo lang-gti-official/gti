@@ -6,6 +6,7 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "gti/executable_path.h"
 #include "gti/support.h"
 #include "gti/target.h"
 #include "project_presentation.h"
@@ -14,6 +15,7 @@
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -40,6 +42,7 @@ struct Options {
   std::optional<std::filesystem::path> dumpMirBefore;
   std::optional<std::filesystem::path> dumpMirAfter;
   std::optional<std::filesystem::path> optimizationReport;
+  std::optional<std::filesystem::path> buildReport;
   std::vector<std::string> compilerArguments;
   lang::ConfigurationFlags configurationFlags;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
@@ -175,6 +178,9 @@ void printUsage(std::ostream &stream) {
          "      --optimization-report <path>\n"
          "                       Write versioned deterministic optimizer "
          "JSON.\n"
+         "      --build-report <path>\n"
+         "                       Write a versioned executable-build provenance "
+         "sidecar.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
@@ -418,16 +424,21 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       continue;
     }
     if (argument == "--dump-mir-before" || argument == "--dump-mir-after" ||
-        argument == "--optimization-report") {
+        argument == "--optimization-report" || argument == "--build-report") {
       if (++index >= argc) {
         std::cerr << "gti: missing path after " << argument << '\n';
         return ArgumentResult::ExitFailure;
       }
-      std::optional<std::filesystem::path> *destination =
-          argument == "--dump-mir-before"
-              ? &options.dumpMirBefore
-              : (argument == "--dump-mir-after" ? &options.dumpMirAfter
-                                                : &options.optimizationReport);
+      std::optional<std::filesystem::path> *destination = nullptr;
+      if (argument == "--dump-mir-before") {
+        destination = &options.dumpMirBefore;
+      } else if (argument == "--dump-mir-after") {
+        destination = &options.dumpMirAfter;
+      } else if (argument == "--optimization-report") {
+        destination = &options.optimizationReport;
+      } else {
+        destination = &options.buildReport;
+      }
       if (*destination) {
         std::cerr << "gti: " << argument << " may be specified only once\n";
         return ArgumentResult::ExitFailure;
@@ -495,6 +506,11 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     std::cerr << "gti: native compiler arguments require executable output\n";
     return ArgumentResult::ExitFailure;
   }
+  if ((options.emitCpp || options.emitNativeHeader || options.emitMir) &&
+      options.buildReport) {
+    std::cerr << "gti: --build-report requires executable output\n";
+    return ArgumentResult::ExitFailure;
+  }
   for (const std::string &argument : options.compilerArguments) {
     if (!lang::driver::isReservedNativeBuildArgument(argument)) {
       continue;
@@ -528,6 +544,9 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   if (options.optimizationReport) {
     outputPaths.emplace_back(*options.optimizationReport,
                              "--optimization-report");
+  }
+  if (options.buildReport) {
+    outputPaths.emplace_back(*options.buildReport, "--build-report");
   }
   for (std::size_t left = 0; left < outputPaths.size(); ++left) {
     std::error_code leftError;
@@ -1086,6 +1105,218 @@ bool writeFile(const std::filesystem::path &path, std::string_view contents) {
   return false;
 }
 
+std::string jsonEscape(std::string_view value) {
+  std::ostringstream output;
+  for (const unsigned char character : value) {
+    switch (character) {
+    case '"':
+      output << "\\\"";
+      break;
+    case '\\':
+      output << "\\\\";
+      break;
+    case '\b':
+      output << "\\b";
+      break;
+    case '\f':
+      output << "\\f";
+      break;
+    case '\n':
+      output << "\\n";
+      break;
+    case '\r':
+      output << "\\r";
+      break;
+    case '\t':
+      output << "\\t";
+      break;
+    default:
+      if (character < 0x20U) {
+        output << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(character) << std::dec;
+      } else {
+        output << static_cast<char>(character);
+      }
+      break;
+    }
+  }
+  return output.str();
+}
+
+void writeJsonString(std::ostream &stream, std::string_view value) {
+  stream << '"' << jsonEscape(value) << '"';
+}
+
+void writeOptionalJsonString(std::ostream &stream,
+                             const std::optional<std::string> &value) {
+  if (value) {
+    writeJsonString(stream, *value);
+  } else {
+    stream << "null";
+  }
+}
+
+void writeBuildFileJson(std::ostream &stream,
+                        const lang::driver::BuildFileProvenance &provenance) {
+  stream << "{\"canonical_path\":";
+  writeJsonString(stream, provenance.canonicalPath.string());
+  stream << ",\"bytes\":" << provenance.bytes << ",\"sha256\":";
+  writeJsonString(stream, provenance.sha256);
+  stream << '}';
+}
+
+std::string_view sourceRoleName(lang::SourceUnitRole role) {
+  switch (role) {
+  case lang::SourceUnitRole::Application:
+    return "application";
+  case lang::SourceUnitRole::Prelude:
+    return "prelude";
+  case lang::SourceUnitRole::StandardLibrary:
+    return "standard-library";
+  }
+  return "application";
+}
+
+std::string_view sourceDependencyKindName(lang::SourceDependencyKind kind) {
+  switch (kind) {
+  case lang::SourceDependencyKind::Include:
+    return "include";
+  case lang::SourceDependencyKind::Prelude:
+    return "prelude";
+  case lang::SourceDependencyKind::StandardLibrary:
+    return "standard-library";
+  case lang::SourceDependencyKind::Package:
+    return "package";
+  }
+  return "include";
+}
+
+std::string
+serializeBuildProvenanceJson(const lang::driver::BuildProvenance &provenance) {
+  std::ostringstream stream;
+  stream << "{\n  \"schema\": " << provenance.schema
+         << ",\n  \"producer\": {\n    \"executable\": ";
+  writeBuildFileJson(stream, provenance.producerExecutable);
+  stream << ",\n    \"compiler_build\": {\"state\":";
+  writeJsonString(stream, lang::driver::compilerSourceStateName(
+                              provenance.compilerBuild.state));
+  stream << ",\"commit\":";
+  writeOptionalJsonString(stream, provenance.compilerBuild.commit);
+  stream << "}\n  },\n  \"sources\": {\n    \"entry_root\": "
+         << provenance.source.entryRoot << ",\n    \"prelude_roots\": [";
+  for (std::size_t index = 0; index < provenance.source.preludeRoots.size();
+       ++index) {
+    if (index != 0) {
+      stream << ',';
+    }
+    stream << provenance.source.preludeRoots[index];
+  }
+  stream << "],\n    \"compilation_order\": [";
+  for (std::size_t index = 0; index < provenance.source.compilationOrder.size();
+       ++index) {
+    if (index != 0) {
+      stream << ',';
+    }
+    stream << provenance.source.compilationOrder[index];
+  }
+  stream << "],\n    \"materials_sha256\":";
+  writeJsonString(stream, provenance.source.materialsSha256);
+  stream << ",\n    \"units\": [";
+  for (std::size_t index = 0; index < provenance.source.units.size(); ++index) {
+    const lang::driver::BuildSourceUnitProvenance &unit =
+        provenance.source.units[index];
+    stream << (index == 0 ? "\n      " : ",\n      ") << "{\"id\":" << unit.id
+           << ",\"role\":";
+    writeJsonString(stream, sourceRoleName(unit.role));
+    stream << ",\"logical_identity\":";
+    writeOptionalJsonString(stream, unit.logicalIdentity);
+    stream << ",\"standard_library_name\":";
+    writeOptionalJsonString(stream, unit.standardLibraryName);
+    stream << ",\"package_identity\":";
+    writeOptionalJsonString(stream, unit.packageIdentity);
+    stream << ",\"package_relative_path\":";
+    writeOptionalJsonString(stream, unit.packageRelativePath);
+    stream << ",\"entry\":" << (unit.entry ? "true" : "false")
+           << ",\"prelude\":" << (unit.prelude ? "true" : "false")
+           << ",\"material\":";
+    writeBuildFileJson(stream, unit.material);
+    stream << '}';
+  }
+  if (!provenance.source.units.empty()) {
+    stream << '\n';
+  }
+  stream << "    ],\n    \"dependencies\": [";
+  for (std::size_t index = 0; index < provenance.source.dependencies.size();
+       ++index) {
+    const lang::driver::BuildSourceDependencyProvenance &dependency =
+        provenance.source.dependencies[index];
+    stream << (index == 0 ? "\n      " : ",\n      ")
+           << "{\"source\":" << dependency.source
+           << ",\"target\":" << dependency.target << ",\"kind\":";
+    writeJsonString(stream, sourceDependencyKindName(dependency.kind));
+    stream << ",\"include_spelling\":";
+    writeJsonString(stream, dependency.includeSpelling);
+    stream << ",\"include_occurrence\":" << dependency.includeOccurrence << '}';
+  }
+  if (!provenance.source.dependencies.empty()) {
+    stream << '\n';
+  }
+  stream << "    ]\n  },\n  \"native\": {\n    \"compiler_executable\": ";
+  writeBuildFileJson(stream, provenance.nativeCompilerExecutable);
+  stream << ",\n    \"argv\": [";
+  for (std::size_t index = 0; index < provenance.nativeCommand.size();
+       ++index) {
+    if (index != 0) {
+      stream << ',';
+    }
+    writeJsonString(stream, provenance.nativeCommand[index]);
+  }
+  stream << "],\n    \"runtime\": {\n      \"materials_sha256\":";
+  writeJsonString(stream, provenance.runtime.materialsSha256);
+  stream << ",\n      \"headers\": [";
+  for (std::size_t index = 0; index < provenance.runtime.headers.size();
+       ++index) {
+    const lang::driver::BuildRuntimeHeaderProvenance &header =
+        provenance.runtime.headers[index];
+    stream << (index == 0 ? "\n        " : ",\n        ") << "{\"kind\":";
+    writeJsonString(stream,
+                    lang::driver::buildRuntimeHeaderKindName(header.kind));
+    stream << ",\"logical_identity\":";
+    writeJsonString(stream, header.logicalIdentity);
+    stream << ",\"material\":";
+    writeBuildFileJson(stream, header.material);
+    stream << '}';
+  }
+  if (!provenance.runtime.headers.empty()) {
+    stream << '\n';
+  }
+  stream << "      ],\n      \"archive\": ";
+  writeBuildFileJson(stream, provenance.runtime.archive);
+  stream << "\n    }\n  }\n}\n";
+  return stream.str();
+}
+
+bool writeFileAtomically(const std::filesystem::path &path,
+                         std::string_view contents) {
+  const std::filesystem::path staged = lang::driver::stagedArtifactPath(path);
+  lang::driver::TemporaryArtifact cleanup(staged, true);
+  const lang::driver::ArtifactWriteStatus written =
+      lang::driver::writeArtifact(staged, contents);
+  if (written != lang::driver::ArtifactWriteStatus::Success) {
+    std::cerr << "gti: failed to write staged build report '" << staged.string()
+              << "'\n";
+    return false;
+  }
+  const lang::driver::ArtifactPublishResult published =
+      lang::driver::publishArtifact(staged, path);
+  if (!published.succeeded()) {
+    std::cerr << "gti: failed to publish build report '" << path.string()
+              << "': " << published.error.message() << '\n';
+    return false;
+  }
+  return true;
+}
+
 lang::driver::OptimizationOutputRequest
 optimizationOutputRequest(const Options &options) {
   return {.capturePreMir = options.dumpMirBefore.has_value(),
@@ -1333,6 +1564,8 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
     return exitCode(ExitStatus::Io);
   case lang::driver::ExecutableBuildStatus::ArtifactPathConflict:
     return exitCode(ExitStatus::Usage);
+  case lang::driver::ExecutableBuildStatus::BuildReportCaptureFailure:
+    return exitCode(ExitStatus::Io);
   }
   return exitCode(ExitStatus::Compilation);
 }
@@ -1398,7 +1631,13 @@ int runDirect(const Options &options, const char *driver) {
               optimizationOutputRequest(options)),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
-          std::move(nativeInputs), options.keepCpp, false, options.verbose));
+          std::move(nativeInputs), options.keepCpp, false, options.verbose,
+          std::nullopt, std::nullopt, std::nullopt,
+          options.buildReport
+              ? std::optional<lang::driver::BuildReportRequest>(
+                    {.output = *options.buildReport,
+                     .producerExecutable = lang::executablePath(driver)})
+              : std::nullopt));
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
@@ -1408,8 +1647,22 @@ int runDirect(const Options &options, const char *driver) {
   if (optimizationOutputStatus != exitCode(ExitStatus::Success)) {
     return optimizationOutputStatus;
   }
+  if (options.buildReport) {
+    if (!result.provenance) {
+      std::cerr << "gti: internal compiler error: requested build report was "
+                   "not captured\n";
+      return exitCode(ExitStatus::Compilation);
+    }
+    if (!writeFileAtomically(*options.buildReport, serializeBuildProvenanceJson(
+                                                       *result.provenance))) {
+      return exitCode(ExitStatus::Io);
+    }
+  }
 
   std::cout << "Built " << options.output << '\n';
+  if (options.buildReport) {
+    std::cout << "Build report " << *options.buildReport << '\n';
+  }
   if (options.keepCpp) {
     std::cout << "Kept C++ " << generatedSource << '\n';
   }
