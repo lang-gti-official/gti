@@ -33,6 +33,29 @@ void expect(bool condition, std::string_view message) {
   }
 }
 
+void testDischargedCompoundOperatorVocabulary() {
+  expect(
+      lang::cppMirCompoundOperatorSpelling(lang::MirOperation::AddAssign) ==
+              "+=" &&
+          lang::cppMirCompoundOperatorSpelling(
+              lang::MirOperation::SubtractAssign) == "-=" &&
+          lang::cppMirCompoundOperatorSpelling(
+              lang::MirOperation::MultiplyAssign) == "*=" &&
+          lang::cppMirCompoundOperatorSpelling(lang::MirOperation::DivideAssign)
+              .empty() &&
+          lang::cppMirCompoundOperatorSpelling(
+              lang::MirOperation::RemainderAssign)
+              .empty() &&
+          lang::cppMirCompoundOperatorSpelling(
+              lang::MirOperation::ShiftLeftAssign)
+              .empty() &&
+          lang::cppMirCompoundOperatorSpelling(
+              lang::MirOperation::ShiftRightAssign)
+              .empty(),
+      "native compound emission should remain limited to operations whose "
+      "proved successful path exactly matches C++ semantics");
+}
+
 std::vector<std::filesystem::path> exampleCorpusSources() {
   if (corpusSource.has_value()) {
     if (std::filesystem::is_regular_file(*corpusSource) &&
@@ -9571,6 +9594,8 @@ struct NamedTest {
 };
 
 constexpr NamedTest kTests[] = {
+    {"testDischargedCompoundOperatorVocabulary",
+     testDischargedCompoundOperatorVocabulary},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},

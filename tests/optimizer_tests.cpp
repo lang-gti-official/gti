@@ -7090,16 +7090,20 @@ int main() {
       lang::Frontend().analyze("optimizer-pass-foundation.gti", source);
   const lang::HirFunctionInstance *promotedHir =
       findHirFunction(first, "promoted_branch");
+  const lang::HirFunctionInstance *loopHir =
+      findHirFunction(first, "promoted_loop");
   expect(first.canGenerateCode() && second.canGenerateCode() &&
-             promotedHir != nullptr,
+             promotedHir != nullptr && loopHir != nullptr,
          "the scalar-promotion and reporting fixture should reach MIR");
   if (!first.canGenerateCode() || !second.canGenerateCode() ||
-      promotedHir == nullptr) {
+      promotedHir == nullptr || loopHir == nullptr) {
     return;
   }
 
   const lang::MirBodyAddress promotedAddress{
       .kind = lang::MirBodyKind::Function, .owner = promotedHir->id};
+  const lang::MirBodyAddress loopAddress{.kind = lang::MirBodyKind::Function,
+                                         .owner = loopHir->id};
   lang::MirBodyAnalysisManager analyses;
   const lang::MirCfgAnalysis *cfg = analyses.cfg(first.mir, promotedAddress);
   const lang::MirDominanceInfo *dominance =
@@ -7110,6 +7114,10 @@ int main() {
       analyses.scalarPromotionInputs(first.mir, promotedAddress);
   const lang::MirSafetyAnalysis *safetyChecks =
       analyses.safetyChecks(first.mir, promotedAddress);
+  const lang::MirSafetyAnalysis *loopSafetyChecks =
+      analyses.safetyChecks(first.mir, loopAddress);
+  const lang::MirClosedCallSafetyAnalysis *closedCallSafety =
+      analyses.closedCallSafety(first.mir);
   const lang::MirPlaceAliasEscapeAnalysis *aliasEscape =
       analyses.placeAliasEscape(first.mir, promotedAddress);
   const lang::MirLoopAnalysis *loops =
@@ -7121,23 +7129,26 @@ int main() {
   const std::vector<std::string> selectivelyInvalidated = analyses.invalidate(
       promotedAddress,
       lang::MirPreservedAnalyses::only({lang::MirAnalysisKind::CfgReachability,
-                                        lang::MirAnalysisKind::ValueUses}));
+                                        lang::MirAnalysisKind::ValueUses,
+                                        lang::MirAnalysisKind::SafetyChecks}));
   expect(cfg != nullptr && dominance != nullptr && uses != nullptr &&
              effectFacts != nullptr && promotionInputs != nullptr &&
-             safetyChecks != nullptr && aliasEscape != nullptr &&
-             loops != nullptr && sparseConstants != nullptr,
+             safetyChecks != nullptr && loopSafetyChecks != nullptr &&
+             closedCallSafety != nullptr && closedCallSafety->converged &&
+             aliasEscape != nullptr && loops != nullptr &&
+             sparseConstants != nullptr,
          "the body analysis manager should derive every client-backed "
          "analysis");
   expect(hasPromotionCandidate,
          "scalar-promotion analysis should identify the branch-local scalar");
   expect(analyses.revision(promotedAddress) == 1 &&
              selectivelyInvalidated ==
-                 std::vector<std::string>{"dominance", "effects",
-                                          "scalar-promotion-inputs",
+                 std::vector<std::string>{"closed-call-safety", "dominance",
+                                          "effects", "scalar-promotion-inputs",
                                           "safety-checks", "place-alias-escape",
                                           "loops", "sparse-constants"},
          "selective invalidation should advance the body revision and report "
-         "only discarded analyses");
+         "body-local and program-dependent discarded analyses");
   expect(analyses.cfg(first.mir, promotedAddress) == cfg &&
              analyses.valueUses(first.mir, promotedAddress) == uses,
          "exact preservation claims should retain cached CFG and value uses");
@@ -7157,11 +7168,26 @@ int main() {
   expect(analyses.revision(promotedAddress) == 2 &&
              fullyInvalidated ==
                  std::vector<std::string>{
-                     "cfg-reachability", "dominance", "value-uses", "effects",
-                     "scalar-promotion-inputs", "safety-checks",
-                     "place-alias-escape", "loops", "sparse-constants"},
+                     "closed-call-safety", "cfg-reachability", "dominance",
+                     "value-uses", "effects", "scalar-promotion-inputs",
+                     "safety-checks", "place-alias-escape", "loops",
+                     "sparse-constants"},
          "an unknown preservation claim should conservatively invalidate every "
          "cached body analysis in deterministic order");
+
+  const lang::MirSafetyAnalysis *preservedSafety =
+      analyses.safetyChecks(first.mir, promotedAddress);
+  const lang::MirClosedCallSafetyAnalysis *preservedClosed =
+      analyses.closedCallSafety(first.mir);
+  const std::vector<std::string> metadataInvalidated =
+      analyses.invalidate(promotedAddress, lang::MirPreservedAnalyses::all());
+  expect(analyses.revision(promotedAddress) == 3 &&
+             metadataInvalidated.empty() &&
+             analyses.safetyChecks(first.mir, promotedAddress) ==
+                 preservedSafety &&
+             analyses.closedCallSafety(first.mir) == preservedClosed,
+         "an explicit all-preserved claim should retain whole-program and "
+         "derived body analyses across metadata-only changes");
 
   const lang::OptimizationPipeline pipeline;
   const lang::OptimizedProgram optimized =

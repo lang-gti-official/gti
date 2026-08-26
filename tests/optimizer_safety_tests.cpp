@@ -146,7 +146,9 @@ int32_t masked_add(int32_t value) {
   return (value & int32_t(255)) + int32_t(1);
 }
 
-void analysis_barrier() {}
+extern "C" {
+  void analysis_barrier();
+}
 
 int64_t bounded_recurrence() {
   mut int64_t total = 0;
@@ -291,8 +293,8 @@ int32_t main() {
   expect(boundedRecurrence == dynamicRecurrence + 1 &&
              boundedRecurrence == repeatedRecurrence + 1 &&
              boundedRecurrence == callRecurrence + 1,
-         "only a finite single-write recurrence without opaque calls should "
-         "gain the accumulator overflow proof");
+         "only a finite single-write recurrence without an opaque native "
+         "call should gain the accumulator overflow proof");
 
   const std::size_t arrayEnvelope =
       functionDischarges(frontend, o2, "fixed_array_envelope",

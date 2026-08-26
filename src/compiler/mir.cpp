@@ -3705,19 +3705,27 @@ validFailureInstructionShape(const MirInstruction &instruction) {
                (instruction.intrinsic == IntrinsicKind::StorageRead ||
                 instruction.intrinsic == IntrinsicKind::StorageReadMut);
       case MirSafetyCheckFamily::ArithmeticOverflow:
-        if (instruction.kind != MirInstructionKind::Compute) {
-          return false;
+        if (instruction.kind == MirInstructionKind::Compute) {
+          return (instruction.operation == MirOperation::Add &&
+                  discharge.outcome.detail == DefinedFailureDetail::Addition) ||
+                 (instruction.operation == MirOperation::Subtract &&
+                  discharge.outcome.detail ==
+                      DefinedFailureDetail::Subtraction) ||
+                 (instruction.operation == MirOperation::Multiply &&
+                  discharge.outcome.detail ==
+                      DefinedFailureDetail::Multiplication) ||
+                 (instruction.operation == MirOperation::Negate &&
+                  discharge.outcome.detail == DefinedFailureDetail::Negation);
         }
-        return (instruction.operation == MirOperation::Add &&
-                discharge.outcome.detail == DefinedFailureDetail::Addition) ||
-               (instruction.operation == MirOperation::Subtract &&
-                discharge.outcome.detail ==
-                    DefinedFailureDetail::Subtraction) ||
-               (instruction.operation == MirOperation::Multiply &&
-                discharge.outcome.detail ==
-                    DefinedFailureDetail::Multiplication) ||
-               (instruction.operation == MirOperation::Negate &&
-                discharge.outcome.detail == DefinedFailureDetail::Negation);
+        return instruction.kind == MirInstructionKind::Assign &&
+               ((instruction.operation == MirOperation::AddAssign &&
+                 discharge.outcome.detail == DefinedFailureDetail::Addition) ||
+                (instruction.operation == MirOperation::SubtractAssign &&
+                 discharge.outcome.detail ==
+                     DefinedFailureDetail::Subtraction) ||
+                (instruction.operation == MirOperation::MultiplyAssign &&
+                 discharge.outcome.detail ==
+                     DefinedFailureDetail::Multiplication));
       case MirSafetyCheckFamily::ArithmeticDomain:
         return instruction.kind == MirInstructionKind::Compute &&
                instruction.operation == MirOperation::Remainder &&
@@ -17593,10 +17601,12 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     return foldedVerification;
   }
 
-  // Safety discharges are replayed from the current canonical candidate after
-  // value/branch folds and before destructive cleanup. Record payloads and
-  // optimized instruction metadata are both untrusted; only the independent
-  // body-local safety analysis authorizes attaching the exact outcome.
+  // Safety discharges are replayed from one immutable canonical analysis of
+  // the candidate after value/branch folds and before destructive cleanup.
+  // Attaching a discharge changes metadata only, so every record can be
+  // checked against the same independently derived whole-program snapshot.
+  const MirClosedCallSafetyAnalysis replaySafety =
+      analyzeMirClosedCallSafetyChecks(candidate);
   for (std::size_t index = 0; index < records.size(); ++index) {
     const MirTransformRecord &record = records[index];
     if (consumed[index] ||
@@ -17607,11 +17617,10 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     const InstructionLocation location =
         body == nullptr ? InstructionLocation{}
                         : findInstruction(*body, record.instruction);
-    const MirSafetyAnalysis analysis =
-        analyzeMirSafetyChecks(candidate, record.body);
+    const MirClosedCallBodyAnalysis *analysis = replaySafety.find(record.body);
     const MirSafetyProof *proof =
-        record.safetyDischarge
-            ? analysis.find(record.instruction, *record.safetyDischarge)
+        record.safetyDischarge && analysis != nullptr
+            ? analysis->safety.find(record.instruction, *record.safetyDischarge)
             : nullptr;
     const MirTransformRequiredAnalyses requiredSafety{.valueUses = true,
                                                       .reachability = true,

@@ -383,6 +383,11 @@ MirEditResult MirProgramEditor::apply() {
                "effects");
     }
   }
+  const std::optional<MirClosedCallSafetyAnalysis> sourceSafety =
+      queuedSafetyDischarges.empty()
+          ? std::nullopt
+          : std::optional<MirClosedCallSafetyAnalysis>{
+                analyzeMirClosedCallSafetyChecks(program)};
   for (std::size_t index = 0; index < queuedSafetyDischarges.size(); ++index) {
     const SafetyDischarge &claim = queuedSafetyDischarges[index];
     if (index != 0 &&
@@ -396,12 +401,14 @@ MirEditResult MirProgramEditor::apply() {
     const ConstInstructionLocation location =
         body == nullptr ? ConstInstructionLocation{}
                         : findInstruction(*body, claim.target.instruction);
-    const MirSafetyAnalysis analysis =
-        analyzeMirSafetyChecks(program, claim.target.body);
+    const MirClosedCallBodyAnalysis *analysis =
+        sourceSafety ? sourceSafety->find(claim.target.body) : nullptr;
     if (body == nullptr || location.block == nullptr ||
         location.instruction == nullptr ||
         hasMirSafetyDischarge(*location.instruction, claim.discharge) ||
-        analysis.find(claim.target.instruction, claim.discharge) == nullptr) {
+        analysis == nullptr ||
+        analysis->safety.find(claim.target.instruction, claim.discharge) ==
+            nullptr) {
       addError(result, claim.target.body,
                location.block == nullptr ? 0 : location.block->id,
                claim.target.instruction,
@@ -697,15 +704,22 @@ MirEditResult MirProgramEditor::apply() {
       touched.push_back(cleanup.body);
     }
   }
+  const std::optional<MirClosedCallSafetyAnalysis> candidateSafety =
+      queuedSafetyDischarges.empty()
+          ? std::nullopt
+          : std::optional<MirClosedCallSafetyAnalysis>{
+                analyzeMirClosedCallSafetyChecks(candidate)};
   for (const SafetyDischarge &claim : queuedSafetyDischarges) {
     MirBody *target = findMirBody(candidate, claim.target.body);
     InstructionLocation location =
         target == nullptr ? InstructionLocation{}
                           : findInstruction(*target, claim.target.instruction);
-    const MirSafetyAnalysis analysis =
-        analyzeMirSafetyChecks(candidate, claim.target.body);
+    const MirClosedCallBodyAnalysis *analysis =
+        candidateSafety ? candidateSafety->find(claim.target.body) : nullptr;
     const MirSafetyProof *proof =
-        analysis.find(claim.target.instruction, claim.discharge);
+        analysis == nullptr
+            ? nullptr
+            : analysis->safety.find(claim.target.instruction, claim.discharge);
     if (location.block == nullptr || location.instruction == nullptr ||
         proof == nullptr) {
       addError(result, claim.target.body, 0, claim.target.instruction,

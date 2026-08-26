@@ -1,8 +1,10 @@
 #pragma once
 
+#include "gti/checked_integer.h"
 #include "gti/mir.h"
 #include "gti/optimization/alias.h"
 
+#include <optional>
 #include <vector>
 
 namespace lang {
@@ -30,11 +32,54 @@ struct MirSafetyAnalysis {
 
   [[nodiscard]] const MirSafetyProof *find(MirInstructionId instruction,
                                            MirSafetyDischarge discharge) const;
+
+  friend bool operator==(const MirSafetyAnalysis &,
+                         const MirSafetyAnalysis &) = default;
 };
 
-// Performs a conservative body-local abstract interpretation over GTI MIR.
-// It proves only checks whose exact outcome follows from integer intervals,
-// branch predicates, fixed-array extents, or tracked private-storage state.
+// Value facts derived from the complete, concrete static-call graph. These
+// facts are analysis results, not call effects: effects continue to describe
+// observable behavior only. The analysis manager revisions this result as one
+// program-wide unit whenever any participating MIR body changes.
+struct MirClosedCallIntegerInterval {
+  CheckedIntegerDomain domain;
+  CheckedIntegerValue lower;
+  CheckedIntegerValue upper;
+
+  friend bool operator==(const MirClosedCallIntegerInterval &,
+                         const MirClosedCallIntegerInterval &) = default;
+};
+
+struct MirClosedCallBodyAnalysis {
+  MirBodyAddress body;
+  bool reached = false;
+  bool closed = false;
+  std::optional<MirClosedCallIntegerInterval> returnInterval;
+  MirSafetyAnalysis safety;
+
+  friend bool operator==(const MirClosedCallBodyAnalysis &,
+                         const MirClosedCallBodyAnalysis &) = default;
+};
+
+struct MirClosedCallSafetyAnalysis {
+  bool converged = false;
+  std::size_t iterations = 0;
+  std::vector<MirClosedCallBodyAnalysis> bodies;
+
+  [[nodiscard]] const MirClosedCallBodyAnalysis *
+  find(MirBodyAddress body) const;
+};
+
+// Computes one bounded, non-recursive contextual summary over exact static
+// GTI calls and constructors. Unsupported, open, native, virtual, recursive,
+// owning-argument, or synchronization-capable edges fail closed. Body-local
+// facts remain available even when no contextual summary is admitted.
+[[nodiscard]] MirClosedCallSafetyAnalysis
+analyzeMirClosedCallSafetyChecks(const MirProgram &program);
+
+// Performs conservative MIR abstract interpretation. Body-local facts are
+// always considered; facts from a closed concrete static-call context are
+// admitted only when the whole-program analysis above converges.
 [[nodiscard]] MirSafetyAnalysis
 analyzeMirSafetyChecks(const MirProgram &program, MirBodyAddress address);
 

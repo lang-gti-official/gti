@@ -18997,6 +18997,26 @@ private:
             cppMirCompoundCheckedHelperSpelling(instruction.operation);
         const std::string_view terminalCompound =
             cppMirCompoundAssignHelperSpelling(instruction.operation);
+        const std::string_view dischargedCompound =
+            cppMirCompoundOperatorSpelling(instruction.operation);
+        if (allMirLocalFailuresDischarged(instruction) &&
+            !dischargedCompound.empty()) {
+          const bool retainResult =
+              instruction.kind == MirInstructionKind::Assign &&
+              instruction.result &&
+              !nonRootRecordUses(facts.body, *instruction.result).empty();
+          if (retainResult) {
+            output << "__gti_mir_v_" << *instruction.result << " = (";
+          }
+          emitElement();
+          output << ' ' << dischargedCompound << ' ';
+          emitOperand(instruction.operands.front());
+          if (retainResult) {
+            output << ')';
+          }
+          output << ";\n";
+          return;
+        }
         if (failureForm && !instruction.localFailureSites.empty() &&
             !checkedCompound.empty()) {
           output << "__gti_mir_failure_status_" << instruction.id << " = "
@@ -19068,6 +19088,26 @@ private:
     // value re-reads the committed destination, exactly like the plain
     // assignment's follow-up read (the helper leaves the destination
     // untouched on failure, and the failure edge never reads the result).
+    const std::string_view dischargedCompound =
+        cppMirCompoundOperatorSpelling(instruction.operation);
+    if (instruction.kind == MirInstructionKind::Assign &&
+        allMirLocalFailuresDischarged(instruction) &&
+        !dischargedCompound.empty()) {
+      const bool retainResult =
+          instruction.result &&
+          !nonRootRecordUses(facts.body, *instruction.result).empty();
+      if (retainResult) {
+        output << "__gti_mir_v_" << *instruction.result << " = (";
+      }
+      output << destinationSpelling(facts, *instruction.destination) << ' '
+             << dischargedCompound << ' ';
+      emitOperand(instruction.operands.front());
+      if (retainResult) {
+        output << ')';
+      }
+      output << ";\n";
+      return;
+    }
     if (failureForm && instruction.kind == MirInstructionKind::Assign &&
         !instruction.localFailureSites.empty() &&
         !cppMirCompoundCheckedHelperSpelling(instruction.operation).empty()) {
@@ -23473,6 +23513,19 @@ cppMirCompoundCheckedHelperSpelling(MirOperation operation) {
     return "::gti_internal::backend::mir_checked_compound_shift_left_v1";
   case MirOperation::ShiftRightAssign:
     return "::gti_internal::backend::mir_checked_compound_shift_right_v1";
+  default:
+    return {};
+  }
+}
+
+std::string_view cppMirCompoundOperatorSpelling(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::AddAssign:
+    return "+=";
+  case MirOperation::SubtractAssign:
+    return "-=";
+  case MirOperation::MultiplyAssign:
+    return "*=";
   default:
     return {};
   }

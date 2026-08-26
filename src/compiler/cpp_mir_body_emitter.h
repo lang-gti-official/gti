@@ -270,6 +270,13 @@ cppMirCheckedOperationHelperSpelling(MirOperation operation);
 [[nodiscard]] std::string_view
 cppMirCompoundCheckedHelperSpelling(MirOperation operation);
 
+// The native compound token used only after verified MIR has discharged every
+// local failure outcome and C++ has the same successful-path semantics. Empty
+// for operations such as remainder and shifts whose defined GTI result is not
+// fully represented by the corresponding C++ operator.
+[[nodiscard]] std::string_view
+cppMirCompoundOperatorSpelling(MirOperation operation);
+
 // The single spelling authority for the shipped integer-arithmetic helper
 // family (`gti_internal_backend_helpers_v1`): the fully qualified helper a
 // backend spells for one of the nine wrapping/saturating/checked intrinsic

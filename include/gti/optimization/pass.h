@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@ enum class MirAnalysisKind : std::uint8_t {
   Effects,
   ScalarPromotionInputs,
   SafetyChecks,
+  ClosedCallSafety,
   PlaceAliasEscape,
   Loops,
   SparseConstants,
@@ -106,10 +108,13 @@ private:
   std::uint32_t mask = 0;
 };
 
-// A snapshot-scoped, body-local cache keyed by stable MirBodyAddress and a
+// A snapshot-scoped analysis cache keyed by stable MirBodyAddress and a
 // monotonically increasing revision. The first query binds the manager to one
-// MirProgram identity; cross-snapshot queries fail closed. No interior MIR
-// pointers survive invalidation.
+// MirProgram identity; cross-snapshot queries fail closed. Program-wide
+// analyses and every body-local result derived from them are invalidated by a
+// semantic mutation to any body. A pass may preserve them only for a change,
+// such as attaching verified metadata, that cannot affect their inputs. No
+// interior MIR pointers survive invalidation.
 class MirBodyAnalysisManager {
 public:
   [[nodiscard]] std::size_t revision(MirBodyAddress address) const;
@@ -126,6 +131,8 @@ public:
   scalarPromotionInputs(const MirProgram &program, MirBodyAddress address);
   [[nodiscard]] const MirSafetyAnalysis *safetyChecks(const MirProgram &program,
                                                       MirBodyAddress address);
+  [[nodiscard]] const MirClosedCallSafetyAnalysis *
+  closedCallSafety(const MirProgram &program);
   [[nodiscard]] const MirPlaceAliasEscapeAnalysis *
   placeAliasEscape(const MirProgram &program, MirBodyAddress address);
   [[nodiscard]] const MirLoopAnalysis *loops(const MirProgram &program,
@@ -159,7 +166,10 @@ private:
   [[nodiscard]] bool accepts(const MirProgram &program);
 
   const MirProgram *programIdentity = nullptr;
-  std::vector<Entry> entries;
+  std::size_t programRevision = 0;
+  std::size_t closedCallSafetyRevision = 0;
+  std::optional<MirClosedCallSafetyAnalysis> closedCallSafetyCache;
+  std::deque<Entry> entries;
 };
 
 struct MirPassContext {

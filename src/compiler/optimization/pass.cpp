@@ -285,6 +285,7 @@ std::string_view name(MirAnalysisKind kind) {
                              std::string_view{"effects"},
                              std::string_view{"scalar-promotion-inputs"},
                              std::string_view{"safety-checks"},
+                             std::string_view{"closed-call-safety"},
                              std::string_view{"place-alias-escape"},
                              std::string_view{"loops"},
                              std::string_view{"sparse-constants"}};
@@ -470,14 +471,27 @@ MirBodyAnalysisManager::safetyChecks(const MirProgram &program,
   }
   Entry &cached = entry(address);
   if (!cached.safetyChecks) {
-    const MirPlaceAliasEscapeAnalysis *aliases =
-        placeAliasEscape(program, address);
-    if (findMirBody(program, address) == nullptr || aliases == nullptr) {
+    const MirClosedCallSafetyAnalysis *closed = closedCallSafety(program);
+    const MirClosedCallBodyAnalysis *body =
+        closed == nullptr ? nullptr : closed->find(address);
+    if (body == nullptr) {
       return nullptr;
     }
-    cached.safetyChecks = analyzeMirSafetyChecks(program, address, *aliases);
+    cached.safetyChecks = body->safety;
   }
   return &*cached.safetyChecks;
+}
+
+const MirClosedCallSafetyAnalysis *
+MirBodyAnalysisManager::closedCallSafety(const MirProgram &program) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
+  if (!closedCallSafetyCache || closedCallSafetyRevision != programRevision) {
+    closedCallSafetyCache = analyzeMirClosedCallSafetyChecks(program);
+    closedCallSafetyRevision = programRevision;
+  }
+  return &*closedCallSafetyCache;
 }
 
 const MirPlaceAliasEscapeAnalysis *
@@ -534,7 +548,27 @@ MirBodyAnalysisManager::invalidate(MirBodyAddress address,
                                    const MirPreservedAnalyses &preserved) {
   Entry &cached = entry(address);
   ++cached.revision;
+  const bool preserveClosedCallSafety =
+      preserved.preserves(MirAnalysisKind::ClosedCallSafety);
+  const bool invalidatedClosedCallSafety =
+      !preserveClosedCallSafety && closedCallSafetyCache.has_value();
+  if (!preserveClosedCallSafety) {
+    ++programRevision;
+    closedCallSafetyCache.reset();
+  }
+  bool invalidatedDependentSafetyChecks = false;
+  if (!preserveClosedCallSafety) {
+    for (Entry &candidate : entries) {
+      if (candidate.safetyChecks) {
+        candidate.safetyChecks.reset();
+        invalidatedDependentSafetyChecks = true;
+      }
+    }
+  }
   std::vector<std::string> invalidated;
+  if (invalidatedClosedCallSafety) {
+    invalidated.emplace_back(name(MirAnalysisKind::ClosedCallSafety));
+  }
   const auto drop = [&](MirAnalysisKind kind, auto &value) {
     if (!preserved.preserves(kind) && value.has_value()) {
       invalidated.emplace_back(name(kind));
@@ -546,7 +580,9 @@ MirBodyAnalysisManager::invalidate(MirBodyAddress address,
   drop(MirAnalysisKind::ValueUses, cached.valueUses);
   drop(MirAnalysisKind::Effects, cached.effects);
   drop(MirAnalysisKind::ScalarPromotionInputs, cached.scalarPromotionInputs);
-  drop(MirAnalysisKind::SafetyChecks, cached.safetyChecks);
+  if (invalidatedDependentSafetyChecks) {
+    invalidated.emplace_back(name(MirAnalysisKind::SafetyChecks));
+  }
   drop(MirAnalysisKind::PlaceAliasEscape, cached.placeAliasEscape);
   drop(MirAnalysisKind::Loops, cached.loops);
   drop(MirAnalysisKind::SparseConstants, cached.sparseConstants);

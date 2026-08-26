@@ -883,8 +883,9 @@ public:
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
-    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
-                                       : MirPreservedAnalyses::all();
+    // A discharge attaches independently replayed proof metadata. It does not
+    // change any CFG, value, place, effect, or abstract-state input.
+    outcome.preserved = MirPreservedAnalyses::all();
     return outcome;
   }
 
