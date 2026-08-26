@@ -1,0 +1,109 @@
+class inner_t {
+public:
+  inner_t() {}
+  mut int32_t v = 3;
+};
+
+class trivial_t {
+public:
+  trivial_t() {}
+  mut int32_t v = 7;
+  mut inner_t inner = inner_t();
+  int32_t get() { return int32_t(this.v); }
+};
+
+class cleanup_t {
+public:
+  cleanup_t() {}
+  ~cleanup_t() {}
+  mut int32_t v = 11;
+};
+
+class move_only_t {
+public:
+  move_only_t() {}
+  move_only_t(move_only_t& other) = delete;
+  mut int32_t v = 13;
+};
+
+interface readable_i {
+  int32_t get();
+};
+
+class polymorphic_t : public readable_i {
+public:
+  polymorphic_t() {}
+  mut int32_t v = 17;
+  int32_t get() override { return int32_t(this.v); }
+};
+
+class trivial_ref {
+  trivial_t& held;
+public:
+  trivial_ref(trivial_t& source) : held(source) {}
+  int32_t read() { return int32_t(this.held.v); }
+  int32_t read_nested() { return int32_t(this.held.inner.v); }
+  int32_t call() { return int32_t(this.held.get()); }
+};
+
+class cleanup_ref {
+  cleanup_t& held;
+public:
+  cleanup_ref(cleanup_t& source) : held(source) {}
+  int32_t read() { return int32_t(this.held.v); }
+};
+
+class move_only_ref {
+  move_only_t& held;
+public:
+  move_only_ref(move_only_t& source) : held(source) {}
+  int32_t read() { return int32_t(this.held.v); }
+};
+
+class polymorphic_ref {
+  polymorphic_t& held;
+public:
+  polymorphic_ref(polymorphic_t& source) : held(source) {}
+  int32_t read() { return int32_t(this.held.v); }
+};
+
+class scalar_ref {
+  int32_t& held;
+public:
+  scalar_ref(int32_t& source) : held(source) {}
+  int32_t read() { return int32_t(this.held); }
+};
+
+class interface_ref {
+  readable_i& held;
+public:
+  interface_ref(readable_i& source) : held(source) {}
+  int32_t call() { return int32_t(this.held.get()); }
+};
+
+int32_t read_parameter(trivial_t& value) { return int32_t(value.v); }
+
+int main() {
+  mut trivial_t trivial = trivial_t();
+  mut cleanup_t cleanup = cleanup_t();
+  mut move_only_t move_only = move_only_t();
+  mut polymorphic_t polymorphic = polymorphic_t();
+  trivial_ref trivial_view = trivial_ref(trivial);
+  cleanup_ref cleanup_view = cleanup_ref(cleanup);
+  move_only_ref move_only_view = move_only_ref(move_only);
+  polymorphic_ref polymorphic_view = polymorphic_ref(polymorphic);
+  scalar_ref scalar_view = scalar_ref(trivial.v);
+  interface_ref interface_view = interface_ref(polymorphic);
+  trivial_t& local = trivial;
+
+  if (int(trivial_view.read()) != 7) { return 1; }
+  if (int(trivial_view.read_nested()) != 3) { return 2; }
+  if (int(trivial_view.call()) != 7) { return 3; }
+  if (int(cleanup_view.read()) != 11) { return 4; }
+  if (int(move_only_view.read()) != 13) { return 5; }
+  if (int(polymorphic_view.read()) != 17) { return 6; }
+  if (int(scalar_view.read()) != 7) { return 7; }
+  if (int(interface_view.call()) != 17) { return 8; }
+  if (int(local.v) != 7 || int(read_parameter(trivial)) != 7) { return 9; }
+  return 0;
+}
