@@ -464,9 +464,19 @@ private:
     return std::nullopt;
   }
 
+  // `restrict` never changes what a caller passes, so the reader consumes it
+  // like `volatile`; the common compiler spellings survive preprocessing.
+  [[nodiscard]] static bool restrictSpelling(std::string_view word) {
+    return word == "restrict" || word == "__restrict" || word == "__restrict__";
+  }
+
+  [[nodiscard]] bool ignorableQualifier() const {
+    return check("volatile") || restrictSpelling(peek().text);
+  }
+
   // Parses a base type. Returns 0 when the tokens do not begin a type.
   [[nodiscard]] NativeTypeId parseBaseType(bool &sawConst) {
-    while (check("const") || check("volatile")) {
+    while (check("const") || ignorableQualifier()) {
       sawConst = sawConst || take().text == "const";
     }
     const Token first = peek();
@@ -538,7 +548,8 @@ private:
           sawDouble = true;
         } else if (word == "_Bool" || word == "bool") {
           sawBool = true;
-        } else if (word == "const" || word == "volatile") {
+        } else if (word == "const" || word == "volatile" ||
+                   restrictSpelling(word)) {
           sawConst = sawConst || word == "const";
         } else {
           break;
@@ -600,7 +611,7 @@ private:
     while (check("*")) {
       take();
       bool pointerConst = false;
-      while (check("const") || check("volatile")) {
+      while (check("const") || ignorableQualifier()) {
         pointerConst = pointerConst || take().text == "const";
       }
       NativeType pointer;
@@ -677,6 +688,15 @@ private:
       expectSemicolon(first.origin, "enum");
       return;
     }
+    if (first.text == "enum" && peek(1).text == "{") {
+      // `enum { ... };` — a bare anonymous enum is a pure constant list in C
+      // too: it cannot be named in a later declaration.
+      take(); // enum
+      [[maybe_unused]] const NativeDeclarationId id =
+          parseEnumBody(std::string(), first.origin);
+      expectSemicolon(first.origin, "enum");
+      return;
+    }
     match("extern");
     parsePrototypeOrVariable(first.origin);
   }
@@ -718,18 +738,30 @@ private:
       std::string name = take().text;
       NativeTypeId fieldType = type;
       if (check("[")) {
-        take();
-        const std::optional<std::int64_t> count = parseIntegerLiteral();
-        if (!count || *count <= 0 || !match("]")) {
+        std::vector<std::uint64_t> extents;
+        bool extentsValid = true;
+        while (match("[")) {
+          const std::optional<std::int64_t> count = parseIntegerLiteral();
+          if (!count || *count <= 0 || !match("]")) {
+            extentsValid = false;
+            break;
+          }
+          extents.push_back(static_cast<std::uint64_t>(*count));
+        }
+        if (!extentsValid || extents.empty()) {
           fail("array field '" + name +
                "' does not use a positive integer literal extent");
           continue;
         }
-        NativeType array;
-        array.kind = NativeTypeKind::Array;
-        array.element = type;
-        array.count = static_cast<std::uint64_t>(*count);
-        fieldType = result_.model.addType(std::move(array));
+        // `int a[2][3]` is array-of-2 of array-of-3 of int; build the
+        // innermost array first so nesting mirrors the declarator.
+        for (std::size_t index = extents.size(); index > 0; --index) {
+          NativeType array;
+          array.kind = NativeTypeKind::Array;
+          array.element = fieldType;
+          array.count = extents[index - 1];
+          fieldType = result_.model.addType(std::move(array));
+        }
       }
       if (check(":")) {
         fail("bit-field '" + name + "' has no GTI representation");
@@ -802,8 +834,9 @@ private:
     }
     if (!expressible || !check("}")) {
       warn(origin,
-           "enum '" + name +
-               "' uses enumerator expressions outside the bounded surface "
+           (name.empty() ? std::string("an anonymous enum")
+                         : "enum '" + name + "'") +
+               " uses enumerator expressions outside the bounded surface "
                "and was skipped");
       while (!atEnd() && !check("}")) {
         take();
