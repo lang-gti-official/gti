@@ -195,6 +195,14 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+A copy-loaded class result whose only executable use is `Return` also avoids an
+invented default-constructed SSA object. The plain C++ form returns the exact
+source place by value when the sealed representation row proves copy
+construction; the transformed failure form placement-constructs that same
+source into its out result. Multiple uses, a mismatched operand/place type, or
+an absent copy-construction row reject body admission rather than selecting a
+native fallback.
+
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
 MIR, never as a backend analysis result. When all local overflow outcomes for a

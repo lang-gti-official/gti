@@ -7102,6 +7102,192 @@ int main() {
          "slot immediately before construct_from");
 }
 
+void testPlainCopyReturnUsesExactSourcePlace() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-plain-copy-return.gti", R"(
+[[c_abi]] struct Pair {
+  mut float x;
+  mut float y;
+};
+
+Pair forward(Pair value) {
+  return value;
+}
+
+int main() {
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the passive-record copy-return fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto hir =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.source != nullptr &&
+                            function.source->name().lexeme == "forward";
+                   });
+  const lang::MirFunctionInstance *forward =
+      hir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(hir->id);
+  expect(forward != nullptr && !forward->mayRaiseDefinedFailure,
+         "the passive-record copy return should be a plain MIR body");
+  if (forward == nullptr) {
+    return;
+  }
+
+  const lang::MirInstruction *copy = nullptr;
+  lang::MirValueId copiedValue = 0;
+  for (const lang::MirBlock &block : forward->body.blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+        !block.terminator.value ||
+        block.terminator.value->kind != lang::MirOperandKind::Value) {
+      continue;
+    }
+    copiedValue = block.terminator.value->value;
+    const lang::MirValue *value = forward->body.findValue(copiedValue);
+    if (value == nullptr) {
+      continue;
+    }
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.id == value->definition &&
+          instruction.kind == lang::MirInstructionKind::Load) {
+        copy = &instruction;
+        break;
+      }
+    }
+  }
+  expect(copy != nullptr && copiedValue != 0 && copy->operands.size() == 1 &&
+             copy->operands.front().kind == lang::MirOperandKind::Copy,
+         "the passive-record return should retain one exact copy Load");
+  if (copy == nullptr || copiedValue == 0) {
+    return;
+  }
+  const lang::MirPlaceId sourcePlace = copy->operands.front().place;
+  const std::string sourceSpelling =
+      "__gti_mir_p_" + std::to_string(sourcePlace) + ".get()";
+
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = forward->id};
+  const lang::CppMirBodyEmissionMapRows rows =
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+  const auto recordRow =
+      std::find_if(rows.types.begin(), rows.types.end(), [&](const auto &row) {
+        return row.type == forward->returnType;
+      });
+  expect(recordRow != rows.types.end() && recordRow->copyConstructible,
+         "the passive-record representation should prove copy construction");
+  if (recordRow == rows.types.end()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyze(address).ready() && emitter.supportsBodyText(address),
+         "an exact copy Load -> Return should enter plain body emission");
+  if (emitter.supportsBodyText(address)) {
+    const std::string text =
+        emitter.emitBodyText(address, "plain-copy-return-test-v0", 1).text;
+    const std::string local =
+        "__gti_mir_v_" + std::to_string(copiedValue) + "{}";
+    expect(text.find("return " + sourceSpelling + ";") != std::string::npos &&
+               text.find(local) == std::string::npos &&
+               text.find("std::construct_at(__gti_mir_out_result") ==
+                   std::string::npos,
+           "plain copy return should copy directly from the exact source "
+           "place without inventing an SSA object or failure ABI");
+  }
+
+  lang::MirProgram conservative = frontend.mir;
+  auto &conservativeFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          conservative.functionInstances());
+  const auto conservativeForward =
+      std::find_if(conservativeFunctions.begin(), conservativeFunctions.end(),
+                   [&](const lang::MirFunctionInstance &function) {
+                     return function.id == forward->id;
+                   });
+  if (conservativeForward != conservativeFunctions.end()) {
+    conservativeForward->mayRaiseDefinedFailure = true;
+  }
+  expect(lang::verifyMirProgram(conservative).valid(),
+         "a conservative true failure summary should remain valid MIR");
+  const lang::CppMirBodyEmitter failureEmitter(conservative, map);
+  expect(failureEmitter.supportsFailureBodyText(address),
+         "the same exact copy return should remain admitted in failure form");
+  if (failureEmitter.supportsFailureBodyText(address)) {
+    const std::string text =
+        failureEmitter
+            .emitFailureBodyText(address, "failure-copy-return-test-v0", 1)
+            .text;
+    expect(text.find("std::construct_at(__gti_mir_out_result, " +
+                     sourceSpelling + ");") != std::string::npos,
+           "failure-form copy return should retain placement construction "
+           "into the exact out result");
+  }
+
+  lang::CppMirBodyEmissionMapRows nonCopyRows = rows;
+  const auto nonCopy = std::find_if(
+      nonCopyRows.types.begin(), nonCopyRows.types.end(),
+      [&](const auto &row) { return row.type == forward->returnType; });
+  if (nonCopy != nonCopyRows.types.end()) {
+    nonCopy->copyConstructible = false;
+    nonCopy->copyable = false;
+  }
+  expect(!lang::CppMirBodyEmitter(
+              frontend.mir, lang::CppMirBodyEmissionMap(std::move(nonCopyRows)))
+              .supportsBodyText(address),
+         "copy return must fail closed without a copy-construction row");
+
+  lang::MirProgram multipleUse = frontend.mir;
+  auto &multipleUseFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          multipleUse.functionInstances());
+  const auto multipleUseForward =
+      std::find_if(multipleUseFunctions.begin(), multipleUseFunctions.end(),
+                   [&](const lang::MirFunctionInstance &function) {
+                     return function.id == forward->id;
+                   });
+  if (multipleUseForward != multipleUseFunctions.end() &&
+      copiedValue <= multipleUseForward->body.valueUses.size() &&
+      !multipleUseForward->body.valueUses[copiedValue - 1].empty()) {
+    multipleUseForward->body.valueUses[copiedValue - 1].push_back(
+        multipleUseForward->body.valueUses[copiedValue - 1].front());
+  }
+  expect(
+      !lang::verifyMirProgram(multipleUse).valid() &&
+          !lang::CppMirBodyEmitter(multipleUse, map).supportsBodyText(address),
+      "duplicated copy-return use metadata must fail closed");
+
+  lang::MirProgram malformed = frontend.mir;
+  auto &malformedFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          malformed.functionInstances());
+  const auto malformedForward =
+      std::find_if(malformedFunctions.begin(), malformedFunctions.end(),
+                   [&](const lang::MirFunctionInstance &function) {
+                     return function.id == forward->id;
+                   });
+  if (malformedForward != malformedFunctions.end()) {
+    for (lang::MirBlock &block : malformedForward->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == copy->id && !instruction.operands.empty()) {
+          instruction.operands.front().type = lang::SemanticType::Float;
+        }
+      }
+    }
+  }
+  expect(lang::verifyMirProgram(malformed).valid() &&
+             !lang::CppMirBodyEmitter(malformed, map).supportsBodyText(address),
+         "a type-incoherent copy-return operand must fail closed at the "
+         "backend boundary even when generic MIR remains valid");
+}
+
 void testFailureCapableClassReturnTemporaryReceiver() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-class-return-temporary-receiver.gti", R"(
@@ -8050,6 +8236,8 @@ constexpr NamedTest kTests[] = {
      testSingleUseClassSsaRepresentationSlot},
     {"testRepresentationOnlyPublicationRearmsBeforeConstruction",
      testRepresentationOnlyPublicationRearmsBeforeConstruction},
+    {"testPlainCopyReturnUsesExactSourcePlace",
+     testPlainCopyReturnUsesExactSourcePlace},
     {"testFailureCapableClassReturnTemporaryReceiver",
      testFailureCapableClassReturnTemporaryReceiver},
     {"testFailureCapableClassReturnFieldRead",
