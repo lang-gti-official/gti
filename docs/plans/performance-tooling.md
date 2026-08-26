@@ -145,6 +145,136 @@ rewritten under the newer rule.
 Re-measure and update this section when check elimination lands, and when the
 MIR cutover completes. A single point is a baseline, not a trend.
 
+## Exact-Main O-MIR-08 Audit
+
+The 2026-08-26 O-MIR-08 audit started from clean compiler revision
+`fa8547e5de3cd49f80b5dd4a9aed3d2e4bd664ad`, before tracked edits. The
+compiler was `gti 0.312.8` with SHA-256
+`d59ffbd97d53b919d602616783ed869406c6b36e2affe1e908f4dbd92ad80cbe`.
+The target was `arm64-apple-darwin25.5.0` on a Mac mini with an Apple M4 Pro
+(8 performance and 4 efficiency cores) and 24 GiB memory, running macOS
+26.5.2. The selected native driver was the regular `/usr/bin/clang++` driver,
+Apple Clang 21.0.0 (`clang-2100.1.1.101`). CMake 4.2.3, Ninja 1.13.2,
+Python 3.14.6, and system LLVM 22.1.8 completed the toolchain record. No GTI
+toolchain override environment variable was set.
+
+The compiler and exact-main baselines were built with:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target gti --parallel 8
+```
+
+The runtime baselines used five warmups, twenty measured repetitions,
+deterministic seed 3108, a 180-second timeout, `-O3 -std=c++23`, and the
+runner's strict `-fno-fast-math`, `-ffp-contract=off`, and
+`-D__gti_strict_ieee754=1` native flags:
+
+```sh
+python3 scripts/benchmark_compare.py \
+  --gti build/gti --cxx /usr/bin/clang++ \
+  --optimization 3 --cpp-standard c++23 \
+  --warmup 5 --runs 20 --seed 3108 --timeout 180 \
+  --workload vector-checked-loop \
+  --output build/baseline-vector-canonical \
+  --json build/baseline-vector-canonical/report.json \
+  --markdown build/baseline-vector-canonical/report.md
+
+python3 scripts/benchmark_compare.py \
+  --gti build/gti --cxx /usr/bin/clang++ \
+  --optimization 3 --cpp-standard c++23 \
+  --warmup 5 --runs 20 --seed 3108 --timeout 180 \
+  --workload managed-thread-parallelism \
+  --output build/baseline-managed-thread-canonical \
+  --json build/baseline-managed-thread-canonical/report.json \
+  --markdown build/baseline-managed-thread-canonical/report.md
+```
+
+| Workload/variant | Median (ms) | MAD (ms) | Correctness |
+| --- | ---: | ---: | --- |
+| `vector-checked-loop` GTI | 109.517 | 5.040 | `digest:0000000014b81952 work-units:200000000` |
+| `vector-checked-loop` semantic C++ | 50.281 | 1.213 | identical |
+| `vector-checked-loop` idiomatic C++ | 7.356 | 0.215 | identical |
+| managed-thread sequential | 707.012 | 8.058 | `digest:000000097bfbb42c work-units:2800000` |
+| managed-thread four-jthread | 200.902 | 6.116 | identical |
+
+The managed-thread result was conclusive. The vector result was marked
+inconclusive only because the idiomatic C++ median was below its 10 ms floor;
+the two checked variants exceeded that floor. The vector GTI build took
+344.627 ms and emitted 266,280 bytes of C++ with SHA-256
+`932cfc1f2fddb44c0e23644cb703caf2947fcb83da3c0615b096a12a0e682938`.
+Its executable was 108,800 bytes with SHA-256
+`a0d217dcaa6d0633b81b40a104569a45d20f0b08fdb54da43415ca37ac5f7cfc`.
+
+Repeated GTI-only C++ emission used the exact command
+`build/gti benchmarks/workloads/vector-checked-loop/main.gti -O3 --emit-cpp
+-o build/baseline-vector-compile.cpp`. Its median was 156.840 ms, MAD
+2.996 ms, and the final emitted file had the same SHA-256 as the runner
+artifact. The corresponding O0 median was 102.073 ms. Exact-main O0 MIR before
+and after optimization were byte-identical with SHA-256
+`ed58e546eb3d52881142dabe9719e99e41255ae3fa697250263d071c207b4862`.
+
+Raw nanosecond samples follow. They are retained here because this audit ended
+at a measured prerequisite rather than an optimizer implementation.
+
+```text
+vector GTI warmups: [121956208, 118424208, 107719417, 114933500, 105806333]
+vector GTI samples: [103855458, 106352084, 117159792, 107491584, 114456542, 117525792, 100658291, 113084291, 111089250, 117422583, 110741167, 108293083, 104376417, 111714625, 101370750, 106946000, 117715750, 123636500, 101508625, 106906083]
+vector semantic warmups: [52794250, 49571500, 49000209, 52378375, 50762458]
+vector semantic samples: [49916875, 48160584, 52178875, 46819666, 49325958, 48811125, 51780125, 50231375, 50917375, 52851084, 53783416, 50299750, 52863208, 50385875, 52099542, 50033042, 47398334, 50713084, 50263042, 49584000]
+vector idiomatic warmups: [6885375, 6733917, 7520500, 7571792, 7885583]
+vector idiomatic samples: [7569416, 7344625, 7572334, 7644584, 7126625, 7548958, 6907417, 7168000, 7167333, 6833417, 7367625, 6757375, 7107791, 7703250, 7384458, 7586791, 7315167, 7173834, 7672291, 7451208]
+managed sequential warmups: [690677500, 694988958, 722405959, 724004708, 699277833]
+managed sequential samples: [698984416, 712388250, 719412208, 700287417, 710104083, 715379208, 710488875, 694381709, 717601959, 726385041, 682241667, 715101250, 704506833, 708804667, 696925458, 724174541, 705219875, 696836292, 699142208, 699983750]
+managed jthread warmups: [191963167, 199905750, 198842833, 203701167, 188237458]
+managed jthread samples: [212738041, 201116459, 188774250, 202961583, 202775125, 209532916, 201046583, 196786792, 194702084, 204124375, 189785625, 194868334, 199692542, 208456167, 186885416, 199734000, 216940125, 192883083, 200756584, 210395375]
+O3 emission warmups: [171848875, 153357708, 158143542, 157319167, 164702833]
+O3 emission samples: [163713000, 145421083, 154949208, 153894583, 156741542, 154332791, 156937833, 158642125, 148917708, 155018250, 154522458, 150891875, 162943292, 161396125, 157140875, 162914667, 166249000, 159885625, 157067625, 153590292]
+```
+
+### O-MIR-08 candidate result
+
+The audit added `fixed-array-loop-proof` as a reproducible non-collapsible
+client. A 4-element source loop discharges its fixed-array read, while the
+same loop at extent 64 reaches the interval solver's widening threshold and
+retains the hot read and write checks. The 64-element workload performs 38.4
+million mutations and carries the identical record
+`digest:0000000024e3fb31 work-units:38400000` in all variants.
+
+The candidate workload was necessarily measured after its source was added,
+but used the unchanged exact-main compiler binary and native toolchain above.
+Five warmups and twenty repetitions produced conclusive medians of 120.876 ms
+for GTI, 120.850 ms for semantic C++, and 120.484 ms for idiomatic C++. This
+places GTI within 0.33% of all variants and leaves no 15% runtime opportunity
+in the retained fixed-array checks.
+
+As a direct upper-bound experiment, the two hot checked array calls in emitted
+C++ were replaced with the same direct `std::array` operations emitted for an
+existing verified bounds discharge. This did not change compiler or backend
+authority and was not committed as an implementation. Current and proxy hot
+functions had identical 229-instruction native disassembly, both with SHA-256
+`5ed1dbc1c9354e8064cc47b3cec6900709fc02373750b853017ee7c0ff4037e7`.
+Their medians were 119.917 ms and 120.111 ms respectively, a -0.16% change.
+The workload's O0 MIR before and after optimization was byte-identical with
+SHA-256
+`b051d5e512d189ff62f3824ee1859ee363f7f920064f7c8bc73a49db712ace8c`.
+No compiler source changed on this evidence-only branch, and the compiler
+binary retained its exact-main SHA-256, so the representative compile-time
+delta is 0% by executable identity rather than a noisy second timing series.
+
+```text
+fixed-array GTI samples: [120657000, 121053084, 119557750, 140102708, 120075125, 119989041, 120430667, 121558375, 121598291, 120900166, 121000167, 120851542, 121529500, 120357792, 121914417, 120822000, 120384084, 120133417, 121416000, 121697458]
+fixed-array semantic samples: [120937417, 119656292, 120099875, 131689250, 120107667, 119807500, 120856709, 120774709, 121142541, 121039875, 120590750, 121003333, 121581583, 120455916, 121154000, 120726000, 121276791, 120389750, 121727750, 120843000]
+fixed-array idiomatic samples: [119634125, 121000834, 120078375, 119693917, 120269459, 120460167, 120856583, 122123708, 120972417, 121427334, 120879792, 121261083, 119758584, 119997708, 120508709, 120212709, 119582958, 119867333, 121451125, 121482958]
+manual-discharge current samples: [120569250, 119690541, 119998875, 119895000, 119950500, 119830625, 119908667, 120817042, 119748000, 120674667, 119925459, 119664209, 119023542, 119944083, 119323250, 120859208, 120750209, 120051125, 118887417, 119463291]
+manual-discharge proxy samples: [119266750, 120276083, 120000084, 120121208, 120094334, 120180542, 120487750, 119793375, 119666583, 120719875, 120880958, 120022541, 120022875, 120870292, 120209917, 120207459, 120986000, 120101125, 119591833, 118914500]
+```
+
+The measured decision is to defer O-MIR-08. Instruction counts are supporting
+evidence only; the runtime result is decisive. The next audit must first gain
+a production loop-carried MIR client and then demonstrate a workload whose
+native backend does not already erase the retained check.
+
 ## Benchmark Comparison Model
 
 ### Variants
@@ -789,8 +919,10 @@ differential tests establish semantic preservation; representative benchmark
 remeasurement remains required before making performance claims or widening a
 family.
 
-- Use benchmark and report evidence to prioritize the bounded `O-MIR-08`
-  loop-range client and `O-MIR-09` local-memory client.
+- The first bounded `O-MIR-08` loop-range client is measured and deferred by
+  the exact-main audit above. Reconsider it only after source MIR produces its
+  induction facts and native runtime evidence shows value; continue measuring
+  `O-MIR-09` local-memory clients independently.
 - Add benchmark coverage for each optimization before implementing it.
 - Report when a check is discharged and the proof that allowed it.
 - Compare GTI against semantic C++ before and after each pass.
