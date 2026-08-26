@@ -21,7 +21,7 @@
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "82ddb21b72ab51c53c665b6628cef320582cd2a671df8d9547969554a19281c3"
+    "stdlib/std/vector.gti": "ddab7cb4aaf6f2c435dfe783c90743d39e7aa3ee9e16e9ee295792feac732945"
   },
   "cases": [
     {

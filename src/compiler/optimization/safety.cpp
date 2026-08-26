@@ -8,6 +8,7 @@
 #include "gti/optimization/loops.h"
 
 #include <algorithm>
+#include <compare>
 #include <limits>
 #include <map>
 #include <optional>
@@ -52,6 +53,21 @@ struct StorageFact {
   friend bool operator==(const StorageFact &, const StorageFact &) = default;
 };
 
+struct PrefixLengthFact {
+  MirPlaceId storage = 0;
+  Evidence evidence;
+
+  friend bool operator==(const PrefixLengthFact &,
+                         const PrefixLengthFact &) = default;
+};
+
+struct ScalarOrigin {
+  MirPlaceId place = 0;
+  MirValueId value = 0;
+
+  friend auto operator<=>(const ScalarOrigin &, const ScalarOrigin &) = default;
+};
+
 using FieldPath = std::vector<SymbolId>;
 
 struct ObjectFact {
@@ -75,6 +91,9 @@ struct AbstractState {
   std::map<MirValueId, StorageFact> storageValues;
   std::map<MirValueId, MirPlaceId> storageOrigins;
   std::map<MirPlaceId, StorageFact> storages;
+  std::map<MirValueId, PrefixLengthFact> prefixLengthValues;
+  std::map<MirPlaceId, PrefixLengthFact> prefixLengthPlaces;
+  std::map<std::pair<MirPlaceId, ScalarOrigin>, Evidence> checkedPrefixBounds;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, ObjectFact> objects;
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
@@ -1296,6 +1315,9 @@ void invalidatePlaceRoot(const MirBody &body,
     state.storageValues.clear();
     state.storageOrigins.clear();
     state.storages.clear();
+    state.prefixLengthValues.clear();
+    state.prefixLengthPlaces.clear();
+    state.checkedPrefixBounds.clear();
     state.aggregateOrigins.clear();
     state.objectValues.clear();
     return;
@@ -1317,6 +1339,16 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.storages,
                 [&](const auto &entry) { return overlaps(entry.first); });
+  std::erase_if(state.prefixLengthValues, [&](const auto &entry) {
+    return overlaps(entry.second.storage);
+  });
+  std::erase_if(state.prefixLengthPlaces, [&](const auto &entry) {
+    return overlaps(entry.first) || overlaps(entry.second.storage);
+  });
+  std::erase_if(state.checkedPrefixBounds, [&](const auto &entry) {
+    return overlaps(entry.first.first) || (entry.first.second.place != 0 &&
+                                           overlaps(entry.first.second.place));
+  });
   for (auto iterator = state.storageOrigins.begin();
        iterator != state.storageOrigins.end();) {
     if (!overlaps(iterator->second)) {
@@ -1426,6 +1458,89 @@ storageOriginForOperand(const AbstractState &state,
   return origin == state.storageOrigins.end()
              ? std::nullopt
              : std::optional<MirPlaceId>{origin->second};
+}
+
+[[nodiscard]] std::optional<MirPlaceId>
+stableStorageOriginForOperand(const AbstractState &state,
+                              const MirPlaceAliasEscapeAnalysis &aliases,
+                              const MirOperand &operand) {
+  const SemanticType *type = &operand.type;
+  if (type->kind == SemanticType::Reference && type->arguments.size() == 1) {
+    type = &type->arguments.front();
+  }
+  if (type->kind != SemanticType::Storage &&
+      type->kind != SemanticType::PrefixStorage) {
+    return std::nullopt;
+  }
+  if (const std::optional<MirPlaceId> tracked =
+          storageOriginForOperand(state, aliases, operand)) {
+    return tracked;
+  }
+  const MirPlaceId place = canonicalPlace(aliases, operand.place);
+  return place == 0 ? std::nullopt : std::optional<MirPlaceId>{place};
+}
+
+[[nodiscard]] std::optional<ScalarOrigin>
+scalarOriginForOperand(const AbstractState &state,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       const MirOperand &operand) {
+  if (operand.literal) {
+    return std::nullopt;
+  }
+  if (operand.value != 0) {
+    if (const auto loaded = state.loadedOrigins.find(operand.value);
+        loaded != state.loadedOrigins.end()) {
+      return ScalarOrigin{.place = canonicalPlace(aliases, loaded->second)};
+    }
+    return ScalarOrigin{.value = operand.value};
+  }
+  const MirPlaceId place = canonicalPlace(aliases, operand.place);
+  return place == 0 ? std::nullopt
+                    : std::optional<ScalarOrigin>{ScalarOrigin{.place = place}};
+}
+
+[[nodiscard]] std::optional<PrefixLengthFact>
+prefixLengthForOperand(const AbstractState &state,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       const MirOperand &operand) {
+  if (operand.value != 0) {
+    if (const auto value = state.prefixLengthValues.find(operand.value);
+        value != state.prefixLengthValues.end()) {
+      return value->second;
+    }
+  }
+  const MirPlaceId place = canonicalPlace(aliases, operand.place);
+  if (place != 0) {
+    if (const auto stored = state.prefixLengthPlaces.find(place);
+        stored != state.prefixLengthPlaces.end()) {
+      return stored->second;
+    }
+  }
+  return std::nullopt;
+}
+
+void invalidatePrefixStorageRelations(
+    AbstractState &state, const MirPlaceAliasEscapeAnalysis &aliases,
+    MirPlaceId storage) {
+  storage = canonicalPlace(aliases, storage);
+  if (storage == 0) {
+    state.prefixLengthValues.clear();
+    state.prefixLengthPlaces.clear();
+    state.checkedPrefixBounds.clear();
+    return;
+  }
+  const auto overlaps = [&](MirPlaceId candidate) {
+    return candidate != 0 &&
+           aliases.relation(storage, candidate) != MirAliasRelation::NoAlias;
+  };
+  std::erase_if(state.prefixLengthValues, [&](const auto &entry) {
+    return overlaps(entry.second.storage);
+  });
+  std::erase_if(state.prefixLengthPlaces, [&](const auto &entry) {
+    return overlaps(entry.second.storage);
+  });
+  std::erase_if(state.checkedPrefixBounds,
+                [&](const auto &entry) { return overlaps(entry.first.first); });
 }
 
 void updateStorageOperand(AbstractState &state,
@@ -1577,6 +1692,13 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     return true;
   }
   const ClosedCallSummary &summary = found->second;
+  // Closed calls transport scalar/object summaries, but not relational
+  // identity between a prior logical-size check and private prefix storage.
+  // Drop those relations at the call boundary until exact effect summaries
+  // can prove that every referenced storage and index origin is unchanged.
+  state.prefixLengthValues.clear();
+  state.prefixLengthPlaces.clear();
+  state.checkedPrefixBounds.clear();
   if (instruction.result) {
     if (summary.result.observed && summary.result.fact) {
       IntegerFact fact = *summary.result.fact;
@@ -1629,6 +1751,9 @@ void killUnknownMemory(AbstractState &state) {
   state.storageValues.clear();
   state.storages.clear();
   state.storageOrigins.clear();
+  state.prefixLengthValues.clear();
+  state.prefixLengthPlaces.clear();
+  state.checkedPrefixBounds.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
 }
@@ -1672,6 +1797,11 @@ void applyInstruction(const MirBody &body,
       if (object != state.objectValues.end()) {
         state.objectValues[*instruction.result] = object->second;
       }
+      if (const auto length =
+              state.prefixLengthValues.find(instruction.operands.front().value);
+          length != state.prefixLengthValues.end()) {
+        state.prefixLengthValues[*instruction.result] = length->second;
+      }
     }
     return;
   }
@@ -1682,6 +1812,15 @@ void applyInstruction(const MirBody &body,
             integerForOperand(body, state, source)) {
       state.integers[*instruction.result] = rebased(
           *fact, block.id, instruction.id, *instruction.result, source.place);
+    }
+    if (source.value != 0) {
+      if (const auto loaded = state.loadedOrigins.find(source.value);
+          loaded != state.loadedOrigins.end()) {
+        state.loadedOrigins[*instruction.result] = loaded->second;
+      }
+    } else if (source.place != 0) {
+      state.loadedOrigins[*instruction.result] =
+          canonicalPlace(aliases, source.place);
     }
     if (const MirPlaceId origin =
             objectOriginForOperand(body, aliases, state, source);
@@ -1695,10 +1834,18 @@ void applyInstruction(const MirBody &body,
     if (const std::optional<StorageFact> storage =
             storageForOperand(state, aliases, source)) {
       state.storageValues[*instruction.result] = *storage;
-      if (const std::optional<MirPlaceId> origin =
-              storageOriginForOperand(state, aliases, source)) {
-        state.storageOrigins[*instruction.result] = *origin;
-      }
+    }
+    if (const std::optional<MirPlaceId> origin =
+            stableStorageOriginForOperand(state, aliases, source)) {
+      state.storageOrigins[*instruction.result] = *origin;
+    }
+    if (const std::optional<PrefixLengthFact> length =
+            prefixLengthForOperand(state, aliases, source)) {
+      PrefixLengthFact copied = *length;
+      add(copied.evidence, block.id);
+      addInstruction(copied.evidence, instruction.id);
+      addValue(copied.evidence, *instruction.result);
+      state.prefixLengthValues[*instruction.result] = std::move(copied);
     }
     return;
   }
@@ -1746,6 +1893,9 @@ void applyInstruction(const MirBody &body,
       const auto storage = state.storages.find(sourcePlace);
       if (storage != state.storages.end()) {
         state.storageValues[*instruction.result] = storage->second;
+      }
+      if (source.type.kind == SemanticType::Storage ||
+          source.type.kind == SemanticType::PrefixStorage) {
         state.storageOrigins[*instruction.result] = sourcePlace;
       }
       if (objectRoot != 0) {
@@ -1754,6 +1904,15 @@ void applyInstruction(const MirBody &body,
                 extractObjectFact(body, aliases, objectRoot, state)) {
           state.objectValues[*instruction.result] = *object;
         }
+      }
+      if (const auto length = state.prefixLengthPlaces.find(sourcePlace);
+          length != state.prefixLengthPlaces.end()) {
+        PrefixLengthFact loaded = length->second;
+        add(loaded.evidence, block.id);
+        addInstruction(loaded.evidence, instruction.id);
+        addValue(loaded.evidence, *instruction.result);
+        addPlace(loaded.evidence, sourcePlace);
+        state.prefixLengthValues[*instruction.result] = std::move(loaded);
       }
     }
     return;
@@ -1798,6 +1957,8 @@ void applyInstruction(const MirBody &body,
         arrayForOperand(state, aliases, source);
     const std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
+    const std::optional<PrefixLengthFact> sourcePrefixLength =
+        prefixLengthForOperand(state, aliases, source);
     if (!aggregateIndex || !previousAggregateElements) {
       invalidatePlaceRoot(body, aliases, state, destination);
     }
@@ -1866,11 +2027,20 @@ void applyInstruction(const MirBody &body,
       addPlace(stored.evidence, destination);
       state.storages[destination] = std::move(stored);
     } else if (const MirPlace *place = body.findPlace(destination);
-               place != nullptr && place->type.kind == SemanticType::Storage) {
+               place != nullptr &&
+               (place->type.kind == SemanticType::Storage ||
+                place->type.kind == SemanticType::PrefixStorage)) {
       state.storages.erase(destination);
     }
     if (sourceObject) {
       seedObjectFact(body, aliases, destination, *sourceObject, state);
+    }
+    if (sourcePrefixLength) {
+      PrefixLengthFact stored = *sourcePrefixLength;
+      add(stored.evidence, block.id);
+      addInstruction(stored.evidence, instruction.id);
+      addPlace(stored.evidence, destination);
+      state.prefixLengthPlaces[destination] = std::move(stored);
     }
     return;
   }
@@ -1940,6 +2110,29 @@ void applyInstruction(const MirBody &body,
   }
 
   if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck) {
+    if (instruction.operands.size() == 2) {
+      const std::optional<ScalarOrigin> index =
+          scalarOriginForOperand(state, aliases, instruction.operands[0]);
+      const std::optional<PrefixLengthFact> length =
+          prefixLengthForOperand(state, aliases, instruction.operands[1]);
+      if (index && length && length->storage != 0) {
+        Evidence evidence = length->evidence;
+        if (const std::optional<IntegerFact> indexFact =
+                integerForOperand(body, state, instruction.operands[0])) {
+          evidence = merged(std::move(evidence), indexFact->evidence);
+        }
+        add(evidence, block.id);
+        addInstruction(evidence, instruction.id);
+        addPlace(evidence, length->storage);
+        if (index->place != 0) {
+          addPlace(evidence, index->place);
+        } else {
+          addValue(evidence, index->value);
+        }
+        state.checkedPrefixBounds.insert_or_assign(
+            std::pair{length->storage, *index}, std::move(evidence));
+      }
+    }
     return;
   }
 
@@ -1972,34 +2165,55 @@ void applyInstruction(const MirBody &body,
   if (prefixOperation && !instruction.operands.empty()) {
     const std::optional<SemanticType> elementType =
         prefixElementType(instruction.operands.front());
+    const std::optional<MirPlaceId> origin = stableStorageOriginForOperand(
+        state, aliases, instruction.operands.front());
     std::optional<StorageFact> storage =
         storageForOperand(state, aliases, instruction.operands.front());
-    if (!elementType || !constantIntegerDomain(*elementType) || !storage) {
+    if (!elementType) {
       killUnknownMemory(state);
       return;
     }
-    add(storage->evidence, block.id);
-    addInstruction(storage->evidence, instruction.id);
     if (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
         instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) {
-      if (instruction.result && storage->elements) {
+      if (instruction.result && storage && storage->elements) {
         state.integers[*instruction.result] = rebased(
             *storage->elements, block.id, instruction.id, *instruction.result);
       }
       return;
     }
     if (instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
-      if (instruction.result && storage->length) {
+      if (instruction.result && storage && storage->length) {
         state.integers[*instruction.result] = rebased(
             *storage->length, block.id, instruction.id, *instruction.result);
       }
+      if (instruction.result && origin) {
+        Evidence evidence = storage ? storage->evidence : Evidence{};
+        add(evidence, block.id);
+        addInstruction(evidence, instruction.id);
+        addValue(evidence, *instruction.result);
+        addPlace(evidence, *origin);
+        state.prefixLengthValues[*instruction.result] = {
+            .storage = *origin, .evidence = std::move(evidence)};
+      }
       return;
     }
+    if (!storage) {
+      killUnknownMemory(state);
+      return;
+    }
+    add(storage->evidence, block.id);
+    addInstruction(storage->evidence, instruction.id);
     if (instruction.intrinsic == IntrinsicKind::PrefixStorageRelocate) {
       if (instruction.operands.size() != 2) {
         killUnknownMemory(state);
         return;
       }
+      const std::optional<MirPlaceId> destinationOrigin =
+          stableStorageOriginForOperand(state, aliases,
+                                        instruction.operands[1]);
+      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
+      invalidatePrefixStorageRelations(state, aliases,
+                                       destinationOrigin.value_or(0));
       updateStorageOperand(state, aliases, instruction.operands[1], *storage);
       const std::optional<CheckedIntegerDomain> lengthDomain =
           constantIntegerDomain(SemanticType::UInt64);
@@ -2017,10 +2231,12 @@ void applyInstruction(const MirBody &body,
     }
     if (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
         instruction.intrinsic == IntrinsicKind::PrefixStorageInsert) {
+      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
       const std::size_t valueIndex =
           instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ? 2 : 1;
       std::optional<IntegerFact> value;
-      if (instruction.operands.size() > valueIndex) {
+      if (constantIntegerDomain(*elementType) &&
+          instruction.operands.size() > valueIndex) {
         value =
             integerForOperand(body, state, instruction.operands[valueIndex]);
       } else if (const std::optional<CheckedIntegerDomain> domain =
@@ -2030,11 +2246,7 @@ void applyInstruction(const MirBody &body,
       if (!value) {
         storage->elements.reset();
         storage->elementsUnknown = true;
-        updateStorageOperand(state, aliases, instruction.operands.front(),
-                             std::move(*storage));
-        return;
-      }
-      if (!storage->elementsUnknown) {
+      } else if (!storage->elementsUnknown) {
         storage->elements = storage->elements
                                 ? std::optional<IntegerFact>{joinedElementFact(
                                       *storage->elements, *value)}
@@ -2053,6 +2265,7 @@ void applyInstruction(const MirBody &body,
     }
     if (instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
         instruction.intrinsic == IntrinsicKind::PrefixStorageErase) {
+      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
       if (storage->length) {
         const IntegerFact one{.domain = storage->length->domain,
                               .lower = {.magnitude = 1},
@@ -2334,6 +2547,31 @@ void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
   }
   joinStorageValues(target.storageValues, incoming.storageValues, widen);
   joinStorageFacts(target.storages, incoming.storages, widen);
+  const auto joinPrefixLengths = [](auto &left, const auto &right) {
+    for (auto iterator = left.begin(); iterator != left.end();) {
+      const auto found = right.find(iterator->first);
+      if (found == right.end() ||
+          found->second.storage != iterator->second.storage) {
+        iterator = left.erase(iterator);
+        continue;
+      }
+      iterator->second.evidence =
+          merged(std::move(iterator->second.evidence), found->second.evidence);
+      ++iterator;
+    }
+  };
+  joinPrefixLengths(target.prefixLengthValues, incoming.prefixLengthValues);
+  joinPrefixLengths(target.prefixLengthPlaces, incoming.prefixLengthPlaces);
+  for (auto iterator = target.checkedPrefixBounds.begin();
+       iterator != target.checkedPrefixBounds.end();) {
+    const auto found = incoming.checkedPrefixBounds.find(iterator->first);
+    if (found == incoming.checkedPrefixBounds.end()) {
+      iterator = target.checkedPrefixBounds.erase(iterator);
+      continue;
+    }
+    iterator->second = merged(std::move(iterator->second), found->second);
+    ++iterator;
+  }
   for (auto iterator = target.storageOrigins.begin();
        iterator != target.storageOrigins.end();) {
     const auto found = incoming.storageOrigins.find(iterator->first);
@@ -2347,7 +2585,9 @@ void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
   return target != before;
 }
 
-void bindEdgeArguments(const MirBody &body, MirBlockId target,
+void bindEdgeArguments(const MirBody &body,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       MirBlockId target,
                        const std::vector<MirOperand> &arguments,
                        AbstractState &state) {
   const MirBlock *block = body.findBlock(target);
@@ -2356,15 +2596,19 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const MirValueId parameter = block->parameters[index].value;
+    const MirOperand &argument = arguments[index];
+    const std::optional<PrefixLengthFact> prefixLength =
+        prefixLengthForOperand(state, aliases, argument);
+    const std::optional<ScalarOrigin> scalar =
+        scalarOriginForOperand(state, aliases, argument);
     if (const std::optional<IntegerFact> fact =
-            integerForOperand(body, state, arguments[index])) {
+            integerForOperand(body, state, argument)) {
       IntegerFact bound = *fact;
       addValue(bound.evidence, parameter);
       state.integers[parameter] = std::move(bound);
     } else {
       state.integers.erase(parameter);
     }
-    const MirOperand &argument = arguments[index];
     const auto loadedOrigin = argument.kind == MirOperandKind::Value
                                   ? state.loadedOrigins.find(argument.value)
                                   : state.loadedOrigins.end();
@@ -2372,6 +2616,30 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
       state.loadedOrigins[parameter] = loadedOrigin->second;
     } else {
       state.loadedOrigins.erase(parameter);
+    }
+    if (prefixLength) {
+      PrefixLengthFact rebound = *prefixLength;
+      addValue(rebound.evidence, parameter);
+      state.prefixLengthValues[parameter] = std::move(rebound);
+    } else {
+      state.prefixLengthValues.erase(parameter);
+    }
+    if (scalar) {
+      std::vector<std::pair<std::pair<MirPlaceId, ScalarOrigin>, Evidence>>
+          reboundBounds;
+      for (const auto &[key, evidence] : state.checkedPrefixBounds) {
+        if (key.second != *scalar) {
+          continue;
+        }
+        Evidence rebound = evidence;
+        addValue(rebound, parameter);
+        reboundBounds.emplace_back(
+            std::pair{key.first, ScalarOrigin{.value = parameter}},
+            std::move(rebound));
+      }
+      for (auto &[key, evidence] : reboundBounds) {
+        state.checkedPrefixBounds.insert_or_assign(key, std::move(evidence));
+      }
     }
   }
 }
@@ -2382,9 +2650,9 @@ struct Edge {
   AbstractState state;
 };
 
-[[nodiscard]] std::vector<Edge> outgoingEdges(const MirBody &body,
-                                              const MirBlock &block,
-                                              const BlockTransfer &transfer) {
+[[nodiscard]] std::vector<Edge>
+outgoingEdges(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+              const MirBlock &block, const BlockTransfer &transfer) {
   const MirTerminator &terminator = block.terminator;
   std::vector<Edge> result;
   const auto append = [&](MirBlockId target,
@@ -2400,7 +2668,7 @@ struct Edge {
     if (!state.reachable) {
       return;
     }
-    bindEdgeArguments(body, target, arguments, state);
+    bindEdgeArguments(body, aliases, target, arguments, state);
     result.push_back(
         {.target = target, .ordinal = ordinal, .state = std::move(state)});
   };
@@ -2852,7 +3120,7 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         const BlockTransfer transfer = transferBlock(
             body, aliases, block, incoming, thresholds, closedCalls, address);
         std::vector<MirForwardDataflowEdge<AbstractState>> result;
-        for (Edge &edge : outgoingEdges(body, block, transfer)) {
+        for (Edge &edge : outgoingEdges(body, aliases, block, transfer)) {
           result.push_back({.target = edge.target,
                             .ordinal = edge.ordinal,
                             .state = std::move(edge.state)});
@@ -3006,20 +3274,47 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         }
       }
 
-      const bool storageRead =
+      const bool sparseStorageRead =
           instruction.kind == MirInstructionKind::Call &&
           (instruction.intrinsic == IntrinsicKind::StorageRead ||
            instruction.intrinsic == IntrinsicKind::StorageReadMut) &&
           instruction.operands.size() >= 2;
-      if (storageRead) {
+      const bool prefixStorageRead =
+          instruction.kind == MirInstructionKind::Call &&
+          (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
+           instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
+          instruction.operands.size() >= 2;
+      if (sparseStorageRead || prefixStorageRead) {
         const std::optional<StorageFact> storage =
             storageForOperand(state, aliases, instruction.operands[0]);
         const std::optional<MirPlaceId> origin =
-            storageOriginForOperand(state, aliases, instruction.operands[0]);
+            prefixStorageRead
+                ? stableStorageOriginForOperand(state, aliases,
+                                                instruction.operands[0])
+                : storageOriginForOperand(state, aliases,
+                                          instruction.operands[0]);
         const std::optional<IntegerFact> index =
             integerForOperand(body, state, instruction.operands[1]);
-        if (storage && index && within(*index, storage->capacity)) {
-          Evidence evidence = merged(storage->evidence, index->evidence);
+        std::optional<Evidence> boundsEvidence;
+        if (prefixStorageRead && storage && index && storage->length &&
+            within(*index, *storage->length)) {
+          boundsEvidence = merged(storage->evidence, index->evidence);
+        } else if (prefixStorageRead && origin) {
+          const std::optional<ScalarOrigin> scalar =
+              scalarOriginForOperand(state, aliases, instruction.operands[1]);
+          if (scalar) {
+            const auto checked =
+                state.checkedPrefixBounds.find(std::pair{*origin, *scalar});
+            if (checked != state.checkedPrefixBounds.end()) {
+              boundsEvidence = checked->second;
+            }
+          }
+        } else if (sparseStorageRead && storage && index &&
+                   within(*index, storage->capacity)) {
+          boundsEvidence = merged(storage->evidence, index->evidence);
+        }
+        if (boundsEvidence) {
+          Evidence evidence = std::move(*boundsEvidence);
           if (origin) {
             addPlace(evidence, *origin);
           }
@@ -3029,8 +3324,9 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
                        .detail = DefinedFailureDetail::PrivateStorage},
                       evidence);
           const std::optional<std::uint64_t> exact =
-              nonnegativeSingleton(*index);
-          if (exact && storage->initialized.contains(*exact)) {
+              index ? nonnegativeSingleton(*index) : std::nullopt;
+          if (sparseStorageRead && storage && exact &&
+              storage->initialized.contains(*exact)) {
             appendProof(analysis, address, block, instruction,
                         MirSafetyCheckFamily::StorageState,
                         {.code = DefinedFailureCode::InvalidStorageState,
@@ -3135,7 +3431,8 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         continue;
       }
       if (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-          instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) {
+          instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+          instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
         continue;
       }
       if (instruction.intrinsic != IntrinsicKind::StorageBoundsCheck) {
