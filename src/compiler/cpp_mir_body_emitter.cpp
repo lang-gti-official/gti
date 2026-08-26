@@ -7669,6 +7669,18 @@ failureFixedArrayDropSchedule(const MirProgram &program, const MirBody &body,
              : nullptr;
 }
 
+// A fixed-array chain of exact concrete extents whose leaf element is a
+// class: T[N], T[N][M], and deeper. Nested levels share the flat form's
+// owning representation.
+[[nodiscard]] bool fixedClassLeafArrayType(const SemanticType &type) {
+  const SemanticType *level = &type;
+  while (level->kind == SemanticType::Array && level->arguments.size() == 1 &&
+         level->arrayLengthParameterId == 0 && level->arrayLength != 0) {
+    level = &level->arguments.front();
+  }
+  return level != &type && level->kind == SemanticType::Class;
+}
+
 [[nodiscard]] const MirClassInstance *
 uniqueClassInstanceForType(const MirProgram &program,
                            const SemanticType &type) {
@@ -7720,10 +7732,16 @@ lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
 
 // Aggregate construction only needs a failure-free element transfer. A
 // failure-capable destructor is governed later by MIR's fixed-array drop
-// schedule rather than native std::array scope destruction.
+// schedule rather than native std::array scope destruction. A nested
+// fixed-array element transfers element-wise, so its proof is its leaf's.
 [[nodiscard]] bool
 fixedArrayElementTransferIsDefinedFailureFree(const MirProgram &program,
                                               const SemanticType &type) {
+  if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+      type.arrayLengthParameterId == 0 && type.arrayLength != 0) {
+    return fixedArrayElementTransferIsDefinedFailureFree(
+        program, type.arguments.front());
+  }
   return mirTypeMoveIsDefinedFailureFree(program, type) ||
          lifecycleGuardedGeneratedMoveIsDefinedFailureFree(program, type);
 }
@@ -8799,11 +8817,22 @@ fixedArrayAggregateInputSlot(const MirProgram &program, const MirBody &body,
                     }) == 1;
   const bool exactConstructor =
       exactSelectedConstructor || generatedDefaultConstructor;
-  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+  // A nested fixed-array element is itself an owning aggregate: its result
+  // slot is constructed exactly like a constructor element's and the outer
+  // aggregate moves from it in operand order.
+  const bool nestedOwningAggregate =
+      definition != nullptr &&
+      definition->kind == MirInstructionKind::Compute &&
+      definition->operation == MirOperation::Aggregate && value != nullptr &&
+      value->info.type.kind == SemanticType::Array && valueDrop != nullptr &&
+      failureFreeFixedArrayAggregateMove(program, body, *definition);
+  if (value == nullptr ||
+      (value->info.type.kind != SemanticType::Class &&
+       !nestedOwningAggregate) ||
       value->info.traits.drop != DropKind::Lexical || definition == nullptr ||
       definition->result != valueId ||
       definition->intrinsic != IntrinsicKind::None ||
-      (!transformedCall && !exactConstructor)) {
+      (!transformedCall && !exactConstructor && !nestedOwningAggregate)) {
     return nullptr;
   }
 
@@ -10658,6 +10687,13 @@ lifetimeSlotPlace(const MirProgram &program,
                                                place.value);
     return moveSlot.slot == &place;
   }
+  // A nested owning aggregate's result is an array-typed element of the
+  // enclosing aggregate; its value-rooted place is that element's slot.
+  if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
+      place.type.kind == SemanticType::Array &&
+      fixedArrayAggregateInputSlot(program, body, place.value) != nullptr) {
+    return true;
+  }
   if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
       place.type.kind == SemanticType::Class) {
     const TransferredConstructorArgument transferred =
@@ -10982,11 +11018,7 @@ public:
         const MirPlace *storage =
             step == nullptr ? nullptr
                             : program.module().findPlace(step->storagePlace);
-        const bool fixedClassArray =
-            row.type.kind == SemanticType::Array &&
-            row.type.arguments.size() == 1 &&
-            row.type.arguments.front().kind == SemanticType::Class &&
-            row.type.arrayLengthParameterId == 0 && row.type.arrayLength != 0;
+        const bool fixedClassArray = fixedClassLeafArrayType(row.type);
         if (row.kind != CppMirSymbolRepresentationKind::Storage ||
             (row.type.kind != SemanticType::Class && !fixedClassArray) ||
             step == nullptr ||
@@ -16788,8 +16820,16 @@ private:
         output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
         return;
       }
-      if (const MirPlace *destination = fixedArrayAggregateDestinationSlot(
-              program, facts.body, instruction)) {
+      // The aggregate constructs either its consuming binding's slot or — as
+      // one nested element of an enclosing owning aggregate — its own
+      // value-rooted result slot, which the outer aggregate moves from.
+      const MirPlace *owningDestination =
+          fixedArrayAggregateDestinationSlot(program, facts.body, instruction);
+      if (owningDestination == nullptr && instruction.result) {
+        owningDestination = fixedArrayAggregateInputPlace(program, facts.body,
+                                                          *instruction.result);
+      }
+      if (const MirPlace *destination = owningDestination) {
         const MirPlaceId slot = canonicalSlotPlaceId(facts.body, *destination);
         output << "::new (static_cast<void *>(__gti_mir_p_" << slot
                << ".construction_address())) "
@@ -24890,13 +24930,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           place.type.kind == SemanticType::Reference) {
         return false;
       }
-      const bool runtimeOwningSlot =
-          place.type.kind == SemanticType::Class ||
-          (place.type.kind == SemanticType::Array &&
-           place.type.arguments.size() == 1 &&
-           place.type.arguments.front().kind == SemanticType::Class &&
-           place.type.arrayLengthParameterId == 0 &&
-           place.type.arrayLength != 0);
+      const bool runtimeOwningSlot = place.type.kind == SemanticType::Class ||
+                                     fixedClassLeafArrayType(place.type);
       if (runtimeOwningSlot && slotPlace(place) &&
           (!storage->runtimeLifetimeSlot || !lifetimeSlotRow())) {
         return false;

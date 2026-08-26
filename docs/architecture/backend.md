@@ -116,8 +116,11 @@ present and never invents an entry to satisfy the C++ representation.
 When the selected executable `Module/0` route must construct cleanup-free
 owning program storage at runtime, its copied C++ storage row records a
 lifetime-slot representation. This currently covers class values and concrete
-fixed arrays of class values whose MIR aggregate schedule proves ordered
-element construction, rollback, transfer, and publication. Global and static
+fixed arrays — including nested multidimensional chains — whose leaf element
+is a class and whose MIR aggregate schedule proves ordered element
+construction, rollback, transfer, and publication. A nested element is itself
+an owning aggregate: it constructs its own value-rooted slot and the
+enclosing aggregate moves from it in operand order. Global and static
 declarations, the module construction carrier, and later symbol-rooted reads
 or writes all consume that same row. An access first exposes the engaged value
 and then follows the exact index or field projection rows; missing slot or
