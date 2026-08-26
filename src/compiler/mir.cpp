@@ -11265,6 +11265,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
     case SemanticType::UInt16:
     case SemanticType::UInt32:
     case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::NullPtr:
@@ -11400,6 +11402,23 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
       return false;
     }
   };
+  const auto stableScalarProvenance = [&](const MirInstruction &instruction) {
+    switch (instruction.literalProvenance.kind) {
+    case MirLiteralProvenanceKind::None:
+    case MirLiteralProvenanceKind::Source:
+    case MirLiteralProvenanceKind::IdentityFold:
+      return true;
+    case MirLiteralProvenanceKind::ComputeFold:
+    case MirLiteralProvenanceKind::SparseConstant:
+      // Optimizer literals retain their source operation. Do not strengthen
+      // an executable body's defined-failure summary merely because an
+      // operation outside this bounded proof folded to a literal.
+      return scalarOperation(instruction.literalProvenance.sourceOperation);
+    case MirLiteralProvenanceKind::Count:
+      return false;
+    }
+    return false;
+  };
   const auto noDefinedFailureDestructor = [&](HirDestructorInstanceId id) {
     const MirDestructorInstance *destructor =
         program.findDestructorInstance(id);
@@ -11517,6 +11536,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                           });
           if (!instruction.result || instruction.destination ||
               !scalarInfo(instruction.info) || (!literalForm && !operandForm) ||
+              !stableScalarProvenance(instruction) ||
               !instruction.lifecycle.empty() ||
               instruction.fullExpressionEnd != 0 ||
               instruction.cleanupBoundaryEnd != 0) {
@@ -12026,9 +12046,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           place.value == 0 && place.loan == 0 && place.projections.empty() &&
           passiveType(place.type) && place.traits.drop == DropKind::Trivial &&
           !place.traits.containsBorrowedState;
-      // A read-only receiver's scalar field load cannot raise a defined
+      // A read-only receiver's passive field load cannot raise a defined
       // failure: the bare receiver place is only the projection carrier and
-      // the projected place reads one trivially droppable scalar field.
+      // the projected place reads one trivially droppable passive field.
       const bool receiverField =
           place.root == MirPlaceRootKind::This && place.binding == 0 &&
           place.symbol == 0 && place.capture == 0 && place.temporary == 0 &&
@@ -12038,12 +12058,12 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             place.type.kind == SemanticType::Class) ||
            (place.projections.size() == 1 &&
             place.projections.front().kind == MirProjectionKind::Field &&
-            scalarType(place.type) && place.traits.drop == DropKind::Trivial &&
+            passiveType(place.type) && place.traits.drop == DropKind::Trivial &&
             !place.traits.containsBorrowedState));
-      // A reference parameter's scalar field load cannot raise either: the
+      // A reference parameter's passive field load cannot raise either: the
       // bare reference binding and its dereference are only projection
       // carriers, and the projected place reads one trivially droppable
-      // scalar field through the compile-proven borrow.
+      // passive field through the compile-proven borrow.
       const bool referenceParameterField =
           place.root == MirPlaceRootKind::Binding && place.loan == 0 &&
           std::find(function.parameterBindings.begin(),
@@ -12058,7 +12078,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
               place.type.kind == SemanticType::Class) ||
              (place.projections.size() == 2 &&
               place.projections[1].kind == MirProjectionKind::Field &&
-              scalarType(place.type) &&
+              passiveType(place.type) &&
               place.traits.drop == DropKind::Trivial &&
               !place.traits.containsBorrowedState))));
       const bool acceptedPlace = ordinaryScalar || passiveStaticStorage ||
@@ -12141,7 +12161,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                  instruction.operation == MirOperation::Identity)
                     ? passiveInfo(instruction.info)
                     : scalarInfo(instruction.info))) &&
-              (scalarOperation(instruction.operation) ||
+              ((scalarOperation(instruction.operation) &&
+                stableScalarProvenance(instruction)) ||
                exactRawComputeInstruction || exactNativeCallbackInstruction) &&
               instruction.definedFailure.empty() &&
               instruction.fullExpressionEnd == 0 &&

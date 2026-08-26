@@ -144,6 +144,28 @@ Packet c_packet_make(uint8_t tag, uint64_t serial, uint16_t flags,
 
 Packet c_packet_roundtrip(Packet value) { return value; }
 
+Packet c_packet_from_pointer(const Packet *value) { return *value; }
+
+Packet c_packet_scaled(float value) {
+  Packet result = {
+      .tag = 11,
+      .serial = 300,
+      .flags = 12,
+      .point = {.x = value, .y = value + 1.0f},
+  };
+  return result;
+}
+
+Packet c_packet_scaled_double(double value) {
+  Packet result = {
+      .tag = 13,
+      .serial = 400,
+      .flags = 14,
+      .point = {.x = (float)value, .y = (float)(value + 1.0)},
+  };
+  return result;
+}
+
 uint64_t c_packet_checksum(Packet value) {
   return (uint64_t)value.tag + value.serial + (uint64_t)value.flags;
 }
@@ -181,6 +203,9 @@ extern "C" {
   Packet c_packet_make(uint8_t tag, uint64_t serial, uint16_t flags,
                        float x, float y);
   Packet c_packet_roundtrip(Packet value);
+  Packet c_packet_from_pointer(const Packet* value);
+  Packet c_packet_scaled(float value);
+  Packet c_packet_scaled_double(double value);
   uint64_t c_packet_checksum(Packet value);
   void c_packet_translate(Packet* value, float dx, float dy);
   Link c_link_null(uint32_t code);
@@ -194,6 +219,60 @@ Link make_link(uint32_t code) {
     return c_link_null(code);
   }
 }
+
+Gamepad make_gamepad() {
+  return c_gamepad_make();
+}
+
+Packet read_packet(const Packet* value) {
+  unsafe {
+    return c_packet_from_pointer(value);
+  }
+}
+
+Packet scaled_packet(float value) {
+  return c_packet_scaled(value);
+}
+
+Packet literal_scaled_packet() {
+  return c_packet_scaled(2.0);
+}
+
+Packet scaled_packet_double(double value) {
+  return c_packet_scaled_double(value);
+}
+
+Packet literal_scaled_packet_double() {
+  return c_packet_scaled_double(3.0d);
+}
+
+Packet forward_packet(Packet value) {
+  return value;
+}
+
+Packet copy_packet(Packet value) {
+  Packet copy = value;
+  return copy;
+}
+
+Packet materialized_packet(float value) {
+  Packet result = c_packet_scaled(value);
+  return result;
+}
+
+class PacketReader {
+public:
+  PacketReader(const Packet* value) : value(value) {}
+
+  Packet read() {
+    unsafe {
+      return c_packet_from_pointer(this.value);
+    }
+  }
+
+private:
+  const Packet* value = nullptr;
+};
 """
 
 
@@ -224,6 +303,39 @@ def build_gti_source() -> str:
     return 2;
   }
 
+  Packet record_copy = packet;
+  Packet forwarded = forward_packet(record_copy);
+  Packet copied_again = copy_packet(forwarded);
+  if (record_copy.point.x != 1.5 || forwarded.point.y != 2.0 ||
+      copied_again.tag != uint8_t(7) ||
+      copied_again.serial != uint64_t(100)) {
+    return 9;
+  }
+
+  Packet scaled = scaled_packet(5.0);
+  Packet literal_scaled = literal_scaled_packet();
+  Packet double_scaled = scaled_packet_double(6.0d);
+  Packet literal_double_scaled = literal_scaled_packet_double();
+  Packet materialized = materialized_packet(7.0);
+  if (scaled.point.x != 5.0 || scaled.point.y != 6.0 ||
+      literal_scaled.point.x != 2.0 || literal_scaled.point.y != 3.0 ||
+      double_scaled.point.x != 6.0 || double_scaled.point.y != 7.0 ||
+      literal_double_scaled.point.x != 3.0 ||
+      literal_double_scaled.point.y != 4.0 ||
+      materialized.point.x != 7.0 || materialized.point.y != 8.0) {
+    return 10;
+  }
+
+  unsafe {
+    Packet pointer_copy = read_packet(&packet);
+    PacketReader reader = PacketReader(&packet);
+    Packet field_copy = reader.read();
+    if (pointer_copy.flags != uint16_t(9) ||
+        field_copy.serial != uint64_t(100)) {
+      return 11;
+    }
+  }
+
   unsafe {
     c_packet_translate(&packet, 0.5, 1.0);
   }
@@ -236,7 +348,7 @@ def build_gti_source() -> str:
     return 4;
   }
 
-  mut Gamepad gamepad = c_gamepad_make();
+  mut Gamepad gamepad = make_gamepad();
   unsafe {
     if (c_gamepad_fill(&gamepad) != 1) {
       return 5;
@@ -263,6 +375,11 @@ def build_gti_source() -> str:
         repeated.flags != uint16_t(10) || repeated.point.x != 3.0 ||
         repeated.point.y != 4.0) {
       return 8;
+    }
+    Packet returned_repeated = scaled_packet(3.0);
+    if (returned_repeated.point.x != 3.0 ||
+        returned_repeated.point.y != 4.0) {
+      return 12;
     }
   }
 

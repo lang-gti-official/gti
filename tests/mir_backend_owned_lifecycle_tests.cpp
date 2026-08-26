@@ -745,6 +745,63 @@ void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
          "without reviving the retired family route");
 }
 
+void testFoldedFloatDestructorKeepsFailureSummary() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-destructor-float-fold.gti", R"(
+class FoldedCleanup {
+public:
+  ~FoldedCleanup() {
+    this.value = float(16777217) + 0.5;
+  }
+
+private:
+  mut float value = 0.0;
+};
+)");
+  expect(frontend.canGenerateCode(),
+         "the folded-float destructor fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirDestructorInstance *sourceDestructor =
+      findDestructor(frontend.hir, frontend.mir, "FoldedCleanup");
+  const lang::MirDefinedFailureEffects sourceEffects =
+      lang::deriveMirDefinedFailureEffects(frontend.mir);
+  expect(sourceDestructor != nullptr &&
+             sourceDestructor->id <= sourceEffects.destructors.size() &&
+             sourceEffects.destructors[sourceDestructor->id - 1],
+         "constant float arithmetic should make the source destructor "
+         "failure-capable");
+  if (sourceDestructor == nullptr) {
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility = pipeline.run(
+      frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+  for (const lang::OptimizationLevel level :
+       {lang::OptimizationLevel::O1, lang::OptimizationLevel::O3}) {
+    const lang::OptimizedProgram optimized =
+        pipeline.run({.hir = frontend.hir,
+                      .mir = frontend.mir,
+                      .level = level,
+                      .target = lang::TargetInfo::host(),
+                      .compatibility = &compatibility});
+    const lang::MirDestructorInstance *optimizedDestructor =
+        findDestructor(frontend.hir, optimized.mir, "FoldedCleanup");
+    const lang::MirDefinedFailureEffects optimizedEffects =
+        lang::deriveMirDefinedFailureEffects(optimized.mir);
+    const std::string dump = lang::MirPrinter().print(optimized.mir);
+    expect(optimized.valid() && optimizedDestructor != nullptr &&
+               optimizedDestructor->id <= optimizedEffects.destructors.size() &&
+               optimizedEffects.destructors[optimizedDestructor->id - 1] &&
+               dump.find("compute-fold:add:") != std::string::npos,
+           "O1/O3 float folding must retain the destructor's source failure "
+           "capability");
+  }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -758,6 +815,7 @@ int main(int argc, char **argv) {
       "mir_backend_owned_lifecycle_ctor_swap.gti");
   testCommaUsesGeneralMir(std::filesystem::path(argv[1]).parent_path() /
                           "mir_backend_owned_lifecycle_comma_near_miss.gti");
+  testFoldedFloatDestructorKeepsFailureSummary();
   if (failures != 0) {
     std::cerr << failures << " owned lifecycle backend test(s) failed\n";
     return 1;

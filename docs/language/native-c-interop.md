@@ -368,10 +368,13 @@ A field cannot have a GTI initializer. A C ABI record is representation only:
 default construction policy belongs in an ordinary safe GTI wrapper or in a
 native factory function. A record can be received from native code, copied,
 stored, inspected, passed back, or initialized from another record value while
-its generated default constructor remains unavailable. Keeping initialization
-policy out of the record also ensures that the compiler-generated C++ header
-and generated program contain the same C++ type definition. `mut` controls
-source write access to the field and has no representation effect.
+its generated default constructor remains unavailable. Copying includes direct
+by-value return of a record parameter or local, and a record-returning native
+call may be returned directly after its exact arguments are evaluated. Keeping
+initialization policy out of the record also ensures that the
+compiler-generated C++ header and generated program contain the same C++ type
+definition. `mut` controls source write access to the field and has no
+representation effect.
 
 The semantic model owns size, ABI alignment, and every field offset. HIR and
 MIR retain that metadata. Generated C++ uses a passive struct and compile-time

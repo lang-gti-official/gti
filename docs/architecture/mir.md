@@ -282,13 +282,18 @@ destructor conservatively at `true`. Its function component retains version
 20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
 recognizes the exact `class-default-cleanup-v1` construction and normal-cleanup
 schedule. The proof additionally admits passive string-view parameters,
-places, values, literals, and call operands (a trivially droppable value view cannot
-raise), admits reference parameters together with scalar field loads through
-their dereference carriers (reading through a compile-proven borrow cannot
-raise, exactly like a read-only receiver's field load), accepts a C-linkage or runtime-binding call target by its
+places, values, literals, and call operands, including `float` and `double` (a
+trivially droppable passive value cannot raise), admits reference parameters
+together with terminal passive field loads through their dereference carriers
+(reading through a compile-proven borrow cannot raise, exactly like a
+read-only receiver's passive field load), accepts a C-linkage or
+runtime-binding call target by its
 `FailurePropagationKind::None` language contract instead of recursing into
 a body that does not exist, and accepts the six wrapping/saturating
-integer-arithmetic intrinsic calls, which carry no failure channel. Its destructor component can prove `false` for bounded source bodies
+integer-arithmetic intrinsic calls, which carry no failure channel.
+Optimizer-produced literals remain classified by their retained source
+operation, so folding cannot silently strengthen this effect summary. Its
+destructor component can prove `false` for bounded source bodies
 over the admitted scalar/class operations. A second closed proof admits exact
 source constructors whose base-free passive-scalar class has one verified
 initializer stage per declared field, their matching source destructors, and

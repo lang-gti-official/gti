@@ -24825,9 +24825,8 @@ int main() {
              artifact.contents.find("::__gti_program::Selector<std::int32_t, "
                                     "float>::__gti_fn_3_apply(") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "::__gti_program::Selector<std::int32_t, "
-                 "float>::__gti_fn_4_apply__gti_mir_failure(") !=
+             artifact.contents.find("::__gti_program::Selector<std::int32_t, "
+                                    "float>::__gti_fn_4_apply(") !=
                  std::string::npos,
          "the C++ backend should emit the function identity selected by GTI");
   expect(artifact.contents.find("mir_checked_convert_v1<std::uint64_t>(") !=

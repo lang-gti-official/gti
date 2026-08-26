@@ -320,6 +320,8 @@ reproducers were removed from this directory.
 | [#118](https://github.com/LukeHHA/gti/issues/118) lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
 | [#119](https://github.com/LukeHHA/gti/issues/119) compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
 | [#120](https://github.com/LukeHHA/gti/issues/120) generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
+| [#129](https://github.com/LukeHHA/gti/issues/129) passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
+| [#137](https://github.com/LukeHHA/gti/issues/137) passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

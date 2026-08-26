@@ -372,6 +372,142 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
   }
 }
 
+void testPassiveRecordDirectCallAndReturnSummary() {
+  const std::string source = R"(
+[[c_abi]] struct P {
+  mut float x;
+};
+
+[[c_opaque]] struct H;
+
+extern "C" {
+  P get_free();
+  P get_pointer(const H* handle);
+  P get_integer(int32_t value);
+  P get_float(float value);
+  P get_double(double value);
+}
+
+P no_arguments() {
+  return get_free();
+}
+
+P pointer_argument(const H* handle) {
+  unsafe {
+    return get_pointer(handle);
+  }
+}
+
+P integer_argument(int32_t value) {
+  return get_integer(value);
+}
+
+P float_binding(float value) {
+  return get_float(value);
+}
+
+P float_literal() {
+  return get_float(2.0);
+}
+
+P double_binding(double value) {
+  return get_double(value);
+}
+
+P double_literal() {
+  return get_double(3.0d);
+}
+
+class Holder {
+  const H* handle = nullptr;
+
+public:
+  P receiver_field() {
+    unsafe {
+      return get_pointer(this.handle);
+    }
+  }
+};
+
+struct PointerCarrier {
+  const H* handle = nullptr;
+};
+
+P reference_field(PointerCarrier& carrier) {
+  unsafe {
+    return get_pointer(carrier.handle);
+  }
+}
+
+P parameter_return(P value) {
+  return value;
+}
+
+P local_materialization(float value) {
+  P local = get_float(value);
+  return local;
+}
+
+int32_t checked_float_to_integer(float value) {
+  return int32_t(value);
+}
+
+int main() {
+  return 0;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-passive-record-direct-call.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the passive-record direct-call matrix should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  constexpr std::string_view noFailure[] = {
+      "no_arguments",     "pointer_argument",      "integer_argument",
+      "float_binding",    "float_literal",         "double_binding",
+      "double_literal",   "receiver_field",        "reference_field",
+      "parameter_return", "local_materialization",
+  };
+  for (const std::string_view name : noFailure) {
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, frontend.mir, name);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure,
+           std::string{"the exact passive direct-call shape should be "
+                       "failure-free: "} +
+               std::string{name});
+  }
+  const lang::MirFunctionInstance *checked =
+      findMirFunction(frontend.hir, frontend.mir, "checked_float_to_integer");
+  expect(checked != nullptr && checked->mayRaiseDefinedFailure,
+         "checked float-to-integer conversion must retain its defined-failure "
+         "effect");
+
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const std::string generated =
+      emit(frontend, frontend.mir, compatibility).contents;
+  for (const std::string_view name : noFailure) {
+    expect(functionDefinition(generated, name).find(marker) !=
+               std::string_view::npos,
+           std::string{"the passive direct-call body should emit from plain "
+                       "verified MIR: "} +
+               std::string{name});
+  }
+  expect(failureFunctionDefinition(generated, "checked_float_to_integer")
+                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+             std::string_view::npos,
+         "checked float-to-integer conversion should remain on the failure "
+         "body route");
+}
+
 void testRuntimeDeclarationSummary() {
   const std::string source = R"(
 namespace gti_internal {
@@ -703,6 +839,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   testFamilyAndSummary(argv[1]);
+  testPassiveRecordDirectCallAndReturnSummary();
   testRuntimeDeclarationSummary();
   testMutations(argv[1]);
   if (failures != 0) {
