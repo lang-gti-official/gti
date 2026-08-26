@@ -8154,6 +8154,269 @@ int32_t main() { return make_packet().value - 7; }
   }
 }
 
+void testCleanupFreeConstructorTemporaryFieldRead() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-constructor-temporary-field-read.gti", R"(
+class plain_t {
+public:
+  plain_t() {}
+  mut int32_t value = 7;
+};
+
+int32_t main() { return plain_t().value - 7; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a direct field read from a cleanup-free constructor temporary "
+         "should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the constructor-temporary fixture should lower its entry function");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::MirInstruction *construct = nullptr;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Construct &&
+          instruction.constructorTarget && instruction.result &&
+          instruction.info.type.kind == lang::SemanticType::Class) {
+        expect(construct == nullptr,
+               "the canonical fixture should have one class construction");
+        construct = &instruction;
+      }
+    }
+  }
+  expect(construct != nullptr,
+         "the direct constructor receiver should remain an ordinary MIR "
+         "Construct result");
+  if (construct == nullptr) {
+    return;
+  }
+
+  const lang::MirValueId classResult = *construct->result;
+  const lang::MirValue *constructed = entry->body.findValue(classResult);
+  const lang::MirConstructorInstance *constructor =
+      frontend.mir.findConstructorInstance(*construct->constructorTarget);
+  const lang::MirClassInstance *owner =
+      constructor == nullptr
+          ? nullptr
+          : frontend.mir.findClassInstance(constructor->owner);
+  const std::vector<lang::MirValueUse> uses = entry->body.usesOf(classResult);
+  const lang::MirPlace *projection =
+      uses.size() == 1 && uses.front().kind == lang::MirValueUseKind::PlaceRoot
+          ? entry->body.findPlace(uses.front().place)
+          : nullptr;
+  const lang::MirInstruction *load = nullptr;
+  if (projection != nullptr) {
+    for (const lang::MirBlock &block : entry->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Load &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Copy &&
+            instruction.operands.front().place == projection->id) {
+          expect(load == nullptr,
+                 "the projected field should have one scalar Load consumer");
+          load = &instruction;
+        }
+      }
+    }
+  }
+
+  expect(
+      constructed != nullptr && constructor != nullptr && owner != nullptr &&
+          constructed->info.category == lang::ValueCategory::Value &&
+          construct->constructorKind == lang::ConstructorKind::Ordinary &&
+          !construct->destination && !construct->receiver &&
+          construct->localFailureSites.empty() &&
+          construct->definedFailure.localOrigins.empty() &&
+          construct->lifecycle.empty() && construct->fullExpressionEnd == 0 &&
+          construct->cleanupBoundaryEnd == 0 && !construct->successResultDrop &&
+          !construct->successResultDestination &&
+          constructor->owner == owner->id &&
+          owner->type == constructed->info.type &&
+          constructor->parameterTypes == construct->parameterTypes &&
+          construct->parameterTypes.size() == construct->operands.size() &&
+          owner->destructorStatus == lang::SpecialMemberStatus::Generated &&
+          !owner->destructor && !owner->requiresActiveDropState &&
+          !owner->requiresActiveCleanup,
+      "the construction should carry exact target/type/parameter metadata "
+      "without semantic cleanup obligations");
+  expect(uses.size() == 1 && projection != nullptr &&
+             projection->root == lang::MirPlaceRootKind::Value &&
+             projection->value == classResult &&
+             projection->projections.size() == 1 &&
+             projection->projections.front().kind ==
+                 lang::MirProjectionKind::Field &&
+             load != nullptr && load->result &&
+             load->info.type == projection->type &&
+             load->info.traits.drop == lang::DropKind::Trivial &&
+             load->info.traits.copyable && load->lifecycle.empty() &&
+             load->localFailureSites.empty() && load->definedFailure.empty(),
+         "the construction result should have one value-rooted Field place "
+         "and one exact trivial scalar copy Load");
+  expect(std::none_of(entry->body.dropObligations.begin(),
+                      entry->body.dropObligations.end(),
+                      [&](const lang::MirDropObligation &drop) {
+                        return drop.generatedValue == classResult ||
+                               (projection != nullptr &&
+                                drop.place == projection->id);
+                      }),
+         "the cleanup-free constructor value and field view should own no MIR "
+         "drop obligations");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the exact constructor field read should enter transformed MIR "
+         "emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "constructor-field-read-v0", 1).text;
+  const std::string slot = "__gti_mir_v_" + std::to_string(classResult);
+  const auto count = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  expect(text.find("mir_lifetime_slot<") != std::string::npos &&
+             count("std::construct_at(" + slot + ".construction_address()") ==
+                 1 &&
+             count(slot + ".mark_constructed()") == 1 &&
+             count(slot + ".get().") == 1 && count(slot + ".destroy()") == 0 &&
+             count("std::move(" + slot + ".get())") == 0,
+         "the constructor should publish once into its value slot and the "
+         "field Load should read it once without an invented copy or drop");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the complete backend should emit the direct constructor field read");
+
+  lang::MirProgram duplicateProjectionUse = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      duplicateProjectionUse.functionInstances());
+  lang::MirFunctionInstance *mutatedEntry = nullptr;
+  for (lang::MirFunctionInstance &function : functions) {
+    if (function.id == entry->id) {
+      mutatedEntry = &function;
+    }
+  }
+  bool replacedReturn = false;
+  if (mutatedEntry != nullptr && projection != nullptr) {
+    for (lang::MirBlock &block : mutatedEntry->body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.value) {
+        continue;
+      }
+      block.terminator.value =
+          lang::MirOperand{.kind = lang::MirOperandKind::Copy,
+                           .place = projection->id,
+                           .type = projection->type};
+      replacedReturn = true;
+    }
+    (void)lang::rebuildMirValueUses(mutatedEntry->body);
+  }
+  expect(replacedReturn &&
+             lang::verifyMirProgram(duplicateProjectionUse).valid(),
+         "the duplicate field consumer near miss should remain valid MIR");
+  if (replacedReturn &&
+      lang::verifyMirProgram(duplicateProjectionUse).valid()) {
+    const lang::CppMirBodyEmissionMap duplicateMap(
+        completeRows(duplicateProjectionUse));
+    const lang::CppMirBodyEmitter duplicateEmitter(duplicateProjectionUse,
+                                                   duplicateMap);
+    expect(!duplicateEmitter.supportsFailureBodyText(address),
+           "a constructor result field place with a second consumer should "
+           "remain outside the slot representation");
+  }
+
+  const lang::FrontendResult nested =
+      analyze("cpp-mir-constructor-temporary-nested-field.gti", R"(
+struct inner_t { int32_t value = 7; };
+class outer_t {
+public:
+  outer_t() {}
+  inner_t inner = inner_t();
+};
+int32_t main() { return outer_t().inner.value - 7; }
+)");
+  expect(nested.canGenerateCode(),
+         "the nested constructor field near miss should pass the frontend");
+  if (nested.canGenerateCode()) {
+    const auto nestedEntry = std::find_if(
+        nested.mir.functionInstances().begin(),
+        nested.mir.functionInstances().end(), [](const auto &function) {
+          return function.entryKind == lang::ProgramEntryKind::NoArguments;
+        });
+    expect(nestedEntry != nested.mir.functionInstances().end(),
+           "the nested constructor field near miss should lower its entry");
+    if (nestedEntry != nested.mir.functionInstances().end()) {
+      const lang::CppMirBodyEmissionMap nestedMap(
+          buildRows(nested, nested.mir, lang::CppStandard::Cpp23));
+      const lang::CppMirBodyEmitter nestedEmitter(nested.mir, nestedMap);
+      expect(
+          !nestedEmitter.supportsFailureBodyText(
+              {.kind = lang::MirBodyKind::Function, .owner = nestedEntry->id}),
+          "a two-field constructor projection should remain unsupported");
+    }
+  }
+
+  const lang::FrontendResult cleanup =
+      analyze("cpp-mir-constructor-temporary-cleanup-field.gti", R"(
+class cleanup_t {
+public:
+  cleanup_t() {}
+  ~cleanup_t() {}
+  int32_t value = 7;
+};
+int32_t main() { return cleanup_t().value - 7; }
+)");
+  expect(cleanup.canGenerateCode(),
+         "the cleanup-owning constructor field near miss should pass the "
+         "frontend");
+  if (cleanup.canGenerateCode()) {
+    const auto cleanupEntry = std::find_if(
+        cleanup.mir.functionInstances().begin(),
+        cleanup.mir.functionInstances().end(), [](const auto &function) {
+          return function.entryKind == lang::ProgramEntryKind::NoArguments;
+        });
+    expect(cleanupEntry != cleanup.mir.functionInstances().end(),
+           "the cleanup-owning constructor near miss should lower its entry");
+    if (cleanupEntry != cleanup.mir.functionInstances().end()) {
+      const lang::CppMirBodyEmissionMap cleanupMap(
+          buildRows(cleanup, cleanup.mir, lang::CppStandard::Cpp23));
+      const lang::CppMirBodyEmitter cleanupEmitter(cleanup.mir, cleanupMap);
+      expect(
+          !cleanupEmitter.supportsFailureBodyText(
+              {.kind = lang::MirBodyKind::Function, .owner = cleanupEntry->id}),
+          "an explicit-destructor constructor temporary should remain "
+          "outside the cleanup-free slot representation");
+    }
+  }
+}
+
 void testReferenceParameterBorrowUsesReferentCarrier() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-reference-parameter-range.gti", R"(
@@ -8919,6 +9182,8 @@ constexpr NamedTest kTests[] = {
      testFailureCapableClassReturnTemporaryReceiver},
     {"testFailureCapableClassReturnFieldRead",
      testFailureCapableClassReturnFieldRead},
+    {"testCleanupFreeConstructorTemporaryFieldRead",
+     testCleanupFreeConstructorTemporaryFieldRead},
     {"testReferenceParameterBorrowUsesReferentCarrier",
      testReferenceParameterBorrowUsesReferentCarrier},
     {"testCopyParameterFieldPublicationAdmission",
