@@ -1,11 +1,17 @@
 # Fixed-array overflow
 
-This is the admitted O-PERF-01 client. A 4,096-element update is bounded by
-construction, but checked multiply/add side exits prevent the native compiler
-from vectorizing the current GTI representation. The semantic C++ twin checks
-the same operations in order, while the idiomatic twin omits checks only for
-this fixed bounded input. The campaign's generated arithmetic ablation is an
-opt-in runner artifact, not a source variant and never optimizer proof.
+This is the completed O-PERF-01 client. A 4,096-element update is bounded by
+construction. Before O-PERF-01, checked arithmetic side exits prevented the
+native compiler from vectorizing the GTI representation. The semantic C++ twin
+checks the same operations in order, while the idiomatic twin omits checks only
+for this fixed bounded input. The campaign's generated arithmetic ablation is
+an opt-in runner artifact, not a source variant and never optimizer proof.
+
+Exact clean commit `52d13d05` discharges all five hot arithmetic outcomes and
+all three hot fixed-array bounds outcomes through MIR proofs. Five warmups and
+twenty seeded interleaved samples measured GTI at 1.007x idiomatic C++ at O2
+and 1.001x at O3. The canonical report identities and raw samples are retained
+in [`docs/plans/performance-tooling.md`](../../../docs/plans/performance-tooling.md).
 
 Expected record:
 
