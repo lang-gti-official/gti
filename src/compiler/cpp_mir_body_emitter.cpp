@@ -2598,23 +2598,46 @@ expectedPayloadExtractionPlace(const MirBody &body, MirValueId valueId) {
   }
   const std::size_t payloadIndex =
       definition->intrinsic == IntrinsicKind::ExpectedValue ? 0u : 1u;
-  if (definition->receiver->type.arguments[payloadIndex] != value->info.type ||
-      body.usesOf(valueId).size() != 1 ||
-      body.usesOf(valueId).front().kind != MirValueUseKind::PlaceRoot) {
+  if (definition->receiver->type.arguments[payloadIndex] != value->info.type) {
     return nullptr;
   }
-  const MirPlace *place = body.findPlace(body.usesOf(valueId).front().place);
-  if (place == nullptr || place->root != MirPlaceRootKind::Value ||
-      place->value != valueId || !place->projections.empty() ||
-      place->type != value->info.type || place->access != value->info.access) {
+  // The extraction roots exactly one bare lvalue view, plus optional pure
+  // field-projection views; each view spells through the published payload
+  // pointer.
+  const MirPlace *bare = nullptr;
+  for (const MirValueUse &use : body.usesOf(valueId)) {
+    if (use.kind != MirValueUseKind::PlaceRoot) {
+      return nullptr;
+    }
+    const MirPlace *place = body.findPlace(use.place);
+    if (place == nullptr || place->root != MirPlaceRootKind::Value ||
+        place->value != valueId) {
+      return nullptr;
+    }
+    if (place->projections.empty()) {
+      if (bare != nullptr || place->type != value->info.type ||
+          place->access != value->info.access) {
+        return nullptr;
+      }
+      bare = place;
+      continue;
+    }
+    if (!std::all_of(place->projections.begin(), place->projections.end(),
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     })) {
+      return nullptr;
+    }
+  }
+  if (bare == nullptr) {
     return nullptr;
   }
   const bool ownsStorage = std::any_of(
       body.dropObligations.begin(), body.dropObligations.end(),
       [&](const MirDropObligation &drop) {
-        return drop.place == place->id || drop.generatedValue == valueId;
+        return drop.place == bare->id || drop.generatedValue == valueId;
       });
-  return ownsStorage ? nullptr : place;
+  return ownsStorage ? nullptr : bare;
 }
 
 // An owning Expected rvalue can transfer one class payload into the exact
@@ -5865,24 +5888,29 @@ materializedClosure(const MirProgram &program, const MirBody &body,
     }
     shape.captures.push_back({.source = source, .mode = mode});
   }
-  // A copy-only lexical closure can create its obligation at the destination
-  // Initialize. A closure with move captures owns an obligation first and the
-  // destination reparents it, so the Closure must carry one Initialize beside
-  // the capture TransferOut events.
+  // A closure whose captures own no obligations creates its own at the
+  // destination Initialize with no lifecycle events of its own: passive
+  // copies always, and moves of captures that never materialized a drop
+  // obligation (verified MIR would otherwise demand their transfer here).
+  // Owning move captures transfer in, so the destination reparents the
+  // closure's obligation and each capture carries one TransferOut.
   const bool lexicalPublication =
       (publication.publication == LambdaValuePublication::Initialize &&
-       moveCaptures == 0 && initialized == 0) ||
+       initialized == 0 && transferred == 0) ||
       (publication.publication == LambdaValuePublication::Reparent &&
-       initialized == 1);
+       initialized == 1 && transferred == moveCaptures);
   const bool lexicalClosure = result->info.traits.drop == DropKind::Lexical &&
                               destination->traits.drop == DropKind::Lexical &&
-                              lexicalPublication && transferred == moveCaptures;
-  const bool passiveCopyClosure =
+                              lexicalPublication;
+  // A passive closure's captures leave no obligations: copies of passive
+  // values, and moves of trivially-dropped values whose moved-from source
+  // keeps no representation state. Both spell the same capture list.
+  const bool passiveClosure =
       result->info.traits.drop == DropKind::Trivial &&
-      destination->traits.drop == DropKind::Trivial && moveCaptures == 0 &&
+      destination->traits.drop == DropKind::Trivial &&
       publication.publication == LambdaValuePublication::Passive &&
       initialized == 0 && transferred == 0;
-  if (!lexicalClosure && !passiveCopyClosure) {
+  if (!lexicalClosure && !passiveClosure) {
     return {};
   }
   return shape;
@@ -10789,8 +10817,50 @@ expectedPayloadReturnSlot(const MirProgram &program,
       value->info.traits.drop != DropKind::Lexical || producer == nullptr ||
       (!constructorProducer && !callProducer) || !producer->result ||
       *producer->result != valueId || producer->destination ||
-      producer->receiver || drop == nullptr ||
-      drop->kind != MirDropObligationKind::Value ||
+      producer->receiver) {
+    return {};
+  }
+  if (drop == nullptr) {
+    // An obligation-free payload: nothing activates, so the construction
+    // cannot leave a partially owned value behind. The slot is
+    // representation-only and the unique Return consumes the value in the
+    // producer's own block.
+    if (!constructorProducer || producer->successResultDrop ||
+        body.usesOf(valueId).size() != 1 ||
+        body.usesOf(valueId).front().kind != MirValueUseKind::Terminator) {
+      return {};
+    }
+    const MirBlock *producerBlock = nullptr;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &member : block.instructions) {
+        if (member.id == producer->id) {
+          producerBlock = &block;
+        }
+      }
+    }
+    if (producerBlock == nullptr ||
+        producerBlock->id != body.usesOf(valueId).front().block ||
+        producerBlock->terminator.kind != MirTerminatorKind::Return ||
+        !producerBlock->terminator.value ||
+        producerBlock->terminator.value->kind != MirOperandKind::Value ||
+        producerBlock->terminator.value->value != valueId) {
+      return {};
+    }
+    bool afterProducer = false;
+    for (const MirInstruction &member : producerBlock->instructions) {
+      if (member.id == producer->id) {
+        afterProducer = true;
+        continue;
+      }
+      if (afterProducer && (member.kind != MirInstructionKind::Lifecycle ||
+                            !member.definedFailure.empty())) {
+        return {};
+      }
+    }
+    return {.value = value, .producer = producer,
+            .returnBlock = producerBlock, .drop = nullptr};
+  }
+  if (drop->kind != MirDropObligationKind::Value ||
       producer->successResultDrop != drop->id) {
     return {};
   }
@@ -15637,6 +15707,18 @@ public:
           // The moved alternative spells inside its sole Unexpected return;
           // the extraction value's pointer remains the only local carrier.
           continue;
+        }
+        if (valueDefinition != nullptr &&
+            valueDefinition->kind == MirInstructionKind::CallInput) {
+          const MovedChainTerminal terminal =
+              movedChainTerminal(facts.body, value.id);
+          if (terminal.consumer != nullptr &&
+              movedPlaceChainSource(facts.body, terminal.top,
+                                    *terminal.consumer) != nullptr) {
+            // The staged link spells std::move over the chain's source place
+            // at its consuming argument; no link materializes a local.
+            continue;
+          }
         }
         if (expectedClassExtractionPlace(facts.body, value.id) != nullptr ||
             expectedClassCopyExtraction(facts.body, value.id)) {
@@ -22594,6 +22676,22 @@ private:
       output << "(*__gti_mir_ref_v_" << place.value << ')';
       return;
     }
+    if (place.root == MirPlaceRootKind::Value && !place.projections.empty() &&
+        std::all_of(place.projections.begin(), place.projections.end(),
+                    [](const MirPlaceProjection &projection) {
+                      return projection.kind == MirProjectionKind::Field;
+                    }) &&
+        expectedClassExtractionPlace(facts.body, place.value) != nullptr) {
+      // A field view over the published payload pointer.
+      const MirValue *extraction = facts.body.findValue(place.value);
+      if (extraction == nullptr) {
+        throw std::logic_error(
+            "verified extraction field view lost its payload value");
+      }
+      output << "(*__gti_mir_ref_v_" << place.value << ')';
+      emitFieldProjectionChain(extraction->info.type, place.projections, 0);
+      return;
+    }
     if (place.root == MirPlaceRootKind::Value &&
         expectedScalarExtractionPlace(facts.body, place.value) == &place) {
       output << "__gti_mir_v_" << place.value;
@@ -25578,6 +25676,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         expectedClassExtractionPlace(body, place.value) == &place) {
       // The failure helper publishes the existing payload's address into the
       // value carrier; this place is the lvalue view over that pointer.
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::Value && !place.projections.empty() &&
+        std::all_of(place.projections.begin(), place.projections.end(),
+                    [](const MirPlaceProjection &projection) {
+                      return projection.kind == MirProjectionKind::Field;
+                    }) &&
+        expectedClassExtractionPlace(body, place.value) != nullptr) {
+      // A field view over the published payload pointer.
+      const MirValue *extraction = body.findValue(place.value);
+      if (extraction == nullptr ||
+          !exactFieldProjectionRows(program_, representations_,
+                                    extraction->info.type, place.projections,
+                                    0, place.type)) {
+        return false;
+      }
       continue;
     }
     if (place.root == MirPlaceRootKind::Value &&
