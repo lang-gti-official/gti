@@ -15429,8 +15429,8 @@ bool compare(uint64_t left, uint64_t right, uint64_t limit) {
   // single directive token '#case', flipping the following colon's spacing on
   // the next pass and breaking idempotence. Every such directive+word pair
   // must format to a fixed point.
-  for (const std::string source : {"# case:", "# case :", "#\tcase:",
-                                   "# default:", "# return :"}) {
+  for (const std::string source :
+       {"# case:", "# case :", "#\tcase:", "# default:", "# return :"}) {
     const std::string first = lang::Formatter().format(source);
     expect(lang::Formatter().format(first) == first,
            "formatting a directive marker glued to a word must be idempotent");
