@@ -10787,7 +10787,8 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
       while (leaf.kind == SemanticType::Array && leaf.arguments.size() == 1 &&
              leaf.arrayLengthParameterId == 0 && leaf.arrayLength != 0) {
         extents.push_back(leaf.arrayLength);
-        leaf = leaf.arguments.front();
+        SemanticType element = leaf.arguments.front();
+        leaf = std::move(element);
       }
       const MirClassInstance *leafClass =
           schedule != nullptr && schedule->leafClassInstance
