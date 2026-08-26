@@ -32056,6 +32056,176 @@ int main() { return inspect(Report()); }
          "ephemeral-borrow fallback tier");
 }
 
+void testCleanupOwningTemporaryArguments() {
+  const std::string source = R"(
+class cleanup_t {
+public:
+  cleanup_t(int32_t initial) : value(initial) {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() {}
+
+  int32_t value;
+};
+
+int32_t read(cleanup_t value) { return value.value; }
+
+expected<cleanup_t, int32_t> make_ready(int32_t value) {
+  return cleanup_t(value);
+}
+
+int main() {
+  int32_t direct = read(cleanup_t(3));
+  expected<cleanup_t, int32_t> ready = make_ready(4);
+  return direct + read(std::move(ready).value()) - 7;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("cleanup-owning-temporary-arguments.gti", source,
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected cleanup-temporary diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "cleanup-owning constructor and Expected results should lower to "
+         "verified by-value argument transfers");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the cleanup-temporary fixture should retain its entry function");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  std::size_t directTransfers = 0;
+  std::size_t expectedTransfers = 0;
+  const auto instructionById = [&](lang::MirInstructionId id) {
+    for (const lang::MirBlock &block : entry->body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &stage : block.instructions) {
+      if (stage.kind != lang::MirInstructionKind::CallInput ||
+          stage.callInputKind != lang::HirCallInputKind::MoveValue ||
+          !stage.result || !stage.destination || !stage.preparedParameterDrop ||
+          stage.operands.size() != 1 ||
+          stage.operands.front().kind != lang::MirOperandKind::Value ||
+          stage.lifecycle.size() != 1) {
+        continue;
+      }
+      const lang::MirValue *sourceValue =
+          entry->body.findValue(stage.operands.front().value);
+      const lang::MirInstruction *producer =
+          sourceValue == nullptr ? nullptr
+                                 : instructionById(sourceValue->definition);
+      const lang::MirDropObligation *sourceDrop =
+          entry->body.findDropObligation(stage.lifecycle.front().source);
+      const lang::MirDropObligation *preparedDrop =
+          entry->body.findDropObligation(*stage.preparedParameterDrop);
+      const lang::MirPlace *sourcePlace =
+          sourceDrop == nullptr ? nullptr
+                                : entry->body.findPlace(sourceDrop->place);
+      const lang::MirPlace *preparedPlace =
+          entry->body.findPlace(*stage.destination);
+      const std::vector<lang::MirValueUse> stagedUses =
+          entry->body.usesOf(*stage.result);
+      const lang::MirInstruction *consumer =
+          stagedUses.size() == 1
+              ? instructionById(stagedUses.front().instruction)
+              : nullptr;
+      const bool transfer =
+          producer != nullptr && sourceValue != nullptr &&
+          sourceValue->info.type.kind == lang::SemanticType::Class &&
+          sourceValue->info.traits.drop == lang::DropKind::Lexical &&
+          sourceDrop != nullptr &&
+          sourceDrop->kind == lang::MirDropObligationKind::Value &&
+          sourceDrop->dropType.requiresActiveCleanup &&
+          preparedDrop != nullptr &&
+          preparedDrop->kind ==
+              lang::MirDropObligationKind::PreparedParameter &&
+          sourcePlace != nullptr &&
+          sourcePlace->root == lang::MirPlaceRootKind::Value &&
+          sourcePlace->value == sourceValue->id &&
+          sourcePlace->projections.empty() && preparedPlace != nullptr &&
+          preparedPlace->root == lang::MirPlaceRootKind::Temporary &&
+          preparedDrop->place == preparedPlace->id &&
+          stage.lifecycle.front().kind ==
+              lang::MirLifecycleEventKind::Reparent &&
+          stage.lifecycle.front().target == preparedDrop->id &&
+          consumer != nullptr &&
+          consumer->kind == lang::MirInstructionKind::Call &&
+          std::count_if(consumer->lifecycle.begin(), consumer->lifecycle.end(),
+                        [&](const lang::MirLifecycleEvent &event) {
+                          return event.kind ==
+                                     lang::MirLifecycleEventKind::TransferOut &&
+                                 event.source == preparedDrop->id &&
+                                 event.target == 0 && !event.conditional &&
+                                 !event.failureCleanup;
+                        }) == 1;
+      expect(transfer,
+             "each cleanup-owning CallInput should reparent one value drop "
+             "into one prepared parameter consumed by its call");
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Construct) {
+        directTransfers += transfer ? 1 : 0;
+      }
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Call &&
+          producer->intrinsic == lang::IntrinsicKind::ExpectedValue) {
+        expectedTransfers += transfer ? 1 : 0;
+      }
+    }
+  }
+  expect(directTransfers == 1 && expectedTransfers == 1,
+         "the entry should retain one direct constructor transfer and one "
+         "owning Expected extraction transfer");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should emit both verified transfers without "
+         "inventing cleanup storage");
+
+  const lang::FrontendResult rejected =
+      lang::Frontend().analyze("cleanup-owning-named-copy.gti", R"(
+class cleanup_t {
+public:
+  cleanup_t() {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() {}
+};
+void consume(cleanup_t value) {}
+int main() {
+  cleanup_t local{};
+  consume(local);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejected.canGenerateCode() &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2018"),
+         "a named move-only lvalue should remain rejected as a deleted "
+         "by-value copy");
+}
+
 void testReadOnlyReceiverDiagnostics() {
   const std::string invalidSource = R"(
 struct Component {
@@ -32257,6 +32427,10 @@ int main(int argc, char **argv) {
     testTemporaryArgumentBorrows();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "cleanup-temporary-arguments") {
+    testCleanupOwningTemporaryArguments();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "receiver-diagnostics") {
     testReadOnlyReceiverDiagnostics();
     return failures == 0 ? 0 : 1;
@@ -32344,6 +32518,7 @@ int main(int argc, char **argv) {
   testMutableFieldGroups();
   testMutableTemporaryReceivers();
   testTemporaryArgumentBorrows();
+  testCleanupOwningTemporaryArguments();
   testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();
   testDefaultedDefaultLifecycle();

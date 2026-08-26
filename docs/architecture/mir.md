@@ -353,7 +353,15 @@ normal-success lifecycle events for one bounded cleanup-owning ordinary-call
 result shape, leaving that result uninitialized on the failure edge. The same
 schema now supports an exact local scalar argument detector or un-sited static
 direct-call propagation after one or more prepared stages without adding
-duplicate failure or cleanup metadata. Version 17 added bounded
+duplicate failure or cleanup metadata. It also represents an exact
+cleanup-owning class producer handed directly to a by-value call: successful
+production initializes the source drop, the adjacent `CallInput` reparents
+that identity into its matching prepared drop, and the `Call` transfers it
+out. For an owning `Expected` extraction, the unprojected Value-root source
+place is only the drop identity for that chain; it does not imply independent
+storage publication. Verification and backend admission require one consumer,
+matching types and drop descriptors, exact success/failure edges, and no
+additional place or loan use. Version 17 added bounded
 `Invoke`/`PropagateFailure` control flow, body-local
 fixed failure-record parameters, and deterministic failure cleanup for
 eligible full-expression-root scalar operations in function and lambda bodies.

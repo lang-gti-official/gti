@@ -1,0 +1,12 @@
+#include <std/thread>
+
+void consume(std::jthread runner) {}
+
+int main() {
+  auto started = std::jthread::start([]() -> void {});
+  if (!started.has_value()) {
+    return 1;
+  }
+  consume(std::move(started).value());
+  return 0;
+}
