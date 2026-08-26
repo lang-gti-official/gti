@@ -122,9 +122,9 @@ or implicit `switch` fallthrough.
 
 ## Build and try it
 
-Requirements are CMake 3.20 or newer, a suitable C++ compiler, and LLVM 18
-through 22 **built with RTTI enabled** (distribution packages such as Debian
-`llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
+Requirements are CMake 3.20 or newer, Ninja, a suitable C++ compiler, and LLVM
+18 through 22 **built with RTTI enabled** (distribution packages such as
+Debian `llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
 CMake uses a compatible system LLVM by default and reports an RTTI mismatch
 at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
 pinned LLVM release used for self-contained toolchains, with RTTI enabled
@@ -139,7 +139,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 ```sh
 git clone https://github.com/LukeHHA/gti.git
 cd gti
-cmake -S . -B build
+cmake -S . -B build -G Ninja
 cmake --build build --parallel 4
 
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
@@ -165,7 +165,7 @@ compiler-launcher interface. This caches compiler outputs without changing
 GTI's build graph or artifact semantics:
 
 ```sh
-cmake -S . -B build \
+cmake -S . -B build -G Ninja \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 ```
