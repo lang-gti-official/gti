@@ -1,17 +1,3 @@
-namespace gti_internal {
-[[no_transfer, no_share]] class thread_handle {
-public:
-  thread_handle(thread_handle& other) = delete;
-  ~thread_handle() = default;
-};
-
-gti_internal::thread_handle thread_handle_empty();
-bool thread_joinable(gti_internal::thread_handle& handle);
-int32_t thread_spawn<Task>(mut gti_internal::thread_handle& handle, Task task);
-int32_t thread_join(mut gti_internal::thread_handle& handle);
-void thread_auto_join(mut gti_internal::thread_handle& handle);
-}
-
 namespace std {
 /// Recoverable managed-thread creation and explicit-join outcomes.
 enum class thread_errc {
@@ -20,25 +6,53 @@ enum class thread_errc {
   not_joinable,
   join_failed,
 };
+}
 
+namespace gti_internal {
+[[no_transfer, no_share]] class thread_handle {
+public:
+  thread_handle(thread_handle& other) = delete;
+  ~thread_handle() = default;
+};
+
+[[no_transfer, no_share]] class thread_result_handle<Result> {
+public:
+  thread_result_handle() = default;
+  thread_result_handle(thread_result_handle<Result>& other) = delete;
+  ~thread_result_handle() = default;
+};
+
+gti_internal::thread_handle thread_handle_empty();
+gti_internal::thread_result_handle<Result> thread_result_handle_empty<Result>();
+bool thread_joinable(gti_internal::thread_handle& handle);
+int32_t thread_spawn<Task>(mut gti_internal::thread_handle& handle, Task task);
+int32_t thread_join(mut gti_internal::thread_handle& handle);
+void thread_auto_join(mut gti_internal::thread_handle& handle);
+bool thread_result_joinable<Result>(gti_internal::thread_result_handle<Result>& handle);
+int32_t thread_result_spawn<Result, Task>(mut gti_internal::thread_result_handle<Result>& handle, Task task);
+expected<Result, std::thread_errc> thread_result_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
+void thread_result_auto_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
+}
+
+namespace std {
 /// A move-only managed thread. Destruction joins an outstanding worker.
 ///
 /// The worker owns its task and all transfer-safe captures. A worker defined
 /// failure is re-raised by `join()` or by the mandatory destructor join. Move
 /// construction transfers the join obligation; move assignment is not part of
 /// this first surface.
-class jthread {
+class thread {
   mut gti_internal::thread_handle handle;
 
-  jthread(gti_internal::thread_handle value)
+  thread(gti_internal::thread_handle value)
       : handle(std::move(value)) {}
 
 public:
-  jthread(jthread& other) = delete;
-  jthread(jthread&& other) = default;
+  thread(thread& other) = delete;
+  thread(thread&& other) = default;
 
   /// Starts one consumed, transfer-safe exact `void()` task.
-  static expected<jthread, thread_errc> start<Task>(Task task) {
+  static expected<thread, thread_errc> start<Task>(Task task) {
     mut gti_internal::thread_handle handle =
         gti_internal::thread_handle_empty();
     int32_t status =
@@ -49,7 +63,7 @@ public:
     if (status != 0) {
       return unexpected(thread_errc::operation_not_permitted);
     }
-    return jthread(std::move(handle));
+    return thread(std::move(handle));
   }
 
   /// True while this value owns an outstanding join obligation.
@@ -69,8 +83,50 @@ public:
     return;
   }
 
-  ~jthread() {
+  ~thread() {
     gti_internal::thread_auto_join(this.handle);
+  }
+};
+
+/// A move-only managed thread whose explicit join returns one owned result.
+///
+/// Destruction joins an outstanding worker and abandons an unobserved result.
+/// The result type and task captures must be transfer-safe owned values.
+class thread_result<Result> {
+  mut gti_internal::thread_result_handle<Result> handle;
+
+public:
+  thread_result()
+      : handle(gti_internal::thread_result_handle_empty<Result>()) {}
+
+  thread_result(thread_result<Result>& other) = delete;
+  thread_result(thread_result<Result>&& other) = default;
+
+  /// Starts one consumed, transfer-safe exact `Result()` task.
+  expected<void, thread_errc> start<Task>(Task task) mut {
+    int32_t status =
+        gti_internal::thread_result_spawn(this.handle, std::move(task));
+    if (status == 1) {
+      return unexpected(thread_errc::resource_unavailable);
+    }
+    if (status != 0) {
+      return unexpected(thread_errc::operation_not_permitted);
+    }
+    return;
+  }
+
+  /// True while this value owns an outstanding join obligation.
+  bool joinable() {
+    return gti_internal::thread_result_joinable(this.handle);
+  }
+
+  /// Joins once and transfers the worker's owned result to this thread.
+  expected<Result, thread_errc> join() mut {
+    return gti_internal::thread_result_join(this.handle);
+  }
+
+  ~thread_result() {
+    gti_internal::thread_result_auto_join(this.handle);
   }
 };
 }

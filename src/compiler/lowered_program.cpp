@@ -1338,7 +1338,17 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
        ++index) {
     const HirThreadTaskAdapter &source = hir.threadTaskAdapters()[index];
     const MirThreadTaskAdapter &lowered = mir.threadTaskAdapters()[index];
+    const HirFunctionInstance *functionTarget =
+        source.functionTarget ? hir.findFunctionInstance(*source.functionTarget)
+                              : nullptr;
+    const HirLambda *lambdaTarget =
+        source.lambdaTarget ? hir.findLambda(*source.lambdaTarget) : nullptr;
+    const SemanticType resultType =
+        functionTarget != nullptr ? functionTarget->returnType
+        : lambdaTarget != nullptr ? lambdaTarget->returnType
+                                  : SemanticType::Unknown;
     if (source.id != lowered.id || source.taskType != lowered.taskType ||
+        resultType != lowered.resultType ||
         source.spawnValue != lowered.spawnValue ||
         source.functionTarget != lowered.functionTarget ||
         source.lambdaTarget != lowered.lambdaTarget ||

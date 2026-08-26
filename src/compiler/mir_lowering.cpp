@@ -7264,6 +7264,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
   }
   result.program.threadTasks.reserve(source.threadTaskAdapters().size());
   for (const HirThreadTaskAdapter &adapter : source.threadTaskAdapters()) {
+    const HirFunctionInstance *functionTarget =
+        adapter.functionTarget
+            ? source.findFunctionInstance(*adapter.functionTarget)
+            : nullptr;
+    const HirLambda *lambdaTarget =
+        adapter.lambdaTarget ? source.findLambda(*adapter.lambdaTarget)
+                             : nullptr;
+    const SemanticType resultType =
+        functionTarget != nullptr ? functionTarget->returnType
+        : lambdaTarget != nullptr ? lambdaTarget->returnType
+                                  : SemanticType::Unknown;
     MirBodyAddress sourceBody;
     MirInstructionId spawnInstruction = 0;
     for (const MirBodyAddress address :
@@ -7291,6 +7302,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     if (spawnInstruction == 0 || adapter.id == 0 ||
         adapter.taskType == SemanticType::Unknown ||
+        resultType == SemanticType::Unknown ||
         adapter.functionTarget.has_value() ==
             adapter.lambdaTarget.has_value() ||
         adapter.invocation != CallableInvocationCapability::Once) {
@@ -7300,6 +7312,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.threadTasks.push_back(
         {.id = adapter.id,
          .taskType = adapter.taskType,
+         .resultType = resultType,
          .spawnValue = adapter.spawnValue,
          .sourceBody = sourceBody,
          .spawnInstruction = spawnInstruction,

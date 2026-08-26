@@ -376,14 +376,16 @@ a semantic/lowering restriction, not a backend fallback.
 Selection of the trusted private thread-spawn declaration extends the existing
 `Owned` callable boundary with
 `CallableOwnedTransportKind::ThreadTask`; it does not recognize
-`std::jthread` or a public method spelling. The accepted value is one fresh or
-explicitly moved exact `void()` lambda or nominal callable. It must be movable,
-transfer-capable, free of tracked borrowed state, and invocable with no
-arguments. Every lambda capture participates in the same recursive transfer
-facts used elsewhere; references, raw pointers, borrowed carriers, cleanup-
-based denials, and nominal opt-outs fail before HIR.
+`std::thread` or a public method spelling. The accepted value is one fresh or
+explicitly moved exact `void()` or context-required `Result()` lambda or
+nominal callable. It must be movable, transfer-capable, free of tracked
+borrowed state, and invocable with no arguments. A typed result must also be an
+owned, non-reference, non-pointer, transfer-capable value matching the private
+result-handle type exactly. Every lambda capture participates in the same
+recursive transfer facts used elsewhere; references, raw pointers, borrowed
+carriers, cleanup-based denials, and nominal opt-outs fail before HIR.
 
-For a generic source wrapper such as the source-defined `jthread::start`, the
+For a generic source wrapper such as the source-defined `thread::start`, the
 callable parameter contract records one owned thread-task destination only
 when the exact parameter move feeds the trusted spawn operation. The ordinary
 path-sensitive move checker supplies at-most-once transport. `GTI-S2084`
@@ -392,13 +394,14 @@ related information for the first structural transfer denial where one
 exists. Semantics also records the exact private handle operations and spawn
 call. For a concrete lambda this is its exact `LambdaId`; for a nominal
 callable it is the unique public, non-generic, exact `void operator()()`
-declaration selected for the consumed receiver, preferring consuming over
-mutable over read-only when those distinct receiver forms exist. The selected
-identity and invocation capability are snapshot-local semantic facts. Later
-phases neither reopen overload selection in C++, infer callable shape from a
-host type, nor repeat transfer analysis. A direct fresh class construction is
-accepted by the same owned-value rule as a fresh lambda; a named task still
-requires one explicit move.
+or exact context-required result declaration selected for the consumed
+receiver, preferring consuming over mutable over read-only when those distinct
+receiver forms exist. The selected identity, invocation capability, and exact
+result type are snapshot-local semantic facts. Later phases neither reopen
+overload selection in C++, infer callable shape from a host type, nor repeat
+transfer analysis. A direct fresh class construction is accepted by the same
+owned-value rule as a fresh lambda; a named task still requires one explicit
+move.
 
 ## Temporary Value Call Capabilities
 

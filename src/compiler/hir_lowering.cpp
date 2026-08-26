@@ -1104,8 +1104,9 @@ private:
       model = &analysis->model;
     }
 
-    if (const FunctionInfo *concrete =
-            model->findFunction(*declaration->declaration)) {
+    const FunctionInfo *concrete =
+        model->findFunction(*declaration->declaration);
+    if (concrete != nullptr) {
       output.program.functions[index].returnBorrowOrigin =
           concrete->returnBorrowOrigin;
       output.program.functions[index].returnBorrowParameter =
@@ -1150,10 +1151,19 @@ private:
           .access = parameter.access,
           .boundary = parameter.boundary,
           .ownedTransport = parameter.ownedTransport};
-      if (lowered.ownedTransport &&
-          lowered.ownedTransport->kind !=
-              CallableOwnedTransportKind::ThreadTask) {
-        lowered.ownedTransport->destinationType = snapshot.returnType;
+      if (lowered.ownedTransport) {
+        if (lowered.ownedTransport->kind !=
+            CallableOwnedTransportKind::ThreadTask) {
+          lowered.ownedTransport->destinationType = snapshot.returnType;
+        } else if (declaration->ownerClass != 0) {
+          const ClassTypeInfo *owner =
+              baseModel->findClassType(declaration->ownerClass);
+          if (owner != nullptr) {
+            lowered.ownedTransport->destinationType = substitute(
+                lowered.ownedTransport->destinationType,
+                classSubstitution(*owner, classArguments, classValueArguments));
+          }
+        }
       }
       lowered.signatures.reserve(parameter.signatures.size());
       for (const CallableSignatureRequirement &signature :
@@ -3590,6 +3600,16 @@ private:
             resolved->parameterTypes[1] != SemanticType::Unknown &&
             resolved->threadTaskEntry) {
           const SemanticType &taskType = resolved->parameterTypes[1];
+          const SemanticType &handleReference = resolved->parameterTypes[0];
+          const SemanticType *handleType =
+              handleReference.kind == SemanticType::Reference &&
+                      handleReference.arguments.size() == 1
+                  ? &handleReference.arguments.front()
+                  : nullptr;
+          const SemanticType resultType =
+              handleType != nullptr && handleType->arguments.size() == 1
+                  ? handleType->arguments.front()
+                  : SemanticType::Void;
           const ResolvedThreadTaskEntry &entry = *resolved->threadTaskEntry;
           std::optional<HirFunctionInstanceId> functionTarget;
           std::optional<HirLambdaId> lambdaTarget;
@@ -3599,7 +3619,7 @@ private:
                     baseModel->findFunction(entry.function)) {
               const HirFunctionInstanceId instance = enqueueFunction(
                   *target, taskType.arguments, taskType.valueArguments, {}, {},
-                  SemanticType::Void, {});
+                  resultType, {});
               if (instance != 0) {
                 functionTarget = instance;
               }

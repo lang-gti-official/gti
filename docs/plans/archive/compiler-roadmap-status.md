@@ -489,7 +489,7 @@ schedule, including a `MoveValue` receiver for an explicit move or exact
 trailing-`&&` target and for once-callable fallback to a read/mutable overload.
 Artifact-local failure sites, explicit normal/failure edges, cleanup unwinding,
 runtime records and containment, hosted generated origins, backend execution,
-task-entry transfer, and public `std::jthread` remain open.
+task-entry transfer, and public `std::thread` remain open.
 
 The active L-TEXT-01 slice now provides source-defined canonical base-10
 `std::print`/`std::println` and owning `std::to_string` for every fixed-width
@@ -509,7 +509,7 @@ plus operation-specific atomic orders. MIR rejects malformed order pairs,
 misplaced synchronization metadata, and every synchronization operation under
 the single-threaded profile. Exhaustive effects keep recognized operations
 non-speculatable, non-removable, and non-reorderable while ordinary unknown
-calls remain conservative barriers. The future `std::jthread` remains an
+calls remain conservative barriers. The future `std::thread` remains an
 ordinary source-defined class over identity-bound private capabilities;
 task-transfer, worker-failure, runtime, ordered execution, and backend work
 remain explicit prerequisites.

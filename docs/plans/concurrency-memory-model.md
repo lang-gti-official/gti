@@ -4,9 +4,10 @@
 > decisions by [ADR 008](../decisions/008-safe-concurrency-memory-model.md),
 > [execution semantics](../language/execution.md#49-concurrency-boundary), and
 > [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing).
-> D-MEM-02 adopted the boundary; the first owned `std::jthread` vertical slice
-> is implemented in 0.309.0 and remaining concurrency families stay staged
-> below.
+> D-MEM-02 adopted the boundary; the first owned thread vertical slice landed
+> in 0.309.0 and the public `std::thread` plus
+> `std::thread_result<Result>` surfaces are complete in 0.313.0. Remaining
+> concurrency families stay staged below.
 > ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
 > technical prerequisites remain evidence, while the bounded public
 > concurrency profile is now systems-readiness work.
@@ -297,8 +298,9 @@ lifetime:
 - a capture or wrapper lacking the required transfer capability.
 
 An owned capture follows the same rule as an explicit argument. C-CALL-01 now
-lets an exact fresh or explicitly moved transfer-safe `void()` lambda serve as
-one consumed managed-thread task over D-CALL-01's accepted
+lets an exact fresh or explicitly moved transfer-safe `void()` or
+context-required `Result()` lambda serve as one consumed managed-thread task
+over D-CALL-01's accepted
 [callable contract](callable-ownership-and-escape.md). Explicit owned move
 capture consumes the source and derives the closure's lifecycle and transfer
 facts from the captured value. No implicit reference capture is introduced.
@@ -542,9 +544,11 @@ during an automatic join cannot be returned and raises
 `GTI-R0012` on the joining thread. If that occurs while another failure is
 already cleaning up, it takes Execution §4.10's `GTI-R0014` emergency path.
 
-The initial task shape is `void()` after owned argument binding, so automatic
-join does not silently discard a normal value result. Later result-bearing
-tasks must require explicit result observation or an explicit discard policy.
+The ordinary `std::thread` task shape is `void()` after owned argument binding.
+`std::thread_result<Result>` instead requires an exact owned `Result()` task:
+explicit join returns the value through `expected<Result, thread_errc>`, while
+automatic join destroys and abandons an unobserved value exactly once under
+the class's documented policy.
 
 ### Detach
 
@@ -737,13 +741,13 @@ column is part of every stage rather than a final test-only pass.
 | C-RUNTIME-01 | **Done for managed threads:** target `threads` capability, private handle/task storage, fixed failure handoff, and classified host services | Unsupported targets fail before backend; installed runtime smoke, platform linkage, stdout serialization, exact record handoff, and fault seams pass. |
 | C-ATOM-01 | Add SC scalar atomic wrapper and exact lowering | Domain and order diagnostics; strong CAS semantics; message-passing and modification-order tests at O0/O3; controlled native-thread harness and TSAN where available. |
 | D-CALL-01 / C-CALL-01 | **Done:** one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
-| C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::jthread` and recoverable creation/join | Spawn/join happens-before tests, move-only task transfer, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
+| C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::thread`, typed `std::thread_result<Result>`, and recoverable creation/join | Spawn/join happens-before tests, move-only task and result transfer, explicit result take or automatic abandon, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
 | M-OWN-03 / C-SYNC-01 | Add guard-tied mutex access after stored mutable dependencies exist | Exactly-once unlock on every edge, no protected-reference escape, contention stress, poisoning/failure behavior, and TSAN. |
 | C-ORDER-01 | Add only the accepted weaker orders | Operation/order compile-fail cases plus deterministic litmus tests for release/acquire and relaxed non-synchronization. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
 | later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
-| C-CONFORM-01 | **Done for `std::jthread`; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
+| C-CONFORM-01 | **Done for `std::thread`; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
 must not infer transfer/share from spelling. Hover displays the adopted public
@@ -758,7 +762,7 @@ This proposal does not add or promise:
 - source syntax for thread creation, atomics, thread-local storage, memory
   orders, or native callbacks beyond the implemented capability attributes;
 - public atomics, mutexes, condition variables, scoped borrows, stop tokens,
-  result-bearing tasks, or detach in the shipped jthread slice;
+  typed argument packs, or detach in the shipped thread slice;
 - cross-thread references in the first executable profile;
 - pointer atomics before a public provenance/cast contract;
 - volatile/MMIO, signals, coroutines, async tasks, work stealing, parallel

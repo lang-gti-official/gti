@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "name": "managed-thread-parallelism",
-  "description": "Four deterministic Mandelbrot partitions run sequentially or through managed jthreads",
+  "description": "Four deterministic Mandelbrot partitions run sequentially or through managed threads",
   "work_units": 2800000,
   "minimum_sample_seconds": 0.10,
   "variants": [
@@ -12,7 +12,7 @@
       "execution_profile": "concurrent"
     },
     {
-      "name": "gti-four-jthreads",
+      "name": "gti-four-threads",
       "kind": "gti",
       "source": "threaded.gti",
       "execution_profile": "concurrent"

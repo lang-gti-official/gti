@@ -263,13 +263,15 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2084` owns the trusted managed-thread boundary. Point at an invalid
   handle/task argument, explicit type argument, or unavailable execution/
   target capability. A task must be one consumed, movable, transfer-capable
-  exact `void()` lambda or nominal callable; relate the first structural
-  transfer denial and the source-defined task parameter when available.
+  exact `void()` or context-required `Result()` lambda or nominal callable;
+  typed result handles additionally require an owned, non-reference,
+  non-pointer, transfer-capable result. Relate the first structural transfer
+  denial and the source-defined task parameter when available.
   Suggest a fresh task or `std::move(task)` and owned captures, but do not
   offer a fix-it because choosing ownership, capture shape, execution profile,
   or target is not mechanical. Ordinary missing-move diagnostics remain
   `GTI-S2046`. The LSP publishes the shared diagnostic unchanged and must not
-  recognize `std::jthread` by spelling.
+  recognize `std::thread` by spelling.
 - `GTI-S2085` owns an incoherent return from a by-value direct
   stored-reference carrier. Point at the actionable terminal token of the
   returned expression and distinguish a carrier-shell field/projection, a

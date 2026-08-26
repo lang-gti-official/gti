@@ -126,15 +126,17 @@ The current implemented foundation includes:
 - `<std/random>` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
   backed by bounded host entropy; and
-- `<std/thread>` source-defined `std::jthread`, a move-only managed worker
-  owning one mandatory join obligation. `std::jthread::start` consumes one
+- `<std/thread>` source-defined `std::thread`, a move-only managed worker
+  owning one mandatory join obligation. `std::thread::start` consumes one
   exact transfer-safe `void()` callable and returns
-  `expected<std::jthread, std::thread_errc>`; `join()` returns recoverable
+  `expected<std::thread, std::thread_errc>`; `join()` returns recoverable
   native join errors, destruction autojoins, and either join route re-raises an
   exact worker defined failure after worker cleanup. Move construction
-  transfers the join obligation; move assignment is unavailable. This first
-  surface has no detach, stop token, separate argument pack, task result, or
-  cross-thread borrow; and
+  transfers the join obligation; move assignment is unavailable.
+  `std::thread_result<Result>` accepts an exact transfer-safe `Result()` task,
+  returns the owned value from explicit `join()`, and joins then abandons an
+  unobserved value during destruction. This first surface has no detach, stop
+  token, separate argument pack, or cross-thread borrow; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
   `std::tcp::socket` owner with typed creation and close errors; and
 - `<std/filesystem>` a move-only `std::filesystem::path` giving C++'s
@@ -261,7 +263,7 @@ Best-effort resource cleanup, such as destruction-time close, may discard a
 host error only when the component contract explicitly says so and an explicit
 recoverable close operation exists.
 
-`std::jthread::start` reports `resource_unavailable` or
+`std::thread::start` reports `resource_unavailable` or
 `operation_not_permitted`; explicit `join()` reports `not_joinable` or a
 recoverable `join_failed`. Those native conditions are not worker task
 failures. A task's ordinary defined-failure record is preserved byte-for-byte
@@ -311,8 +313,8 @@ The following component families remain planned or incomplete:
   customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, random distributions and engine
   breadth, connected networking, traffic buffers, atomics, mutexes, condition
-  variables, stop tokens, detached/scoped/result-bearing tasks, and broader
-  threading;
+  variables, stop tokens, detached/scoped tasks, typed argument packs, and
+  broader threading;
 - recoverable allocation factories;
 - allocator-aware containers and safe pools/arenas; and
 - broader native interoperability beyond the current bounded records, opaque

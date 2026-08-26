@@ -157,7 +157,7 @@ built with the same
 compiler, optimization level, C++ standard, native flags, and explicit
 `concurrent` execution profile.
 `gti-sequential` runs the four partitions in series;
-`gti-four-jthreads` starts all four as owned `std::jthread` tasks and joins
+`gti-four-threads` starts all four as owned `std::thread` tasks and joins
 them.
 
 One work unit is one computed pixel in one pass, for 2,800,000 work units.
@@ -170,7 +170,7 @@ GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
 ```
 
 The sequential variant is the reference. The reciprocal of
-`gti-four-jthreads`'s `median_ratio_to_reference` is the observed speedup.
+`gti-four-threads`'s `median_ratio_to_reference` is the observed speedup.
 The number is machine-specific and should be interpreted with the report's
 CPU identity, raw samples, and variance; the benchmark demonstrates real
 parallel execution, not a universal speedup guarantee. See the workload's

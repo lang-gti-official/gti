@@ -2,16 +2,16 @@
 #include "kernel.gti"
 
 int main() {
-  auto first_started = std::jthread::start([]() -> void {
+  auto first_started = std::thread::start([]() -> void {
     require_partition(0, worker_count, first_partition_checksum);
   });
-  auto second_started = std::jthread::start([]() -> void {
+  auto second_started = std::thread::start([]() -> void {
     require_partition(1, worker_count, second_partition_checksum);
   });
-  auto third_started = std::jthread::start([]() -> void {
+  auto third_started = std::thread::start([]() -> void {
     require_partition(2, worker_count, third_partition_checksum);
   });
-  auto fourth_started = std::jthread::start([]() -> void {
+  auto fourth_started = std::thread::start([]() -> void {
     require_partition(3, worker_count, fourth_partition_checksum);
   });
 
@@ -20,10 +20,10 @@ int main() {
     return 1;
   }
 
-  mut std::jthread first = std::move(first_started).value();
-  mut std::jthread second = std::move(second_started).value();
-  mut std::jthread third = std::move(third_started).value();
-  mut std::jthread fourth = std::move(fourth_started).value();
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread second = std::move(second_started).value();
+  mut std::thread third = std::move(third_started).value();
+  mut std::thread fourth = std::move(fourth_started).value();
   mut uint64_t digest = uint64_t(0);
 
   auto first_joined = first.join();
