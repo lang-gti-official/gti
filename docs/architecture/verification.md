@@ -81,7 +81,7 @@ assertions.
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
 | `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits, bounded-depth analysis/completion worker survival, default-project-profile and standalone-startup thread analysis, public thread hover/definition/completion/tokens, and private capability filtering |
 | `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
-| `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, cancellation/supersession, and bounded cache occupancy without a CI wall-time threshold |
+| `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
@@ -151,6 +151,11 @@ The LSP has a separate protocol-level scalability runner,
 and every opt-in frontend trace, summarizes unit-level load/lex/parse/semantic
 work and cache occupancy, and can compare repeated-edit and cold-open medians
 with a baseline captured under the same local build and machine configuration.
+The immediate benchmark cancellation is advisory at the protocol boundary: a
+request may return `RequestCancelled`, or a valid completion may win the race
+before the server observes `$/cancelRequest`. The benchmark accepts and
+validates both outcomes; `lsp_protocol` retains deterministic `-32800`
+cancellation coverage with a deliberately queued workload.
 When both binaries are supplied, it alternates current-first and baseline-first
 pairs to limit host thermal/load bias. Its CTest smoke gate enforces the
 protocol and work/invalidation invariants but does not enforce the 30% campaign
