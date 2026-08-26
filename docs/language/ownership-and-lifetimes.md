@@ -901,8 +901,12 @@ int values[4] = {1, 2, 3, 4};
 
 They are ordinary bounded values, not owning pointers or allocation handles.
 They never decay to pointers, and their copy, move, and destruction traits
-follow the element type. This is sufficient underlying storage for fixed-size
-aggregates and a future `std::array` alias.
+follow the element type. The same structural rule applies when the array is a
+class field, including move-only and interface-implementing concrete element
+types: the containing class inherits the array's copy, move, and cleanup
+traits, and each constructed element owns one corresponding drop. This is
+sufficient underlying storage for fixed-size aggregates and a future
+`std::array` alias.
 
 A GTI implementation of `std::vector<T>` needs capacity containing partially
 constructed elements. Smart pointers alone cannot safely represent that

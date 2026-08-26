@@ -126,8 +126,11 @@ struct BindingArrayFieldElementAccess {
 
 [[nodiscard]] std::optional<BindingArrayFieldElementAccess>
 bindingArrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
-  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
-      place.projections.size() < 2) {
+  const bool bindingRoot =
+      place.root == MirPlaceRootKind::Binding && place.binding != 0;
+  const bool symbolRoot =
+      place.root == MirPlaceRootKind::Symbol && place.symbol != 0;
+  if ((!bindingRoot && !symbolRoot) || place.projections.size() < 2) {
     return std::nullopt;
   }
   const auto firstIndex =
@@ -156,9 +159,14 @@ bindingArrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
   const std::vector<MirPlaceProjection> indices(firstIndex,
                                                 place.projections.end());
   for (const MirPlace &candidate : body.places) {
-    if (candidate.id == place.id ||
-        candidate.root != MirPlaceRootKind::Binding ||
-        candidate.binding != place.binding || candidate.projections != fields ||
+    const bool sameBinding = bindingRoot &&
+                             candidate.root == MirPlaceRootKind::Binding &&
+                             candidate.binding == place.binding;
+    const bool sameSymbol =
+        symbolRoot && candidate.root == MirPlaceRootKind::Symbol &&
+        candidate.symbol == place.symbol && candidate.capture == place.capture;
+    if (candidate.id == place.id || (!sameBinding && !sameSymbol) ||
+        candidate.projections != fields ||
         candidate.type.kind != SemanticType::Array) {
       continue;
     }
@@ -197,6 +205,8 @@ struct ConstantArrayElementFieldAccess {
 // A field projected from a compile-time in-bounds fixed-array element needs no
 // second storage row and no runtime bounds edge. Dynamic or unchecked indices
 // stay outside this shape so a field projection cannot hide a failing access.
+// The array itself is either the bare root or an array-typed field chain of
+// the root record (a fixed-array class field), proved by its sibling place.
 [[nodiscard]] std::optional<ConstantArrayElementFieldAccess>
 constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
   const bool bindingRoot =
@@ -206,13 +216,25 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
   if ((!bindingRoot && !symbolRoot) || place.projections.size() < 2) {
     return std::nullopt;
   }
-  const auto firstField =
+  const auto firstIndex =
       std::find_if(place.projections.begin(), place.projections.end(),
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Index;
+                   });
+  if (firstIndex == place.projections.end() ||
+      !std::all_of(place.projections.begin(), firstIndex,
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Field &&
+                            projection.field != 0;
+                   })) {
+    return std::nullopt;
+  }
+  const auto firstField =
+      std::find_if(firstIndex, place.projections.end(),
                    [](const MirPlaceProjection &projection) {
                      return projection.kind != MirProjectionKind::Index;
                    });
-  if (firstField == place.projections.begin() ||
-      firstField == place.projections.end() ||
+  if (firstField == place.projections.end() ||
       std::any_of(firstField, place.projections.end(),
                   [](const MirPlaceProjection &projection) {
                     return projection.kind != MirProjectionKind::Field ||
@@ -220,6 +242,8 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
                   })) {
     return std::nullopt;
   }
+  const std::vector<MirPlaceProjection> prefix(place.projections.begin(),
+                                               firstIndex);
 
   for (const MirPlace &candidate : body.places) {
     const bool sameBinding = bindingRoot &&
@@ -229,15 +253,14 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
         symbolRoot && candidate.root == MirPlaceRootKind::Symbol &&
         candidate.symbol == place.symbol && candidate.capture == place.capture;
     if (candidate.id == place.id || (!sameBinding && !sameSymbol) ||
-        !candidate.projections.empty() ||
+        candidate.projections != prefix ||
         candidate.type.kind != SemanticType::Array) {
       continue;
     }
     SemanticType current = candidate.type;
     std::vector<MirPlaceProjection> indices;
     bool valid = true;
-    for (auto projection = place.projections.begin(); projection != firstField;
-         ++projection) {
+    for (auto projection = firstIndex; projection != firstField; ++projection) {
       if (current.kind != SemanticType::Array ||
           current.arguments.size() != 1 ||
           current.arrayLengthParameterId != 0 || !projection->constantIndex ||
@@ -6378,13 +6401,39 @@ containedFailureConstructorRepresentation(
                                              instruction);
 }
 
+[[nodiscard]] bool
+failureFreeFixedArrayAggregateMove(const MirProgram &program,
+                                   const MirBody &body,
+                                   const MirInstruction &instruction);
+
+[[nodiscard]] const MirDropObligation *
+uniqueValueLifetimeDrop(const MirBody &body, MirValueId valueId,
+                        const SemanticType &type);
+
+[[nodiscard]] const MirDestructorInstance *
+failureDestructorTarget(const MirProgram &program, const MirBody &body,
+                        const MirInstruction &instruction);
+
+[[nodiscard]] bool
+containedInitializerDestructorCannotFail(const MirProgram &program,
+                                         const MirBody &body,
+                                         const MirInstruction &instruction) {
+  const MirDestructorInstance *target =
+      failureDestructorTarget(program, body, instruction);
+  return target != nullptr && failureStatusCannotFail(target->body);
+}
+
 // An owning in-class initializer may materialize a class temporary in MIR and
 // immediately reparent its obligation into the field. Native in-class
 // initialization constructs that same value directly in the field, so the
 // temporary and ConstructionRollback records are representation-only. Erase
 // them only for an exact ordinary Construct or targetless default Call,
-// followed by its one Initialize transfer.
-[[nodiscard]] bool directOwningFieldInitializerTransfers(const MirBody &body) {
+// followed by its one Initialize transfer. A fixed-array field adds one
+// mediating level: element temporaries transfer into an admitted owning
+// aggregate, whose own result obligation then takes the Initialize transfer.
+[[nodiscard]] bool
+directOwningFieldInitializerTransfers(const MirProgram &program,
+                                      const MirBody &body) {
   if (body.dropObligations.empty()) {
     return true;
   }
@@ -6393,14 +6442,44 @@ containedFailureConstructorRepresentation(
   }
 
   std::unordered_set<MirDropObligationId> matched;
+  // Element obligations of every admitted owning aggregate; their transfer
+  // and cleanup edges are proved by failureFreeFixedArrayAggregateMove.
+  std::unordered_set<MirDropObligationId> aggregateElements;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Compute ||
+          instruction.operation != MirOperation::Aggregate ||
+          !failureFreeFixedArrayAggregateMove(program, body, instruction)) {
+        continue;
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        const MirValue *element = operand.kind == MirOperandKind::Value
+                                      ? body.findValue(operand.value)
+                                      : nullptr;
+        const MirDropObligation *drop =
+            element == nullptr ? nullptr
+                               : uniqueValueLifetimeDrop(body, element->id,
+                                                         element->info.type);
+        if (drop != nullptr) {
+          aggregateElements.insert(drop->id);
+        }
+      }
+    }
+  }
   for (const MirDropObligation &temporaryDrop : body.dropObligations) {
     if (temporaryDrop.kind == MirDropObligationKind::ConstructionRollback) {
       continue;
     }
+    const bool aggregateResult =
+        temporaryDrop.dropType.type.kind == SemanticType::Array &&
+        temporaryDrop.dropType.fixedArray.has_value();
+    // A trivially cleaned element (a class with no destructor state) still
+    // materializes partial-construction bookkeeping under an invoke-paired
+    // constructor; the story below pins its exact shape either way.
     if (temporaryDrop.kind != MirDropObligationKind::Value ||
         temporaryDrop.initiallyActive ||
-        temporaryDrop.dropType.type.kind != SemanticType::Class ||
-        !temporaryDrop.dropType.requiresActiveCleanup) {
+        (temporaryDrop.dropType.type.kind != SemanticType::Class &&
+         !aggregateResult)) {
       return false;
     }
     const MirPlace *temporary = body.findPlace(temporaryDrop.place);
@@ -6442,15 +6521,74 @@ containedFailureConstructorRepresentation(
         producer->lifecycle.front().target == temporaryDrop.id &&
         !producer->lifecycle.front().conditional &&
         !producer->lifecycle.front().failureCleanup;
+    // The admitted owning aggregate is itself a producer: its result
+    // obligation takes the Initialize transfer into the field exactly like
+    // a single class temporary.
+    const bool owningAggregate =
+        aggregateResult && producer != nullptr &&
+        producer->kind == MirInstructionKind::Compute &&
+        producer->operation == MirOperation::Aggregate &&
+        failureFreeFixedArrayAggregateMove(program, body, *producer);
     if (temporary == nullptr || value == nullptr || producer == nullptr ||
-        (!ordinaryConstruct && !targetlessDefaultCall) || !producer->result ||
-        *producer->result != value->id || producer->destination ||
-        producer->receiver || producer->successResultDestination ||
+        (!ordinaryConstruct && !targetlessDefaultCall && !owningAggregate) ||
+        !producer->result || *producer->result != value->id ||
+        producer->destination || producer->receiver ||
+        producer->successResultDestination ||
         producer->info.type != value->info.type ||
         producer->info.type != temporary->type ||
         temporaryDrop.dropType.type != temporary->type ||
         !producer->localFailureSites.empty()) {
       return false;
+    }
+
+    // An element of an admitted owning aggregate transfers into the
+    // aggregate result rather than a field. Its exact transfer position is
+    // proved by failureFreeFixedArrayAggregateMove; here only its complete
+    // lifecycle-event story is audited: one activation, one transfer, and
+    // representation-only failure-cleanup drops of completed elements.
+    if (aggregateElements.contains(temporaryDrop.id)) {
+      std::size_t activations = 0;
+      std::size_t transfers = 0;
+      bool invalidEvent = false;
+      const auto inspect = [&](const MirLifecycleEvent &event) {
+        if (event.source != temporaryDrop.id &&
+            event.target != temporaryDrop.id) {
+          return;
+        }
+        if (event.kind == MirLifecycleEventKind::Initialize &&
+            event.source == 0 && event.target == temporaryDrop.id &&
+            !event.conditional && !event.failureCleanup) {
+          ++activations;
+        } else if (event.kind == MirLifecycleEventKind::TransferOut &&
+                   event.source == temporaryDrop.id && event.target == 0 &&
+                   !event.conditional && !event.failureCleanup) {
+          ++transfers;
+        } else if (event.kind == MirLifecycleEventKind::Drop &&
+                   event.source == temporaryDrop.id && event.target == 0 &&
+                   !event.conditional && event.failureCleanup) {
+          // A later element construction's failure edge drops this
+          // completed element. The contained constructor never returns
+          // that status, so the cleanup instruction is representation-only.
+        } else {
+          invalidEvent = true;
+        }
+      };
+      for (const MirBlock &block : body.blocks) {
+        for (const MirLifecycleEvent &event :
+             block.terminator.successLifecycle) {
+          inspect(event);
+        }
+        for (const MirInstruction &instruction : block.instructions) {
+          for (const MirLifecycleEvent &event : instruction.lifecycle) {
+            inspect(event);
+          }
+        }
+      }
+      if (invalidEvent || activations != 1 || transfers != 1 ||
+          !matched.insert(temporaryDrop.id).second) {
+        return false;
+      }
+      continue;
     }
 
     const std::vector<MirValueUse> uses = nonRootRecordUses(body, value->id);
@@ -6552,19 +6690,36 @@ containedFailureConstructorRepresentation(
         const MirPlace *place = instruction.destination
                                     ? body.findPlace(*instruction.destination)
                                     : nullptr;
+        // A representation-only failure edge drops either a completed
+        // field's rollback obligation or a completed element of an owning
+        // aggregate whose later element construction failed.
+        const bool fieldRollbackDrop =
+            drop != nullptr && place != nullptr &&
+            drop->kind == MirDropObligationKind::ConstructionRollback &&
+            drop->place == place->id && matched.contains(drop->id) &&
+            place->root == MirPlaceRootKind::Binding && place->symbol != 0 &&
+            place->projections.empty();
+        const bool aggregateElementDrop =
+            drop != nullptr && place != nullptr &&
+            drop->kind == MirDropObligationKind::Value &&
+            drop->place == place->id && matched.contains(drop->id) &&
+            aggregateElements.contains(drop->id) &&
+            place->root == MirPlaceRootKind::Value &&
+            place->projections.empty();
+        const bool containedDestructorDrop =
+            (fieldRollbackDrop || aggregateElementDrop) &&
+            containedInitializerDestructorCannotFail(program, body,
+                                                     instruction);
         if (block.activeFailure == 0 || event == nullptr || drop == nullptr ||
             place == nullptr || instruction.result ||
             !instruction.operands.empty() ||
             !instruction.localFailureSites.empty() ||
-            !instruction.definedFailure.empty() ||
+            (!instruction.definedFailure.empty() && !containedDestructorDrop) ||
             instruction.fullExpressionEnd != 0 ||
             instruction.cleanupBoundaryEnd != 0 ||
             event->kind != MirLifecycleEventKind::Drop || event->target != 0 ||
             event->conditional || !event->failureCleanup ||
-            drop->kind != MirDropObligationKind::ConstructionRollback ||
-            drop->place != place->id || !matched.contains(drop->id) ||
-            place->root != MirPlaceRootKind::Binding || place->symbol == 0 ||
-            !place->projections.empty()) {
+            (!fieldRollbackDrop && !aggregateElementDrop)) {
           return false;
         }
       }
@@ -6592,8 +6747,9 @@ containedFailureConstructorRepresentation(
                       const MirDropObligation *drop =
                           body.findDropObligation(obligation);
                       return drop == nullptr || !matched.contains(obligation) ||
-                             drop->kind !=
-                                 MirDropObligationKind::ConstructionRollback;
+                             (drop->kind !=
+                                  MirDropObligationKind::ConstructionRollback &&
+                              !aggregateElements.contains(obligation));
                     })) {
       return false;
     }
@@ -6606,10 +6762,9 @@ containedFailureConstructorRepresentation(
 // terminates with the original record. Its MIR failure successor is not an
 // executable C++ path. Accept that successor only when it is the exact
 // cleanup-only chain retained by the verified field-initializer body.
-[[nodiscard]] bool
-containedInitializerFailureBranch(const MirBody &body, MirBlockId start,
-                                  MirFailureRecordId failure,
-                                  std::unordered_set<MirBlockId> &covered) {
+[[nodiscard]] bool containedInitializerFailureBranch(
+    const MirProgram &program, const MirBody &body, MirBlockId start,
+    MirFailureRecordId failure, std::unordered_set<MirBlockId> &covered) {
   MirBlockId current = start;
   for (std::size_t visited = 0; visited < body.blocks.size(); ++visited) {
     const MirBlock *block = body.findBlock(current);
@@ -6617,6 +6772,7 @@ containedInitializerFailureBranch(const MirBody &body, MirBlockId start,
         block->activeFailure != failure || !covered.insert(current).second) {
       return false;
     }
+    const MirInstruction *containedDestructor = nullptr;
     for (const MirInstruction &instruction : block->instructions) {
       const bool cleanupDrop =
           instruction.kind == MirInstructionKind::Drop &&
@@ -6629,11 +6785,49 @@ containedInitializerFailureBranch(const MirBody &body, MirBlockId start,
       if (!cleanupDrop && !cleanupBoundary) {
         return false;
       }
+      if (cleanupDrop && !instruction.definedFailure.empty()) {
+        if (containedDestructor != nullptr ||
+            !containedInitializerDestructorCannotFail(program, body,
+                                                      instruction)) {
+          return false;
+        }
+        containedDestructor = &instruction;
+      }
     }
     if (block->terminator.kind == MirTerminatorKind::PropagateFailure) {
-      return block->terminator.failureRecord == failure;
+      return containedDestructor == nullptr &&
+             block->terminator.failureRecord == failure;
     }
-    if (block->terminator.kind != MirTerminatorKind::Goto ||
+    if (block->terminator.kind == MirTerminatorKind::Invoke) {
+      const MirFailureRecord *cleanupFailure =
+          body.findFailureRecord(block->terminator.failureRecord);
+      const MirBlock *parameter =
+          cleanupFailure == nullptr
+              ? nullptr
+              : body.findBlock(cleanupFailure->parameterBlock);
+      if (containedDestructor == nullptr ||
+          block->terminator.invokeInstruction != containedDestructor->id ||
+          block->terminator.target == 0 || block->terminator.elseTarget == 0 ||
+          !block->terminator.successLifecycle.empty() ||
+          cleanupFailure == nullptr ||
+          cleanupFailure->producerBlock != block->id ||
+          cleanupFailure->producerInstruction != containedDestructor->id ||
+          parameter == nullptr ||
+          parameter->id != block->terminator.elseTarget ||
+          parameter->failureParameter != cleanupFailure->id ||
+          parameter->activeFailure != failure ||
+          !parameter->instructions.empty() ||
+          parameter->terminator.kind !=
+              MirTerminatorKind::TerminateCleanupFailure ||
+          parameter->terminator.failureRecord != cleanupFailure->id ||
+          !covered.insert(parameter->id).second) {
+        return false;
+      }
+      current = block->terminator.target;
+      continue;
+    }
+    if (containedDestructor != nullptr ||
+        block->terminator.kind != MirTerminatorKind::Goto ||
         block->terminator.target == 0) {
       return false;
     }
@@ -7639,6 +7833,9 @@ failureDestructorTarget(const MirProgram &program, const MirBody &body,
                            drop->dropType.type == owner->type &&
                            drop->dropType.classInstance == owner->id &&
                            !drop->dropType.fixedArray;
+  // Interface bases carry no state, so the leaf destructor protocol still
+  // owns the element's complete cleanup; a state-bearing base keeps the
+  // schedule outside this arm.
   const bool fixedArray =
       drop != nullptr && owner != nullptr && drop->dropType.fixedArray &&
       drop->dropType.type.kind == SemanticType::Array &&
@@ -17239,6 +17436,11 @@ private:
         std::string spelling;
         if (array->root == MirPlaceRootKind::Symbol && array->capture != 0 &&
             facts.instanceLabel == std::string_view("lambda-instance")) {
+          if (!array->projections.empty()) {
+            throw std::logic_error(
+                "verified array-element field store cannot spell a captured "
+                "field-chain array");
+          }
           spelling = captureSpelling(facts.id, array->symbol, array->capture);
         } else if (array->root == MirPlaceRootKind::Symbol) {
           const CppMirSymbolRepresentation *storage =
@@ -17252,6 +17454,35 @@ private:
           if (storage->runtimeLifetimeSlot) {
             spelling += ".get()";
           }
+          spelling += fieldProjectionChainSpelling(storage->type,
+                                                   array->projections, 0);
+        } else if (array->root == MirPlaceRootKind::Binding &&
+                   !array->projections.empty()) {
+          // The array is a fixed-array field chain of the root record;
+          // spell the record's canonical storage, then the exact chain.
+          const MirPlace *base = nullptr;
+          for (const MirPlace &candidate : facts.body.places) {
+            if (candidate.id != array->id &&
+                candidate.root == MirPlaceRootKind::Binding &&
+                candidate.binding == array->binding &&
+                candidate.projections.empty()) {
+              base = &candidate;
+            }
+          }
+          if (base == nullptr) {
+            throw std::logic_error(
+                "verified array-element field store lost its record base");
+          }
+          const MirPlaceId baseId =
+              slotPlace(facts.body, *base)
+                  ? canonicalSlotPlaceId(facts.body, *base)
+                  : canonicalBindingPlaceId(facts.body, *base);
+          spelling = "__gti_mir_p_" + std::to_string(baseId);
+          if (slotPlace(facts.body, *base)) {
+            spelling += ".get()";
+          }
+          spelling +=
+              fieldProjectionChainSpelling(base->type, array->projections, 0);
         } else if (array->root == MirPlaceRootKind::Binding) {
           const MirPlaceId base =
               slotPlace(facts.body, *array)
@@ -22272,6 +22503,13 @@ private:
       return;
     }
     if (place.root == MirPlaceRootKind::Symbol) {
+      // A symbol-rooted fixed-array field element spells through the shared
+      // field-element story rather than the storage's field chain.
+      if (const std::optional<BindingArrayFieldElementAccess> access =
+              bindingArrayFieldElementAccess(facts.body, place)) {
+        emitBindingArrayFieldElement(facts, *access);
+        return;
+      }
       if (place.capture != 0 &&
           facts.instanceLabel == std::string_view("lambda-instance")) {
         output << captureSpelling(facts.id, place.symbol, place.capture);
@@ -25146,9 +25384,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if ((!directStorage && !dereferencedPointer && !fieldStorage) ||
           storage == nullptr || storage->spelling.empty() ||
           (storage->runtimeLifetimeSlot && !lifetimeSlotRow())) {
-        {
-          return false;
+        // A symbol-rooted fixed-array field element shares the binding
+        // form's field-element story; the sibling field place proves the
+        // concrete array type.
+        if (const std::optional<BindingArrayFieldElementAccess> access =
+                bindingArrayFieldElementAccess(body, place)) {
+          const MirPlace *array = body.findPlace(access->array);
+          if (array == nullptr || !typeRow(array->type) ||
+              !typeRow(place.type)) {
+            return false;
+          }
+          continue;
         }
+        return false;
       }
       continue;
     }
@@ -28993,7 +29241,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   // construction, per-field Initialize stages, and lifecycle boundaries.
   // Every other shape stays with the compatibility route.
   if (body->blocks.empty() || body->entry != 1 || !body->loans.empty() ||
-      !directOwningFieldInitializerTransfers(*body)) {
+      !directOwningFieldInitializerTransfers(program_, *body)) {
     return result;
   }
   std::vector<const MirInstruction *> schedule;
@@ -29076,7 +29324,8 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       block = next;
     }
     for (const auto &[start, failure] : failureBranches) {
-      if (!containedInitializerFailureBranch(*body, start, failure, covered)) {
+      if (!containedInitializerFailureBranch(program_, *body, start, failure,
+                                             covered)) {
         return result;
       }
     }
