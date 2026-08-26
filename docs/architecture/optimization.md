@@ -1,9 +1,9 @@
 # Optimization
 
-Status: implemented verified local MIR pipeline, reusable local dataflow and
-SCCP, bounded loop/range and place alias/escape analyses, proof-carrying safety
-optimization families, snapshot-scoped analysis caching, and optimizer
-observability.
+Status: implemented verified MIR pipeline, reusable local dataflow and SCCP,
+bounded loop/range and place alias/escape analyses, bounded closed-call safety
+summaries, proof-carrying safety optimization families, snapshot-scoped
+analysis caching, and optimizer observability.
 
 GTI optimization has one executable-body authority: optimized MIR. The
 frontend still runs the earlier HIR constant analysis as a transitional shadow
@@ -100,8 +100,8 @@ synchronization.
 
 ## Proof-Carrying Safety Checks
 
-`analyzeMirSafetyChecks` is the canonical body-local abstract interpreter for
-the first check-elimination slice. It propagates checked fixed-width integer
+`analyzeMirSafetyChecks` is the canonical safety-proof query. Its baseline is a
+body-local abstract interpreter that propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
 tracks fixed-array extents and one scalar element envelope per non-escaping
 fixed-array root, and tracks exact initialized slots in private sparse storage.
@@ -148,8 +148,26 @@ The admitted operations are deliberately narrow:
   so signed-minimum remainder `-1` retains GTI's defined zero result instead of
   invoking C++ undefined behavior.
 
-Array borrows, prefix-storage operations, division, dynamic-divisor remainder,
-shifts, conversions, cross-call range facts, and unproved dynamic indices
+The whole-program `analyzeMirClosedCallSafetyChecks` layer adds one bounded
+contextual family. It starts from executable/module initialization roots and
+propagates exact scalar arguments and returns, mutable receiver/argument object
+fields, private prefix-storage capacity/length/content, and structurally
+admitted indexed-container element envelopes through concrete source-defined
+static calls and constructors. Indexed elements are admitted only when every
+relevant `operator[]` body is verified to return the exact receiver-owned
+prefix-storage element loan; public names never participate. Contexts join
+monotonically, use fixed global and per-body update budgets, and contribute
+proofs only after convergence. Recursive SCCs, native or virtual calls, owning
+argument transfers, synchronization, raw/unsafe memory, unsupported cleanup,
+open call families, and conflicting facts remain conservative.
+
+Discharged checked `+=`, `-=`, and `*=` may emit the equivalent native C++
+compound operator. Remainder and shifts remain on GTI-owned helpers even after
+a local failure is discharged because native C++ does not represent every GTI
+defined-semantics boundary, including signed-minimum remainder by `-1`.
+
+Array borrows, prefix-storage bounds operations, division, dynamic-divisor
+remainder, shifts, unsupported conversions, and unproved dynamic indices
 remain checked. Place alias facts refine mutable safety state: duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves
 facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
@@ -187,9 +205,11 @@ selection, SCCP literal proofs, exact safety proofs, unreachable cleanup, and
 dead-computation removal. Canonical source MIR containing a pre-attached safety
 discharge is rejected. Replay takes one canonical SCCP snapshot before sparse
 edits and exact-compares every replacement literal and related MIR identity.
-It also reruns the canonical safety analysis and exact-compares the proof's
-outcome and related MIR blocks, instructions, values, and places before
-attaching it. It then exact-compares complete MIR structures, including
+It also reruns the canonical safety analysis once for the immutable candidate
+snapshot and exact-compares every proof's outcome and related MIR blocks,
+instructions, values, and places before attaching metadata. The editor likewise
+uses one source and one candidate safety snapshot per batch. It then
+exact-compares complete MIR structures, including
 initialization and failure schedules. Missing, duplicate, unsorted, stale,
 malformed, or unauthorized records fail closed.
 
@@ -246,11 +266,13 @@ The body analysis manager binds to one `MirProgram` snapshot identity and is
 then keyed by stable `MirBodyAddress` plus a monotonically increasing revision.
 It rejects cross-snapshot queries rather than returning a same-address stale
 fact. It caches CFG/reachability and acyclicity, dominance, value uses, exact
-instruction effects, scalar-promotion inputs, canonical safety facts, place
-alias/escape facts, loop/range facts, and sparse constants. A pass explicitly
-preserves analyses; an unknown or omitted claim invalidates every cached result
-conservatively. No interior MIR pointer survives invalidation. The safety
-analysis reuses the manager-owned alias snapshot. Memory SSA, inlining,
+instruction effects, scalar-promotion inputs, canonical body and whole-program
+closed-call safety facts, place alias/escape facts, loop/range facts, and sparse
+constants. A semantic mutation to any body invalidates the program-wide summary
+and every derived body safety result. A pass may preserve them only for a
+metadata-only change that cannot affect analysis inputs; an unknown or omitted
+claim invalidates conservatively. Cache entries have stable addresses and no
+interior MIR pointer survives invalidation. Memory SSA, inlining,
 devirtualization, and loop or memory transformations remain absent until a
 bounded measured client requires them.
 

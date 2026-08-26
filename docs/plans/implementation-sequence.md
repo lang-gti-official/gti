@@ -375,8 +375,8 @@ detailed row together; do not copy the sequence into another plan.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `O-PERF-00` | **complete** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Exact clean commit `a2bd29dc` records conclusive checked-array, checked-vector, scalar-chain, scalar-FP, control, game-update, and managed-thread baselines; strict generated arithmetic ceilings; and fixed-native O0/O1/O2/O3 attribution. |
 | 2 | `O-PERF-01` | **complete** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | Exact clean commit `f1a4075f` discharges all five hot arithmetic outcomes and the three hot fixed-array bounds outcomes; GTI measured 1.011x idiomatic C++ at O2 and 0.999x at O3 with no control regression above 0.4%. |
-| 3 | `O-PERF-02` | **active** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | The selected bounded interprocedural family materially improves the vector workload with exact call, failure, cleanup, and snapshot identity. |
-| 4 | `O-PERF-03` | **blocked on 02** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
+| 3 | `O-PERF-02` | **complete** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | Exact clean commit `d6374eb9` uses bounded contextual summaries to discharge six overflow outcomes and four arithmetic-domain outcomes; the O2 vector median fell from 1,213.192 ms to 558.336 ms while all conservative near misses and independent replay passed. |
+| 4 | `O-PERF-03` | **active** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
 | 5 | `O-PERF-04` | **blocked on 03** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
 | 6 | `O-PERF-05` | **blocked on 04** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | A long-running scalar-FP or call-boundary client reaches at most 1.15x its semantic C++ twin, or retained native evidence closes the row as a no-op. |
 | 7 | `O-GAME-01` | **blocked on 05** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Core checked kernels reach at most 1.5x idiomatic C++; the combined update reaches at most 1.5x semantic C++ and 2x idiomatic C++, with no unexplained constituent above those gates. |
@@ -2878,9 +2878,9 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
 ### O-PERF-02: Closed-Call And Container Fact Transport
 
-- **State/role:** active after completed `O-PERF-01`; this row owns the first
-  interprocedural performance client and subsumes the active part of
-  `O-MIR-10`.
+- **State/role:** complete on exact clean implementation commit `d6374eb9`;
+  this row owns the first interprocedural performance client and subsumes the
+  active part of `O-MIR-10`.
 - **Corrected client:** `vector-checked-loop` is deterministic and its hot
   values are bounded: initialization yields 1 through 17, the multiplier is
   selected as -1 or 1, and the complete sum remains in range. It is not
@@ -2909,9 +2909,30 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   independently attributable prefix-storage row rather than landing
   interprocedural infrastructure.
 
+The selected implementation is a bounded contextual proof-summary analysis,
+not inlining or cloning. It transports exact scalar arguments, returns,
+mutable receiver/argument objects, and structurally admitted indexed-container
+element envelopes through concrete source-defined static calls and
+constructors. A whole-program cache invalidates on any semantic body edit;
+metadata-only proof attachment explicitly preserves it. Native, virtual,
+recursive, owning-transfer, synchronization, unsupported cleanup, conflicting
+context, and non-convergent families fail closed. Proof replay batches one
+immutable source and candidate snapshot, so the new whole-program authority is
+not recomputed per discharge.
+
+At O2, five warmups and twenty seeded interleaved samples produced 558.336 ms
+GTI, 715.229 ms semantic C++, and 87.947 ms idiomatic C++. The GTI median is
+54.0% below the `O-PERF-01` exact-head vector baseline; normalizing each GTI
+run to its semantic twin gives a 62.6% reduction. O3 produced 570.654 ms GTI,
+571.371 ms semantic C++, and 57.471 ms idiomatic C++. Both exact-head reports
+are conclusive and retain the same complete-state digest. Detailed report
+identities, counters, and raw samples live in
+[`performance-tooling.md`](performance-tooling.md).
+
 ### O-PERF-03: Single-Bound Prefix Storage Access
 
-- **State/role:** blocked on `O-PERF-02`; second-order container closure.
+- **State/role:** active after completed `O-PERF-02`; second-order container
+  closure and the sole active compiler-performance row.
 - **Corrected starting point:** current `std::vector` stores `count` while its
   private `prefix_storage` independently stores `length_`, and every public
   subscript performs a vector-detail bounds check followed by the prefix read's

@@ -47,8 +47,9 @@ memory family) remain measured-defer, while the active interprocedural client
 is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
-Performance-priority update (2026-08-26): `O-PERF-00` closed on exact clean
-commit `a2bd29dc`, and `O-PERF-01` closed on exact clean commit `f1a4075f`.
+Performance-priority update (2026-08-27): `O-PERF-00` closed on exact clean
+commit `a2bd29dc`, `O-PERF-01` closed on exact clean commit `f1a4075f`, and
+`O-PERF-02` closed on exact clean commit `d6374eb9`.
 The fixed-array bounds control remained a measured no-op. The admitted
 complete-state fixed-array overflow workload originally measured 283.568 ms in
 GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
@@ -56,10 +57,14 @@ alias-safe fixed-array content envelopes, and finite loop-carried accumulator
 thresholds now discharge all five hot arithmetic outcomes and all three hot
 bounds outcomes. The clean implementation measured 61.807 versus 61.111 ms at
 O2 and 61.055 versus 61.113 ms at O3. No campaign control regressed by more
-than 0.4% relative to its semantic C++ twin. `O-PERF-02` is now the sole
-active row and owns the checked-vector closed-call/container client. Exact
-report identities, raw samples, profiles, MIR/report counters, and
-disassembly hashes live in
+than 0.4% relative to its semantic C++ twin. Bounded contextual summaries then
+transported exact scalar and container-element facts through the closed vector
+call family. The O2 vector median fell from 1,213.192 ms to 558.336 ms while
+native, virtual, recursive, owning-transfer, conflicting-context, and
+non-convergent boundaries remained conservative. `O-PERF-03` is now the sole
+active row and owns duplicate prefix-storage checking and vector length
+authority. Exact report identities, raw samples, profiles, MIR/report counters,
+and emitted-code hashes live in
 [`performance-tooling.md`](performance-tooling.md).
 
 The audit proposal is not adopted verbatim. The live safety analysis already
@@ -834,19 +839,25 @@ and all checked failure behavior, and remain backend-neutral.
 
 ### Milestone 6: interprocedural optimization
 
-Status: effect-summary foundation complete; `O-PERF-02` owns the only active
-candidate selection and no transform is implemented.
+Status: the first bounded contextual proof-summary client is complete under
+`O-PERF-02`; broader interprocedural transformation remains deferred.
 
 - Conservative per-instance call effects and exact closed static-summary
   queries are implemented and independently verified.
-- Closed-world reachability, devirtualization, and inlining are not
-  implemented.
-- `O-PERF-02` may select one bounded closed static-call inlining,
-  specialization, or contextual-proof family if profiling and an upper-bound
-  proxy show material vector/container value. It must not store value ranges
-  in effect flags, and must reject recursion, native or virtual calls,
-  incomplete cleanup/lifetime cases, and calls outside a deterministic cost
-  budget.
+- One deterministic whole-program analysis transports exact scalar arguments,
+  returns, mutable object fields, private prefix-storage state, and
+  structurally admitted indexed-element envelopes through concrete
+  source-defined static calls and constructors. It uses bounded rounds and
+  per-context updates, stores values separately from effects, and rejects
+  recursion, native or virtual calls, owning transfers, synchronization,
+  incomplete call families, and unsupported cleanup/lifetime shapes.
+- The analysis is snapshot-scoped. Any semantic body edit invalidates its
+  program-wide cache and all derived body safety facts; independently replayed
+  metadata attachment explicitly preserves the immutable result. Replay
+  validates all claims against one source and one candidate snapshot rather
+  than recomputing the whole program per claim.
+- Closed-world reachability as a removal authority, body cloning,
+  devirtualization, and inlining are not implemented.
 - Devirtualization remains deferred. Do not generalize the selected family
   until temporary lifetime, cleanup, layout, closed-world, and cost-model
   requirements are met and another workload measures value.
