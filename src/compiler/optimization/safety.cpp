@@ -4846,11 +4846,11 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
       }
       ContextualBodyResult body =
           analyzeContextualBody(program, address, context, round);
+      nextSafety.emplace(address, std::move(body.safety));
       if (!body.summary.complete) {
         continue;
       }
       nextSummaries.emplace(address, std::move(body.summary));
-      nextSafety.emplace(address, std::move(body.safety));
     }
 
     std::stable_sort(round.discovered.begin(), round.discovered.end(),
@@ -4903,13 +4903,15 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
                   summary != summaries.end() && summary->second.complete;
     body.safety = analyzeBodyLocalSafety(
         program, address, analyzeMirPlaceAliasEscape(program, address));
-    if (body.closed) {
+    if (result.converged) {
       if (const auto contextual = contextualSafety.find(address);
           contextual != contextualSafety.end()) {
         body.safety.proofs.insert(body.safety.proofs.end(),
                                   contextual->second.proofs.begin(),
                                   contextual->second.proofs.end());
       }
+    }
+    if (body.closed) {
       if (summary->second.result.observed && summary->second.result.fact) {
         const IntegerFact &interval = *summary->second.result.fact;
         body.returnInterval =

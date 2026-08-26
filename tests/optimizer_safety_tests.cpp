@@ -818,6 +818,23 @@ void increment_narrow(mut CheckedRecordBuffer& values) {
       (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
 }
 
+void repeat_narrow(mut CheckedRecordBuffer& values) {
+  for (mut int32_t tick = 0; tick < int32_t(100); tick++) {
+    mut CheckedRecord& value = values[uint64_t(0)];
+    int32_t phase = tick % int32_t(17);
+    value.narrow =
+        (value.narrow * int32_t(3) + phase + int32_t(2)) % int32_t(61) -
+        int32_t(30);
+  }
+}
+
+void repeat_unbounded(mut CheckedRecordBuffer& values, int32_t delta) {
+  for (mut int32_t tick = 0; tick < int32_t(100); tick++) {
+    mut CheckedRecord& value = values[uint64_t(0)];
+    value.narrow = value.narrow + delta;
+  }
+}
+
 int32_t direct_increment_narrow() {
   mut CheckedRecordBuffer values = CheckedRecordBuffer();
   mut CheckedRecord& value = values[uint64_t(0)];
@@ -833,10 +850,19 @@ void barrier_then_increment(mut CheckedRecordBuffer& values) {
       (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
 }
 
+void increment_then_barrier(mut CheckedRecordBuffer& values) {
+  mut CheckedRecord& value = values[uint64_t(0)];
+  value.narrow =
+      (value.narrow * int32_t(3) + int32_t(1)) % int32_t(17);
+  analysis_barrier();
+}
+
 int32_t main() {
   mut CheckedRecordBuffer values = CheckedRecordBuffer();
   int32_t direct = direct_increment_narrow();
   increment_narrow(values);
+  repeat_narrow(values);
+  increment_then_barrier(values);
   barrier_then_increment(values);
   return direct;
 }
@@ -873,6 +899,19 @@ int32_t main() {
              overflow(o3, "direct_increment_narrow") == 2,
          "a direct call-result loan retained by a local reference should "
          "preserve its indexed-record field envelope");
+  const std::size_t repeatNarrowO2 = overflow(o2, "repeat_narrow");
+  const std::size_t repeatNarrowO3 = overflow(o3, "repeat_narrow");
+  const std::size_t repeatUnboundedO2 = overflow(o2, "repeat_unbounded");
+  const std::size_t repeatUnboundedO3 = overflow(o3, "repeat_unbounded");
+  expect(repeatNarrowO2 == 4 && repeatNarrowO3 == 4,
+         "a result-bounded record field update should preserve its envelope "
+         "across a finite loop and discharge every arithmetic check");
+  expect(repeatUnboundedO2 == 0 && repeatUnboundedO3 == 0,
+         "an unbounded record field recurrence must retain its field check");
+  expect(overflow(o2, "increment_then_barrier") == 2 &&
+             overflow(o3, "increment_then_barrier") == 2,
+         "a later opaque call must not discard converged contextual proofs "
+         "established before the barrier");
   expect(overflow(o2, "barrier_then_increment") == 0 &&
              overflow(o3, "barrier_then_increment") == 0,
          "an opaque call must invalidate retained indexed-record field "
