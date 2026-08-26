@@ -214,14 +214,16 @@ contains exactly one join obligation. Moving the handle transfers that
 obligation; detach is absent. Destruction of an outstanding handle
 **automatically joins**. This can block or participate in deadlock, but it
 ensures no managed child outlives the cleanup of its owned task state. Later
-result-bearing tasks must require explicit observation or an explicit discard
-policy.
+result-bearing work uses the separate source-defined
+`std::thread_result<Result>` owner. Explicit `join()` returns
+`expected<Result, thread_errc>` and therefore cannot silently lose a value;
+destruction joins and explicitly abandons an unobserved result exactly once.
 
-The normal public spelling for this managed-thread contract is `std::jthread`.
-GTI does not pair it with a separate C++-style detach-capable `std::thread` in
-the first concurrent profile. A later detached or otherwise unstructured task
-facility is a distinct design problem and cannot weaken `std::jthread`'s owned
-join obligation.
+The normal public spelling for this managed-thread contract is `std::thread`.
+Unlike C++'s class with the same spelling, GTI's owner always joins and has no
+detach operation. A later detached or otherwise unstructured task facility is
+a distinct design problem and cannot weaken `std::thread`'s owned join
+obligation.
 
 Creation and recoverable join errors use `expected` whenever a valid ownership
 state can be returned. Task and argument values are moved into runtime-owned

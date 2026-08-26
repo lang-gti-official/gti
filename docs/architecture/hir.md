@@ -25,7 +25,8 @@ obligations, not HIR declarations or executable values.
 - exact native callback adapter identities linking a callback type to one
   concrete free-function instance;
 - exact managed-thread task adapter identities linking one concrete spawn
-  value to its task type and once-invocation contract;
+  value to its task type, exact `void` or owned result type, and once-invocation
+  contract;
 - enums and resolved class/base/lifecycle metadata;
 - executable `HirBody` values, bindings, statements, and root statements;
 - snapshot-local full-expression identities plus typed lexical/value drop
@@ -167,7 +168,7 @@ values retain `ThreadJoin`. Program verification requires every adapter to be
 nonzero, type-complete, referenced by its exact spawn, rooted in that exact
 function/lambda instance and owner type, and ordered deterministically. HIR
 does not erase the task, invent a native entry point, reopen `operator()`
-selection, or recognize the source-defined `std::jthread` wrapper.
+selection, or recognize the source-defined `std::thread` wrapper.
 
 ## Executable Values
 

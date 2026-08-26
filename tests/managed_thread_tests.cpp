@@ -101,35 +101,35 @@ public:
 };
 
 int main() {
-  auto first_started = std::jthread::start(
+  auto first_started = std::thread::start(
       []() -> void { std::println("first task"); });
   if (!first_started.has_value()) { return 1; }
-  mut std::jthread first = std::move(first_started).value();
-  mut std::jthread moved = std::move(first);
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread moved = std::move(first);
   auto first_join = moved.join();
   if (!first_join.has_value() || moved.joinable()) { return 2; }
 
   auto owner = std::make_unique<resource>(42);
-  auto second_started = std::jthread::start(
+  auto second_started = std::thread::start(
       [owned = std::move(owner)]() -> void {
         std::println(owned->read());
       });
   if (!second_started.has_value()) { return 3; }
-  mut std::jthread second = std::move(second_started).value();
+  mut std::thread second = std::move(second_started).value();
   auto second_join = second.join();
   if (!second_join.has_value()) { return 4; }
 
   class_task task = class_task();
-  auto third_started = std::jthread::start(std::move(task));
+  auto third_started = std::thread::start(std::move(task));
   if (!third_started.has_value()) { return 5; }
-  mut std::jthread third = std::move(third_started).value();
+  mut std::thread third = std::move(third_started).value();
   auto third_join = third.join();
   if (!third_join.has_value()) { return 6; }
 
   {
-    auto fourth_started = std::jthread::start(fresh_task());
+    auto fourth_started = std::thread::start(fresh_task());
     if (!fourth_started.has_value()) { return 7; }
-    mut std::jthread fourth = std::move(fourth_started).value();
+    mut std::thread fourth = std::move(fourth_started).value();
   }
   std::println("after automatic join");
   return 0;
@@ -250,7 +250,7 @@ void testPublicPipelineAndInventory() {
     printDiagnostics(frontend);
   }
   expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
-         "the public jthread workflow should complete frontend analysis");
+         "the public thread workflow should complete frontend analysis");
   if (!frontend.canGenerateCode()) {
     return;
   }
@@ -347,6 +347,80 @@ void testPublicPipelineAndInventory() {
       "both C++ standards should consume lowered task and failure authority");
 }
 
+void testTypedResultPipeline() {
+  const lang::FrontendResult frontend = analyze("managed-thread-result.gti", R"(
+#include <std/thread>
+
+class result_task {
+  int32_t value;
+public:
+  result_task(int32_t value) : value(value) {}
+  int32_t operator()() && { return this.value; }
+};
+
+int main() {
+  mut std::thread_result<int32_t> first =
+      std::thread_result<int32_t>();
+  auto first_started = first.start(result_task(42));
+  if (!first_started.has_value()) { return 1; }
+
+  auto first_joined = first.join();
+  if (!first_joined.has_value()) { return 2; }
+
+  auto restarted = first.start([]() -> int32_t { return 9; });
+  if (!restarted.has_value()) { return 3; }
+  auto rejoined = first.join();
+  if (!rejoined.has_value()) { return 4; }
+
+  mut std::thread_result<int32_t> abandoned =
+      std::thread_result<int32_t>();
+  auto abandoned_started = abandoned.start(result_task(7));
+  if (!abandoned_started.has_value()) { return 5; }
+  return 0;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "typed result tasks should retain exact semantic, HIR, and MIR "
+         "contracts");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  expect(frontend.mir.threadTaskAdapters().size() == 2 &&
+             std::all_of(frontend.mir.threadTaskAdapters().begin(),
+                         frontend.mir.threadTaskAdapters().end(),
+                         [](const lang::MirThreadTaskAdapter &adapter) {
+                           return adapter.resultType ==
+                                  lang::SemanticType::Int32;
+                         }),
+         "named and closure result tasks should instantiate two exact int32 "
+         "adapters");
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, frontend.mir, frontend.mir, concurrentTarget());
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "typed task results should retain exact lowered-program authority");
+  const std::string cpp20 =
+      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
+  const std::string cpp23 =
+      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+  expect(cpp20.find("managed_thread_spawn_value<") != std::string::npos &&
+             cpp20.find("managed_thread_spawn_value<"
+                        "__gti_thread_task_adapter, std::int32_t>") !=
+                 std::string::npos &&
+             cpp20.find("managed_thread_take_join_result<") !=
+                 std::string::npos &&
+             cpp23.find("gti_rt_thread_join_value_v1") != std::string::npos &&
+             cpp23.find("managed_thread_abandon_join_result(") !=
+                 std::string::npos,
+         "both C++ standards should emit typed spawn, join, and abandon "
+         "ownership transitions");
+}
+
 void expectThreadRejection(std::string_view name, std::string source,
                            std::string_view message,
                            bool requireRelatedCause = false) {
@@ -372,19 +446,19 @@ void testSemanticRejections() {
   const std::string basic = R"(
 #include <std/thread>
 int main() {
-  auto started = std::jthread::start([]() -> void {});
+  auto started = std::thread::start([]() -> void {});
   return 0;
 }
 )";
   lang::TargetInfo single = concurrentTarget();
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
   const lang::FrontendResult singleResult =
-      analyze("single-threaded-jthread.gti", basic, single);
+      analyze("single-threaded-thread.gti", basic, single);
   expect(!singleResult.canGenerateCode() &&
              hasCode(singleResult, "GTI-S2084") &&
              hasMessage(singleResult, "concurrent execution profile") &&
              !hasCode(singleResult, "GTI-B0001"),
-         "the default execution profile should reject jthread before backend "
+         "the default execution profile should reject thread before backend "
          "entry");
 
   lang::TargetInfo unsupportedTarget = lang::TargetInfo::host();
@@ -401,7 +475,7 @@ int main() {
   expectThreadRejection("nonvoid-thread-task.gti", R"(
 #include <std/thread>
 int main() {
-  auto started = std::jthread::start([]() -> int32_t { return 1; });
+  auto started = std::thread::start([]() -> int32_t { return 1; });
   return 0;
 }
 )",
@@ -409,7 +483,7 @@ int main() {
   expectThreadRejection("parameter-thread-task.gti", R"(
 #include <std/thread>
 int main() {
-  auto started = std::jthread::start([](int32_t value) -> void {});
+  auto started = std::thread::start([](int32_t value) -> void {});
   return 0;
 }
 )",
@@ -419,7 +493,7 @@ int main() {
 int main() {
   std::string_view text = "borrowed";
   auto task = [text]() -> void {};
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   return 0;
 }
 )",
@@ -431,7 +505,7 @@ int main() {
   unsafe {
     int32_t* raw = &value;
     auto task = [raw]() -> void {};
-    auto started = std::jthread::start(std::move(task));
+    auto started = std::thread::start(std::move(task));
   }
   return 0;
 }
@@ -443,18 +517,74 @@ int main() {
 int main() {
   local_only state = local_only();
   auto task = [state]() -> void {};
-  auto started = std::jthread::start(std::move(task));
+  auto started = std::thread::start(std::move(task));
   return 0;
 }
 )",
                         "transfer-safe exact void() task", true);
+
+  expectThreadRejection("mismatched-thread-result-task.gti", R"(
+#include <std/thread>
+int main() {
+  mut std::thread_result<int32_t> worker =
+      std::thread_result<int32_t>();
+  auto started = worker.start([]() -> bool { return true; });
+  return 0;
+}
+)",
+                        "return type matches");
+  const lang::FrontendResult borrowedResultType =
+      analyze("borrowed-thread-result.gti", R"(
+#include <std/thread>
+int main() {
+  mut std::thread_result<int32_t&> worker =
+      std::thread_result<int32_t&>();
+  return 0;
+}
+)");
+  expect(!borrowedResultType.canGenerateCode() &&
+             hasCode(borrowedResultType, "GTI-S2017") &&
+             hasMessage(borrowedResultType,
+                        "References cannot be nested inside another type") &&
+             !hasCode(borrowedResultType, "GTI-B0001"),
+         "a borrowed result should fail at the general nested-reference type "
+         "boundary before managed-thread lowering");
+  expectThreadRejection("raw-thread-result.gti", R"(
+#include <std/thread>
+int main() {
+  mut std::thread_result<int32_t*> worker =
+      std::thread_result<int32_t*>();
+  return 0;
+}
+)",
+                        "owned non-void value type");
+  expectThreadRejection("nontransfer-thread-result.gti", R"(
+#include <std/thread>
+class local_result {
+  int32_t value;
+public:
+  local_result(int32_t value) : value(value) {}
+  local_result(local_result& other) = delete;
+  local_result(local_result&& other) = default;
+  ~local_result() {}
+};
+int main() {
+  mut std::thread_result<local_result> worker =
+      std::thread_result<local_result>();
+  auto started = worker.start([]() -> local_result {
+    return local_result(1);
+  });
+  return 0;
+}
+)",
+                        "transfer-safe");
 
   const lang::FrontendResult missingMove =
       analyze("thread-task-needs-move.gti", R"(
 #include <std/thread>
 int main() {
   auto task = []() -> void {};
-  auto started = std::jthread::start(task);
+  auto started = std::thread::start(task);
   return 0;
 }
 )");
@@ -463,28 +593,28 @@ int main() {
              !hasCode(missingMove, "GTI-B0001"),
          "a named thread task should require one explicit ownership move");
 
-  const lang::FrontendResult copiedHandle = analyze("copy-jthread.gti", R"(
+  const lang::FrontendResult copiedHandle = analyze("copy-thread.gti", R"(
 #include <std/thread>
 int main() {
-  auto started = std::jthread::start([]() -> void {});
+  auto started = std::thread::start([]() -> void {});
   if (!started.has_value()) { return 1; }
-  mut std::jthread first = std::move(started).value();
-  std::jthread copied = first;
+  mut std::thread first = std::move(started).value();
+  std::thread copied = first;
   return 0;
 }
 )");
   expect(!copiedHandle.canGenerateCode() && !hasCode(copiedHandle, "GTI-B0001"),
-         "the public jthread handle should be move-only");
+         "the public thread handle should be move-only");
 
   const lang::FrontendResult assignedHandle =
-      analyze("move-assign-jthread.gti", R"(
+      analyze("move-assign-thread.gti", R"(
 #include <std/thread>
 int main() {
-  auto first_started = std::jthread::start([]() -> void {});
-  auto second_started = std::jthread::start([]() -> void {});
+  auto first_started = std::thread::start([]() -> void {});
+  auto second_started = std::thread::start([]() -> void {});
   if (!first_started.has_value() || !second_started.has_value()) { return 1; }
-  mut std::jthread first = std::move(first_started).value();
-  mut std::jthread second = std::move(second_started).value();
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread second = std::move(second_started).value();
   first = std::move(second);
   return 0;
 }
@@ -494,7 +624,7 @@ int main() {
              hasHint(assignedHandle, "does not support move assignment") &&
              !hasHint(assignedHandle, "use std::move(owner)") &&
              !hasCode(assignedHandle, "GTI-B0001"),
-         "jthread move assignment should stop in semantics with a correction "
+         "thread move assignment should stop in semantics with a correction "
          "that does not repeat the already-written std::move");
 
   const lang::FrontendResult privateHandle =
@@ -650,6 +780,7 @@ void testVerifierMutations() {
 int main() {
   testDormantImportInSingleThreadedProfile();
   testPublicPipelineAndInventory();
+  testTypedResultPipeline();
   testSemanticRejections();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;

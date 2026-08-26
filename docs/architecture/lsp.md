@@ -251,11 +251,14 @@ or lifecycle capability from spelling.
 
 Managed-thread diagnostics also remain shared frontend authority. An invalid
 task transfer, single-threaded profile, or target without thread support
-publishes `GTI-S2084` with its semantic related spans and hints. The LSP reads
-the default project profile as described below, exposes only the source-defined
-`std::jthread` declarations in hover/definition/completion, and filters the
-identity-bound `gti_internal` handle and operations. It does not derive task
-transfer, callable entry selection, or concurrency from public spelling.
+publishes `GTI-S2084` with its semantic related spans and hints. Typed-result
+diagnostics use the same compiler fact, including exact result matching and
+transfer denials. The LSP reads the default project profile as described below,
+exposes only the source-defined `std::thread` and
+`std::thread_result<Result>` declarations in hover/definition/completion, and
+filters the identity-bound `gti_internal` handles and operations. It does not
+derive task transfer, callable entry selection, result ownership, or
+concurrency from public spelling.
 
 ## Document State
 

@@ -17,10 +17,10 @@ The single-threaded profile is the default executable profile. The reference
 toolchain also resolves an explicit concurrent-profile selection before
 semantic analysis and applies its global/static storage policy during semantic
 analysis. Together with an independently advertised target/runtime `threads`
-capability, that selection exposes the bounded source-defined `std::jthread`
-surface. It does not expose atomics, mutexes, detach, scoped borrows, or
-foreign-thread entry; those facilities retain separate runtime and conformance
-gates.
+capability, that selection exposes the bounded source-defined `std::thread`
+and `std::thread_result<Result>` surfaces. It does not expose atomics, mutexes,
+detach, scoped borrows, or foreign-thread entry; those facilities retain
+separate runtime and conformance gates.
 
 ## 1.2 Conforming Programs
 

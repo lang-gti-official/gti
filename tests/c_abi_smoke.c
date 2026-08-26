@@ -148,15 +148,36 @@ _Static_assert(sizeof(gti_thread_join_result_v1) == 184 &&
                        176,
                "the v1 managed-thread join result layout must remain fixed");
 _Static_assert(
+    sizeof(gti_thread_value_join_result_v1) == 208 &&
+        offsetof(gti_thread_value_join_result_v1, join) == 0 &&
+        offsetof(gti_thread_value_join_result_v1, result_context) == 184 &&
+        offsetof(gti_thread_value_join_result_v1, take_result) == 192 &&
+        offsetof(gti_thread_value_join_result_v1, abandon_result) == 200,
+    "the v1 managed-thread value join result layout must remain fixed");
+_Static_assert(
     _Generic(&gti_rt_thread_spawn_v1,
         gti_thread_spawn_result_v1 (*)(gti_thread_task_entry_v1, void *,
                                        gti_thread_task_destroy_v1): 1,
         default: 0),
     "the managed-thread spawn entry must retain its C prototype");
+_Static_assert(
+    _Generic(&gti_rt_thread_spawn_value_v1,
+        gti_thread_spawn_result_v1 (*)(gti_thread_task_entry_v1, void *,
+                                       gti_thread_task_complete_v1,
+                                       gti_thread_task_abandon_v1,
+                                       gti_thread_result_take_v1,
+                                       gti_thread_result_abandon_v1): 1,
+        default: 0),
+    "the managed-thread value spawn entry must retain its C prototype");
 _Static_assert(_Generic(&gti_rt_thread_join_v1,
                    gti_thread_join_result_v1 (*)(gti_thread_state_v1 **): 1,
                    default: 0),
                "the managed-thread join entry must retain its C prototype");
+_Static_assert(
+    _Generic(&gti_rt_thread_join_value_v1,
+        gti_thread_value_join_result_v1 (*)(gti_thread_state_v1 **): 1,
+        default: 0),
+    "the managed-thread value join entry must retain its C prototype");
 
 int main(void) {
   static const char text[] = "gti";

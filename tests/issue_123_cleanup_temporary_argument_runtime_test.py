@@ -33,7 +33,7 @@ def main() -> int:
     positive = fixtures / "issue_123_cleanup_temporary_argument.gti"
     failure = fixtures / "issue_123_cleanup_temporary_argument_failure.gti"
     named_copy = fixtures / "issue_123_move_only_named_copy.gti"
-    jthread = fixtures / "issue_123_jthread_handoff.gti"
+    thread = fixtures / "issue_123_thread_handoff.gti"
 
     with tempfile.TemporaryDirectory(prefix="gti-issue-123-") as temporary:
         root = pathlib.Path(temporary)
@@ -148,8 +148,8 @@ def main() -> int:
         ):
             return fail("reject named move-only copy", rejected)
 
-        jthread_executable = root / "jthread"
-        built_jthread = run(
+        thread_executable = root / "thread"
+        built_thread = run(
             [
                 str(compiler),
                 "--execution-profile",
@@ -157,20 +157,20 @@ def main() -> int:
                 "--std",
                 "c++23",
                 "-O2",
-                str(jthread),
+                str(thread),
                 "-o",
-                str(jthread_executable),
+                str(thread_executable),
             ]
         )
-        if built_jthread.returncode != 0:
-            return fail("build jthread handoff", built_jthread)
-        executed_jthread = run([str(jthread_executable)])
+        if built_thread.returncode != 0:
+            return fail("build thread handoff", built_thread)
+        executed_thread = run([str(thread_executable)])
         if (
-            executed_jthread.returncode != 0
-            or executed_jthread.stdout != ""
-            or executed_jthread.stderr != ""
+            executed_thread.returncode != 0
+            or executed_thread.stdout != ""
+            or executed_thread.stderr != ""
         ):
-            return fail("run jthread handoff", executed_jthread)
+            return fail("run thread handoff", executed_thread)
 
     return 0
 

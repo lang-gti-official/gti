@@ -71,7 +71,7 @@ own `main` function.
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
-| `66-managed-threads.gti` | move-only `std::jthread`, owned task transfer, explicit join, and mandatory autojoin |
+| `66-managed-threads.gti` | move-only `std::thread`, owned task transfer, explicit join, and mandatory autojoin |
 | `67-forward-iterators.gti` | copied owner-tied read cursors, `std::next`, and forward-iterator binary search |
 | `68-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `69-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
@@ -193,7 +193,7 @@ one child mutable loan limited to its iteration.
 ```
 
 It transfers fresh and explicitly moved `void()` tasks into move-only
-`std::jthread` handles. Explicit `join()` reports native creation/join errors as
+`std::thread` handles. Explicit `join()` reports native creation/join errors as
 `std::expected`; a still-joinable handle autojoins during deterministic scope
 cleanup. Worker-defined failures are re-raised by that explicit or automatic
 join boundary. The initial public slice deliberately has no detached handle or

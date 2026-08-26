@@ -15293,6 +15293,7 @@ public:
 
   [[nodiscard]] std::string emit(const ScalarBodyFacts &facts,
                                  std::string_view familyLabel) {
+    currentBody = &facts.body;
     const CppMirControlFlowPlan controlFlow =
         buildCppMirControlFlowPlan(facts.body);
     const CppMirControlFlowVerification controlFlowVerification =
@@ -15707,6 +15708,18 @@ public:
       }
       const MirInstruction *valueDefinition =
           findInstruction(facts.body, value.definition);
+      if (valueDefinition != nullptr &&
+          valueDefinition->kind == MirInstructionKind::Call &&
+          valueDefinition->intrinsic == IntrinsicKind::ThreadJoin &&
+          valueDefinition->result && *valueDefinition->result == value.id &&
+          value.info.type.kind == SemanticType::Expected) {
+        // A typed join may publish from a successor block. Its lifetime slot
+        // supplies cross-block storage without default-constructing Result.
+        writeIndent();
+        output << lifetimeSlotSpelling() << '<' << typeSpelling(value.info.type)
+               << ", true> __gti_mir_v_" << value.id << ";\n";
+        continue;
+      }
       if (valueDefinition != nullptr &&
           valueDefinition->kind == MirInstructionKind::Move &&
           valueDefinition->result && *valueDefinition->result == value.id) {
@@ -16961,10 +16974,27 @@ private:
         "verified MIR scalar-CFG literal has an unsupported representation");
   }
 
+  [[nodiscard]] bool isTypedThreadJoinValue(MirValueId id) const {
+    const MirValue *value =
+        currentBody == nullptr ? nullptr : currentBody->findValue(id);
+    const MirInstruction *definition =
+        value == nullptr || currentBody == nullptr
+            ? nullptr
+            : findInstruction(*currentBody, value->definition);
+    return value != nullptr && definition != nullptr &&
+           definition->kind == MirInstructionKind::Call &&
+           definition->intrinsic == IntrinsicKind::ThreadJoin &&
+           definition->result && *definition->result == id &&
+           value->info.type.kind == SemanticType::Expected;
+  }
+
   void emitOperand(const MirOperand &operand,
                    bool allowSyntheticLogicalConstant = false) {
     if (operand.kind == MirOperandKind::Value) {
       output << "__gti_mir_v_" << operand.value;
+      if (isTypedThreadJoinValue(operand.value)) {
+        output << ".get()";
+      }
       return;
     }
     if (allowSyntheticLogicalConstant && isSyntheticLogicalConstant(operand)) {
@@ -20254,12 +20284,27 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic == IntrinsicKind::ThreadSpawn) {
+      const MirThreadTaskAdapter *adapter =
+          instruction.threadTaskAdapter
+              ? program.findThreadTaskAdapter(*instruction.threadTaskAdapter)
+              : nullptr;
+      if (adapter == nullptr) {
+        throw std::logic_error(
+            "verified thread spawn lost its exact task adapter");
+      }
       output << "__gti_mir_v_" << *instruction.result
-             << " = ::gti_internal::backend::managed_thread_spawn<"
+             << " = ::gti_internal::backend::managed_thread_spawn";
+      if (adapter->resultType != SemanticType::Void) {
+        output << "_value";
+      }
+      output << '<'
              << (currentFamilyLabel.starts_with("deduced-callable")
                      ? std::string{"__gti_thread_task_adapter"}
-                     : std::to_string(*instruction.threadTaskAdapter))
-             << ">(";
+                     : std::to_string(adapter->id));
+      if (adapter->resultType != SemanticType::Void) {
+        output << ", " << typeSpelling(adapter->resultType);
+      }
+      output << ">(";
       emitCallArgument(instruction.operands[0], false, false);
       output << ", ";
       emitCallArgument(instruction.operands[1], false, false);
@@ -20271,12 +20316,42 @@ private:
          instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)) {
       const bool automatic =
           instruction.intrinsic == IntrinsicKind::ThreadAutoJoin;
-      output << "const ::gti_thread_join_result_v1 "
-                "__gti_mir_thread_join_"
-             << instruction.id
-             << " = ::gti_internal::backend::managed_thread_join(";
+      const SemanticType &handleReference = instruction.operands.front().type;
+      const SemanticType *handleType =
+          handleReference.kind == SemanticType::Reference &&
+                  handleReference.arguments.size() == 1
+              ? &handleReference.arguments.front()
+              : nullptr;
+      const SemanticType *resultType =
+          handleType != nullptr && handleType->kind == SemanticType::Class &&
+                  handleType->arguments.size() == 1
+              ? &handleType->arguments.front()
+              : nullptr;
+      if (handleType == nullptr || handleType->kind != SemanticType::Class ||
+          handleType->arguments.size() > 1) {
+        throw std::logic_error(
+            "verified thread join lost its exact handle result type");
+      }
+      if (resultType != nullptr) {
+        output << "::gti_thread_value_join_result_v1 "
+                  "__gti_mir_thread_value_join_"
+               << instruction.id
+               << " = ::gti_internal::backend::managed_thread_join_value(";
+      } else {
+        output << "const ::gti_thread_join_result_v1 "
+                  "__gti_mir_thread_join_"
+               << instruction.id
+               << " = ::gti_internal::backend::managed_thread_join(";
+      }
       emitCallArgument(instruction.operands.front(), false, false);
       output << ");\n";
+      if (resultType != nullptr) {
+        writeIndent();
+        output << "const ::gti_thread_join_result_v1 "
+                  "&__gti_mir_thread_join_"
+               << instruction.id << " = __gti_mir_thread_value_join_"
+               << instruction.id << ".join;\n";
+      }
       writeIndent();
       output << "if (__gti_mir_thread_join_" << instruction.id
              << ".status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {\n";
@@ -20315,6 +20390,20 @@ private:
       --indentation;
       writeIndent();
       output << "}\n";
+      if (automatic && resultType != nullptr) {
+        writeIndent();
+        output << "if (__gti_mir_thread_join_" << instruction.id
+               << ".status == GTI_THREAD_JOIN_OK_V1) {\n";
+        ++indentation;
+        writeIndent();
+        output << "::gti_internal::backend::"
+                  "managed_thread_abandon_join_result("
+                  "__gti_mir_thread_value_join_"
+               << instruction.id << ");\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+      }
       if (automatic) {
         writeIndent();
         output << "if (__gti_mir_thread_join_" << instruction.id
@@ -20331,13 +20420,30 @@ private:
       }
       if (!automatic) {
         writeIndent();
-        output << "__gti_mir_v_" << *instruction.result
-               << " = __gti_mir_thread_join_" << instruction.id
-               << ".status == GTI_THREAD_JOIN_OK_V1 ? std::int32_t{0} : "
-                  "(__gti_mir_thread_join_"
-               << instruction.id
-               << ".status == GTI_THREAD_JOIN_NOT_JOINABLE_V1 ? "
-                  "std::int32_t{1} : std::int32_t{2});\n";
+        if (resultType != nullptr) {
+          if (instruction.info.type.kind != SemanticType::Expected ||
+              instruction.info.type.arguments.size() != 2 ||
+              instruction.info.type.arguments.front() != *resultType) {
+            throw std::logic_error(
+                "verified typed thread join lost its exact Expected result");
+          }
+          output << "__gti_mir_v_" << *instruction.result
+                 << ".construct_from([&] { return "
+                    "::gti_internal::backend::"
+                    "managed_thread_take_join_result<"
+                 << typeSpelling(*resultType) << ", "
+                 << typeSpelling(instruction.info.type.arguments[1]) << ">(";
+          output << "__gti_mir_thread_value_join_" << instruction.id
+                 << "); });\n";
+        } else {
+          output << "__gti_mir_v_" << *instruction.result
+                 << " = __gti_mir_thread_join_" << instruction.id
+                 << ".status == GTI_THREAD_JOIN_OK_V1 ? std::int32_t{0} : "
+                    "(__gti_mir_thread_join_"
+                 << instruction.id
+                 << ".status == GTI_THREAD_JOIN_NOT_JOINABLE_V1 ? "
+                    "std::int32_t{1} : std::int32_t{2});\n";
+        }
       }
       if (!failureForm) {
         writeIndent();
@@ -23239,6 +23345,7 @@ private:
   std::size_t indentation;
   bool failureForm = false;
   std::string_view currentFamilyLabel;
+  const MirBody *currentBody = nullptr;
   std::ostringstream output;
 };
 
@@ -25959,6 +26066,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            definition->kind == MirInstructionKind::Call &&
            definition->intrinsic == IntrinsicKind::ThreadHandleEmpty &&
            definition->result && *definition->result == value.id) ||
+          (definition != nullptr &&
+           definition->kind == MirInstructionKind::Call &&
+           definition->intrinsic == IntrinsicKind::ThreadJoin &&
+           definition->result && *definition->result == value.id &&
+           value.info.type.kind == SemanticType::Expected) ||
           isBorrowStagedResult(body, value) ||
           isStorageStagedResult(body, value) ||
           discardedAssignmentResult(body, value.id) ||
@@ -26242,12 +26354,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              instruction.result &&
              inlineUnexpectedClassConstruction(body, *instruction.result)
                      .producer == &instruction);
+        const bool independentNonRaisingConstruction =
+            instruction.kind == MirInstructionKind::Construct &&
+            instruction.localFailureSites.empty() &&
+            instruction.definedFailure.empty() &&
+            !referencesPendingStaged(instruction);
         // A Move between the staging and its consuming call is inert
         // argument staging: it neither raises nor observes, so the
         // staged callable's deferred spelling stays exact. Lifecycle and
         // EndBorrow spell as comments and touch no state, so they are
         // equally inert inside the window.
-        if (!consumingCall &&
+        if (!consumingCall && !independentNonRaisingConstruction &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
@@ -28284,6 +28401,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    place->type.kind == SemanticType::Class &&
                    typeRow(operand.type) && typeRow(place->type);
           };
+          const auto threadHandleType =
+              [&](const MirOperand &operand) -> const SemanticType * {
+            if (operand.type.kind != SemanticType::Reference ||
+                operand.type.arguments.size() != 1) {
+              return nullptr;
+            }
+            const SemanticType &handle = operand.type.arguments.front();
+            return handle.kind == SemanticType::Class &&
+                           handle.arguments.size() <= 1
+                       ? &handle
+                       : nullptr;
+          };
           if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {
             if (instruction.receiver || instruction.functionTarget ||
                 !instruction.result || !instruction.operands.empty() ||
@@ -28300,6 +28429,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.info.type != SemanticType::Bool ||
                 !threadHandleArgument(instruction.operands.front(),
                                       AccessMode::ReadOnly) ||
+                threadHandleType(instruction.operands.front()) == nullptr ||
                 !instruction.localFailureSites.empty() ||
                 instruction.definedFailure.propagation !=
                     FailurePropagationKind::None) {
@@ -28313,6 +28443,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     ? program_.findThreadTaskAdapter(
                           *instruction.threadTaskAdapter)
                     : nullptr;
+            const SemanticType *handle =
+                instruction.operands.empty()
+                    ? nullptr
+                    : threadHandleType(instruction.operands.front());
+            const SemanticType handleResult =
+                handle == nullptr
+                    ? SemanticType::Unknown
+                    : (handle->arguments.empty() ? SemanticType::Void
+                                                 : handle->arguments.front());
             if (instruction.receiver || instruction.functionTarget ||
                 !instruction.result || instruction.operands.size() != 2 ||
                 instruction.info.type != SemanticType::Int32 ||
@@ -28320,6 +28459,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                       AccessMode::Mutable) ||
                 !valueOperand(instruction.operands[1]) || adapter == nullptr ||
                 adapter->taskType != instruction.operands[1].type ||
+                adapter->resultType != handleResult ||
                 adapter->sourceBody != address ||
                 adapter->spawnInstruction != instruction.id ||
                 adapter->invocation != CallableInvocationCapability::Once ||
@@ -28338,11 +28478,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.intrinsic == IntrinsicKind::ThreadAutoJoin) {
             const bool automatic =
                 instruction.intrinsic == IntrinsicKind::ThreadAutoJoin;
+            const SemanticType *handle =
+                instruction.operands.empty()
+                    ? nullptr
+                    : threadHandleType(instruction.operands.front());
+            const SemanticType *resultType =
+                handle != nullptr && handle->arguments.size() == 1
+                    ? &handle->arguments.front()
+                    : nullptr;
             const bool resultReady =
                 automatic ? (!instruction.result &&
                              instruction.info.type == SemanticType::Void)
-                          : (instruction.result &&
-                             instruction.info.type == SemanticType::Int32);
+                : resultType == nullptr
+                    ? (instruction.result &&
+                       instruction.info.type == SemanticType::Int32)
+                    : (instruction.result &&
+                       instruction.info.type.kind == SemanticType::Expected &&
+                       instruction.info.type.arguments.size() == 2 &&
+                       instruction.info.type.arguments.front() == *resultType &&
+                       instruction.info.type.arguments[1].kind ==
+                           SemanticType::Enum);
             const bool localFailureReady =
                 automatic
                     ? instruction.localFailureSites.size() == 1 &&
@@ -28353,6 +28508,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                           instruction.definedFailure.localOrigins.empty();
             if (instruction.receiver || instruction.functionTarget ||
                 instruction.operands.size() != 1 || !resultReady ||
+                handle == nullptr ||
                 !threadHandleArgument(instruction.operands.front(),
                                       AccessMode::Mutable) ||
                 instruction.synchronization.kind !=

@@ -209,13 +209,16 @@ volatile, synchronized, transfer-capable, share-capable, or safe for concurrent
 use. Concurrent mutation must be mediated by an operation with an explicit
 synchronization contract, such as a future atomic or mutex guard.
 
-The executable `std::jthread` model consumes one exact owned `void()` task.
-The callable object and every capture must be transfer-capable and are moved to
-the worker exactly once. References, borrowed-state iterators/views, raw
-pointers, and borrowed captures cannot cross even when a native lifetime looks
-long enough. A later scoped-borrow extension requires an explicit structured
-join proof, a child loan and suspended parent, cleanup on every normal and
-failure exit, and verified reactivation only after child completion.
+The executable managed-thread model consumes one exact owned `void()` task
+through `std::thread` or one exact owned `Result()` task through
+`std::thread_result<Result>`. The callable object, every capture, and any
+result returned to the joining thread must be transfer-capable and cross the
+boundary exactly once. References, borrowed-state iterators/views, raw
+pointers, and borrowed captures or results cannot cross even when a native
+lifetime looks long enough. A later scoped-borrow extension requires an
+explicit structured join proof, a child loan and suspended parent, cleanup on
+every normal and failure exit, and verified reactivation only after child
+completion.
 
 In the concurrent profile, namespace globals and static fields must be
 immutable and share-capable. Ordinary mutable globals/static fields are

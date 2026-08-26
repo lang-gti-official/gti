@@ -1130,6 +1130,7 @@ struct MirNativeCallbackAdapter {
 struct MirThreadTaskAdapter {
   MirThreadTaskAdapterId id = 0;
   SemanticType taskType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
   HirValueId spawnValue = 0;
   MirBodyAddress sourceBody;
   MirInstructionId spawnInstruction = 0;

@@ -191,6 +191,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
 
   std::vector<std::size_t> threadTaskRoots(program.threadTaskAdapters().size(),
                                            0);
+  std::vector<SemanticType> threadTaskResults(
+      program.threadTaskAdapters().size(), SemanticType::Unknown);
   const auto verifyThreadTaskValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
       if (value.intrinsic != IntrinsicKind::ThreadSpawn) {
@@ -209,6 +211,29 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "managed thread spawn has no exact HIR task adapter");
         continue;
       }
+      const SemanticType *handleType =
+          value.parameterTypes.size() == 2 &&
+                  value.parameterTypes.front().kind ==
+                      SemanticType::Reference &&
+                  value.parameterTypes.front().arguments.size() == 1
+              ? &value.parameterTypes.front().arguments.front()
+              : nullptr;
+      if (handleType == nullptr || handleType->kind != SemanticType::Class ||
+          handleType->arguments.size() > 1) {
+        result.errors.emplace_back(
+            "managed thread spawn has no exact result handle type");
+        continue;
+      }
+      const SemanticType taskResult = handleType->arguments.empty()
+                                          ? SemanticType::Void
+                                          : handleType->arguments.front();
+      SemanticType &recorded = threadTaskResults[adapter->id - 1];
+      if (recorded != SemanticType::Unknown && recorded != taskResult) {
+        result.errors.emplace_back(
+            "managed thread task adapter has conflicting result types");
+        continue;
+      }
+      recorded = taskResult;
       ++threadTaskRoots[adapter->id - 1];
     }
   };
@@ -253,7 +278,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           target->source != nullptr &&
           declaration->declaration == target->source && owner != nullptr &&
           owner->type == adapter.taskType &&
-          target->returnType == SemanticType::Void &&
+          target->returnType == threadTaskResults[index] &&
           target->parameterTypes.empty() &&
           target->source->operatorName().has_value() &&
           target->source->operatorName()->kind == OverloadedOperator::Call &&
@@ -264,13 +289,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const HirLambda *target = program.findLambda(*adapter.lambdaTarget);
       exactEntry =
           exactEntry && target != nullptr && target->type == adapter.taskType &&
-          target->returnType == SemanticType::Void &&
+          target->returnType == threadTaskResults[index] &&
           target->parameterTypes.empty() &&
           adapter.targetInvocation == CallableInvocationCapability::Read;
     }
     if (adapter.id != index + 1 || adapter.spawnValue == 0 ||
         adapter.taskType == SemanticType::Unknown ||
         adapter.taskType.kind == SemanticType::TypeParameter ||
+        threadTaskResults[index] == SemanticType::Unknown ||
         adapter.invocation != CallableInvocationCapability::Once ||
         program.executionProfile() != ExecutionProfile::Concurrent ||
         threadTaskRoots[index] != 1 || !exactEntry) {
