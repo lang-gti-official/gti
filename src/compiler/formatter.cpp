@@ -1615,7 +1615,18 @@ private:
       if (candidate.kind == Kind::Newline) {
         continue;
       }
-      if (candidate.kind == Kind::Directive || isComment(candidate.kind)) {
+      if (candidate.kind == Kind::Directive) {
+        // A directive is normally a hard boundary, but an incomplete marker
+        // such as a lone '#' merges with a following word into a single
+        // directive token when re-scanned (e.g. '#' 'case' -> '#case'). Keep
+        // them separated when gluing them would change the token stream, so
+        // formatting stays idempotent on recovered input.
+        if (preceding.empty() && retokenizes({&candidate, &current})) {
+          return true;
+        }
+        break;
+      }
+      if (isComment(candidate.kind)) {
         break;
       }
       preceding.push_back(&candidate);
