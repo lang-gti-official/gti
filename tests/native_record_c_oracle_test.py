@@ -255,6 +255,17 @@ def build_gti_source() -> str:
     }
   }
 
+  for (mut int32_t iteration = 0; iteration < 3; iteration++) {
+    Packet repeated = c_packet_make(
+        uint8_t(8), uint64_t(200), uint16_t(10), 3.0, 4.0);
+    if (repeated.tag != uint8_t(8) ||
+        repeated.serial != uint64_t(200) ||
+        repeated.flags != uint16_t(10) || repeated.point.x != 3.0 ||
+        repeated.point.y != 4.0) {
+      return 8;
+    }
+  }
+
   std::println("native C record oracle passed");
   return 0;
 }
