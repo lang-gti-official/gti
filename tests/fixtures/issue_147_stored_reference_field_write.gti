@@ -1,0 +1,19 @@
+class value_t {
+public:
+  value_t() {}
+  mut int32_t v = 7;
+};
+
+class value_ref {
+  value_t& held;
+public:
+  value_ref(value_t& source) : held(source) {}
+  void write() mut { this.held.v = 9; }
+};
+
+int main() {
+  mut value_t value = value_t();
+  mut value_ref view = value_ref(value);
+  view.write();
+  return 0;
+}

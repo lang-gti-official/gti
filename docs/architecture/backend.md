@@ -356,6 +356,12 @@ state; unrelated in-class initializers retain their source-defined value.
 Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.
+A read through a receiver's stored class-reference field uses the exact
+`Field, Dereference, Field...` MIR projection path: the reference field must
+have its copied reference-type row, and every trailing field must resolve from
+the referent type through an exact field row. The C++ alias relies only on the
+language's existing implicit reference-member dereference; unsupported
+projections fail body admission.
 
 A fixed-array drop with a concrete MIR schedule uses the same lifetime-slot
 boundary for its aggregate storage. The C++ representation recursively visits
