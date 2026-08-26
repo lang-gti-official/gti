@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "name": "scalar-fp-update",
+  "description": "Strict scalar floating-point field update and closed method call",
+  "work_units": 30000000,
+  "minimum_sample_seconds": 0.05,
+  "variants": [
+    {
+      "name": "gti",
+      "kind": "gti",
+      "source": "main.gti"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp"
+    },
+    {
+      "name": "cpp-idiomatic",
+      "kind": "cpp",
+      "source": "idiomatic.cpp"
+    }
+  ]
+}

@@ -81,6 +81,37 @@ retains the selected profile in the exact GTI build command and schema-2 build
 record. Schema-1 commands and serialized build records retain their original
 shape and do not acquire an `execution_profile` field.
 
+`--native-optimization` enables a report-schema-3 attribution run without
+changing either descriptor schema. `--optimization` still selects GTI's MIR
+policy, while the bounded native option selects one of `0` through `3` for
+every measured native executable. For a GTI variant, the runner first performs
+the ordinary driver build with retained C++ and a validated build-report
+sidecar, then derives a second native command from that exact sidecar. Only the
+single driver-owned optimization flag, dependency-file path, and output path
+may change. Both commands and both executables remain in the report. Runs that
+omit the option retain the frozen schema-1 shape or existing schema-2
+provenance behavior exactly.
+
+`--arithmetic-success-proxy WORKLOAD/VARIANT` additionally enables report
+schema 4. The selected target must be a GTI variant in the same invocation and
+the mode requires `--native-optimization`. The runner derives one extra
+measured executable from that target's validated build provenance and retained
+C++. It locates exactly one definition of each compiler-owned
+`gti_internal::backend::mir_checked_add_v1`,
+`mir_checked_subtract_v1`, and `mir_checked_multiply_v1` helper, then replaces
+exactly the helpers' three `if (overflow) {` guards with `if (false) {`. Missing,
+duplicate, or structurally unexpected helpers fail the run. There is no
+descriptor-provided pattern, command, or transformation surface.
+
+The generated variant is a **successful-path-only, non-semantic attribution
+proxy**. It participates in the same correctness validation and randomized
+sample interleaving as ordinary variants, but it does not preserve GTI's
+overflow-failure behavior and is never an exact-head proof input. Schema 4
+records the original and transformed source hashes, exact helper family and
+replacement count, native command, stdout, stderr, dependency file, and
+executable. It is suitable for measuring the upper bound available from
+successful checked arithmetic, not for validating a compiler optimization.
+
 The normal schema-1 variants are:
 
 - `gti`: the checked GTI program compiled by the normal direct driver;
@@ -119,16 +150,16 @@ invalid if variants produce different normalized records.
 This workload reproduces the checked `std::vector<int32_t>` scale-and-sum
 shape reported in issue #32. It constructs and value-initializes 5,000 logical
 elements, writes a deterministic `1..17` pattern through checked indexing,
-then performs 20,000 rounds. Every round scales all elements by a varying
+then performs 240,000 rounds. Every round scales all elements by a varying
 `-1`/`1` multiplier and sums all elements from left to right.
 
 One logical work unit is one element visit in a timed `scale` or `sum` pass.
 Setup is excluded, so the workload performs
-`5,000 * 20,000 * 2 = 200,000,000` work units. Each round's checked sum feeds a
+`5,000 * 240,000 * 2 = 2,400,000,000` work units. Each round's checked sum feeds a
 bounded rolling digest; the final expected record is:
 
 ```text
-GTI-BENCH-1 digest:0000000014b81952 work-units:200000000
+GTI-BENCH-1 digest:00000000135e33a6 work-units:2400000000
 ```
 
 The comparison contract is intentionally explicit:
@@ -177,12 +208,29 @@ parallel execution, not a universal speedup guarantee. See the workload's
 [`README.md`](workloads/managed-thread-parallelism/README.md) for its
 safe-state and result-validation contract.
 
-## Optimizer-level campaign
+## Runtime-optimizer campaign controls
 
-[`optimiser/main.gti`](optimiser/main.gti) is the former
-`examples/optimiser` workload. It remains a manual Hyperfine campaign because
-it compares four optimization levels of one GTI source rather than variants
-built under one common optimization policy.
+The runtime-optimizer campaign uses several independently attributable
+workloads rather than one aggregate score:
+
+- [`checked-scalar-chain`](workloads/checked-scalar-chain/README.md) is the
+  scalar checked-arithmetic control;
+- [`fixed-array-loop-proof`](workloads/fixed-array-loop-proof/README.md) is the
+  existing bounds-proof/no-op control;
+- [`fixed-array-overflow`](workloads/fixed-array-overflow/README.md) exercises
+  bounded checked arithmetic in a fixed-array loop;
+- [`scalar-fp-update`](workloads/scalar-fp-update/README.md) is the strict
+  floating-point and closed-method control;
+- [`game-update-stage`](workloads/game-update-stage/README.md) is the initial
+  representative scalar/container update stage;
+- [`optimizer-level-control`](workloads/optimizer-level-control/README.md)
+  replaces the former manual optimizer example with a descriptor-backed
+  fixed-native campaign.
+
+Run `optimizer-level-control` once for each GTI optimization level from `0`
+through `3` while holding `--native-optimization 3`. This keeps the native
+compiler policy fixed and attributes any executable difference to GTI's MIR
+policy.
 
 ## Reproduction
 
@@ -208,7 +256,7 @@ python3 scripts/benchmark_compare.py \
   --warmup 5 \
   --runs 20 \
   --seed 1 \
-  --workload vector-checked-loop \
+  --workload optimizer-level-control \
   --output build/benchmarks \
   --json build/benchmarks/report.json \
   --markdown build/benchmarks/report.md
@@ -229,6 +277,46 @@ python3 scripts/benchmark_compare.py \
   --output build/benchmarks \
   --json build/benchmarks/threading.json \
   --markdown build/benchmarks/threading.md
+```
+
+To attribute GTI optimizer changes independently of the native compiler, keep
+the native level fixed explicitly. Repeat the command with GTI optimization
+levels `0` through `3`, using a distinct output/report path for each run:
+
+```sh
+python3 scripts/benchmark_compare.py \
+  --gti build/gti \
+  --cxx /usr/bin/clang++ \
+  --optimization 0 \
+  --native-optimization 3 \
+  --cpp-standard c++23 \
+  --warmup 5 \
+  --runs 20 \
+  --seed 1 \
+  --workload vector-checked-loop \
+  --output build/benchmarks-fixed-native-o0 \
+  --json build/benchmarks-fixed-native-o0/report.json \
+  --markdown build/benchmarks-fixed-native-o0/report.md
+```
+
+To add the bounded arithmetic successful-path ceiling for one checked GTI
+variant:
+
+```sh
+python3 scripts/benchmark_compare.py \
+  --gti build/gti \
+  --cxx /usr/bin/clang++ \
+  --optimization 0 \
+  --native-optimization 3 \
+  --arithmetic-success-proxy checked-scalar-chain/gti \
+  --cpp-standard c++23 \
+  --warmup 5 \
+  --runs 20 \
+  --seed 1 \
+  --workload checked-scalar-chain \
+  --output build/benchmarks-arithmetic-ceiling \
+  --json build/benchmarks-arithmetic-ceiling/report.json \
+  --markdown build/benchmarks-arithmetic-ceiling/report.md
 ```
 
 `--smoke` builds every variant and executes each once in a seeded order. That
