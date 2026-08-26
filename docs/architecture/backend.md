@@ -129,6 +129,16 @@ the existing MIR storage and initialization order. It does not admit
 cleanup-owning program storage or make C++ static lifetime rules an execution
 authority.
 
+For a local fixed array whose exact leaf class is polymorphic, aggregate
+transfer is admitted only when the concrete class is movable by its generated
+move, every declared field move is failure-free, every base is an exact
+structural base, and no base carries state. Interface bases therefore preserve
+the same complete-element proof as a base-less class; state-bearing bases,
+custom moves, abstract classes, and unions remain outside this vocabulary. A
+source destructor uses the verified fixed-array drop schedule only under the
+same base/field restrictions, preserving per-element construction rollback and
+reverse destruction rather than relying on native array lifetime.
+
 Backends choose helper names, monomorphization mechanics, ABI spelling, and
 target syntax. They cannot rediscover whether an item exists from source
 declarations or HIR use sites.

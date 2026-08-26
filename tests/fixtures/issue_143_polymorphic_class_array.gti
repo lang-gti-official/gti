@@ -1,0 +1,59 @@
+mut int32_t traced_destructions = 0;
+mut int32_t traced_destruction_order = 0;
+
+interface Shape {
+  int32_t value();
+};
+
+class square : public Shape {
+public:
+  square() {}
+  int32_t value() override { return 7; }
+  mut int32_t side = 2;
+};
+
+class standalone_virtual {
+public:
+  standalone_virtual() {}
+  virtual int32_t value() { return 5; }
+};
+
+class traced : public Shape {
+public:
+  traced() {}
+
+  ~traced() {
+    traced_destructions = traced_destructions + 1;
+    traced_destruction_order = traced_destruction_order * 10 + this.id;
+  }
+
+  int32_t value() override { return 3; }
+  mut int32_t id = 0;
+};
+
+int32_t read_shape(Shape& shape) { return int32_t(shape.value()); }
+
+int main() {
+  mut square squares[2] = {};
+  mut standalone_virtual virtuals[2] = {};
+  squares[0].side = 9;
+  if (int(squares[0].side) != 9 || int(squares[1].side) != 2) { return 1; }
+  if (int(virtuals[0].value()) != 5) { return 2; }
+  if (int(read_shape(squares[0])) != 7 ||
+      int(read_shape(squares[1])) != 7) { return 3; }
+
+  {
+    mut traced values[3] = {};
+    values[0].id = 1;
+    values[1].id = 2;
+    values[2].id = 3;
+    if (traced_destructions != 0) { return 4; }
+    if (int(read_shape(values[0])) != 3 ||
+        int(read_shape(values[2])) != 3) { return 5; }
+  }
+
+  if (traced_destructions != 3 || traced_destruction_order != 321) {
+    return 6;
+  }
+  return 0;
+}
