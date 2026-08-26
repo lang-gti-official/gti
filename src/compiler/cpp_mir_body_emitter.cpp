@@ -14028,7 +14028,8 @@ transformedFailureCallee(const MirProgram &program,
       program.findFunctionInstance(*instruction.functionTarget);
   if (target != nullptr &&
       virtualFailureCallee(program, instruction) != nullptr) {
-    return target;
+    return failureFreeVirtualCallee(program, instruction) == target ? nullptr
+                                                                    : target;
   }
   // A deduced-callable template callee keeps the compatibility plain
   // convention. Every other source GTI callee that may raise uses the
