@@ -60,9 +60,15 @@ the plan's one-active-implementation rule.
    frame. Crash handling follows ADR 006's standing rules.
 6. **Recovery is not import.** Clang recovers from native errors by
    inventing types; importing a recovered declaration would bind the wrong
-   ABI. A declaration Clang marks invalid is skipped with its native error
-   surfaced verbatim, keeping per-declaration fail-soft reading without
-   trusting recovery output.
+   ABI. A declaration Clang marks invalid — or whose source extent overlaps
+   a native error, since Clang does not always mark recovered declarations —
+   is skipped with its native error surfaced verbatim, keeping
+   per-declaration fail-soft reading without trusting recovery output. The
+   same conservatism applies to ABI-affecting facts the bounded surface
+   cannot yet carry: assembler labels rename the link symbol, so importing
+   the C name would bind a different function; non-C calling conventions
+   change the call ABI; layout attributes change what Clang computed. Each
+   refuses with its reason until C-06 preserves such facts as model data.
 
 ## License
 
