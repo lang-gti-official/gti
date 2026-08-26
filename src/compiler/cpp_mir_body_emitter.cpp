@@ -13859,8 +13859,9 @@ struct ClassSsaLifetimeSlot {
 // Some class SSA producers cannot use an ordinary initialized C++ local. This
 // exact no-alias, single-consumer shape gives the result uninitialized
 // representation storage. It is not a semantic drop: the value is transferred
-// immediately to a Return or one by-value call parameter, and only a generated
-// cleanup-free moved-from representation remains to be ended by the slot.
+// immediately to a Return or one by-value call parameter, or observed through
+// one scalar field read, and only a generated cleanup-free representation
+// remains to be ended by the slot.
 [[nodiscard]] ClassSsaLifetimeSlot
 classSsaLifetimeSlot(const MirProgram &program,
                      const CppMirBodyEmissionMap &representations,
@@ -13872,6 +13873,14 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer == nullptr
           ? nullptr
           : transformedFailureCallee(program, representations, *producer);
+  const MirConstructorInstance *constructor =
+      producer != nullptr && producer->kind == MirInstructionKind::Construct &&
+              producer->constructorTarget
+          ? program.findConstructorInstance(*producer->constructorTarget)
+          : nullptr;
+  const MirClassInstance *constructedOwner =
+      constructor == nullptr ? nullptr
+                             : program.findClassInstance(constructor->owner);
   const bool defaultConstructionProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       !producer->functionTarget && !producer->constructorTarget &&
@@ -13883,10 +13892,48 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer->operands.empty() && producer->callableArguments.empty() &&
       producer->localFailureSites.empty() &&
       producer->definedFailure.propagation == FailurePropagationKind::None;
+  const bool directConstructionProducer =
+      value != nullptr && producer != nullptr && constructor != nullptr &&
+      constructedOwner != nullptr &&
+      producer->kind == MirInstructionKind::Construct && producer->result &&
+      *producer->result == valueId && !producer->destination &&
+      !producer->receiver && !producer->functionTarget &&
+      producer->constructorTarget && !producer->bodyTarget &&
+      !producer->lambdaTarget && !producer->callableInvocation &&
+      producer->constructorKind == ConstructorKind::Ordinary &&
+      producer->dispatch == CallDispatch::Static &&
+      producer->intrinsic == IntrinsicKind::None &&
+      producer->operation == MirOperation::None &&
+      producer->callableArguments.empty() &&
+      producer->localFailureSites.empty() &&
+      producer->definedFailure.localOrigins.empty() &&
+      (producer->definedFailure.propagation ==
+           FailurePropagationKind::Constructor ||
+       (producer->definedFailure.propagation == FailurePropagationKind::None &&
+        !constructor->mayRaiseDefinedFailure)) &&
+      producer->parameterTypes == constructor->parameterTypes &&
+      producer->parameterTypes.size() == producer->operands.size() &&
+      std::equal(producer->parameterTypes.begin(),
+                 producer->parameterTypes.end(), producer->operands.begin(),
+                 [](const SemanticType &parameter, const MirOperand &operand) {
+                   return parameter == operand.type;
+                 }) &&
+      constructedOwner->id == constructor->owner &&
+      constructedOwner->type == value->info.type &&
+      producer->info == value->info && !producer->preparedParameterDrop &&
+      !producer->successResultDrop && !producer->successResultDestination &&
+      producer->lifecycle.empty() && producer->fullExpressionEnd == 0 &&
+      !producer->earlyExitFullExpressionEnd &&
+      producer->cleanupBoundaryEnd == 0 &&
+      (producer->definedFailure.propagation == FailurePropagationKind::None ||
+       failureConstructorBoundaryEligible(program, *constructor) ||
+       terminallyContainedPlainConstructor(program, representations,
+                                           *producer));
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
       !value->info.traits.movable || producer == nullptr ||
-      (callee == nullptr && !defaultConstructionProducer) ||
+      (callee == nullptr && !defaultConstructionProducer &&
+       !directConstructionProducer) ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (callee != nullptr && callee->returnType != value->info.type) ||
@@ -13907,6 +13954,10 @@ classSsaLifetimeSlot(const MirProgram &program,
   if (classInstance == nullptr ||
       classInstance->destructorStatus != SpecialMemberStatus::Generated ||
       classInstance->destructor || classInstance->requiresActiveCleanup ||
+      (directConstructionProducer &&
+       (classInstance->requiresActiveDropState ||
+        classInstance->traits.containsBorrowedState ||
+        value->info.traits.containsBorrowedState)) ||
       !classInstance->traits.movable) {
     return {};
   }
@@ -13927,13 +13978,18 @@ classSsaLifetimeSlot(const MirProgram &program,
     const bool exactProjection =
         projection != nullptr && projection->root == MirPlaceRootKind::Value &&
         projection->value == valueId && !projection->projections.empty() &&
+        (!directConstructionProducer || projection->projections.size() == 1) &&
         std::all_of(projection->projections.begin(),
                     projection->projections.end(),
                     [](const MirPlaceProjection &item) {
                       return item.kind == MirProjectionKind::Field;
                     }) &&
         exactFieldProjectionRows(program, representations, value->info.type,
-                                 projection->projections, 0, projection->type);
+                                 projection->projections, 0,
+                                 projection->type) &&
+        (!directConstructionProducer ||
+         expectedTypeRepresentation(projection->type) ==
+             CppMirTypeRepresentationKind::Scalar);
     const MirInstruction *consumer = nullptr;
     if (exactProjection) {
       if (std::any_of(body.loans.begin(), body.loans.end(),
@@ -13990,11 +14046,27 @@ classSsaLifetimeSlot(const MirProgram &program,
       }
     }
     if (consumer != nullptr) {
+      const MirValue *loaded =
+          consumer->result ? body.findValue(*consumer->result) : nullptr;
+      if (directConstructionProducer &&
+          (loaded == nullptr || loaded->info.type != projection->type ||
+           consumer->info.traits.drop != DropKind::Trivial ||
+           !consumer->info.traits.copyable ||
+           loaded->info.traits.drop != DropKind::Trivial ||
+           !loaded->info.traits.copyable)) {
+        return {};
+      }
       return {.value = value,
               .producer = producer,
               .consumer = consumer,
               .consumerKind = ClassSsaSlotConsumerKind::FieldRead};
     }
+  }
+
+  // A direct construction qualifies only for the exact field read above.
+  // General Return and CallArgument consumers remain call-only.
+  if (directConstructionProducer) {
+    return {};
   }
 
   // A value-root place or drop obligation would make this semantic storage;
@@ -18912,6 +18984,17 @@ private:
         output << ");\n";
         return;
       }
+      const ClassSsaLifetimeSlot fieldReadSlot = classSsaLifetimeSlot(
+          program, representations, facts.body, *instruction.result);
+      if (fieldReadSlot.producer == &instruction &&
+          fieldReadSlot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
+          (!failureForm || transformedConstructor(instruction) == nullptr)) {
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result << ".construct(";
+        emitClassConstructionArguments(facts, instruction);
+        output << ");\n";
+        return;
+      }
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         classFreshArrayAssignmentFusion(program, facts.body, instruction)) {
@@ -18934,6 +19017,14 @@ private:
         const ExpectedPayloadReturnSlot expectedPayload =
             expectedPayloadReturnSlot(program, representations, facts.body,
                                       *instruction.result);
+        const ClassSsaLifetimeSlot fieldReadSlot =
+            publishesReturn || expectedPayload
+                ? ClassSsaLifetimeSlot{}
+                : classSsaLifetimeSlot(program, representations, facts.body,
+                                       *instruction.result);
+        const bool publishesFieldReadSlot =
+            fieldReadSlot.producer == &instruction &&
+            fieldReadSlot.consumerKind == ClassSsaSlotConsumerKind::FieldRead;
         const MirPlace *slot =
             publishesReturn || expectedPayload
                 ? nullptr
@@ -18953,20 +19044,24 @@ private:
         if (slot == nullptr) {
           slot = fieldResult.slot;
         }
-        if (!publishesReturn && !expectedPayload && slot == nullptr) {
+        if (!publishesReturn && !expectedPayload && slot == nullptr &&
+            !publishesFieldReadSlot) {
           throw std::logic_error(
               "verified MIR failure construction lost its exact destination");
         }
         const auto emitDestination = [&] {
           if (publishesReturn) {
             output << "__gti_mir_out_result";
+          } else if (publishesFieldReadSlot) {
+            output << "__gti_mir_v_" << *instruction.result
+                   << ".construction_address()";
           } else {
             output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
                    << ".construction_address()";
           }
         };
         writeIndent();
-        if (!publishesReturn && slot != nullptr) {
+        if (!publishesReturn && !publishesFieldReadSlot && slot != nullptr) {
           emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                  *slot);
         }
@@ -19105,8 +19200,12 @@ private:
         ++indentation;
         if (!publishesReturn) {
           writeIndent();
-          output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
-                 << ".mark_constructed();\n";
+          if (publishesFieldReadSlot) {
+            output << "__gti_mir_v_" << *instruction.result;
+          } else {
+            output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot);
+          }
+          output << ".mark_constructed();\n";
         }
         --indentation;
         writeIndent();
@@ -22256,9 +22355,8 @@ private:
     throw std::logic_error("verified checked array destination lost its index");
   }
 
-  void emitClassConstructionExpression(const ScalarBodyFacts &facts,
-                                       const MirInstruction &instruction) {
-    output << typeSpelling(instruction.info.type) << '(';
+  void emitClassConstructionArguments(const ScalarBodyFacts &facts,
+                                      const MirInstruction &instruction) {
     for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -22295,6 +22393,12 @@ private:
         output << ')';
       }
     }
+  }
+
+  void emitClassConstructionExpression(const ScalarBodyFacts &facts,
+                                       const MirInstruction &instruction) {
+    output << typeSpelling(instruction.info.type) << '(';
+    emitClassConstructionArguments(facts, instruction);
     output << ')';
   }
 
@@ -25489,6 +25593,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (slot == nullptr) {
             slot = fieldResult.slot;
           }
+          const ClassSsaLifetimeSlot fieldReadSlot =
+              !publishesReturn && instruction.result
+                  ? classSsaLifetimeSlot(program_, representations_, body,
+                                         *instruction.result)
+                  : ClassSsaLifetimeSlot{};
+          const bool publishesFieldReadSlot =
+              fieldReadSlot.producer == &instruction &&
+              fieldReadSlot.consumerKind == ClassSsaSlotConsumerKind::FieldRead;
           const bool ownerTypeMatches =
               targetOwner != nullptr &&
               targetOwner->type == instruction.info.type;
@@ -25502,7 +25614,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                           instruction.operands.end(), valueOperand);
           if (target == nullptr || targetOwner == nullptr ||
               !ownerTypeMatches || (!boundaryEligible && !containedPlain) ||
-              !instruction.result || (!publishesReturn && slot == nullptr) ||
+              !instruction.result ||
+              (!publishesReturn && slot == nullptr &&
+               !publishesFieldReadSlot) ||
               !operandsReady) {
             return false;
           }

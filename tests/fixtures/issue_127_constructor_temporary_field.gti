@@ -1,0 +1,82 @@
+mut int32_t constructions = 0;
+
+class plain_t {
+public:
+  plain_t() { constructions += 1; }
+  plain_t(plain_t& other) = default;
+
+  int32_t get() { return this.value; }
+
+  mut int32_t value = 1;
+};
+
+int32_t if_position() {
+  if (plain_t().value == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+int32_t while_position() {
+  mut bool pending = true;
+  mut int32_t result = 0;
+  while (pending && plain_t().value == 1) {
+    result = 1;
+    pending = false;
+  }
+  return result;
+}
+
+int32_t switch_position() {
+  switch (plain_t().value) {
+  case 1:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+int32_t accept_scalar(int32_t value) { return value; }
+
+int32_t argument_position() { return accept_scalar(plain_t().value); }
+
+int32_t return_position() { return plain_t().value; }
+
+int32_t index_position() {
+  int32_t values[2] = {0, 1};
+  return values[plain_t().value];
+}
+
+int32_t initializer_position() {
+  int32_t value = plain_t().value;
+  return value;
+}
+
+int32_t compound_assignment_position() {
+  mut int32_t value = 0;
+  value += plain_t().value;
+  return value;
+}
+
+plain_t make_plain() { return plain_t(); }
+
+int32_t controls() {
+  mut int32_t total = 0;
+  total += plain_t().get();
+  total += make_plain().value;
+  total += make_plain().get();
+  plain_t local = plain_t();
+  total += local.value;
+  return total;
+}
+
+int32_t main() {
+  int32_t total = if_position() + while_position() + switch_position() +
+                  argument_position() + return_position() + index_position() +
+                  initializer_position() + compound_assignment_position() +
+                  controls();
+  if (constructions != 12) {
+    return 1;
+  }
+  return total - 12;
+}
