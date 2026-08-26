@@ -28182,7 +28182,8 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
     return result;
   }
   // The schedule is the straight-line chain of blocks from the entry:
-  // literal materialization, exact symbol-storage reads,
+  // literal materialization, transparent identities, exact conversions,
+  // payload construction, exact symbol-storage reads,
   // terminally-contained checked computes (the compatibility helper family
   // that reports and never returns on failure, so each Invoke edge is
   // sequential and its else block is unreachable), exact non-failing class
@@ -28249,7 +28250,8 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       const bool checkedCompute =
           producer != nullptr &&
           producer->kind == MirInstructionKind::Compute &&
-          !cppMirTerminalCheckedHelperSpelling(producer->operation).empty() &&
+          (!cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
+           producer->operation == MirOperation::Convert) &&
           producer->localFailureSites.size() == 1;
       const bool containedConstruction =
           producer != nullptr &&
@@ -28281,6 +28283,18 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   }
   ScalarBodyTextEmitter writer(program_, representations_, 0);
   std::unordered_map<MirValueId, std::string> spellings;
+  const auto singleInstructionOperandUse = [&](MirValueId value,
+                                               const MirInstruction &consumer,
+                                               std::size_t operandIndex) {
+    const std::vector<MirValueUse> &uses = body->usesOf(value);
+    return uses.size() == 1 &&
+           uses.front().kind == MirValueUseKind::InstructionOperand &&
+           uses.front().instruction == consumer.id &&
+           uses.front().operandIndex == operandIndex;
+  };
+  const auto singleResultUse = [&](const MirInstruction &instruction) {
+    return instruction.result && body->usesOf(*instruction.result).size() == 1;
+  };
   const auto dependentFieldTypeSpelling =
       [&](MirValueId value) -> const std::string * {
     if (address.kind != MirBodyKind::FieldInitializers || value == 0) {
@@ -28352,6 +28366,121 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
         spellings.emplace(*instruction->result,
                           writer.literalSpelling(*instruction->literal,
                                                  instruction->info.type));
+        continue;
+      }
+      if (instruction->operation == MirOperation::Identity) {
+        const MirOperand *operand = instruction->operands.size() == 1
+                                        ? &instruction->operands.front()
+                                        : nullptr;
+        const auto source =
+            operand != nullptr && operand->kind == MirOperandKind::Value
+                ? spellings.find(operand->value)
+                : spellings.end();
+        if (operand == nullptr || source == spellings.end() ||
+            operand->type != instruction->info.type ||
+            !instruction->localFailureSites.empty() ||
+            !instruction->definedFailure.empty() ||
+            instruction->info.traits.drop != DropKind::Trivial ||
+            instruction->ownership || !instruction->lifecycle.empty() ||
+            !singleInstructionOperandUse(operand->value, *instruction, 0) ||
+            !singleResultUse(*instruction)) {
+          return result;
+        }
+        spellings.emplace(*instruction->result, source->second);
+        continue;
+      }
+      if (instruction->operation == MirOperation::Convert) {
+        const MirOperand *operand = instruction->operands.size() == 1
+                                        ? &instruction->operands.front()
+                                        : nullptr;
+        const auto source =
+            operand != nullptr && operand->kind == MirOperandKind::Value
+                ? spellings.find(operand->value)
+                : spellings.end();
+        const auto row = std::find_if(
+            representations_.types().begin(), representations_.types().end(),
+            [&](const CppMirTypeRepresentation &candidate) {
+              return candidate.type == instruction->info.type;
+            });
+        if (operand == nullptr || source == spellings.end() ||
+            instruction->localFailureSites.size() > 1 ||
+            row == representations_.types().end() || row->spelling.empty() ||
+            instruction->info.traits.drop != DropKind::Trivial ||
+            instruction->ownership || !instruction->lifecycle.empty() ||
+            !singleInstructionOperandUse(operand->value, *instruction, 0) ||
+            !singleResultUse(*instruction)) {
+          return result;
+        }
+        std::string spelled;
+        if (instruction->localFailureSites.empty()) {
+          spelled = "static_cast<";
+        } else {
+          spelled = "::gti_internal::backend::numeric_cast<";
+        }
+        spelled += row->spelling;
+        spelled += ">(";
+        spelled += source->second;
+        spelled += ')';
+        spellings.emplace(*instruction->result, std::move(spelled));
+        continue;
+      }
+      if (instruction->operation == MirOperation::PayloadConstruct) {
+        const CppMirEnumRepresentation *enumRow = nullptr;
+        if (instruction->enumOwner) {
+          for (const CppMirEnumRepresentation &candidate :
+               representations_.enums()) {
+            if (candidate.owner == *instruction->enumOwner) {
+              enumRow = &candidate;
+            }
+          }
+        }
+        const CppMirPayloadVariantRepresentation *variant = nullptr;
+        if (enumRow != nullptr && instruction->enumVariant) {
+          for (const CppMirPayloadVariantRepresentation &candidate :
+               enumRow->payloadVariants) {
+            if (candidate.index == *instruction->enumVariant) {
+              variant = &candidate;
+            }
+          }
+        }
+        if (enumRow == nullptr || enumRow->spelling.empty() ||
+            variant == nullptr || variant->spelling.empty() ||
+            instruction->payloadIndex ||
+            instruction->info.type.kind != SemanticType::Enum ||
+            instruction->info.type.enumId != *instruction->enumOwner ||
+            variant->fieldTypes.size() != instruction->operands.size() ||
+            !instruction->localFailureSites.empty() ||
+            !instruction->definedFailure.empty() ||
+            instruction->info.traits.drop != DropKind::Trivial ||
+            instruction->ownership || !instruction->lifecycle.empty() ||
+            !singleResultUse(*instruction)) {
+          return result;
+        }
+        std::string spelled = enumRow->spelling;
+        spelled += '{';
+        spelled += enumRow->spelling;
+        spelled += "::";
+        spelled += variant->spelling;
+        spelled += '{';
+        for (std::size_t index = 0; index < instruction->operands.size();
+             ++index) {
+          const MirOperand &operand = instruction->operands[index];
+          const auto source = operand.kind == MirOperandKind::Value
+                                  ? spellings.find(operand.value)
+                                  : spellings.end();
+          if (source == spellings.end() ||
+              operand.type != variant->fieldTypes[index] ||
+              !singleInstructionOperandUse(operand.value, *instruction,
+                                           index)) {
+            return result;
+          }
+          if (index != 0) {
+            spelled += ", ";
+          }
+          spelled += source->second;
+        }
+        spelled += "}}";
+        spellings.emplace(*instruction->result, std::move(spelled));
         continue;
       }
       // The empty aggregate spells the row type's value initialization,

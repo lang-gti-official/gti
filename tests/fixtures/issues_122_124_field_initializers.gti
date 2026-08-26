@@ -1,0 +1,44 @@
+enum class payload_t { one(int32_t value), none };
+
+int32_t conversion_source = 7;
+
+class expression_owner_t {
+public:
+  expression_owner_t() {}
+
+  mut int32_t grouped = (7);
+  mut int32_t converted = int32_t(7);
+  mut int32_t converted_expression = int32_t(3 + 4);
+  mut int8_t checked_conversion = int8_t(conversion_source);
+};
+
+class payload_owner_t {
+public:
+  payload_owner_t() {}
+
+  mut payload_t empty = payload_t::none;
+  mut payload_t valued = payload_t::one(int32_t(9));
+};
+
+int main() {
+  mut expression_owner_t expressions = expression_owner_t();
+  if (expressions.grouped != 7 || expressions.converted != 7 ||
+      expressions.converted_expression != 7 ||
+      expressions.checked_conversion != int8_t(7)) {
+    return 1;
+  }
+
+  mut payload_owner_t payloads = payload_owner_t();
+  switch (payloads.empty) {
+  case payload_t::none:
+    break;
+  case payload_t::one(value):
+    return value + 2;
+  }
+  switch (payloads.valued) {
+  case payload_t::none:
+    return 3;
+  case payload_t::one(value):
+    return value - 9;
+  }
+}
