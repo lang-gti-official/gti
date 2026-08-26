@@ -80,7 +80,7 @@ jobs:
             fi
           fi
 
-      - name: Install Linux build dependencies
+      - name: Install Linux build dependencies and Ninja
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -90,11 +90,11 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            build-essential cmake
+            build-essential cmake ninja-build
 
-      - name: Install CMake
+      - name: Install CMake and Ninja
         if: runner.os == 'macOS'
-        run: brew install cmake
+        run: brew install cmake ninja
 
       - name: Resolve package platform
         id: platform
@@ -114,7 +114,7 @@ jobs:
 
       - name: Configure release build
         run: >-
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
 
@@ -142,6 +142,7 @@ jobs:
           cmake \
             -S "${{ gitea.workspace }}/tests/installed_library_smoke" \
             -B "${{ runner.temp }}/gti-installed-library-smoke" \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-stage"
           cmake --build \
