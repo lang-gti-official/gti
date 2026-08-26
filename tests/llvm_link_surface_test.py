@@ -51,6 +51,37 @@ build gti: CXX_EXECUTABLE_LINKER main.o
             + result.stderr
         )
 
+    libclang_graph = """\
+build _deps/llvm/libclangAST.a: CXX_STATIC_LIBRARY_LINKER clangAST.o
+build gti: CXX_EXECUTABLE_LINKER main.o
+  COMMAND = /usr/bin/clang++ -o gti main.o
+  LINK_LIBRARIES = libgti_bindgen.a /usr/lib/llvm-18/lib/libclang-18.so.18.1 libLLVMSupport.a
+"""
+    result = run(checker, libclang_graph)
+    if result.returncode != 0:
+        raise AssertionError(
+            "libclang, the compiler driver path, and clang's private build "
+            "graph must all pass GTI's link gate:\n"
+            + result.stdout
+            + result.stderr
+        )
+
+    forbidden_clang_graph = """\
+build gti: CXX_EXECUTABLE_LINKER main.o
+  LINK_LIBRARIES = libclang.dylib libclangAST.a libclang-cpp.so.18
+"""
+    result = run(checker, forbidden_clang_graph)
+    if (
+        result.returncode == 0
+        or "clangAST" not in result.stderr
+        or "clang-cpp" not in result.stderr
+    ):
+        raise AssertionError(
+            "a Clang component library in a GTI Ninja link rule must fail:\n"
+            + result.stdout
+            + result.stderr
+        )
+
     print("LLVM Ninja link-surface filtering passed")
     return 0
 
