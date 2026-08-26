@@ -435,7 +435,6 @@ add_library(
   "gti_bindgen" STATIC
   "src/bindgen/bindgen.cpp"
   "src/bindgen/binding_planner.cpp"
-  "src/bindgen/c_reader.cpp"
   "src/bindgen/clang_reader.cpp"
   "src/bindgen/gti_writer.cpp"
   "src/bindgen/native_model.cpp"

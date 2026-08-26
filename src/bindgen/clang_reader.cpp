@@ -119,6 +119,7 @@ public:
                "header are unavailable to this import");
         } else {
           warn(origin, "native C error: " + text);
+          nativeErrorLines_.push_back(origin.line);
         }
       }
       clang_disposeDiagnostic(diagnostic);
@@ -148,6 +149,23 @@ private:
   // and typedef-adopted anonymous definitions) resolve to the named
   // declaration instead of producing an alias declaration.
   std::map<std::string, NativeDeclarationId> transparentTypedefs_;
+  // Main-file lines carrying a native C error. Clang recovers from errors by
+  // inventing types without always marking the declaration invalid, so any
+  // declaration whose extent overlaps an error is refused wholesale —
+  // importing recovery output would bind the wrong ABI.
+  std::vector<std::uint32_t> nativeErrorLines_;
+
+  [[nodiscard]] bool hasNativeErrorWithin(CXCursor cursor) const {
+    const CXSourceRange extent = clang_getCursorExtent(cursor);
+    const std::uint32_t first = originOf(clang_getRangeStart(extent)).line;
+    const std::uint32_t last = originOf(clang_getRangeEnd(extent)).line;
+    for (const std::uint32_t line : nativeErrorLines_) {
+      if (line >= first && line <= last) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Visitor callbacks cross a C API frame: no exception may unwind through
   // libclang, so each body converts failure into a break plus a flag.
@@ -347,8 +365,8 @@ private:
     }
     case CXType_Enum: {
       CXCursor declaration = clang_getTypeDeclaration(type);
-      const auto known = declarationsByUsr_.find(
-          usrOf(clang_getCanonicalCursor(declaration)));
+      const auto known =
+          declarationsByUsr_.find(usrOf(clang_getCanonicalCursor(declaration)));
       if (known != declarationsByUsr_.end()) {
         return makeReference(known->second);
       }
@@ -395,8 +413,8 @@ private:
         return mapType(canonical);
       }
       const std::string spelling = owned(clang_getTypeSpelling(type));
-      return makeUnsupported(
-          spelling, "type '" + spelling + "' is outside the bounded surface");
+      return makeUnsupported(spelling, "type '" + spelling +
+                                           "' is outside the bounded surface");
     }
     }
   }
@@ -456,8 +474,7 @@ private:
                       : owned(clang_getCursorSpelling(canonical));
     record.scope = rootScope_;
     record.origin = originOf(canonical);
-    record.recordIsUnion =
-        clang_getCursorKind(canonical) == CXCursor_UnionDecl;
+    record.recordIsUnion = clang_getCursorKind(canonical) == CXCursor_UnionDecl;
     const NativeDeclarationId id =
         result_.model.addDeclaration(std::move(record));
     result_.model.order.push_back(id);
@@ -528,6 +545,9 @@ private:
         failureReason = std::move(reason);
       }
     };
+    if (hasNativeErrorWithin(cursor)) {
+      fail("the record definition has native C errors");
+    }
     for (const CXCursor child : childrenOf(cursor)) {
       const CXCursorKind childKind = clang_getCursorKind(child);
       if (clang_isAttribute(childKind) != 0) {
@@ -559,9 +579,9 @@ private:
       }
       bool fieldAttribute = false;
       for (const CXCursor fieldChild : childrenOf(child)) {
-        fieldAttribute = fieldAttribute ||
-                         clang_isAttribute(clang_getCursorKind(fieldChild)) !=
-                             0;
+        fieldAttribute =
+            fieldAttribute ||
+            clang_isAttribute(clang_getCursorKind(fieldChild)) != 0;
       }
       if (fieldAttribute) {
         fail("field '" + name +
@@ -591,6 +611,11 @@ private:
     }
     const std::string usr = usrOf(clang_getCanonicalCursor(cursor));
     if (declarationsByUsr_.find(usr) != declarationsByUsr_.end()) {
+      return;
+    }
+    if (hasNativeErrorWithin(cursor)) {
+      warn(originOf(cursor), "enum '" + owned(clang_getCursorSpelling(cursor)) +
+                                 "' has native C errors and was skipped");
       return;
     }
     NativeDeclaration declaration;
@@ -624,7 +649,8 @@ private:
       return; // A C11 typedef redeclaration restates one declaration.
     }
     const SourceOrigin origin = originOf(cursor);
-    if (clang_isInvalidDeclaration(cursor) != 0) {
+    if (clang_isInvalidDeclaration(cursor) != 0 ||
+        hasNativeErrorWithin(cursor)) {
       warn(origin,
            "typedef '" + name + "' has native C errors and was skipped");
       return;
@@ -711,7 +737,8 @@ private:
     if (declarationsByUsr_.find(usr) != declarationsByUsr_.end()) {
       return; // C redeclarations restate one function.
     }
-    bool invalid = clang_isInvalidDeclaration(cursor) != 0;
+    bool invalid =
+        clang_isInvalidDeclaration(cursor) != 0 || hasNativeErrorWithin(cursor);
     const int argumentCount = clang_Cursor_getNumArguments(cursor);
     for (int index = 0; !invalid && index < argumentCount; ++index) {
       invalid = clang_isInvalidDeclaration(clang_Cursor_getArgument(
@@ -795,10 +822,17 @@ ReadResult ClangCReader::read(std::string_view headerText) {
   const std::string targetArgument =
       std::string("--target=") + canonicalTriple(profile_);
   const char *arguments[] = {
-      "-x",           "c",
-      "-std=c17",     "-w",
-      "-nostdinc",    "-nobuiltininc",
-      targetArgument.c_str(), "-include",
+      "-x",
+      "c",
+      "-std=c17",
+      "-w",
+      // Reading is fail-soft per declaration: Clang's default error limit
+      // would abandon a header after twenty native errors.
+      "-ferror-limit=0",
+      "-nostdinc",
+      "-nobuiltininc",
+      targetArgument.c_str(),
+      "-include",
       kBuiltinsPath,
   };
   CXUnsavedFile files[2] = {
@@ -833,22 +867,21 @@ ReadResult ClangCReader::read(std::string_view headerText) {
     builder.collectNativeDiagnostics();
     builder.run();
     if (builder.failed()) {
-      result.diagnostics.push_back({ReaderSeverity::Error,
-                                    {},
-                                    "native declaration import failed"});
+      result.diagnostics.push_back(
+          {ReaderSeverity::Error, {}, "native declaration import failed"});
     }
   }
   clang_disposeTranslationUnit(unit);
   clang_disposeIndex(index);
   // One deterministic presentation: every reader diagnostic reports in
   // source order regardless of which pass produced it.
-  std::stable_sort(result.diagnostics.begin(), result.diagnostics.end(),
-                   [](const ReaderDiagnostic &left,
-                      const ReaderDiagnostic &right) {
-                     return left.origin.line != right.origin.line
-                                ? left.origin.line < right.origin.line
-                                : left.origin.column < right.origin.column;
-                   });
+  std::stable_sort(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [](const ReaderDiagnostic &left, const ReaderDiagnostic &right) {
+        return left.origin.line != right.origin.line
+                   ? left.origin.line < right.origin.line
+                   : left.origin.column < right.origin.column;
+      });
   return result;
 }
 

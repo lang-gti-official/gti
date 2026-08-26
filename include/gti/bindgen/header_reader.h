@@ -50,8 +50,9 @@ enum class CDataModel {
 // The platform seam for C's implementation-defined integer widths. GTI's
 // supported targets are all 64-bit, so their C ABIs reduce to LP64 and LLP64.
 // Keeping the choice explicit prevents a host assumption from leaking into a
-// cross-target binding file; a future Clang-backed reader may replace these
-// facts with Clang target information behind the same reader boundary.
+// cross-target binding file. The Clang-backed reader selects one canonical
+// parse target per data model, so the widths themselves are Clang facts;
+// forwarding the pipeline's real triple through this seam is C-05/C-06 work.
 class CTargetProfile final {
 public:
   constexpr explicit CTargetProfile(CDataModel dataModel = CDataModel::Lp64)
@@ -73,15 +74,6 @@ class NativeHeaderReader {
 public:
   virtual ~NativeHeaderReader() = default;
   [[nodiscard]] virtual ReadResult read(std::string_view headerText) = 0;
-};
-
-class BoundedCReader final : public NativeHeaderReader {
-public:
-  explicit BoundedCReader(CTargetProfile profile = CTargetProfile{});
-  [[nodiscard]] ReadResult read(std::string_view headerText) override;
-
-private:
-  CTargetProfile profile_;
 };
 
 // The libclang-backed C17 reader (ADR 021). The header text is parsed as one

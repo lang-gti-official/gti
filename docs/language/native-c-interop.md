@@ -164,9 +164,11 @@ enums become an `int32_t` alias plus `constexpr` constants, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
 block. Everything the bounded surface cannot express is reported with its
 reason and listed in the generated file's skip report rather than silently
-dropped. Native preprocessor errors retain Clang's source diagnostics. Notes
-from the temporary bounded declaration reader identify preprocessed line
-numbers until the planned libclang reader owns source provenance. The
+dropped. Native preprocessor errors retain Clang's source diagnostics. The
+declaration reader is itself libclang (ADR 021), so a declaration that does
+not parse as C is skipped with Clang's error message rather than imported
+through error recovery; reader and planner notes identify preprocessed line
+numbers until the import policy milestone owns original-source provenance. The
 generated source has no special status: this language contract remains the
 sole ABI authority when it is compiled. The tool's architecture and growth
 phases are recorded in
