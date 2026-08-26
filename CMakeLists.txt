@@ -762,12 +762,12 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  # The binary owns 72 lightweight tests and two aggregate corpus sweeps. Four
+  # The binary owns 73 lightweight tests and two aggregate corpus sweeps. Four
   # interleaved shards keep every lightweight test running exactly once. The
   # Python coordinator below reserves four CTest processors, runs both corpus
   # sweeps once per exact census source, and re-aggregates the original
   # whole-corpus assertions without one indivisible sanitizer test. Invoking
-  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 74 tests.
+  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 75 tests.
   if(Python3_Interpreter_FOUND)
     foreach(shard RANGE 1 4)
       add_test(NAME cpp_mir_body_emitter_${shard}of4
@@ -775,7 +775,7 @@ if(BUILD_TESTING)
     endforeach()
   else()
     # Fail closed when the corpus coordinator cannot run: the no-argument
-    # binary executes all 74 tests, including both aggregate corpus sweeps.
+    # binary executes all 75 tests, including both aggregate corpus sweeps.
     add_test(NAME cpp_mir_body_emitter
              COMMAND gti_cpp_mir_body_emitter_tests)
     set_tests_properties(cpp_mir_body_emitter PROPERTIES PROCESSORS 4)
@@ -1222,6 +1222,15 @@ if(BUILD_TESTING)
     set_tests_properties(issue_126_array_element_assignment_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME issue_127_constructor_temporary_field_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/issue_127_constructor_temporary_field_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(issue_127_constructor_temporary_field_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
@@ -1390,6 +1399,7 @@ if(BUILD_TESTING)
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
         issue_126_array_element_assignment_runtime
+        issue_127_constructor_temporary_field_runtime
         issues_117_120_regressions
         mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime

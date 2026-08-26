@@ -319,6 +319,7 @@ reproducers were removed from this directory.
 | [#122](https://github.com/LukeHHA/gti/issues/122) grouped and converted field initializers | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
 | [#124](https://github.com/LukeHHA/gti/issues/124) payload-enum class fields | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
 | [#126](https://github.com/LukeHHA/gti/issues/126) fixed-array class element copy and fresh-value assignment | `v0.312.5` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_126_array_element_assignment_runtime` |
+| [#127](https://github.com/LukeHHA/gti/issues/127) cleanup-free direct-constructor temporary field reads | `v0.312.6` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_127_constructor_temporary_field_runtime` |
 | [#129](https://github.com/LukeHHA/gti/issues/129) passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 | [#137](https://github.com/LukeHHA/gti/issues/137) passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 

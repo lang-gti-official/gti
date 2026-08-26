@@ -285,10 +285,13 @@ nested call can participate in an ordinary constructor full expression.
 
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
-The call constructs the slot, and the load spells through its verified field
-chain. Additional consumers, non-field projections, active cleanup, or
-incoherent type rows reject body emission rather than falling back to native
-temporary behavior.
+An admitted GTI call or ordinary `Construct` publishes once into the slot, and
+the load spells through its verified field chain. The constructor form also
+requires exact target, owner, result, parameter, and operand metadata; one
+single-field projection; a trivial scalar copy load; and no active cleanup,
+lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
+non-field projections, cleanup-owning temporaries, and incoherent type rows
+reject body emission rather than falling back to native temporary behavior.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
