@@ -4961,6 +4961,258 @@ int32_t main() {
          "from verified MIR");
 }
 
+void testCheckedClassArrayElementAssignmentFamily() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-checked-class-array-assignment.gti", R"(
+class leaf {
+public:
+  leaf() {}
+  mut int32_t v = 1;
+};
+
+int main() {
+  mut leaf items[4] = {};
+  mut leaf source = leaf();
+  items[0].v = 2;
+  int32_t observed = items[0].v;
+  items[1] = source;
+  items[2] = std::move(source);
+  items[3] = leaf();
+  return int(observed + items[1].v + items[2].v + items[3].v) - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the five-row class-array assignment fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the five-row fixture should lower its entry function");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::MirInstruction *copyLoad = nullptr;
+  const lang::MirInstruction *copyAssignment = nullptr;
+  const lang::MirInstruction *move = nullptr;
+  const lang::MirInstruction *moveAssignment = nullptr;
+  const lang::MirInstruction *freshConstruct = nullptr;
+  const lang::MirInstruction *freshAssignment = nullptr;
+  const lang::MirPlace *copyDestination = nullptr;
+  const lang::MirPlace *freshDestination = nullptr;
+  bool fieldRead = false;
+  bool fieldWrite = false;
+  const auto wholeElement = [](const lang::MirPlace *place) {
+    return place != nullptr && place->type.kind == lang::SemanticType::Class &&
+           place->projections.size() == 1 &&
+           place->projections.front().kind == lang::MirProjectionKind::Index;
+  };
+  const auto elementField = [](const lang::MirPlace *place) {
+    return place != nullptr && place->projections.size() == 2 &&
+           place->projections.front().kind == lang::MirProjectionKind::Index &&
+           place->projections.back().kind == lang::MirProjectionKind::Field;
+  };
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      if (instruction.kind == lang::MirInstructionKind::Load &&
+          instruction.operands.size() == 1) {
+        fieldRead = fieldRead || elementField(entry->body.findPlace(
+                                     instruction.operands.front().place));
+      }
+      if (instruction.kind == lang::MirInstructionKind::Assign &&
+          instruction.destination) {
+        fieldWrite =
+            fieldWrite ||
+            elementField(entry->body.findPlace(*instruction.destination));
+      }
+      if (index + 1 >= block.instructions.size() || !instruction.result) {
+        continue;
+      }
+      const lang::MirInstruction &consumer = block.instructions[index + 1];
+      const lang::MirPlace *destination =
+          consumer.destination ? entry->body.findPlace(*consumer.destination)
+                               : nullptr;
+      if (consumer.kind != lang::MirInstructionKind::Assign ||
+          !consumer.result || consumer.operands.size() != 1 ||
+          consumer.operands.front().kind != lang::MirOperandKind::Value ||
+          consumer.operands.front().value != *instruction.result ||
+          !wholeElement(destination)) {
+        continue;
+      }
+      if (instruction.kind == lang::MirInstructionKind::Load &&
+          instruction.operands.front().kind == lang::MirOperandKind::Copy) {
+        copyLoad = &instruction;
+        copyAssignment = &consumer;
+        copyDestination = destination;
+      } else if (instruction.kind == lang::MirInstructionKind::Move) {
+        move = &instruction;
+        moveAssignment = &consumer;
+      } else if (instruction.kind == lang::MirInstructionKind::Construct &&
+                 instruction.constructorKind ==
+                     lang::ConstructorKind::Ordinary) {
+        freshConstruct = &instruction;
+        freshAssignment = &consumer;
+        freshDestination = destination;
+      }
+    }
+  }
+
+  const auto exactBoundsFailure = [&](const lang::MirInstruction *assignment) {
+    if (assignment == nullptr || assignment->localFailureSites.size() != 1 ||
+        assignment->definedFailure.localOrigins.size() != 1) {
+      return false;
+    }
+    const lang::DefinedFailureOrigin &origin =
+        assignment->definedFailure.localOrigins.front();
+    const std::vector<lang::DefinedFailureOutcome> expected = {
+        {.code = lang::DefinedFailureCode::IndexOutOfBounds,
+         .detail = lang::DefinedFailureDetail::FixedArray}};
+    const std::optional<lang::FailureSiteId> site =
+        frontend.mir.failureMetadata().siteFor(origin);
+    const lang::FailureSiteDescriptor *descriptor =
+        frontend.mir.failureMetadata().findSite(
+            assignment->localFailureSites.front());
+    return site && *site == assignment->localFailureSites.front() &&
+           origin.outcomes == expected && descriptor != nullptr &&
+           descriptor->outcomes == expected;
+  };
+  const auto mutableArrayBase = [&](const lang::MirPlace *destination) {
+    return destination != nullptr &&
+           std::any_of(entry->body.places.begin(), entry->body.places.end(),
+                       [&](const lang::MirPlace &candidate) {
+                         return candidate.root == destination->root &&
+                                candidate.binding == destination->binding &&
+                                candidate.projections.empty() &&
+                                candidate.type.kind ==
+                                    lang::SemanticType::Array &&
+                                candidate.access == lang::AccessMode::Mutable;
+                       });
+  };
+  expect(fieldRead && fieldWrite && copyLoad != nullptr &&
+             copyAssignment != nullptr && move != nullptr &&
+             moveAssignment != nullptr && freshConstruct != nullptr &&
+             freshAssignment != nullptr && copyDestination != nullptr &&
+             freshDestination != nullptr,
+         "MIR should retain the field read/write and adjacent copy, move, and "
+         "fresh-value whole-element assignment families");
+  if (copyLoad == nullptr || copyAssignment == nullptr || move == nullptr ||
+      moveAssignment == nullptr || freshConstruct == nullptr ||
+      freshAssignment == nullptr || copyDestination == nullptr ||
+      freshDestination == nullptr) {
+    return;
+  }
+  expect(copyDestination->access == lang::AccessMode::ReadOnly &&
+             freshDestination->access == lang::AccessMode::ReadOnly &&
+             mutableArrayBase(copyDestination) &&
+             mutableArrayBase(freshDestination) &&
+             exactBoundsFailure(copyAssignment) &&
+             exactBoundsFailure(moveAssignment) &&
+             exactBoundsFailure(freshAssignment),
+         "checked whole-element stores should use projected read-only places, "
+         "mutable sibling array storage, and one paired fixed-array bounds "
+         "site");
+
+  const bool fusedValuesHaveCleanup =
+      std::any_of(entry->body.places.begin(), entry->body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Value &&
+                           (place.value == *copyLoad->result ||
+                            place.value == *copyAssignment->result ||
+                            place.value == *freshConstruct->result ||
+                            place.value == *freshAssignment->result);
+                  }) ||
+      std::any_of(entry->body.dropObligations.begin(),
+                  entry->body.dropObligations.end(),
+                  [&](const lang::MirDropObligation &drop) {
+                    return drop.generatedValue == *copyLoad->result ||
+                           drop.generatedValue == *copyAssignment->result ||
+                           drop.generatedValue == *freshConstruct->result ||
+                           drop.generatedValue == *freshAssignment->result;
+                  });
+  expect(!fusedValuesHaveCleanup && copyLoad->lifecycle.empty() &&
+             copyAssignment->lifecycle.empty() &&
+             freshConstruct->lifecycle.empty() &&
+             freshAssignment->lifecycle.empty(),
+         "the copy and fresh-value fusions should own no value-rooted place, "
+         "drop, or lifecycle cleanup");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the five-row checked class-array body should support transformed "
+         "MIR emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "class-array-assignment-test-v0", 1)
+          .text;
+  std::size_t checkedWrites = 0;
+  for (std::size_t position = 0;
+       (position =
+            text.find(" = ::gti_internal::backend::mir_checked_array_write_v1(",
+                      position)) != std::string::npos;
+       ++checkedWrites, ++position) {
+  }
+  const std::string copyValue =
+      "__gti_mir_v_" + std::to_string(*copyLoad->result);
+  const std::string freshValue =
+      "__gti_mir_v_" + std::to_string(*freshConstruct->result);
+  expect(checkedWrites == 3 &&
+             text.find("class copy load " + std::to_string(*copyLoad->result) +
+                       " fuses into assignment " +
+                       std::to_string(copyAssignment->id)) !=
+                 std::string::npos &&
+             text.find("construct " + std::to_string(*freshConstruct->result) +
+                       " fuses into checked array assignment") !=
+                 std::string::npos &&
+             text.find("stages into fixed-array assignment") !=
+                 std::string::npos &&
+             text.find(copyValue) == std::string::npos &&
+             text.find(freshValue) == std::string::npos,
+         "the copy, move, and fresh rows should each spell one checked write "
+         "without materializing copy/fresh SSA objects");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("cpp-mir-move-only-array-copy.gti", R"(
+class move_only {
+public:
+  move_only() {}
+  move_only(move_only& other) = delete;
+  move_only(move_only&& other) = default;
+};
+
+int main() {
+  mut move_only items[2] = {};
+  move_only source = move_only();
+  items[1] = source;
+  return 0;
+}
+)");
+  const bool copyDiagnostic = std::any_of(
+      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2003" &&
+               diagnostic.message.find("array element") != std::string::npos;
+      });
+  expect(!invalid.canGenerateCode() && copyDiagnostic,
+         "a named move-only class value should remain rejected as an array "
+         "element copy");
+}
+
 void testGeneratedSpecialMemberConstructionSchedule() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-generated-special-members.gti", R"(
@@ -8623,6 +8875,8 @@ constexpr NamedTest kTests[] = {
      testOwningFixedArrayAggregateAndCheckedMove},
     {"testPassiveClassArrayMoveAssignmentSchedule",
      testPassiveClassArrayMoveAssignmentSchedule},
+    {"testCheckedClassArrayElementAssignmentFamily",
+     testCheckedClassArrayElementAssignmentFamily},
     {"testGeneratedSpecialMemberConstructionSchedule",
      testGeneratedSpecialMemberConstructionSchedule},
     {"testForwardedConcretePackLayout", testForwardedConcretePackLayout},
