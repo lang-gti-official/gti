@@ -7,10 +7,10 @@ checks the same operations in order, while the idiomatic twin omits checks only
 for this fixed bounded input. The campaign's generated arithmetic ablation is
 an opt-in runner artifact, not a source variant and never optimizer proof.
 
-Exact clean commit `52d13d05` discharges all five hot arithmetic outcomes and
+Exact clean commit `f1a4075f` discharges all five hot arithmetic outcomes and
 all three hot fixed-array bounds outcomes through MIR proofs. Five warmups and
-twenty seeded interleaved samples measured GTI at 1.007x idiomatic C++ at O2
-and 1.001x at O3. The canonical report identities and raw samples are retained
+twenty seeded interleaved samples measured GTI at 1.011x idiomatic C++ at O2
+and 0.999x at O3. The canonical report identities and raw samples are retained
 in [`docs/plans/performance-tooling.md`](../../../docs/plans/performance-tooling.md).
 
 Expected record:

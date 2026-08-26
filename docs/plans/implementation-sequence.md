@@ -374,7 +374,7 @@ detailed row together; do not copy the sequence into another plan.
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `O-PERF-00` | **complete** | current benchmark runner and reconciled audits | Freeze reproducible attribution workloads and separate GTI optimization effects from native optimization effects. | Exact clean commit `a2bd29dc` records conclusive checked-array, checked-vector, scalar-chain, scalar-FP, control, game-update, and managed-thread baselines; strict generated arithmetic ceilings; and fixed-native O0/O1/O2/O3 attribution. |
-| 2 | `O-PERF-01` | **complete** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | Exact clean commit `52d13d05` discharges all five hot arithmetic outcomes and the three hot fixed-array bounds outcomes; GTI measured 1.007x idiomatic C++ at O2 and 1.001x at O3 with no control regression above 0.6%. |
+| 2 | `O-PERF-01` | **complete** | `O-PERF-00` | Prove bounded loop-carried arithmetic safe with the existing MIR safety/replay architecture. | Exact clean commit `f1a4075f` discharges all five hot arithmetic outcomes and the three hot fixed-array bounds outcomes; GTI measured 1.011x idiomatic C++ at O2 and 0.999x at O3 with no control regression above 0.4%. |
 | 3 | `O-PERF-02` | **active** | `O-PERF-01` | Carry exact range/container facts through one closed static-call family only as required by the checked-vector client. | The selected bounded interprocedural family materially improves the vector workload with exact call, failure, cleanup, and snapshot identity. |
 | 4 | `O-PERF-03` | **blocked on 02** | `O-PERF-02` | Establish one logical vector length authority and remove only proved redundant prefix-storage checks. | A proved access emits at most one logical check and a discharged access emits no private recheck; all failure identities and container invariants remain exact. |
 | 5 | `O-PERF-04` | **blocked on 03** | `O-PERF-03` plus a genuinely opaque checked-loop client | Select or reject one exact checked-loop fast path for operations that static analysis cannot discharge. | A semantics-preserving proxy improves its admitted workload by at least 30% and the implementation preserves first failure, partial effects, and fallback behavior, or the row closes as measured-defer. |
@@ -2831,7 +2831,7 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 ### O-PERF-01: Loop-Carried Arithmetic Range Proof
 
 - **State/role:** complete at exact clean commit
-  `52d13d058bf76a7d3f33a82de1334eed03f28b78`; first implementation row after
+  `f1a4075f3848d3f24531f12364f227fde29b887d`; first implementation row after
   completed `O-PERF-00`.
 - **Corrected starting point:** the canonical safety analysis already runs a
   deterministic loop fixpoint and widens interval facts after repeated block
@@ -2869,12 +2869,12 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   invalidation, and a finite reducible-loop accumulator threshold on the
   existing dataflow solver. The admitted body discharged five of five hot
   arithmetic outcomes and all three hot fixed-array bounds outcomes. Five
-  warmups and twenty seeded interleaved runs produced 59.838 ms GTI versus
-  59.414 ms idiomatic C++ at O2, and 59.389 versus 59.315 ms at O3. Exact
+  warmups and twenty seeded interleaved runs produced 61.807 ms GTI versus
+  61.111 ms idiomatic C++ at O2, and 61.055 versus 61.113 ms at O3. Exact
   signed-minimum remainder, zero-divisor, dynamic-bound, repeated-write,
   alias-write, call-barrier, lifecycle, and runtime-failure tests retain the
-  conservative boundary. Five exact-head controls changed by at most 0.6%
-  relative to their semantic-C++ twins.
+  conservative boundary. No exact-head control regressed by more than 0.4%
+  relative to its semantic-C++ twin.
 
 ### O-PERF-02: Closed-Call And Container Fact Transport
 
