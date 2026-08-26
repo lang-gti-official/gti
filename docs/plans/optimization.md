@@ -47,9 +47,9 @@ memory family) remain measured-defer, while the active interprocedural client
 is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
-Performance-priority update (2026-08-27): `O-PERF-00` through `O-PERF-03`
-are complete, and `O-PERF-04` is measured-defer on exact clean commit
-`4dbb50bd`; `O-PERF-05` is the sole active row.
+Performance-priority update (2026-08-27): `O-PERF-00` through `O-PERF-03` and
+`O-PERF-05` are complete, and `O-PERF-04` is measured-defer on exact clean
+commit `4dbb50bd`; `O-GAME-01` is the sole active row.
 The fixed-array bounds control remained a measured no-op. The admitted
 complete-state fixed-array overflow workload originally measured 283.568 ms in
 GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
@@ -64,7 +64,11 @@ only independently replayed private rechecks. A bounded follow-up carries the
 same scalar envelope through exact indexed return borrows and finite closed-call
 loop bounds; vector medians are now 1.042x idiomatic at O2 and 1.049x at O3.
 The genuinely opaque scalar-loop preflight exposed only 0.34% value, so no
-versioning transform was admitted. Native, virtual, recursive,
+versioning transform was admitted. The residual backend audit then measured
+the scalar-FP client at 1.005x semantic C++ and the closed-call vector client
+at 0.109x semantic and 1.044x idiomatic; their native hot loops contain no
+surviving call or failure-ABI boundary, so no speculative representation
+change was admitted. Native, virtual, recursive,
 owning-transfer, conflicting-context, mutating-call, and non-convergent
 boundaries remain conservative. Exact report identities, raw samples,
 profiles, MIR/report counters, and emitted-code hashes live in
