@@ -48,15 +48,15 @@ is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
 complete by the analysis foundations.
 
 Performance-priority update (2026-08-26): `O-PERF-00` closed on exact clean
-commit `a2bd29dc`, and `O-PERF-01` closed on exact clean commit `52d13d05`.
+commit `a2bd29dc`, and `O-PERF-01` closed on exact clean commit `f1a4075f`.
 The fixed-array bounds control remained a measured no-op. The admitted
 complete-state fixed-array overflow workload originally measured 283.568 ms in
 GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
 alias-safe fixed-array content envelopes, and finite loop-carried accumulator
 thresholds now discharge all five hot arithmetic outcomes and all three hot
-bounds outcomes. The clean implementation measured 59.838 versus 59.414 ms at
-O2 and 59.389 versus 59.315 ms at O3. The five campaign controls changed by at
-most 0.6% relative to their semantic C++ twins. `O-PERF-02` is now the sole
+bounds outcomes. The clean implementation measured 61.807 versus 61.111 ms at
+O2 and 61.055 versus 61.113 ms at O3. No campaign control regressed by more
+than 0.4% relative to its semantic C++ twin. `O-PERF-02` is now the sole
 active row and owns the checked-vector closed-call/container client. Exact
 report identities, raw samples, profiles, MIR/report counters, and
 disassembly hashes live in
