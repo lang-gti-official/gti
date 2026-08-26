@@ -23,7 +23,7 @@ EXPECTED_RECORDS = {
         "GTI-BENCH-1 digest:0000000034322aaf work-units:327680000"
     ),
     "game-update-stage": (
-        "GTI-BENCH-1 digest:0000000039624947 work-units:51200000"
+        "GTI-BENCH-1 digest:0000000012e84ad4 work-units:61440000"
     ),
     "optimizer-level-control": (
         "GTI-BENCH-1 digest:000000025efeed0b work-units:700000"

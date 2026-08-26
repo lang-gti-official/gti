@@ -52,7 +52,7 @@ int main() {
     entity.velocity_y = int32_t(index % std::size_t(7)) - 3;
   }
 
-  for (mut int32_t tick = 0; tick < 50000; tick++) {
+  for (mut int32_t tick = 0; tick < 60000; tick++) {
     int32_t phase = tick % 17;
     for (mut std::size_t index = 0; index < entity_count; index++) {
       mut entity_state& entity = entities[index];
@@ -83,11 +83,11 @@ int main() {
              uint64_t(1000000007);
   }
 
-  if (digest != uint64_t(0x39624947)) {
+  if (digest != uint64_t(0x12e84ad4)) {
     return 1;
   }
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
-  std::println(" work-units:51200000");
+  std::println(" work-units:61440000");
   return 0;
 }
