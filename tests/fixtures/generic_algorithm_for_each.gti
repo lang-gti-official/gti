@@ -1,0 +1,90 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+mut int32_t observed = 0;
+
+class iteration_sentinel {
+  std::size_t final_position;
+
+public:
+  iteration_sentinel(std::size_t position) : final_position(position) {}
+
+  std::size_t position() {
+    return this.final_position;
+  }
+};
+
+class iteration_iterator {
+  mut std::size_t index;
+  mut int32_t values[4] = {1, 2, 3, 4};
+
+public:
+  iteration_iterator(std::size_t initial) : index(initial) {}
+
+  int32_t& operator*() {
+    return this.values[this.index];
+  }
+
+  void operator++() mut {
+    this.index++;
+  }
+
+  bool operator!=(iteration_sentinel& sentinel) {
+    return this.index != sentinel.position();
+  }
+};
+
+class read_observer {
+public:
+  read_observer() {}
+  read_observer(read_observer& other) = delete;
+  read_observer(read_observer&& other) = default;
+
+  void operator()(int32_t& value) {
+    observed += value;
+  }
+};
+
+class mutable_observer {
+  mut int32_t calls;
+
+public:
+  mutable_observer() : calls(0) {}
+  mutable_observer(mutable_observer& other) = delete;
+  mutable_observer(mutable_observer&& other) = default;
+
+  void operator()(int32_t& value) mut {
+    observed += value;
+    this.calls++;
+  }
+
+  int32_t count() {
+    return this.calls;
+  }
+};
+
+int main() {
+  read_observer reader = read_observer();
+  read_observer returned_reader = std::for_each(
+      iteration_iterator(std::size_t(0)),
+      iteration_sentinel(std::size_t(4)),
+      std::move(reader));
+  int32_t extra = 5;
+  returned_reader(extra);
+  if (observed != 15) {
+    return 1;
+  }
+
+  mut std::vector<int32_t> values = std::vector<int32_t>({2, 4, 6});
+  mut mutable_observer writer = mutable_observer();
+  mut mutable_observer returned_mutable = std::for_each(
+      values.begin(), values.end(), std::move(writer));
+  int32_t mutable_extra = 7;
+  returned_mutable(mutable_extra);
+  if (observed != 34 || returned_mutable.count() != 4) {
+    return 2;
+  }
+
+  return 0;
+}

@@ -1,0 +1,16 @@
+Function illegal_store<Function>(mut Function function) {
+  function();
+  Function copied = function;
+  return std::move(function);
+}
+
+class operation {
+public:
+  void operator()() {}
+};
+
+int main() {
+  operation callable = operation();
+  [[discard]] illegal_store(std::move(callable));
+  return 0;
+}

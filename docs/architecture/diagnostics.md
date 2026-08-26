@@ -384,13 +384,21 @@ spelling; lambda captures retain the canonical declaration identity they
 captured. Return escape and unproven forwarding retain their more specific
 messages instead of cascading into a second ordinary-use diagnostic.
 
+One bounded exact-return contract permits repeated direct invocation followed
+by the final `std::move` of that same parameter on every reachable valued
+return. `GTI-S2046` still rejects assignment, capture, forwarding, any other
+ordinary value use, a once-callable target, or a caller that omits the exact
+ownership move. The diagnostic identifies the exact-return parameter and
+suggests only direct invocation plus the declaration's final move; it must not
+describe this case as general callable storage or escape.
+
 `GTI-S2046` also owns failure at the bounded owned-callable boundary. It points
-at the argument when the caller omits `std::move`, the concrete closure is not
-movable, its capture state contains a reference, tracked borrow, or raw
-pointer, or the selected generic result/field does not preserve its exact
-type. Relate the diagnostic to the generic parameter declaration. These are
-source contract errors; forged return, field, constructor, or move evidence is
-instead rejected by MIR verification as compiler corruption.
+at the argument when the caller omits `std::move`, the concrete callable is not
+movable, its stored state contains a reference, tracked borrow, or raw pointer,
+or the selected generic result/field does not preserve its exact type. Relate
+the diagnostic to the generic parameter declaration. These are source contract
+errors; forged return, field, constructor, or move evidence is instead rejected
+by MIR verification as compiler corruption.
 
 `GTI-S2027` owns lambda capture-shape and ownership failures. The parser keeps
 `[target = expression]` recoverable; semantics accepts only

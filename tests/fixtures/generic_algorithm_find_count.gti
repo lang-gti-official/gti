@@ -1,0 +1,82 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+class move_only_sentinel {
+  std::size_t final_position;
+
+public:
+  move_only_sentinel(std::size_t position) : final_position(position) {}
+
+  std::size_t position() {
+    return this.final_position;
+  }
+};
+
+class move_only_iterator {
+  mut std::size_t index;
+  mut int32_t values[5] = {2, 4, 2, 8, 10};
+
+public:
+  move_only_iterator(std::size_t initial) : index(initial) {}
+  move_only_iterator(move_only_iterator& other) = delete;
+  move_only_iterator(move_only_iterator&& other) = default;
+
+  int32_t& operator*() {
+    return this.values[this.index];
+  }
+
+  void operator++() mut {
+    this.index++;
+  }
+
+  bool operator!=(move_only_sentinel& sentinel) {
+    return this.index != sentinel.position();
+  }
+
+  std::size_t position() {
+    return this.index;
+  }
+};
+
+int main() {
+  int32_t read_only_needle = 8;
+  mut move_only_iterator found = std::find(
+      move_only_iterator(std::size_t(0)),
+      move_only_sentinel(std::size_t(5)), read_only_needle);
+  if (*found != 8 || found.position() != std::size_t(3)) {
+    return 1;
+  }
+
+  int32_t missing = 9;
+  mut move_only_iterator not_found = std::find(
+      move_only_iterator(std::size_t(0)),
+      move_only_sentinel(std::size_t(5)), missing);
+  if (not_found.position() != std::size_t(5)) {
+    return 2;
+  }
+
+  mut int32_t mutable_needle = 2;
+  if (std::count(move_only_iterator(std::size_t(0)),
+                 move_only_sentinel(std::size_t(5)), mutable_needle) != 2 ||
+      std::count(move_only_iterator(std::size_t(0)),
+                 move_only_sentinel(std::size_t(0)), mutable_needle) != 0) {
+    return 3;
+  }
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({3, 7, 3, 11, 13});
+  int32_t vector_needle = 11;
+  mut auto vector_found =
+      std::find(values.begin(), values.end(), vector_needle);
+  if (*vector_found != 11) {
+    return 4;
+  }
+
+  mut int32_t repeated = 3;
+  if (std::count(values.begin(), values.end(), repeated) != 2) {
+    return 5;
+  }
+
+  return 0;
+}

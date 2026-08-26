@@ -1,0 +1,19 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class value_observer {
+public:
+  value_observer() {}
+
+  int32_t operator()(int32_t& value) {
+    return value;
+  }
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  value_observer operation = value_observer();
+  [[discard]] std::for_each(values.begin(), values.end(),
+                            std::move(operation));
+  return 0;
+}

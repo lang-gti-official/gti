@@ -1,0 +1,22 @@
+#include <std/vector>
+
+std::detail::vector_iterator<int32_t> ambiguous_owner(
+    bool select_first, mut std::detail::vector_iterator<int32_t> first,
+    mut std::detail::vector_iterator<int32_t> second) {
+  if (select_first) {
+    return std::move(first);
+  }
+  return std::move(second);
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  mut auto first = values.begin();
+  mut auto second = values.begin();
+  mut auto selected = ambiguous_owner(
+      true, std::move(first), std::move(second));
+  if (*selected != 1) {
+    return 1;
+  }
+  return 0;
+}

@@ -1,0 +1,16 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class observer {
+public:
+  observer() {}
+
+  void operator()(int32_t& value) {}
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  observer operation = observer();
+  [[discard]] std::for_each(values.begin(), values.end(), operation);
+  return 0;
+}

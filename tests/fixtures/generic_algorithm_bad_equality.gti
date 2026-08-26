@@ -1,0 +1,43 @@
+#include <std/algorithm>
+
+class value {
+public:
+  value() {}
+};
+
+class sentinel {
+  int32_t final_position;
+
+public:
+  sentinel(int32_t position) : final_position(position) {}
+
+  int32_t position() {
+    return this.final_position;
+  }
+};
+
+class iterator {
+  mut int32_t index;
+  value element = value();
+
+public:
+  iterator(int32_t initial) : index(initial) {}
+
+  value& operator*() {
+    return this.element;
+  }
+
+  void operator++() mut {
+    this.index++;
+  }
+
+  bool operator!=(sentinel& last) {
+    return this.index != last.position();
+  }
+};
+
+int main() {
+  value needle = value();
+  std::find(iterator(0), sentinel(1), needle);
+  return 0;
+}
