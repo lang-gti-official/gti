@@ -36,11 +36,13 @@ assets.
    token-permission settings. Build and test jobs remain read-only; only the
    publish jobs request release write access.
 
-The runner environment needs Bash, Git, CMake 3.20 or newer, a C++20 compiler,
-Python 3 with `venv` and `pip`, and Node.js/npm. Native CI installs a supported
-LLVM on Linux or macOS. Release builds download GTI's pinned LLVM source and
-therefore also need outbound access to GitHub release assets. An Ubuntu runner
-should be based on Ubuntu 24.04 so `llvm-18-dev` is available.
+The runner environment needs Bash, Git, Python 3 with `venv` and `pip`, and
+Node.js/npm. Linux jobs install CMake 3.20 or newer, a C++20 compiler, and a
+supported LLVM where needed. macOS runners need a C++20 compiler and Homebrew;
+the workflows install CMake and LLVM there where needed. Release builds
+download GTI's pinned LLVM source and therefore also need outbound access to
+GitHub release assets. An Ubuntu runner should be based on Ubuntu 24.04 so
+`llvm-18-dev` is available.
 
 ## Mirror-aware triggers
 
