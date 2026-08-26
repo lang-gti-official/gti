@@ -48,7 +48,7 @@ int main() {
   vector3 right = vector3(0.5d, 0.25d, 0.125d);
   mut double accumulator = 0.0d;
 
-  for (mut int32_t index = 0; index < 30000000; index++) {
+  for (mut int32_t index = 0; index < 60000000; index++) {
     left.x = left.x * 0.9999d + 0.0001d;
     left.y = left.y * 0.9998d + 0.0002d;
     left.z = left.z * 0.9997d + 0.0003d;
@@ -59,11 +59,11 @@ int main() {
   digest = (digest + uint64_t(left.x * 1000000.0d)) % uint64_t(1000000007);
   digest = (digest + uint64_t(left.y * 1000000.0d)) % uint64_t(1000000007);
   digest = (digest + uint64_t(left.z * 1000000.0d)) % uint64_t(1000000007);
-  if (digest != uint64_t(0x1be59f2)) {
+  if (digest != uint64_t(0x34ee502)) {
     return 1;
   }
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
-  std::println(" work-units:30000000");
+  std::println(" work-units:60000000");
   return 0;
 }

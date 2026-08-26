@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "scalar-fp-update",
   "description": "Strict scalar floating-point field update and closed method call",
-  "work_units": 30000000,
+  "work_units": 60000000,
   "minimum_sample_seconds": 0.05,
   "variants": [
     {
