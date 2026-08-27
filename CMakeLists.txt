@@ -571,8 +571,10 @@ if(GTI_BUNDLE_LLVM)
     COMPONENT gti_toolchain
   )
   # libclang is deliberately shared — the C API's supported distribution form
-  # — and ships beside the LLVM archives. The installed gti binary locates it
-  # by rpath relative to its own location.
+  # — and ships beside the LLVM archives. Every installed executable that
+  # reaches the bindgen reader locates it by rpath relative to its own
+  # location, so each one needs the rpath: gti_lsp links the same driver and
+  # fails to load at startup without it.
   install(
     TARGETS libclang
     LIBRARY DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
@@ -580,14 +582,19 @@ if(GTI_BUNDLE_LLVM)
             NAMELINK_COMPONENT gti_toolchain
   )
   if(APPLE)
-    set_target_properties(
-      gti PROPERTIES INSTALL_RPATH
-                     "@loader_path/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
+    set(GTI_LLVM_ARCHIVE_INSTALL_RPATH
+        "@loader_path/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
   else()
-    set_target_properties(
-      gti PROPERTIES INSTALL_RPATH
-                     "$ORIGIN/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
+    set(GTI_LLVM_ARCHIVE_INSTALL_RPATH
+        "$ORIGIN/../${GTI_LLVM_ARCHIVE_INSTALL_DIR}")
   endif()
+  foreach(installed_executable IN ITEMS gti gti_lsp)
+    if(TARGET "${installed_executable}")
+      set_target_properties(
+        "${installed_executable}"
+        PROPERTIES INSTALL_RPATH "${GTI_LLVM_ARCHIVE_INSTALL_RPATH}")
+    endif()
+  endforeach()
 endif()
 install(TARGETS gti_tree_sitter
         LIBRARY DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/parser"
@@ -1638,6 +1645,7 @@ if(BUILD_TESTING)
       set_tests_properties(
         driver_pipeline
         output_determinism binary64_runtime sum_types_runtime
+        constexpr_aggregate_runtime
         issues_122_124_field_initializers_runtime
         stdlib_include_sweep
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
