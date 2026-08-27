@@ -1537,6 +1537,14 @@ if(BUILD_TESTING)
     set_tests_properties(mixed_capture_callable_template_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME class_move_assignment_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/class_move_assignment_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(class_move_assignment_runtime PROPERTIES TIMEOUT 240)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1786,6 +1794,7 @@ if(BUILD_TESTING)
         owner_tied_by_value_argument_runtime
         moved_loop_local_runtime
         mixed_capture_callable_template_runtime
+        class_move_assignment_runtime
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
         temporary_argument_borrow_runtime
