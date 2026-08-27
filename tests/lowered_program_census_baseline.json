@@ -541,7 +541,7 @@
       }
     },
     "38-vector-emplace.gti": {
-      "declarations": 198,
+      "declarations": 197,
       "bodies": 73,
       "generated_items": 32,
       "generated_kinds": {
@@ -616,7 +616,7 @@
       }
     },
     "43-program-arguments.gti": {
-      "declarations": 396,
+      "declarations": 395,
       "bodies": 193,
       "generated_items": 33,
       "generated_kinds": {
@@ -631,7 +631,7 @@
       }
     },
     "44-bounded-requires.gti": {
-      "declarations": 326,
+      "declarations": 325,
       "bodies": 147,
       "generated_items": 29,
       "generated_kinds": {
@@ -751,7 +751,7 @@
       }
     },
     "52-stateful-callables.gti": {
-      "declarations": 353,
+      "declarations": 352,
       "bodies": 153,
       "generated_items": 31,
       "generated_kinds": {
@@ -826,7 +826,7 @@
       }
     },
     "57-contextual-array-arguments.gti": {
-      "declarations": 193,
+      "declarations": 192,
       "bodies": 42,
       "generated_items": 13,
       "generated_kinds": {
@@ -946,7 +946,7 @@
       }
     },
     "65-mutable-ranges.gti": {
-      "declarations": 187,
+      "declarations": 186,
       "bodies": 49,
       "generated_items": 20,
       "generated_kinds": {
@@ -976,7 +976,7 @@
       }
     },
     "67-forward-iterators.gti": {
-      "declarations": 227,
+      "declarations": 226,
       "bodies": 60,
       "generated_items": 19,
       "generated_kinds": {
@@ -1081,7 +1081,7 @@
       }
     },
     "74-read-only-range-loans.gti": {
-      "declarations": 187,
+      "declarations": 186,
       "bodies": 45,
       "generated_items": 16,
       "generated_kinds": {
@@ -1097,7 +1097,7 @@
     }
   },
   "totals": {
-    "declarations": 12219,
+    "declarations": 12211,
     "bodies": 4172,
     "generated_items": 588
   }
