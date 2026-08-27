@@ -1,10 +1,11 @@
 # Compiler Structural Refactor
 
-> **Plan status:** Active structural gate. In-flight work was reconciled at
-> `4d4c8ae242fe08511db8de41fcafe117dde06dba`; **R-STRUCT-00** through
-> **R-STRUCT-02** are complete and **R-STRUCT-03** is the active implementation
-> slice. No new compiler feature
-> campaign begins until the exit gate in this plan passes.
+> **Plan status:** Complete. The reconciled baseline is
+> `4d4c8ae242fe08511db8de41fcafe117dde06dba`; the final implementation was
+> measured at `fe6593acf37cd980d43bac43da7759959aa3a252` on 2026-08-28.
+> **R-STRUCT-00** through **R-STRUCT-05** passed and the exclusive structural
+> gate is released. The documentation/format-only closure after that measured
+> implementation does not change compiler artifacts or timing.
 >
 > This is an internal architecture plan. It does not define GTI language
 > semantics and does not make generated C++ text a public compatibility
@@ -69,7 +70,7 @@ The reconciled baseline is `4d4c8ae242fe08511db8de41fcafe117dde06dba`
 (`VERSION` 0.321.0). Its controlled machine, toolchain, build-edge, binary,
 fan-out, trace, diagnostic, census, six-configuration corpus, and raw-artifact
 record is
-[`compiler-structural-baseline.json`](compiler-structural-baseline.json).
+[`compiler-structural-baseline.json`](../compiler-structural-baseline.json).
 That record supersedes the approximate audit sizes below for before/after
 comparison; the table remains as the rationale captured when the plan was
 accepted.
@@ -103,7 +104,7 @@ The structural work should improve cold parallelism, focused rebuilds, and
 reviewability. Cross-agent build caps, CTest resource accounting, and compiler
 caching remain separate build-system responsibilities.
 
-The completed [compiled compiler library migration](archive/compiler-library-migration.md)
+The completed [compiled compiler library migration](compiler-library-migration.md)
 is a foundation, not a failed attempt to repeat. It already moved algorithms
 out of public headers and established the `gti_compiler`, `gti_cpp_backend`,
 and `gti_driver` boundaries. This plan decomposes responsibilities *within*
@@ -177,7 +178,7 @@ work.
    equivalence oracles.
 
 **Exit evidence:** complete. The committed
-[`compiler-structural-baseline.json`](compiler-structural-baseline.json) names
+[`compiler-structural-baseline.json`](../compiler-structural-baseline.json) names
 the machine/toolchain, configuration, concurrency, commit, commands, and raw
 artifact locations. No refactor result is compared across unlike concurrency
 or competing worktrees.
@@ -467,6 +468,17 @@ O0/O1/O3 corpus output is byte-identical to the baseline; native bindings,
 failure, lifecycle, managed-thread, module initialization, and installed
 toolchain tests pass.
 
+**Completed evidence:** one immutable, pointer-free
+`CppMirBodyEmissionPlan` is authoritative for admitted body shapes and a
+pointer-free `CppProgramEmissionPlan` owns deterministic whole-program order.
+The body text writer formats only the approved plan; program, support-preamble,
+and defined-failure writers have separate output responsibilities; and
+`CppEmitter::Impl` is a 34-line coordinator. Plan-lifetime tests destroy the
+input `LoweredProgram` before writing. Preflight mutation, representation,
+body-text, lifecycle/failure, native, managed-thread, and corpus suites pass.
+Four focused ordinary, defined-failure, native-C, and managed-thread artifacts
+were byte-identical before the final complete 444-configuration oracle.
+
 ## R-STRUCT-05: Dependency And Build Closure
 
 After source ownership is explicit, make the build describe it.
@@ -512,9 +524,67 @@ The gate requires:
   Tree-sitter, formatter, LSP protocol, documentation index, MIR census,
   optimizer replay, and corpus/native runtime gates pass.
 
+**Completed evidence (same machine, Ninja, AppleClang 21, `--parallel 2`):**
+the strict snapshot comparator reports identical diagnostics, MIR and lowered
+censuses, MIR before/after text, optimizer reports, generated C++, exit codes,
+stdout, and stderr for all 74 examples at C++20/C++23 and O0/O1/O3.
+
+| Measurement | `4d4c8ae2` baseline | `fe6593ac` implementation | Result |
+| --- | ---: | ---: | --- |
+| clean Debug wall / CPU | 110.116557 s / 225.988870 s | 149.974170 s / 308.793632 s | +36.2% / +36.6%, explained below |
+| clean Release wall / CPU | 153.757400 s / 309.497171 s | 192.765301 s / 387.440264 s | +25.4% / +25.2%, explained below |
+| Debug no-op wall | 0.111573 s | 0.068518 s | -38.6% |
+| Release no-op wall | 0.102819 s | 0.065318 s | -36.5% |
+| Debug longest / p95 object | 6,668 ms / 3,114 ms | 4,309 ms / 3,211 ms | -35.4% / +3.1% |
+| Release longest / p95 object | 17,066 ms / 6,001 ms | 8,724 ms / 5,161 ms | **-48.9%** / -14.0%; the 40% gate passes |
+| Release `gti` / `gti_lsp` | 10,758,768 / 10,522,344 bytes | 10,834,112 / 10,613,864 bytes | +0.7% / +0.9% |
+| Release compiler / backend archive | 11,535,984 / 2,087,912 bytes | 13,155,760 / 2,170,432 bytes | +14.0% / +4.0%, explained below |
+| representative frontend trace wall | 0.617634 s | 0.600056 s | -2.8% |
+| 444 end-to-end builds, median / mean / p95 | 0.277484 / 0.396548 / 1.120168 s | 0.287801 / 0.373186 / 0.863450 s | +3.7% / -5.9% / -22.9% |
+
+The clean-build regressions are a measured structural cost, not an unexplained
+performance change. The build now has 170 independently compiled object edges
+instead of 128 (+42 edges, +32.8%) because semantic, MIR, backend, and test
+authorities are real translation-unit/target boundaries. CPU growth tracks
+that extra work. Unity builds are deliberately excluded. Measured private
+precompiled contracts were retained only for the seven semantic units and six
+compiler suites where they reduced candidate aggregate compile work by 9.4%
+and 12.7%; a neutral emitter-fixture PCH was rejected. The compiler archive's
+14.0% growth is likewise the expected granularity and repeated private
+template/constant cost of independently archived semantic objects. The final
+link coalesces that cost: both shipped executables grow by less than 1% and
+runtime behavior is byte-for-byte unchanged.
+
+Warm implementation-only rebuild probes used the same `--parallel 2` policy.
+Each candidate edit rebuilt exactly one owning object plus its archive or test
+executable and required downstream links; no unrelated phase/test object was
+recompiled.
+
+| Edited responsibility | Baseline wall | Implementation wall | Candidate object |
+| --- | ---: | ---: | --- |
+| semantic body analysis | 11.16 s | 9.88 s | `semantic_body_analysis.cpp.o` |
+| MIR program verification | 8.27 s | 8.76 s | `mir_program_verifier.cpp.o` |
+| optimizer orchestration | 9.49 s | 12.38 s | `optimizer.cpp.o` |
+| body text emission | 7.97 s | 5.29 s | `cpp_mir_body_text_writer.cpp.o` |
+| ownership test suite | 5.68 s | 3.73 s | `compiler_ownership_tests.cpp.o` |
+
+The MIR/optimizer wall variance comes from 58 required compiler-library
+consumer relinks versus 47 at the baseline: the six compiler and four emitter
+suites are deliberately independent executables. It does not represent a
+recompile-fan-out regression. Body-emitter and focused-test edits improve by
+33.6% and 34.3%, respectively.
+
+The final Release build passed all 141 CTest registrations serially in 725.17
+seconds, including Tree-sitter queries, formatter behavior, documentation,
+MIR/optimizer replay and census, LSP, native oracles, and every runtime matrix.
+The pinned clang-format 22.1.8 check passed 300 files. A staged install passed
+all seven downstream `find_package(GTI)` library tests and the installed CLI,
+project CLI, LSP, and managed-thread workflows. The structural snapshot
+self-tests and exact baseline comparator also pass.
+
 Feature development resumes only after the final report records these results,
 all **R-STRUCT** rows are marked complete in
-[`implementation-sequence.md`](implementation-sequence.md), and the canonical
+[`implementation-sequence.md`](../implementation-sequence.md), and the canonical
 architecture documents describe the new source ownership. A partially split
 file or improved line count is not sufficient.
 
