@@ -42,6 +42,23 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+## Request Sessions
+
+One call to either public `SemanticVisitor::check` overload owns one complete
+semantic request session. `SemanticVisitor::Impl::RequestSessionState` is the
+single mutable owner for diagnostics, `SemanticModel`, scopes and declaration
+indexes, AST-keyed facts, substitutions, loan/value-flow state, contextual
+types, program effects, and request-local identity counters. Both program and
+standalone-expression analysis enter through the same `resetRequestState`
+operation before publishing any result.
+
+The selected target, source-graph pointer, tooling-occurrence mode, and metrics
+sink are visitor configuration and remain outside the session. Reusing a
+visitor therefore preserves configuration but cannot preserve names, compiler
+IDs, AST pointers, flow facts, diagnostics, or return/expression context from a
+previous check. Concrete-instance analysis still operates against the current
+snapshot; it does not establish an unrelated public request.
+
 Borrow-summary publication builds one `FunctionId`-to-candidate index after
 declaration registration and updates only the candidate rows for each resolved
 function. It does not rescan every namespace/member overload table once per

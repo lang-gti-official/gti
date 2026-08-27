@@ -1,0 +1,7743 @@
+#include "compiler_test_fixture.h"
+
+namespace {
+
+void testContainerScaffoldSurfaces() {
+  const std::string source = R"(
+#include <std/array>
+#include <std/forward_list>
+#include <std/iterator>
+#include <std/list>
+#include <std/span>
+#include <std/string>
+#include <std/vector>
+
+int count_range<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  mut int count = 0;
+  for (; first != last; ++first) {
+    count++;
+  }
+  return count;
+}
+
+int main() {
+  int initial[2] = {1, 2};
+  mut std::array<int, 2> fixed{initial};
+  mut std::array<int, 2> fixed_other{initial};
+  fixed.fill(3);
+  fixed.swap(fixed_other);
+  int fixed_at = fixed.at(0);
+  int fixed_ends = fixed.front() + fixed.back() + fixed_at;
+
+  mut std::vector<int> dynamic{};
+  mut std::vector<int> dynamic_other{};
+  dynamic.resize(std::size_t(2));
+  dynamic.resize(std::size_t(3), 7);
+  dynamic.shrink_to_fit();
+  dynamic.swap(dynamic_other);
+  std::vector<int> dynamic_copy = dynamic.clone();
+  int dynamic_ends = dynamic.front() + dynamic.back();
+
+  mut std::string text = std::string("abc");
+  mut std::string other_text = std::string("def");
+  text.resize(std::size_t(4));
+  text.pop_back();
+  text.shrink_to_fit();
+  text.swap(other_text);
+  char text_at = text.at(0);
+  char text_front = text.front();
+  char text_back = text.back();
+  bool text_state = text_at == text_front || text_at == text_back;
+  std::string_view text_view = text.view();
+  std::string_view text_view_copy = text_view;
+  bool text_view_state = text_view_copy.size() == text.size();
+
+  mut std::list<int> linked{};
+  mut std::list<int> linked_other{};
+  linked.push_back(1);
+  linked.resize(std::size_t(2));
+  linked.sort();
+  int remove_value = 1;
+  std::size_t linked_removed = linked.remove(remove_value);
+  std::size_t linked_unique = linked.unique();
+  linked.merge(std::move(linked_other));
+  linked.reverse();
+  int linked_count = count_range(linked.begin(), linked.end());
+
+  mut std::forward_list<int> forward{};
+  mut std::forward_list<int> forward_other{};
+  forward.push_front(1);
+  forward.resize(std::size_t(2));
+  forward.sort();
+  std::size_t forward_removed = forward.remove(remove_value);
+  std::size_t forward_unique = forward.unique();
+  forward.merge(std::move(forward_other));
+  forward.reverse();
+  int forward_count = count_range(forward.begin(), forward.end());
+
+  std::span<int> view = dynamic.as_span();
+  std::span<int> prefix = view.first(std::size_t(0));
+  std::span<int> copied_view = view;
+  bool view_state = view.empty() && prefix.empty();
+
+  return fixed_ends + dynamic_ends + linked_count +
+         forward_count + int(linked_removed + linked_unique +
+                             forward_removed + forward_unique) +
+         int(dynamic_copy.size()) + (text_state ? 0 : 1) +
+         (text_view_state ? 0 : 1) + (view_state ? 0 : 1);
+}
+)";
+
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "container-scaffolds.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected container scaffold diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "container scaffolds should expose current constrained modifiers, "
+         "move-only traversal, and read-only view shapes");
+
+  const lang::FrontendResult invalidatedSpan = lang::Frontend().analyze(
+      "invalidated-span.gti",
+      "#include <std/vector>\n"
+      "#include <std/span>\n"
+      "int main() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  std::span<int> view = values.as_span();\n"
+      "  values.push_back(3);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidatedSpan.canGenerateCode() &&
+             hasDiagnosticCode(invalidatedSpan.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(invalidatedSpan.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "mutating an owner while a copied read-only span is live should be "
+         "rejected by the ordinary retained-loan rule");
+
+  const lang::FrontendResult movedOwner = lang::Frontend().analyze(
+      "moved-span-owner.gti",
+      "#include <std/vector>\n"
+      "#include <std/span>\n"
+      "int main() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  std::span<int> view = values.as_span();\n"
+      "  std::vector<int> moved = std::move(values);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedOwner.canGenerateCode() &&
+             hasDiagnosticCode(movedOwner.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(movedOwner.diagnostics,
+                           "Cannot move storage while an overlapping borrow "
+                           "may still be live"),
+         "moving an owner while one of its spans is live should be rejected");
+
+  const lang::FrontendResult escapedSpan = lang::Frontend().analyze(
+      "escaped-span.gti",
+      "#include <std/vector>\n"
+      "#include <std/span>\n"
+      "std::span<int> escape() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  return values.as_span();\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!escapedSpan.canGenerateCode() &&
+             hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(escapedSpan.diagnostics,
+                           "borrowed return requires either one exact "
+                           "global/static storage origin"),
+         "a span must not escape the local owner that supplies its retained "
+         "loan");
+
+  const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
+      "invalidated-string-view.gti",
+      "#include <std/string>\n"
+      "T relay<T>(T value) { return value; }\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  std::string_view view = relay(text.view());\n"
+      "  text.push_back('d');\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidatedTextView.canGenerateCode() &&
+             hasDiagnosticCode(invalidatedTextView.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(invalidatedTextView.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "a concrete generic relay must preserve a dynamic string_view owner "
+         "dependency and reject mutation while that result is live");
+
+  const lang::FrontendResult movedTextOwner = lang::Frontend().analyze(
+      "moved-string-view-owner.gti",
+      "#include <std/string>\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  std::string_view view = text.view();\n"
+      "  std::string moved = std::move(text);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedTextOwner.canGenerateCode() &&
+             hasDiagnosticCode(movedTextOwner.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(movedTextOwner.diagnostics,
+                           "Cannot move storage while an overlapping borrow "
+                           "may still be live"),
+         "moving a string while its dynamic string_view is live should be "
+         "rejected");
+
+  const lang::FrontendResult escapedTextView = lang::Frontend().analyze(
+      "escaped-string-view.gti",
+      "#include <std/string>\n"
+      "std::string_view escape() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  return text.view();\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!escapedTextView.canGenerateCode() &&
+             hasDiagnosticCode(escapedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(escapedTextView.diagnostics,
+                           "dynamic std::string_view cannot escape without "
+                           "one exact owner dependency"),
+         "a dynamic string_view must not escape the local string that owns "
+         "its bytes");
+
+  const lang::FrontendResult storedTextView = lang::Frontend().analyze(
+      "stored-string-view.gti",
+      "#include <std/string>\n"
+      "mut std::string_view saved = \"\";\n"
+      "void retain(std::string_view value) { saved = value; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!storedTextView.canGenerateCode() &&
+             hasDiagnosticCode(storedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(storedTextView.diagnostics,
+                           "cannot be assigned into an existing binding"),
+         "an opaque string_view parameter must not be retained in global "
+         "storage without an expressible dependency graph");
+
+  const lang::FrontendResult nestedTextView =
+      analyzeTrustedPreludeFixture("nested-string-view-storage.gti", R"(
+#include <std/string>
+int main() {
+  mut std::string text = std::string("abc");
+  mut gti_internal::storage<std::string_view> stored =
+      gti_internal::allocate_storage<std::string_view>(uint64_t(1));
+  gti_internal::storage_construct(stored, uint64_t(0), text.view());
+  return 0;
+}
+)");
+  expect(!nestedTextView.canGenerateCode() &&
+             hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(nestedTextView.diagnostics,
+                           "cannot be nested in dynamic storage"),
+         "a dynamic string_view must not be hidden in compiler-private "
+         "storage without a nested dependency representation");
+}
+
+void testInferredVoidGenericArguments() {
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("inferred-void-generic.gti", R"(
+T* identity_pointer<T>(T* pointer) { return pointer; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity_pointer(pointer);
+  return copied == nullptr ? 0 : 1;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Generic type arguments cannot be void"),
+         "implicit generic inference should reject a bare void type argument");
+
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("inferred-void-pointer-generic.gti", R"(
+T identity<T>(T value) { return value; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity(pointer);
+  return copied == nullptr ? 0 : 1;
+}
+)");
+  expect(valid.canGenerateCode(),
+         "generic inference should continue accepting void* as a complete "
+         "pointer type");
+}
+
+void testTrustedIntrinsicDeclarations() {
+  const lang::FrontendResult trusted =
+      lang::Frontend().analyze("trusted-intrinsic-declaration.gti", R"(
+namespace utility = std;
+
+int main() {
+  int source = 1;
+  int moved = utility::move(source);
+  return moved;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(trusted.canGenerateCode(),
+         "a namespace alias should retain the trusted move declaration's "
+         "intrinsic identity");
+
+  const lang::FunctionDecl *trustedMain =
+      findTopLevelFunction(trusted.program, "main");
+  const auto *trustedMoved =
+      trustedMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                trustedMain->body()->statements().at(1).get());
+  const auto *trustedCall =
+      trustedMoved == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(trustedMoved->initializer().get());
+  const lang::ResolvedCallInfo *trustedResolution =
+      trustedCall == nullptr ? nullptr
+                             : trusted.semantics.findCall(*trustedCall);
+  const lang::FunctionInfo *trustedDeclaration =
+      trustedResolution == nullptr || trustedResolution->declaration == nullptr
+          ? nullptr
+          : trusted.semantics.findFunction(*trustedResolution->declaration);
+  const lang::SourceUnit *trustedUnit =
+      trustedDeclaration == nullptr
+          ? nullptr
+          : trusted.sourceGraph.findUnit(trustedDeclaration->sourceUnit);
+  expect(trustedResolution != nullptr && trustedResolution->function != 0 &&
+             trustedResolution->intrinsic == lang::IntrinsicKind::Move &&
+             trustedDeclaration != nullptr &&
+             trustedDeclaration->intrinsic == lang::IntrinsicKind::Move &&
+             trustedUnit != nullptr && trustedUnit->prelude,
+         "resolved intrinsic calls should point to a trusted prelude "
+         "declaration instead of deriving behavior from call-site spelling");
+  expect(trustedResolution != nullptr &&
+             std::none_of(trusted.hir.functionInstances().begin(),
+                          trusted.hir.functionInstances().end(),
+                          [&](const lang::HirFunctionInstance &instance) {
+                            return instance.declaration ==
+                                   trustedResolution->function;
+                          }),
+         "intrinsic declarations should remain semantic operations rather than "
+         "bodyless HIR call targets");
+
+  const lang::FrontendResult ordinary =
+      lang::Frontend().analyze("ordinary-function-named-move.gti", R"(
+namespace std {
+T move<T>(T& value) { return value; }
+}
+
+int main() {
+  int source = 1;
+  int copied = std::move(source);
+  return source + copied - 2;
+}
+)");
+  expect(ordinary.canGenerateCode(),
+         "an ordinary function named std::move should follow ordinary call "
+         "semantics outside the trusted prelude");
+  const lang::FunctionDecl *ordinaryMain =
+      findTopLevelFunction(ordinary.program, "main");
+  const auto *ordinarySource =
+      ordinaryMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                ordinaryMain->body()->statements().front().get());
+  const auto *ordinaryCopied =
+      ordinaryMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                ordinaryMain->body()->statements().at(1).get());
+  const auto *ordinaryCall = ordinaryCopied == nullptr
+                                 ? nullptr
+                                 : dynamic_cast<const lang::Call *>(
+                                       ordinaryCopied->initializer().get());
+  const lang::BindingInfo *ordinarySourceBinding =
+      ordinarySource == nullptr
+          ? nullptr
+          : ordinary.semantics.findBinding(*ordinarySource);
+  const lang::ResolvedCallInfo *ordinaryResolution =
+      ordinaryCall == nullptr ? nullptr
+                              : ordinary.semantics.findCall(*ordinaryCall);
+  expect(ordinarySourceBinding != nullptr &&
+             !ordinarySourceBinding->explicitlyMoved &&
+             ordinaryResolution != nullptr &&
+             ordinaryResolution->intrinsic == lang::IntrinsicKind::None,
+         "untrusted declarations must not acquire ownership effects by using "
+         "a standard-library spelling");
+
+  const lang::FrontendResult untrustedMutableReturn =
+      lang::Frontend().analyze("untrusted-mutable-return.gti", R"(
+mut int& expose(mut int& value) { return value; }
+int main() { return 0; }
+)");
+  expect(!untrustedMutableReturn.semanticValid &&
+             hasDiagnostic(untrustedMutableReturn.diagnostics,
+                           "cannot derive from a mutable parameter"),
+         "parsing trusted intrinsic signatures must not permit mutable "
+         "reference returns from ordinary free functions");
+}
+
+void testThisReceiverKeyword() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> tokens = lexer.scan("this self");
+  expect(tokens.size() >= 3 && tokens[0].kind == lang::TokenKind::THIS &&
+             tokens[1].kind == lang::TokenKind::IDENTIFIER,
+         "this should be the receiver keyword and self should remain an "
+         "ordinary identifier");
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("this-receiver.gti", R"(
+class Counter {
+  int value = 4;
+public:
+  int read() {
+    int self = 1;
+    return this.value + self - 1;
+  }
+};
+
+int main() {
+  Counter counter = Counter();
+  return counter.read() - 4;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "this member access and self identifiers should compile together");
+
+  bool foundThisValue = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.kind == lang::HirValueKind::This) {
+        foundThisValue = true;
+      }
+    }
+  }
+  expect(foundThisValue,
+         "typed HIR should preserve the current-object expression");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(generated.find("const auto &__gti_mir_p_") != std::string::npos &&
+             generated.find("= (*this).value;") != std::string::npos &&
+             generated.find("// GTI verified-MIR body:") != std::string::npos,
+         "the C++ backend should lower GTI this as a checked object receiver");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-this.gti", "int main() { return this.value; }");
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot use 'this' outside a class or struct method"),
+      "this should be rejected outside an instance method");
+}
+
+void testClassesStructsAndAccess() {
+  lang::Lexer lexer;
+  const std::string validSource = R"(
+class Vault {
+  int secret = 7;
+
+public:
+  int reveal() { return this.secret; }
+  int reveal_other(Vault other) { return other.secret; }
+};
+
+struct Reading {
+  int value = 1;
+
+private:
+  int hidden = 2;
+
+public:
+  int total() { return this.value + this.hidden; }
+};
+
+int open(mut Vault vault) { return vault.reveal(); }
+int read(Reading reading) { return reading.value; }
+)";
+  auto validTokens = lexer.scan(validSource);
+  expect(!lexer.hadError(), "class and struct access syntax should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "class and struct access syntax should parse");
+
+  lang::SemanticVisitor validSemantic;
+  expect(validSemantic.check(validProgram),
+         "public members and same-class private access should resolve");
+
+  const std::string generated = emitAnalyzedSource(validSource);
+  expect(generated.find("class Vault;") != std::string::npos &&
+             generated.find("struct Reading;") != std::string::npos &&
+             generated.find("class Vault {") != std::string::npos &&
+             generated.find("struct Reading {") != std::string::npos &&
+             generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_reveal() const;") != std::string::npos &&
+             generated.find("private:\n    std::int32_t hidden = "
+                            "static_cast<std::int32_t>(2)") !=
+                 std::string::npos &&
+             generated.find("= (*this).hidden;") != std::string::npos,
+         "emitter should preserve declaration kinds, access labels, and "
+         "frontend-owned field immutability");
+
+  auto invalidTokens = lexer.scan(R"(
+class A {
+  int private_value = 1;
+public:
+  int visible = 2;
+  int inspect(A other) { return other.private_value; }
+};
+
+struct B {
+  int public_value = 1;
+private:
+  int hidden = 2;
+};
+
+A wrong_type(B value) { return value; }
+int read_class_private(A value) { return value.private_value; }
+int read_struct_private(B value) { return value.hidden; }
+int read_missing(B value) { return value.missing; }
+
+class Duplicate {
+  int value = 1;
+public:
+  int value = 2;
+};
+
+class InvalidFields {
+  mut int missing_initializer;
+  int invalid_reference = missing_initializer;
+  int invalid_receiver = this.private_value;
+};
+
+int invalid_global_receiver = this.private_value;
+MissingType unresolved();
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid class semantics should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(
+      !invalidSemantic.check(invalidProgram),
+      "nominal, access, member, field, and receiver errors should be rejected");
+  expect(hasDiagnostic(invalidSemantic, "Cannot return a value of type"),
+         "different nominal class types should not be assignable");
+  expect(hasDiagnostic(invalidSemantic, "of 'A' is private") &&
+             hasDiagnostic(invalidSemantic, "of 'B' is private"),
+         "class defaults and explicit private labels should be enforced");
+  expect(hasDiagnostic(invalidSemantic, "Unknown member 'missing'"),
+         "unknown members should be diagnosed on their nominal type");
+  expect(hasDiagnostic(invalidSemantic, "Duplicate member declaration"),
+         "duplicate fields and methods should be rejected");
+  expect(
+      hasDiagnostic(invalidSemantic, "fields must have an initializer"),
+      "mutable fields should require initialization until constructors exist");
+  expect(hasDiagnostic(invalidSemantic, "referenced from field initializers"),
+         "field initializers should not depend on member initialization order");
+  expect(hasDiagnostic(invalidSemantic, "outside a class or struct method"),
+         "this should be rejected in fields and outside methods");
+  expect(hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'"),
+         "unknown nominal types should be diagnosed");
+
+  auto conditionalTokens = lexer.scan(R"(
+class PlatformValue {
+#if target.os == "public-os"
+public:
+#else
+private:
+#endif
+  int value = 1;
+};
+int read_platform(PlatformValue value) { return value.value; }
+)");
+  lang::Parser conditionalParser(std::move(conditionalTokens));
+  lang::Program conditionalProgram = conditionalParser.parse();
+  expect(!conditionalParser.hadError(),
+         "conditional access labels should parse in class bodies");
+
+  lang::SemanticVisitor publicTarget(
+      lang::TargetInfo{.os = "public-os", .vendor = "test", .arch = "test"});
+  lang::SemanticVisitor privateTarget(
+      lang::TargetInfo{.os = "private-os", .vendor = "test", .arch = "test"});
+  expect(publicTarget.check(conditionalProgram),
+         "the active public access branch should expose following members");
+  expect(!privateTarget.check(conditionalProgram) &&
+             hasDiagnostic(privateTarget, "is private"),
+         "the active private access branch should hide following members");
+
+  auto recoveryTokens = lexer.scan(R"(
+struct Recovered {
+  public int value = 1;
+private:
+  int hidden = 2;
+};
+int main() { return 0; }
+)");
+  lang::Parser recoveryParser(std::move(recoveryTokens));
+  lang::Program recoveryProgram = recoveryParser.parse();
+  expect(
+      recoveryParser.errors().size() == 1 &&
+          recoveryProgram.declarations().size() == 2,
+      "parser recovery should resume at access labels and later declarations");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box{public:int value=1;private:int hidden=2;};"
+      "struct Point{int x=0;};");
+  expect(formatted == "class Box {\npublic:\n  int value = 1;\nprivate:\n"
+                      "  int hidden = 2;\n};\nstruct Point {\n"
+                      "  int x = 0;\n};\n",
+         "formatter should outdent C++-style access labels");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted class access labels should be idempotent");
+}
+
+void testMutableFieldGroups() {
+  const lang::TargetInfo target = lang::TargetInfo::host();
+  const std::string source = R"(
+#define FIELD_GROUP_ACTIVE
+
+struct Counter {
+public:
+  mut {
+    int first = 1;
+#ifdef FIELD_GROUP_ACTIVE
+    int second = 2;
+#else
+    int second = 20;
+#endif
+  }
+
+  int identity = 4;
+
+  void increment() mut {
+    this.first++;
+    this.second++;
+  }
+
+  int value() {
+    return this.first + this.second + this.identity;
+  }
+};
+
+[[c_abi]] struct GroupedNative {
+  mut {
+    int32_t x;
+    int32_t y;
+  }
+};
+
+[[c_abi]] struct ExpandedNative {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+int main() {
+  mut Counter counter = Counter();
+  counter.increment();
+  return counter.value() == 9 ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend({.target = target})
+          .analyze("mutable-field-groups.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "mutable field groups should compile as ordinary mutable fields");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::ClassDecl *counter = nullptr;
+  const lang::ClassDecl *groupedNative = nullptr;
+  const lang::ClassDecl *expandedNative = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(declaration.get());
+    if (classDecl == nullptr) {
+      continue;
+    }
+    if (classDecl->name().lexeme == "Counter") {
+      counter = classDecl;
+    } else if (classDecl->name().lexeme == "GroupedNative") {
+      groupedNative = classDecl;
+    } else if (classDecl->name().lexeme == "ExpandedNative") {
+      expandedNative = classDecl;
+    }
+  }
+  expect(counter != nullptr && groupedNative != nullptr &&
+             expandedNative != nullptr,
+         "field-group fixtures should retain their class declarations");
+  if (counter == nullptr || groupedNative == nullptr ||
+      expandedNative == nullptr) {
+    return;
+  }
+
+  const lang::MutableFieldGroupDecl *group = nullptr;
+  for (const lang::StmtPtr &member : counter->members()) {
+    if (const auto *candidate =
+            dynamic_cast<const lang::MutableFieldGroupDecl *>(member.get())) {
+      group = candidate;
+      break;
+    }
+  }
+  expect(group != nullptr && !group->members().empty(),
+         "the AST should preserve the mutable field-group source container");
+  if (group == nullptr) {
+    return;
+  }
+  const auto *first =
+      dynamic_cast<const lang::VariableDecl *>(group->members().front().get());
+  expect(first != nullptr && first->isMutable(),
+         "grouped field declarations should carry effective mutable "
+         "semantics without an individual mut token");
+
+  const lang::ClassTypeInfo *counterInfo =
+      frontend.semantics.findClassType(*counter);
+  expect(counterInfo != nullptr && counterInfo->fields.size() == 3 &&
+             counterInfo->fields[0].declaration->name().lexeme == "first" &&
+             counterInfo->fields[1].declaration->name().lexeme == "second" &&
+             counterInfo->fields[2].declaration->name().lexeme == "identity" &&
+             counterInfo->fields[0].declaration->isMutable() &&
+             counterInfo->fields[1].declaration->isMutable() &&
+             !counterInfo->fields[2].declaration->isMutable(),
+         "semantic collection should flatten active grouped fields in source "
+         "order without changing following immutable fields");
+
+  const lang::ClassTypeInfo *groupedInfo =
+      frontend.semantics.findClassType(*groupedNative);
+  const lang::ClassTypeInfo *expandedInfo =
+      frontend.semantics.findClassType(*expandedNative);
+  bool matchingAbi = groupedInfo != nullptr && expandedInfo != nullptr &&
+                     groupedInfo->cAbiLayout && expandedInfo->cAbiLayout &&
+                     groupedInfo->cAbiLayout->sizeBytes ==
+                         expandedInfo->cAbiLayout->sizeBytes &&
+                     groupedInfo->cAbiLayout->abiAlignmentBytes ==
+                         expandedInfo->cAbiLayout->abiAlignmentBytes &&
+                     groupedInfo->cAbiLayout->fields.size() ==
+                         expandedInfo->cAbiLayout->fields.size();
+  if (matchingAbi) {
+    for (std::size_t index = 0; index < groupedInfo->cAbiLayout->fields.size();
+         ++index) {
+      const lang::CAbiRecordFieldLayout &groupedField =
+          groupedInfo->cAbiLayout->fields[index];
+      const lang::CAbiRecordFieldLayout &expandedField =
+          expandedInfo->cAbiLayout->fields[index];
+      matchingAbi =
+          matchingAbi && groupedField.type == expandedField.type &&
+          groupedField.offsetBytes == expandedField.offsetBytes &&
+          groupedField.sizeBytes == expandedField.sizeBytes &&
+          groupedField.abiAlignmentBytes == expandedField.abiAlignmentBytes;
+    }
+  }
+  expect(matchingAbi,
+         "grouped and explicitly mutable C ABI records should have identical "
+         "layout facts");
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
+  std::size_t counterFields = 0;
+  bool groupLeakedIntoLowering = false;
+  for (const lang::LoweredDeclaration &declaration : lowered.declarations()) {
+    groupLeakedIntoLowering =
+        groupLeakedIntoLowering ||
+        declaration.kind == lang::LoweredDeclarationKind::Other;
+    const auto *storage =
+        std::get_if<lang::LoweredStorageDeclaration>(&declaration.payload);
+    if (storage != nullptr && counterInfo != nullptr &&
+        storage->ownerClass == counterInfo->id) {
+      ++counterFields;
+      if (declaration.name == "first" || declaration.name == "second") {
+        expect(storage->mutability == lang::Mutability::Mutable,
+               "lowered grouped fields should retain ordinary mutable field "
+               "records");
+      }
+    }
+  }
+  expect(counterFields == 3 && !groupLeakedIntoLowering,
+         "LoweredProgram should contain only flattened ordinary fields and no "
+         "mutable-group declaration");
+
+  const std::string generated =
+      gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target);
+  expect(generated.find("std::int32_t first") != std::string::npos &&
+             generated.find("std::int32_t second") != std::string::npos &&
+             generated.find("mutable_field_group") == std::string::npos,
+         "the C++ backend should consume flattened field declarations only");
+
+  const std::string formatted = lang::Formatter().format(
+      "struct Sample{private:mut{int first=0;int second=1;}int id=2;};");
+  const std::string expectedFormatting = R"(struct Sample {
+private:
+  mut {
+    int first = 0;
+    int second = 1;
+  }
+  int id = 2;
+};
+)";
+  expect(formatted == expectedFormatting &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve and idempotently indent mutable field "
+         "groups without adding a semicolon");
+
+  const std::array<std::pair<std::string, std::string>, 12> invalidSyntax{{
+      {"interface Bad { mut { int value = 0; } };",
+       "Interfaces cannot contain mutable field groups"},
+      {"union Bad { mut { int value = 0; } };",
+       "Unions cannot contain mutable field groups"},
+      {"struct Bad { mut {} };",
+       "A mutable field group must contain at least one field"},
+      {"struct Bad { mut { mut int value = 0; } int recovered = 1; };",
+       "already mutable"},
+      {"struct Bad { mut { static int value = 0; } int recovered = 1; };",
+       "only direct instance fields"},
+      {"struct Bad { mut { constexpr int value = 0; } "
+       "int recovered = 1; };",
+       "cannot contain constexpr fields"},
+      {"struct Bad { mut { void run() {} } int recovered = 1; };",
+       "Methods and constructors cannot be declared"},
+      {"struct Bad { mut { Bad() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { ~Bad() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { operator int() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { private: int value = 0; } "
+       "int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { mut { int value = 0; } } "
+       "int recovered = 1; };",
+       "already mutable"},
+  }};
+  for (const auto &[invalidSource, expected] : invalidSyntax) {
+    const lang::FrontendResult invalid = lang::Frontend().analyze(
+        "invalid-mutable-field-group.gti", invalidSource);
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnostic(invalid.diagnostics, expected),
+           "invalid mutable field-group contents should produce a focused "
+           "parser diagnostic");
+  }
+
+  const lang::FrontendResult storedReference =
+      lang::Frontend().analyze("mutable-field-group-reference.gti", R"(
+class Borrowed {
+  mut {
+    int& value;
+  }
+
+public:
+  Borrowed(int& input) : value(input) {}
+};
+)");
+  expect(!storedReference.canGenerateCode() &&
+             hasDiagnostic(storedReference.diagnostics,
+                           "Stored reference fields must be read-only") &&
+             hasRelatedDiagnostic(storedReference.diagnostics,
+                                  "inherits mutability from this field group"),
+         "a grouped stored-reference error should identify the inherited "
+         "mutability source");
+}
+
+void testConstructorsAndReceiverMutability() {
+  lang::Lexer lexer;
+  const std::string validSource = R"(
+class Counter {
+  mut int value;
+  int step = 1;
+
+public:
+  Counter() : value(0) {}
+  Counter(int initial) : value(initial) {}
+  Counter(bool reset) : value(0) {}
+  int read() { return this.value; }
+  int advance(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+struct Origin {
+  int x = 0;
+  Origin(int initial) : x(initial) {}
+};
+
+class LifecycleValue {
+  int value = 0;
+
+public:
+  LifecycleValue(LifecycleValue& other) = default;
+  LifecycleValue(LifecycleValue&& other) = default;
+};
+
+class MoveOnlyPolicy {
+  int value = 0;
+
+public:
+  MoveOnlyPolicy(MoveOnlyPolicy& other) = delete;
+  MoveOnlyPolicy(MoveOnlyPolicy&& other) = default;
+};
+
+int inspect(Counter counter) { return counter.read(); }
+int main() {
+  Counter zero = Counter();
+  Counter fixed = Counter(1);
+  mut int observed = fixed.read();
+  mut Counter moving = Counter(observed);
+  observed = moving.advance(2);
+  Origin origin = Origin();
+  Origin shifted = Origin(4);
+  Counter reset = Counter(true);
+  LifecycleValue source{};
+  LifecycleValue copied = LifecycleValue(source);
+  mut LifecycleValue movable{};
+  LifecycleValue moved = LifecycleValue(std::move(movable));
+  mut MoveOnlyPolicy owner{};
+  MoveOnlyPolicy transferred = MoveOnlyPolicy(std::move(owner));
+  return observed + origin.x;
+}
+)";
+  auto validTokens = lexer.scan(validSource);
+  expect(!lexer.hadError(), "constructor and receiver syntax should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "constructor and receiver syntax should parse");
+
+  const lang::FrontendResult validFrontend =
+      lang::Frontend().analyze("constructors-and-receivers.gti", validSource,
+                               {standardLibraryPrelude()});
+  expect(validFrontend.semanticValid,
+         "explicit construction and mutable receiver calls should validate");
+
+  const lang::ClassDecl *counter =
+      findTopLevelClass(validFrontend.program, "Counter");
+  const lang::ClassDecl *origin =
+      findTopLevelClass(validFrontend.program, "Origin");
+  const lang::ClassDecl *lifecycleValue =
+      findTopLevelClass(validFrontend.program, "LifecycleValue");
+  const lang::ClassDecl *moveOnlyPolicy =
+      findTopLevelClass(validFrontend.program, "MoveOnlyPolicy");
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(validFrontend.program, "main");
+  const auto *zero = main == nullptr
+                         ? nullptr
+                         : dynamic_cast<const lang::VariableDecl *>(
+                               main->body()->statements().at(0).get());
+  const auto *fixed = main == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                main->body()->statements().at(1).get());
+  const auto *defaultOrigin = main == nullptr
+                                  ? nullptr
+                                  : dynamic_cast<const lang::VariableDecl *>(
+                                        main->body()->statements().at(5).get());
+  const auto *zeroCall =
+      zero == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(zero->initializer().get());
+  const auto *fixedCall =
+      fixed == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(fixed->initializer().get());
+  const auto *originCall = defaultOrigin == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::Call *>(
+                                     defaultOrigin->initializer().get());
+  const auto constructorCallAt = [&](std::size_t index) {
+    const auto *declaration =
+        main == nullptr ? nullptr
+                        : dynamic_cast<const lang::VariableDecl *>(
+                              main->body()->statements().at(index).get());
+    return declaration == nullptr ? static_cast<const lang::Call *>(nullptr)
+                                  : dynamic_cast<const lang::Call *>(
+                                        declaration->initializer().get());
+  };
+  const lang::Call *copyCall = constructorCallAt(9);
+  const lang::Call *moveCall = constructorCallAt(11);
+  const lang::Call *moveOnlyCall = constructorCallAt(13);
+  const lang::ClassLifecycleInfo *counterLifecycle =
+      counter == nullptr ? nullptr
+                         : validFrontend.semantics.findClassLifecycle(*counter);
+  const lang::ClassLifecycleInfo *originLifecycle =
+      origin == nullptr ? nullptr
+                        : validFrontend.semantics.findClassLifecycle(*origin);
+  const lang::ClassLifecycleInfo *valueLifecycle =
+      lifecycleValue == nullptr
+          ? nullptr
+          : validFrontend.semantics.findClassLifecycle(*lifecycleValue);
+  const lang::ClassLifecycleInfo *moveOnlyLifecycle =
+      moveOnlyPolicy == nullptr
+          ? nullptr
+          : validFrontend.semantics.findClassLifecycle(*moveOnlyPolicy);
+  const lang::ResolvedConstructionInfo *zeroConstruction =
+      zeroCall == nullptr ? nullptr
+                          : validFrontend.semantics.findConstruction(*zeroCall);
+  const lang::ResolvedConstructionInfo *fixedConstruction =
+      fixedCall == nullptr
+          ? nullptr
+          : validFrontend.semantics.findConstruction(*fixedCall);
+  const lang::ResolvedConstructionInfo *originConstruction =
+      originCall == nullptr
+          ? nullptr
+          : validFrontend.semantics.findConstruction(*originCall);
+  const lang::ResolvedConstructionInfo *copyConstruction =
+      copyCall == nullptr ? nullptr
+                          : validFrontend.semantics.findConstruction(*copyCall);
+  const lang::ResolvedConstructionInfo *moveConstruction =
+      moveCall == nullptr ? nullptr
+                          : validFrontend.semantics.findConstruction(*moveCall);
+  const lang::ResolvedConstructionInfo *moveOnlyConstruction =
+      moveOnlyCall == nullptr
+          ? nullptr
+          : validFrontend.semantics.findConstruction(*moveOnlyCall);
+  expect(counterLifecycle != nullptr && originLifecycle != nullptr &&
+             counterLifecycle->constructors.size() == 3 &&
+             counterLifecycle->defaultConstructor ==
+                 lang::SpecialMemberStatus::Declared &&
+             counterLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterLifecycle->moveAssignment ==
+                 lang::SpecialMemberStatus::Generated &&
+             originLifecycle->defaultConstructor ==
+                 lang::SpecialMemberStatus::Generated,
+         "class lifecycle metadata should distinguish declared, generated, "
+         "and available special members");
+  expect(valueLifecycle != nullptr && moveOnlyLifecycle != nullptr &&
+             valueLifecycle->declaredCopyConstructor &&
+             valueLifecycle->declaredMoveConstructor &&
+             valueLifecycle->declaredCopyConstructor->kind ==
+                 lang::ConstructorKind::Copy &&
+             valueLifecycle->declaredMoveConstructor->kind ==
+                 lang::ConstructorKind::Move &&
+             valueLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             valueLifecycle->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             moveOnlyLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Deleted &&
+             moveOnlyLifecycle->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated,
+         "declared copy and move policies should override lifecycle "
+         "availability without entering ordinary overload sets");
+  expect(zeroConstruction != nullptr && fixedConstruction != nullptr &&
+             originConstruction != nullptr &&
+             zeroConstruction->declaration != fixedConstruction->declaration &&
+             !zeroConstruction->generatedDefault &&
+             originConstruction->generatedDefault,
+         "construction metadata should retain exact overload selection and "
+         "generated default construction");
+  expect(copyConstruction != nullptr && moveConstruction != nullptr &&
+             moveOnlyConstruction != nullptr &&
+             copyConstruction->kind == lang::ConstructorKind::Copy &&
+             moveConstruction->kind == lang::ConstructorKind::Move &&
+             moveOnlyConstruction->kind == lang::ConstructorKind::Move &&
+             copyConstruction->declaration != nullptr &&
+             moveConstruction->declaration != nullptr,
+         "same-type construction should resolve explicitly to copy or move "
+         "lifecycle operations");
+
+  const lang::FrontendResult lifecycleFrontend =
+      lang::Frontend().analyze("copy-move-policy.gti", R"(
+class Value {
+  int value = 0;
+public:
+  Value(Value& other) = default;
+  Value(Value&& other) = default;
+};
+class GenericValue<T> {
+  T value;
+public:
+  GenericValue(T initial) : value(initial) {}
+  GenericValue(GenericValue<T>& other) = default;
+  GenericValue(GenericValue<T>&& other) = default;
+};
+int main() {
+  Value source{};
+  Value copied = Value(source);
+  mut Value movable{};
+  Value moved = Value(std::move(movable));
+  GenericValue<int> generic_source = GenericValue<int>(1);
+  GenericValue<int> generic_copy = GenericValue<int>(generic_source);
+  mut GenericValue<int> generic_movable = GenericValue<int>(2);
+  GenericValue<int> generic_move =
+      GenericValue<int>(std::move(generic_movable));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(lifecycleFrontend.canGenerateCode(),
+         "copy and move policy calls should pass the complete frontend");
+  std::size_t hirCopies = 0;
+  std::size_t hirMoves = 0;
+  for (const lang::HirFunctionInstance &function :
+       lifecycleFrontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      hirCopies += value.constructorKind == lang::ConstructorKind::Copy;
+      hirMoves += value.constructorKind == lang::ConstructorKind::Move;
+    }
+  }
+  expect(hirCopies == 2 && hirMoves == 2,
+         "typed HIR should preserve special construction kinds without "
+         "creating source constructor bodies");
+
+  expect(lifecycleFrontend.mir.valid(),
+         "copy and move construction should lower to valid MIR");
+  std::size_t mirCopies = 0;
+  std::size_t mirMoves = 0;
+  for (const lang::MirFunctionInstance &function :
+       lifecycleFrontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct) {
+          continue;
+        }
+        mirCopies += instruction.constructorKind == lang::ConstructorKind::Copy;
+        mirMoves += instruction.constructorKind == lang::ConstructorKind::Move;
+      }
+    }
+  }
+  expect(mirCopies == 2 && mirMoves == 2,
+         "MIR construct instructions should retain copy and move identity");
+
+  const lang::BackendArtifact generatedArtifact =
+      gti_test::emitCpp(validFrontend, validFrontend.mir, validFrontend.mir,
+                        lang::OptimizationPipeline().run(
+                            validFrontend.hir, lang::OptimizationLevel::O0));
+  const std::string &generated = generatedArtifact.contents;
+  const std::string &lifecycleGenerated = generatedArtifact.contents;
+  expect(generated.find("explicit Counter(const std::int32_t initial);") !=
+                 std::string::npos &&
+             generated.find("Counter::Counter(std::int32_t __gti_mir_arg_0) : "
+                            "value(__gti_mir_arg_0)") != std::string::npos,
+         "constructor overloads should lower explicitly with field "
+         "initialization");
+  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_read() const") != std::string::npos,
+         "methods should lower as read-only by default");
+  expect(generated.find("_advance(const std::int32_t amount) const") ==
+                 std::string::npos &&
+             generated.find("_advance(const std::int32_t amount)") !=
+                 std::string::npos,
+         "mutable receiver methods should lower without C++ const");
+  const std::string originSlotPrefix =
+      "mir_lifetime_slot<::__gti_program::Origin> ";
+  const std::size_t originSlotAt = generated.find(originSlotPrefix);
+  const std::size_t originSlotNameAt =
+      originSlotAt == std::string::npos
+          ? std::string::npos
+          : originSlotAt + originSlotPrefix.size();
+  const std::size_t originSlotNameEnd =
+      originSlotNameAt == std::string::npos
+          ? std::string::npos
+          : generated.find(';', originSlotNameAt);
+  const std::string originSlot =
+      originSlotNameEnd == std::string::npos
+          ? std::string{}
+          : generated.substr(originSlotNameAt,
+                             originSlotNameEnd - originSlotNameAt);
+  expect(!originSlot.empty() &&
+             generated.find(originSlot + ".construct();", originSlotNameEnd) !=
+                 std::string::npos,
+         "generated default construction should remain explicit at the call "
+         "site");
+  expect(lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
+             lifecycleGenerated.find("Counter(const Counter &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find("Counter(Counter &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "Counter &operator=(const Counter &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "Counter &operator=(Counter &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find("~Counter() noexcept = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "LifecycleValue(const LifecycleValue &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "LifecycleValue(LifecycleValue &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "MoveOnlyPolicy(const MoveOnlyPolicy &) = delete;") !=
+                 std::string::npos,
+         "the backend should explicitly emit compiler-generated special "
+         "members");
+
+  const std::string invalidSource = R"(
+class MissingInitialization {
+  int value;
+};
+
+class InvalidConstructor {
+  int first;
+  int second;
+
+public:
+  InvalidConstructor(int value)
+      : second(value), first(this.second), second(value) { return; }
+  InvalidConstructor(mut int value) : first(value), second(value) {}
+};
+
+class ReservedCopy {
+  int value = 0;
+
+public:
+  ReservedCopy(ReservedCopy& other) : value(other.value) {}
+};
+
+class CleanupCopy {
+  int value = 0;
+
+public:
+  CleanupCopy(CleanupCopy& other) = default;
+  ~CleanupCopy() {}
+};
+
+class DeletedCopy {
+  int value = 0;
+
+public:
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+};
+
+class DeletedMove {
+  int value = 0;
+
+public:
+  DeletedMove(DeletedMove& other) = default;
+  DeletedMove(DeletedMove&& other) = delete;
+};
+
+class InvalidDefaultTarget {
+  int value = 0;
+
+public:
+  InvalidDefaultTarget(int value) = default;
+};
+
+class PrivatePolicy {
+  PrivatePolicy(PrivatePolicy& other) = delete;
+};
+
+void invalid_rvalue_reference(DeletedCopy&& value) {}
+void consume_deleted(DeletedCopy value) {}
+
+class PrivateValue {
+  int value;
+  PrivateValue(int initial) : value(initial) {}
+};
+
+class MutableValue {
+  mut int value = 0;
+
+public:
+  void mutate() { this.value = 1; }
+  void mutate_other(MutableValue other) mut { other.value = 1; }
+  void bump() mut { this.value += 1; }
+};
+
+class ImmutableField {
+  int value = 0;
+
+public:
+  void replace() mut { this.value = 1; }
+};
+
+int main() {
+  PrivateValue hidden = PrivateValue(1);
+  MutableValue fixed = MutableValue();
+  fixed.bump();
+  mut MutableValue moving = MutableValue();
+  moving.bump();
+  mut MutableValue uninitialized;
+  InvalidConstructor mismatch = InvalidConstructor(true);
+  MutableValue implicit_value = 1;
+  DeletedCopy original{};
+  DeletedCopy copied = DeletedCopy(original);
+  DeletedCopy copied_directly = original;
+  consume_deleted(original);
+  mut DeletedMove stationary{};
+  DeletedMove moved = DeletedMove(std::move(stationary));
+  return 0;
+}
+)";
+  auto invalidTokens = lexer.scan(invalidSource);
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid constructor semantics should remain valid syntax");
+
+  const lang::FrontendResult invalidFrontend =
+      lang::Frontend().analyze("invalid-constructors-and-receivers.gti",
+                               invalidSource, {standardLibraryPrelude()});
+  const std::vector<lang::Diagnostic> &invalidSemantic =
+      invalidFrontend.diagnostics;
+  expect(!invalidFrontend.semanticValid,
+         "invalid construction and receiver use should be rejected");
+  expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
+         "a class without a constructor should still initialize every field");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Duplicate constructor overload signature"),
+         "constructor overload signatures should be unique by exact parameter "
+         "type");
+  expect(hasDiagnostic(invalidSemantic, "field declaration order") &&
+             hasDiagnostic(invalidSemantic, "initialized more than once"),
+         "constructor initializer order and uniqueness should be enforced");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Cannot use 'this' in a constructor initializer"),
+         "constructor initializers should not observe a partial object");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Constructors cannot contain return statements"),
+         "constructor bodies should reject return statements");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Custom copy and move constructor bodies require"),
+         "custom lifecycle bodies should remain gated on place-aware moves");
+  expect(hasDiagnostic(invalidSemantic,
+                       "defaulted copy constructor of 'CleanupCopy' is "
+                       "unavailable"),
+         "a defaulted copy policy should reject structurally noncopyable "
+         "state");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Copy construction of 'DeletedCopy' is deleted"),
+         "an explicitly deleted copy constructor should reject construction");
+  expect(hasDiagnostic(invalidSemantic, "Cannot initialize 'copied_directly'"),
+         "deleted copy policy should govern direct initialization");
+  expect(hasDiagnostic(invalidSemantic, "deleted copy constructor"),
+         "deleted copy policy should govern by-value calls");
+  expect(hasDiagnostic(invalidSemantic, "type 'DeletedMove' is not movable"),
+         "an explicitly deleted move constructor should reject std::move");
+  expect(hasDiagnostic(invalidSemantic,
+                       "must use the exact form 'InvalidDefaultTarget() = "
+                       "default;'"),
+         "ordinary constructor defaulting should require the exact "
+         "zero-argument form");
+  expect(
+      hasDiagnostic(invalidSemantic, "constructor policies must be public") &&
+          hasDiagnostic(invalidSemantic,
+                        "'&&' is currently confined to a class or struct's "
+                        "exact move constructor policy"),
+      "the confined policy layer should reject private policies and "
+      "general rvalue references");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Constructor of 'PrivateValue' is private"),
+         "constructor access should follow class access labels");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Mutable method requires a mutable receiver") &&
+             hasDiagnostic(invalidSemantic,
+                           "Cannot mutate through a read-only receiver"),
+         "mutable methods and field writes should require mutable receivers");
+  expect(hasDiagnostic(invalidSemantic, "Member is immutable"),
+         "frontend field immutability should remain enforced independently of "
+         "the C++ representation");
+  expect(
+      hasDiagnostic(invalidSemantic,
+                    "No constructor of 'InvalidConstructor'") &&
+          hasDiagnostic(invalidSemantic, "Cannot initialize 'implicit_value'"),
+      "constructor calls should reject mismatched and implicit conversions");
+  expect(hasDiagnostic(invalidSemantic, "require explicit construction"),
+         "class variables should never invoke construction implicitly");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Counter{mut int value;public:Counter(int initial):value(initial){}"
+      "Counter(Counter& other)=default;Counter(Counter&& other)=delete;"
+      "int read(){return this.value;}void reset()mut{this.value=0;}};");
+  expect(formatted.find("Counter(int initial) : value(initial) {}") !=
+                 std::string::npos &&
+             formatted.find("Counter(Counter& other) = default;") !=
+                 std::string::npos &&
+             formatted.find("Counter(Counter&& other) = delete;") !=
+                 std::string::npos &&
+             formatted.find("void reset() mut {") != std::string::npos,
+         "formatter should distinguish constructor policies from logical "
+         "operators and switch labels");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted constructors and receiver qualifiers should be idempotent");
+
+  lang::Parser globalQualifierParser(lexer.scan("void invalid() mut {}"));
+  globalQualifierParser.parse();
+  expect(globalQualifierParser.hadError() &&
+             globalQualifierParser.errors().front().message.find(
+                 "Only class and struct methods") != std::string::npos,
+         "free functions should reject receiver mutability qualifiers");
+}
+
+void testInheritanceAndInterfaces() {
+  const std::string source = R"(
+interface Renderable {
+  int render(int frame);
+};
+
+interface Named {
+  int name_id();
+};
+
+class Entity {
+public:
+  Entity(int id) : id(id) {}
+  virtual int tick(int frame) { return frame + this.id; }
+  virtual int tick(float frame) { return 10; }
+
+private:
+  int id;
+};
+
+class Sprite : public Entity, public Renderable, public Named {
+public:
+  Sprite(int id) : Entity(id) {}
+  int tick(int frame) override { return frame + 2; }
+  int inherited_tick() { return tick(1.5); }
+  int render(int frame) override { return this.tick(frame); }
+  int name_id() override { return 7; }
+};
+
+interface Reader<T> {
+  T read();
+};
+
+class Box<T> : public Reader<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() override { return this.value; }
+};
+
+class ClassContract {
+public:
+  virtual int class_only() = 0;
+};
+
+class ClassImplementation : public ClassContract {
+public:
+  int class_only() override { return 1; }
+};
+
+int invoke(Renderable& renderable) {
+  return renderable.render(3);
+}
+
+int invoke_direct(Sprite& sprite) {
+  return sprite.render(3);
+}
+
+int main() {
+  Sprite sprite{4};
+  Box<int> box{3};
+  Reader<int>& reader = box;
+  int inherited_overload = sprite.tick(1.5);
+  return invoke(sprite) + invoke_direct(sprite) + inherited_overload +
+         sprite.inherited_tick() + reader.read() - 33;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("inheritance.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected inheritance diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "public state, interface, and generic inheritance should pass the "
+         "frontend");
+
+  const auto *renderable = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(0).get());
+  const auto *entity = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(2).get());
+  const auto *sprite = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(3).get());
+  const auto *box = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(5).get());
+  const lang::ClassTypeInfo *renderableType =
+      renderable == nullptr ? nullptr
+                            : frontend.semantics.findClassType(*renderable);
+  const lang::ClassTypeInfo *spriteType =
+      sprite == nullptr ? nullptr : frontend.semantics.findClassType(*sprite);
+  const lang::ClassLifecycleInfo *entityLifecycle =
+      entity == nullptr ? nullptr
+                        : frontend.semantics.findClassLifecycle(*entity);
+  const lang::ClassLifecycleInfo *spriteLifecycle =
+      sprite == nullptr ? nullptr
+                        : frontend.semantics.findClassLifecycle(*sprite);
+  expect(renderableType != nullptr && renderableType->abstract &&
+             renderableType->polymorphic &&
+             renderableType->kind == lang::ClassKind::Interface,
+         "interfaces should be abstract polymorphic semantic types");
+  expect(spriteType != nullptr && spriteType->bases.size() == 3 &&
+             !spriteType->abstract && spriteType->polymorphic &&
+             entityLifecycle != nullptr && entityLifecycle->polymorphic &&
+             spriteLifecycle != nullptr && spriteLifecycle->polymorphic,
+         "concrete derived classes should retain base and lifecycle metadata");
+
+  const auto findMethod = [](const lang::ClassDecl *owner,
+                             std::string_view name) {
+    if (owner == nullptr) {
+      return static_cast<const lang::FunctionDecl *>(nullptr);
+    }
+    for (const lang::StmtPtr &member : owner->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == name) {
+        return function;
+      }
+    }
+    return static_cast<const lang::FunctionDecl *>(nullptr);
+  };
+  const lang::FunctionDecl *contract = findMethod(renderable, "render");
+  const lang::FunctionDecl *implementation = findMethod(sprite, "render");
+  const lang::FunctionDecl *boxRead = findMethod(box, "read");
+  const lang::FunctionInfo *contractInfo =
+      contract == nullptr ? nullptr
+                          : frontend.semantics.findFunction(*contract);
+  const lang::FunctionInfo *implementationInfo =
+      implementation == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(*implementation);
+  expect(contract != nullptr && !contract->isPure() &&
+             contractInfo != nullptr && contractInfo->virtualMethod &&
+             contractInfo->pureVirtual && implementationInfo != nullptr &&
+             implementationInfo->virtualMethod &&
+             implementationInfo->overrideMethod &&
+             implementationInfo->virtualRoots.size() == 1 &&
+             implementationInfo->virtualRoots.front() == contractInfo->id,
+         "interface signatures should become pure virtual contracts without "
+         "requiring a source-level '= 0;'");
+
+  const lang::FunctionDecl *invoke =
+      findTopLevelFunction(frontend.program, "invoke");
+  const auto *invokeReturn =
+      invoke == nullptr || invoke->body()->statements().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ReturnStmt *>(
+                invoke->body()->statements().front().get());
+  const auto *virtualCall =
+      invokeReturn == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(invokeReturn->value().get());
+  const lang::ResolvedCallInfo *callInfo =
+      virtualCall == nullptr ? nullptr
+                             : frontend.semantics.findCall(*virtualCall);
+  expect(callInfo != nullptr &&
+             callInfo->dispatch == lang::CallDispatch::Virtual,
+         "calls through interface references should carry virtual dispatch");
+
+  const lang::FunctionDecl *invokeDirect =
+      findTopLevelFunction(frontend.program, "invoke_direct");
+  const auto *directReturn =
+      invokeDirect == nullptr || invokeDirect->body()->statements().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ReturnStmt *>(
+                invokeDirect->body()->statements().front().get());
+  const auto *directCall =
+      directReturn == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(directReturn->value().get());
+  const lang::ResolvedCallInfo *directCallInfo =
+      directCall == nullptr ? nullptr
+                            : frontend.semantics.findCall(*directCall);
+  expect(directCallInfo != nullptr && implementationInfo != nullptr &&
+             spriteType != nullptr &&
+             directCallInfo->function == implementationInfo->id &&
+             directCallInfo->dispatch == lang::CallDispatch::Virtual &&
+             directCallInfo->dispatchOwner.kind == lang::SemanticType::Class &&
+             directCallInfo->dispatchOwner.classId == spriteType->id,
+         "a concrete override call should retain its exact target, virtual "
+         "dispatch, and concrete dispatch owner in semantics");
+
+  const lang::HirClassInstance *spriteHir = nullptr;
+  const lang::HirFunctionInstance *invokeHir = nullptr;
+  const lang::HirFunctionInstance *invokeDirectHir = nullptr;
+  const lang::HirFunctionInstance *boxReadHir = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == sprite) {
+      spriteHir = &instance;
+    }
+  }
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == invoke) {
+      invokeHir = &instance;
+    }
+    if (instance.source == invokeDirect) {
+      invokeDirectHir = &instance;
+    }
+    if (instance.source == boxRead) {
+      boxReadHir = &instance;
+    }
+  }
+  const bool hirHasVirtualCall =
+      invokeHir != nullptr &&
+      std::any_of(invokeHir->body.values.begin(), invokeHir->body.values.end(),
+                  [](const lang::HirValue &value) {
+                    return value.kind == lang::HirValueKind::Call &&
+                           value.dispatch == lang::CallDispatch::Virtual &&
+                           value.dispatchOwner.kind ==
+                               lang::SemanticType::Class;
+                  });
+  const lang::HirValue *directHirCall = nullptr;
+  if (invokeDirectHir != nullptr) {
+    const auto found = std::find_if(
+        invokeDirectHir->body.values.begin(),
+        invokeDirectHir->body.values.end(), [&](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.source == directCall;
+        });
+    if (found != invokeDirectHir->body.values.end()) {
+      directHirCall = &*found;
+    }
+  }
+  const lang::HirFunctionInstance *directHirTarget =
+      directHirCall != nullptr && directHirCall->functionTarget
+          ? frontend.hir.findFunctionInstance(*directHirCall->functionTarget)
+          : nullptr;
+  expect(spriteHir != nullptr && spriteHir->bases.size() == 3 &&
+             spriteHir->polymorphic && hirHasVirtualCall &&
+             boxReadHir != nullptr && boxReadHir->owner &&
+             boxReadHir->virtualMethod && boxReadHir->overrideMethod,
+         "HIR should retain base instances and virtual call dispatch");
+  expect(directHirCall != nullptr && directHirTarget != nullptr &&
+             spriteHir != nullptr &&
+             directHirCall->dispatch == lang::CallDispatch::Virtual &&
+             directHirCall->dispatchOwner == spriteHir->type &&
+             directHirTarget->source == implementation &&
+             directHirTarget->virtualRoots.size() == 1 &&
+             contractInfo != nullptr &&
+             directHirTarget->virtualRoots.front() == contractInfo->id,
+         "HIR should preserve the concrete override target and its exact "
+         "virtual contract root");
+  const lang::MirClassInstance *spriteMir =
+      spriteHir == nullptr ? nullptr
+                           : frontend.mir.findClassInstance(spriteHir->id);
+  expect(spriteMir != nullptr && spriteMir->bases.size() == 3 &&
+             spriteMir->polymorphic,
+         "MIR should preserve inheritance metadata for future backends");
+  const lang::MirFunctionInstance *invokeDirectMir =
+      invokeDirectHir == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(invokeDirectHir->id);
+  const lang::MirInstruction *directMirCall = nullptr;
+  if (invokeDirectMir != nullptr && directHirTarget != nullptr) {
+    for (const lang::MirBlock &block : invokeDirectMir->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == directHirTarget->id;
+          });
+      if (found != block.instructions.end()) {
+        directMirCall = &*found;
+        break;
+      }
+    }
+  }
+  const lang::MirFunctionInstance *directMirTarget =
+      directMirCall != nullptr && directMirCall->functionTarget
+          ? frontend.mir.findFunctionInstance(*directMirCall->functionTarget)
+          : nullptr;
+  expect(directMirCall != nullptr && directMirTarget != nullptr &&
+             spriteMir != nullptr &&
+             directMirCall->dispatch == lang::CallDispatch::Virtual &&
+             directMirCall->dispatchOwner == spriteMir->type &&
+             directMirCall->definedFailure.propagation ==
+                 lang::FailurePropagationKind::VirtualCall &&
+             directMirTarget->declaration == implementationInfo->id &&
+             directMirTarget->virtualRoots.size() == 1 &&
+             contractInfo != nullptr &&
+             directMirTarget->virtualRoots.front() == contractInfo->id,
+         "MIR should preserve the exact concrete target, virtual owner, and "
+         "contract identity without devirtualizing the call");
+
+  const lang::BackendArtifact generatedArtifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
+  const std::string &generated = generatedArtifact.contents;
+  constexpr std::string_view nameIdDefinition =
+      "std::int32_t Sprite::name_id() const {";
+  const std::size_t firstNameIdDefinition = generated.find(nameIdDefinition);
+  expect(
+      generated.find(
+          "class Sprite : public ::__gti_program::Entity, public "
+          "::__gti_program::Renderable, public ::__gti_program::Named") !=
+              std::string::npos &&
+          generated.find("virtual std::int32_t render(") != std::string::npos &&
+          generated.find("render(const std::int32_t frame) const override") !=
+              std::string::npos &&
+          generated.find("virtual std::int32_t class_only() const = 0;") !=
+              std::string::npos &&
+          generated.find("class_only() const override") != std::string::npos &&
+          generated.find(" = 0;") != std::string::npos &&
+          generated.find("virtual ~Renderable() noexcept = default;") !=
+              std::string::npos &&
+          generated.find("explicit Sprite(const std::int32_t id);") !=
+              std::string::npos &&
+          generated.find("Sprite::Sprite(std::int32_t __gti_mir_arg_0) : "
+                         "::__gti_program::Entity(__gti_mir_arg_0)") !=
+              std::string::npos &&
+          generated.find("virtual bool read__gti_mir_failure(") !=
+              std::string::npos &&
+          generated.find("read__gti_mir_failure(T "
+                         "*__gti_mir_out_result") != std::string::npos &&
+          generated.find("template <> std::int32_t "
+                         "__gti_program::Box<std::int32_t>::read() const") !=
+              std::string::npos &&
+          firstNameIdDefinition != std::string::npos &&
+          generated.find(nameIdDefinition,
+                         firstNameIdDefinition + nameIdDefinition.size()) ==
+              std::string::npos &&
+          generated.find("static_cast<const ::__gti_program::Entity &>") !=
+              std::string::npos,
+      "the C++ backend should emit inheritance, pure contracts, overrides, "
+      "base construction, polymorphic destruction, and GTI-selected virtual "
+      "overloads");
+
+  const std::string formatted = lang::Formatter().format(
+      "interface Renderable{int render(int frame);};"
+      "class Sprite:public Entity,public Renderable{public:"
+      "Sprite(int id):Entity(id){}int render(int frame)override{return frame;}"
+      "};");
+  if (formatted.find("interface Renderable {") == std::string::npos ||
+      formatted.find("class Sprite : public Entity, public Renderable {") ==
+          std::string::npos ||
+      formatted.find("int render(int frame) override {") == std::string::npos ||
+      lang::Formatter().format(formatted) != formatted) {
+    std::cerr << "Inheritance formatted output was:\n" << formatted;
+  }
+  expect(
+      formatted.find("interface Renderable {") != std::string::npos &&
+          formatted.find("int render(int frame);") != std::string::npos &&
+          formatted.find("int render(int frame) = 0;") == std::string::npos &&
+          formatted.find("class Sprite : public Entity, public Renderable {") !=
+              std::string::npos &&
+          formatted.find("int render(int frame) override {") !=
+              std::string::npos &&
+          lang::Formatter().format(formatted) == formatted,
+      "inheritance and override syntax should format idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-inheritance.gti", R"(
+interface Broken {
+public:
+  Broken() {}
+  int state = 0;
+  int body() { return 1; }
+};
+
+interface LegacyPureSyntax {
+  int old_style() = 0;
+};
+
+class Left {};
+class Right {};
+class TooMany : public Left, public Right {};
+class HiddenBase : Left {};
+
+interface RootContract { int root(); };
+interface LeftContract : public RootContract {};
+interface RightContract : public RootContract {};
+interface DiamondContract : public LeftContract, public RightContract {};
+interface InvalidInterfaceBase : public Left { int invalid(); };
+
+class CycleLeft : public CycleRight {};
+class CycleRight : public CycleLeft {};
+
+class Abstract {
+public:
+  virtual int work(int value) = 0;
+};
+
+class Missing : public Abstract {};
+class Accidental : public Abstract {
+public:
+  int work(int value) { return value; }
+};
+class ReturnMismatch : public Abstract {
+public:
+  bool work(int value) override { return true; }
+};
+
+class RequiresArgument {
+  int stored;
+
+public:
+  RequiresArgument(int value) : stored(value) {}
+};
+class MissingBaseInitializer : public RequiresArgument {
+public:
+  MissingBaseInitializer() {}
+};
+
+class Plain {
+public:
+  int read() { return 1; }
+};
+class HidesPlain : public Plain {
+public:
+  int read() override { return 2; }
+};
+
+class PrivateState {
+  int secret = 1;
+};
+class LeaksPrivateState : public PrivateState {
+public:
+  int leak() { return secret; }
+};
+
+class Concrete : public Abstract {
+public:
+  int work(int value) override { return value; }
+};
+int consume(Abstract& value) { return value.work(1); }
+int main() {
+  Missing missing{};
+  Concrete concrete{};
+  Abstract sliced = concrete;
+  return consume(concrete);
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid inheritance and interface programs should be rejected");
+  expect(hasDiagnostic(invalid.diagnostics, "Interfaces are behavior-only") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interfaces cannot declare constructors") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interface methods are pure contracts") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interface methods are implicitly pure"),
+         "interfaces should permit only declaration-only public behavior "
+         "contracts and reject redundant '= 0;' syntax");
+  expect(hasDiagnostic(invalid.diagnostics, "only one state-bearing base") &&
+             hasDiagnostic(invalid.diagnostics, "Inheritance must be public"),
+         "inheritance should be public with at most one state-bearing base");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "An interface can inherit only from other interfaces") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "inheritance diamonds are not supported") &&
+             hasDiagnostic(invalid.diagnostics, "Inheritance cycle"),
+         "interface bases, inheritance diamonds, and cycles should be "
+         "diagnosed before lowering");
+  expect(hasDiagnostic(invalid.diagnostics, "Overriding methods must use") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Override return type must exactly match") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "same signature as a non-virtual base method"),
+         "override checking should be exact, explicit, and virtual-only");
+  expect(
+      hasDiagnostic(invalid.diagnostics, "must explicitly initialize base") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot construct abstract class 'Missing'"),
+      "derived construction should initialize bases and reject abstract "
+      "objects");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "Member 'secret' of 'PrivateState' is private") &&
+             hasDiagnostic(invalid.diagnostics, "Cannot initialize 'sliced'"),
+         "private state access and object slicing should stay rejected while "
+         "public-derived lvalues bind to base reference parameters");
+}
+
+void testInheritedGenericTargetInstances() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("inherited-generic-targets.gti", R"(
+class Base<T> {
+public:
+  T echo(T value) { return value; }
+};
+
+class Derived<First, Second> : public Base<Second> {
+public:
+  Second indirect(Second value) { return echo(value); }
+};
+
+class SizedBase<T, uint64_t N> {
+public:
+  uint64_t extent() { return N; }
+};
+
+class SizedDerived<T, uint64_t N> : public SizedBase<T, N> {};
+
+int main() {
+  Derived<int32_t, uint64_t> value{};
+  SizedDerived<int32_t, 3> sized{};
+  uint64_t direct = value.echo(uint64_t(7));
+  uint64_t indirect = value.indirect(uint64_t(8));
+  uint64_t extent = sized.extent();
+  return int32_t(direct + indirect + extent) - 18;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected inherited-generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "inherited methods should retain their resolved generic base "
+         "instance through HIR and MIR");
+
+  const lang::ClassDecl *base = findTopLevelClass(frontend.program, "Base");
+  const lang::FunctionDecl *echo = nullptr;
+  if (base != nullptr) {
+    for (const lang::StmtPtr &member : base->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == "echo") {
+        echo = function;
+        break;
+      }
+    }
+  }
+
+  std::vector<const lang::HirClassInstance *> baseInstances;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == base) {
+      baseInstances.push_back(&instance);
+    }
+  }
+  const lang::HirClassInstance *concreteBase =
+      baseInstances.size() == 1 ? baseInstances.front() : nullptr;
+  expect(concreteBase != nullptr && concreteBase->typeArguments.size() == 1 &&
+             concreteBase->typeArguments.front() == lang::SemanticType::UInt64,
+         "inherited calls should enqueue only the resolved Base<uint64_t> "
+         "owner, not a symbolic or derived-argument-shaped base");
+
+  const lang::ClassDecl *sizedBase =
+      findTopLevelClass(frontend.program, "SizedBase");
+  std::vector<const lang::HirClassInstance *> sizedBaseInstances;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == sizedBase) {
+      sizedBaseInstances.push_back(&instance);
+    }
+  }
+  const lang::HirClassInstance *concreteSizedBase =
+      sizedBaseInstances.size() == 1 ? sizedBaseInstances.front() : nullptr;
+  expect(concreteSizedBase != nullptr &&
+             concreteSizedBase->typeArguments.size() == 1 &&
+             concreteSizedBase->typeArguments.front() ==
+                 lang::SemanticType::Int32 &&
+             concreteSizedBase->valueArguments.size() == 1 &&
+             concreteSizedBase->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             concreteSizedBase->valueArguments.front().value == 3,
+         "inherited calls should preserve the resolved base's type and value "
+         "arguments together");
+
+  std::vector<const lang::HirFunctionInstance *> echoInstances;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == echo) {
+      echoInstances.push_back(&instance);
+    }
+  }
+  const lang::HirFunctionInstance *concreteEcho =
+      echoInstances.size() == 1 ? echoInstances.front() : nullptr;
+  expect(concreteEcho != nullptr && concreteEcho->owner.has_value() &&
+             concreteBase != nullptr &&
+             *concreteEcho->owner == concreteBase->id &&
+             concreteEcho->returnType == lang::SemanticType::UInt64 &&
+             concreteEcho->parameterTypes.size() == 1 &&
+             concreteEcho->parameterTypes.front() == lang::SemanticType::UInt64,
+         "the inherited method target should use the concrete base owner and "
+         "signature selected by semantics");
+
+  const auto containsUnresolvedType =
+      [&](const auto &self, const lang::SemanticType &type) -> bool {
+    return type.kind == lang::SemanticType::TypeParameter ||
+           type.kind == lang::SemanticType::TypePack ||
+           std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const lang::SemanticType &argument) {
+                         return self(self, argument);
+                       });
+  };
+  bool concreteBody = concreteEcho != nullptr;
+  if (concreteEcho != nullptr) {
+    concreteBody =
+        std::none_of(concreteEcho->body.bindings.begin(),
+                     concreteEcho->body.bindings.end(),
+                     [&](const lang::HirBinding &binding) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     binding.info.type);
+                     }) &&
+        std::none_of(concreteEcho->body.values.begin(),
+                     concreteEcho->body.values.end(),
+                     [&](const lang::HirValue &value) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     value.info.type);
+                     });
+  }
+  expect(concreteBody,
+         "a concrete inherited method must not retain symbolic class types in "
+         "its executable HIR body");
+
+  bool callsUseConcreteTarget = concreteEcho != nullptr;
+  if (concreteEcho != nullptr) {
+    std::size_t calls = 0;
+    for (const lang::HirFunctionInstance &function :
+         frontend.hir.functionInstances()) {
+      for (const lang::HirValue &value : function.body.values) {
+        if (value.functionTarget == concreteEcho->id) {
+          ++calls;
+          callsUseConcreteTarget =
+              callsUseConcreteTarget &&
+              value.dispatchOwner.kind == lang::SemanticType::Class &&
+              value.dispatchOwner.classId == concreteBase->declaration &&
+              value.dispatchOwner.arguments.size() == 1 &&
+              value.dispatchOwner.arguments.front() ==
+                  lang::SemanticType::UInt64;
+        }
+      }
+    }
+    callsUseConcreteTarget = callsUseConcreteTarget && calls == 2;
+  }
+  expect(callsUseConcreteTarget,
+         "direct and unqualified inherited calls should share the same "
+         "resolved concrete HIR target");
+
+  const lang::MirFunctionInstance *mirEcho =
+      concreteEcho == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(concreteEcho->id);
+  bool concreteMir = mirEcho != nullptr &&
+                     mirEcho->body.returnType == lang::SemanticType::UInt64;
+  if (mirEcho != nullptr) {
+    concreteMir =
+        concreteMir &&
+        std::none_of(mirEcho->body.places.begin(), mirEcho->body.places.end(),
+                     [&](const lang::MirPlace &place) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     place.type);
+                     }) &&
+        std::none_of(mirEcho->body.values.begin(), mirEcho->body.values.end(),
+                     [&](const lang::MirValue &value) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     value.info.type);
+                     });
+  }
+  expect(concreteMir,
+         "MIR for a concrete inherited method should contain only substituted "
+         "types");
+}
+
+void testDirectBraceConstruction() {
+  const std::string source = R"(
+class Box<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+
+using IntBox = Box<int>;
+
+class Holder {
+  Box<int> box{3};
+
+public:
+  int read() { return this.box.read(); }
+};
+
+class Pair {
+  int left;
+  int right;
+
+public:
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+
+struct Point {
+  int x = 4;
+};
+
+int main() {
+  Box<int> boxed{1};
+  mut Box<int> changing{2};
+  IntBox aliased{3,};
+  Holder holder{};
+  Point point{};
+  Pair pair{5, 6,};
+  return boxed.read() + changing.read() + aliased.read() + holder.read() +
+         point.x + pair.sum();
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("direct-initialization.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected direct-initialization diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "class direct initialization should pass the shared frontend");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *boxed = main == nullptr || main->body()->statements().empty()
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                main->body()->statements().front().get());
+  const auto *initializer = boxed == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::DirectInitializer *>(
+                                      boxed->initializer().get());
+  const lang::ResolvedConstructionInfo *construction =
+      initializer == nullptr
+          ? nullptr
+          : frontend.semantics.findConstruction(*initializer);
+  expect(initializer != nullptr && initializer->arguments().size() == 1 &&
+             lang::AstPrinter().print(*initializer) == "(direct-init 1)",
+         "the AST should preserve direct constructor arguments");
+  expect(construction != nullptr && construction->constructor != 0 &&
+             construction->constructedType.kind == lang::SemanticType::Class,
+         "semantics should retain the exact selected constructor identity");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *boxedStatement =
+      mainInstance == nullptr || mainInstance->body.roots.empty()
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots.front());
+  const lang::HirValue *boxedValue =
+      boxedStatement == nullptr || !boxedStatement->value
+          ? nullptr
+          : mainInstance->body.findValue(*boxedStatement->value);
+  expect(boxedValue != nullptr &&
+             boxedValue->kind == lang::HirValueKind::DirectInitializer &&
+             boxedValue->operands.size() == 1 &&
+             boxedValue->constructorTarget.has_value(),
+         "HIR should retain direct initialization and its constructor edge");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(
+      generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
+              std::string::npos &&
+          generated.find(".construct(__gti_mir_v_") != std::string::npos &&
+          generated.find("mir_lifetime_slot<::__gti_program::Holder>") !=
+              std::string::npos &&
+          generated.find(".construct();") != std::string::npos &&
+          generated.find("mir_lifetime_slot<::__gti_program::Pair>") !=
+              std::string::npos &&
+          generated.find("Pair::Pair(std::int32_t __gti_mir_arg_0, "
+                         "std::int32_t __gti_mir_arg_1)") != std::string::npos,
+      "the backend should lower braces through explicit constructor calls");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-direct-initialization.gti", R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+
+int main() {
+  int primitive{1};
+  int values[1]{1};
+  auto inferred{1};
+  Sample copy_list = {1};
+  Sample& reference{1};
+  Sample mismatch{true};
+  Sample missing;
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "unsupported brace forms and constructor mismatches should fail");
+  expect(
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2038") == 4 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2028") == 1 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2012") == 1 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "limited to classes and structs") &&
+          hasDiagnostic(invalid.diagnostics, "initialize a fixed array") &&
+          hasDiagnostic(invalid.diagnostics, "does not use '= {...}'") &&
+          hasDiagnostic(invalid.diagnostics, "cannot initialize a reference") &&
+          hasDiagnostic(invalid.diagnostics, "require explicit construction"),
+      "direct initialization should diagnose each unsupported form at the "
+      "GTI layer");
+
+  lang::Lexer lexer;
+  lang::Parser recoveryParser(lexer.scan(R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  Sample broken{1;
+  Sample retained{2};
+  return retained.value;
+}
+)",
+                                         "direct-recovery.gti"));
+  const lang::Program recovered = recoveryParser.parse();
+  const lang::FunctionDecl *recoveredMain =
+      findTopLevelFunction(recovered, "main");
+  expect(recoveryParser.hadError() && recoveredMain != nullptr &&
+             recoveredMain->body()->statements().size() == 2,
+         "a malformed direct initializer should preserve later declarations");
+
+  lang::Parser parenthesizedParser(lexer.scan(R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  mut Sample value(1);
+  return 0;
+}
+)"));
+  parenthesizedParser.parse();
+  expect(parenthesizedParser.hadError() &&
+             hasDiagnostic(parenthesizedParser.errors(),
+                           "use 'Type name{arguments};'"),
+         "block-scope parenthesized declarations should direct users to the "
+         "unambiguous brace form");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box<T>{public:Box(T value){}};int main(){mut Box<int> "
+      "value { 1, };Box<int> empty { };int values[1]={1};return 0;}");
+  if (formatted.find("mut Box<int> value{1,};") == std::string::npos ||
+      formatted.find("Box<int> empty{};") == std::string::npos ||
+      formatted.find("int values[1] = {1};") == std::string::npos) {
+    std::cerr << "Direct-initialization formatted output was:\n" << formatted;
+  }
+  expect(formatted.find("mut Box<int> value{1,};") != std::string::npos &&
+             formatted.find("Box<int> empty{};") != std::string::npos &&
+             formatted.find("int values[1] = {1};") != std::string::npos,
+         "formatter should keep direct braces compact and distinct from "
+         "array initialization");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "direct brace formatting should be idempotent");
+}
+
+void testRecursiveClassLayouts() {
+  const std::string directSource = R"(
+struct Cell {
+  int value;
+  Cell inner;
+
+public:
+  Cell(int value, Cell cell) : value(value), inner(cell) {}
+};
+)";
+  const lang::FrontendResult direct =
+      lang::Frontend().analyze("recursive-class-layout.gti", directSource);
+  const lang::Diagnostic *directDiagnostic =
+      findDiagnosticByCode(direct.diagnostics, "GTI-S2082");
+  const std::size_t fieldType = directSource.find("Cell inner");
+  expect(!direct.canGenerateCode() && directDiagnostic != nullptr &&
+             directDiagnostic->primary.start == fieldType &&
+             directDiagnostic->primary.end == fieldType + 4 &&
+             countDiagnosticCode(direct.diagnostics, "GTI-S2082") == 1 &&
+             countDiagnosticCode(direct.diagnostics, "GTI-S2003") == 0 &&
+             hasRelatedDiagnostic(direct.diagnostics,
+                                  "recursively contained type") &&
+             hasDiagnosticHint(direct.diagnostics, "std::unique_ptr<Cell>"),
+         "ordinary classes should reject direct by-value recursion at the "
+         "field without cascading into constructor conversion diagnostics");
+
+  const lang::FrontendResult generic =
+      lang::Frontend().analyze("recursive-generic-layout.gti", R"(
+class Node<T> {
+  T value;
+  Node<T> next;
+
+public:
+  Node(T value, Node<T> next) : value(value), next(next) {}
+};
+)");
+  expect(!generic.canGenerateCode() &&
+             countDiagnosticCode(generic.diagnostics, "GTI-S2082") == 1 &&
+             countDiagnosticCode(generic.diagnostics, "GTI-S2003") == 0 &&
+             hasDiagnosticHint(generic.diagnostics, "std::unique_ptr<Node<T>>"),
+         "generic self-layout diagnostics should preserve the written owner "
+         "type in their indirection hint");
+
+  const lang::FrontendResult fixedArray =
+      lang::Frontend().analyze("recursive-array-layout.gti", R"(
+struct Branch {
+  Branch children[2];
+};
+)");
+  expect(!fixedArray.canGenerateCode() &&
+             countDiagnosticCode(fixedArray.diagnostics, "GTI-S2082") == 1 &&
+             hasDiagnostic(fixedArray.diagnostics, "through field 'children'"),
+         "fixed arrays should preserve their by-value recursive layout edge");
+}
+
+void testNamedGenerics() {
+  lang::Lexer lexer;
+  const std::string source = R"(
+class Box<T> {
+  mut T value;
+
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+  U echo<U>(U replacement) { return replacement; }
+  void set(T replacement) mut { this.value = replacement; }
+};
+
+T identity<T>(T value) { return value; }
+T unbox<T>(Box<T> box) { return box.get(); }
+U relay<T, U>(Box<T> box, U value) { return box.echo<U>(value); }
+
+int main() {
+  mut Box<int> box = Box<int>(identity(7));
+  box.set(identity<int>(9));
+  int value = unbox(box);
+  int relayed = relay(box, box.echo<int>(value));
+  std::string_view text = identity<std::string_view>("generic");
+  return relayed;
+}
+
+)";
+  auto validTokens = lexer.scan(source);
+  expect(!lexer.hadError(), "named generic source should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "generic classes, functions, and applications should parse");
+
+  const lang::FrontendResult validFrontend = lang::Frontend().analyze(
+      "named-generics.gti", source, {standardLibraryPrelude()});
+  if (!validFrontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : validFrontend.diagnostics) {
+      std::cerr << "Unexpected generic diagnostic: "
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(validFrontend.canGenerateCode(),
+         "generic substitution and exact inference should validate");
+
+  const std::string generated = gti_test::emitCppText(validFrontend);
+  expect(generated.find("template <typename T>\n  class Box;") !=
+                 std::string::npos &&
+             generated.find("template <typename T>\n  class Box {") !=
+                 std::string::npos,
+         "generic classes should lower with matching C++ forward declarations");
+  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_identity(T __gti_mir_arg_0)") !=
+                 std::string::npos &&
+             generated.find("_unbox(") != std::string::npos,
+         "generic functions should lower as C++ function templates");
+  expect(
+      generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
+              std::string::npos &&
+          generated.find("_identity(__gti_mir_v_") != std::string::npos &&
+          generated.find("Box<std::int32_t>::__gti_fn_") != std::string::npos &&
+          generated.find("_set(") != std::string::npos &&
+          containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
+          containsMangledFunction(generated, "Box<std::int32_t>::", "set", "("),
+      "applied types and explicit generic calls should lower recursively");
+  expect(generated.find(".template __gti_fn_") == std::string::npos &&
+             generated.find("Box<std::int32_t>::__gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_echo(__gti_mir_v_") != std::string::npos &&
+             containsMangledFunction(generated, "Box<std::int32_t>::", "echo",
+                                     "(__gti_mir_v_"),
+         "the backend should emit the concrete selected generic method "
+         "without reopening C++ dependent-template lookup");
+
+  auto invalidTokens = lexer.scan(R"(
+class Duplicate<T, T> {};
+class SameName<SameName> {};
+class Shadow<T> {
+public:
+  T replace<T>(T value) { return value; }
+};
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+T identity<T>(T value) { return value; }
+T choose<T>(T left, T right) { return left; }
+T unsupported_add<T>(T left, T right) { return left + right; }
+bool unsupported_equal<T>(T left, T right) { return left == right; }
+T make<T>();
+int ordinary(int value) { return value; }
+int main<T>() { return 0; }
+
+int use() {
+  Box missing = Box(1);
+  Box<int, bool> excessive = Box<int, bool>(1);
+  Box<void> impossible = Box<void>(1);
+  int mismatch = identity<int>(true);
+  int conflict = choose(1, true);
+  int unknown = make();
+  int excessive_types = identity<int, bool>(1);
+  int not_generic = ordinary<int>(1);
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid generic semantics should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid generic applications should be rejected semantically");
+  expect(hasDiagnostic(invalidSemantic, "Duplicate generic type parameter"),
+         "generic parameter names should be unique");
+  expect(hasDiagnostic(invalidSemantic, "same name as its declaration") &&
+             hasDiagnostic(invalidSemantic, "cannot shadow"),
+         "generic parameters should not collide with enclosing declarations");
+  expect(hasDiagnostic(invalidSemantic, "requires 1 generic type argument"),
+         "generic class applications should enforce arity");
+  expect(hasDiagnostic(invalidSemantic, "cannot be void"),
+         "void should not be accepted as a user generic argument");
+  expect(hasDiagnostic(invalidSemantic, "Conflicting types inferred"),
+         "repeated generic parameters should infer one exact type");
+  expect(
+      hasDiagnostic(invalidSemantic, "numeric operands"),
+      "unconstrained type parameters should not gain operators by duck typing");
+  expect(hasDiagnostic(invalidSemantic, "Equality operands"),
+         "generic equality should wait for an explicit contract model");
+  expect(hasDiagnostic(invalidSemantic, "Cannot infer generic type parameter"),
+         "return-only generic parameters should require explicit arguments");
+  expect(
+      hasDiagnostic(invalidSemantic, "wrong number of type arguments") &&
+          hasDiagnostic(invalidSemantic, "Non-generic functions do not take"),
+      "explicit function type arguments should enforce generic arity");
+  expect(hasDiagnostic(invalidSemantic, "main entry point cannot be generic"),
+         "the native entry point should remain non-generic");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box<T>{T value;public:Box(T value):value(value){}T get(){return "
+      "this.value;}};T identity<T>(T value){return value;}int main(){Box<"
+      "Box<int>> nested=Box<Box<int>>(Box<int>(1));int value=identity<int>(1);"
+      "return value;}");
+  expect(formatted.find("class Box<T> {") != std::string::npos &&
+             formatted.find("T identity<T>(T value) {") != std::string::npos &&
+             formatted.find("Box<Box<int>> nested = Box<Box<int>>(") !=
+                 std::string::npos &&
+             formatted.find("identity<int>(1)") != std::string::npos,
+         "formatter should preserve compact generic angle brackets");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted generic syntax should be idempotent");
+
+  const std::string comparison =
+      lang::Formatter().format("bool result=a < b > c;");
+  expect(comparison == "bool result = a < b > c;\n",
+         "formatter should not treat relational expressions as generic types");
+
+  lang::Parser malformedParser(lexer.scan("class Broken<> {}; int okay = 1;"));
+  const lang::Program recovered = malformedParser.parse();
+  expect(malformedParser.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after malformed generic parameters");
+}
+
+void testExactQualifiedClassSpecializations() {
+  const std::string source = R"(
+class demo::Value<int> {
+public:
+  int read() { return 2; }
+};
+
+namespace demo {
+class Value<T> {
+public:
+  int read() { return 1; }
+};
+
+class Count<uint64_t N> {
+public:
+  int read() { return 1; }
+};
+}
+
+int read_exact(demo::Value<int>& value) { return value.read(); }
+
+class demo::Count<7> {
+public:
+  int read() { return 7; }
+};
+
+int read_through_generic<T>(demo::Value<T>& value) {
+  return value.read();
+}
+
+int main() {
+  demo::Value<int> exact{};
+  demo::Value<bool> primary{};
+  demo::Count<7> exact_value{};
+  demo::Count<8> primary_value{};
+  return read_exact(exact) + read_through_generic<int>(exact) +
+         primary.read() + exact_value.read() + primary_value.read() - 13;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("exact-qualified-specialization.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected exact-specialization diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "a qualified exact class specialization should replace its primary "
+         "for the matching canonical application");
+
+  const lang::ClassTypeInfo *specialization = nullptr;
+  const lang::ClassTypeInfo *primary = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info == nullptr || info->qualifiedName != "demo::Value") {
+      continue;
+    }
+    if (info->exactSpecializationPrimary == 0) {
+      primary = info;
+    } else {
+      specialization = info;
+    }
+  }
+  expect(primary != nullptr && specialization != nullptr &&
+             specialization->exactSpecializationPrimary == primary->id &&
+             specialization->exactTypeArguments ==
+                 std::vector<lang::SemanticType>{lang::SemanticType::Int32},
+         "HIR discovery should retain separate primary and exact semantic "
+         "class identities");
+
+  if (frontend.canGenerateCode()) {
+    const std::string generated = gti_test::emitCppText(frontend);
+    const std::size_t primaryDefinition = generated.find("class Value {");
+    const std::size_t specializationDefinition =
+        generated.find("class Value<std::int32_t> {");
+    expect(generated.find("class Value<std::int32_t>;") != std::string::npos &&
+               primaryDefinition != std::string::npos &&
+               specializationDefinition != std::string::npos &&
+               primaryDefinition < specializationDefinition,
+           "the C++ representation should emit a forward declaration and "
+           "dependency-order the selected full specialization after its "
+           "primary");
+  }
+
+  const std::string formatted = lang::Formatter().format(
+      "namespace demo{class Value<T>{};}class demo::Value<int>{};");
+  expect(formatted.find("class demo::Value<int> {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve qualified exact-specialization "
+         "syntax idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-exact-qualified-specialization.gti", R"(
+namespace demo {
+class Value<T> {};
+class Nested<T> {};
+}
+using signed_int = int32_t;
+class demo::Value<int> {};
+class demo::Value<signed_int> {};
+class demo::Nested<UnknownType> {};
+class demo::Value<int>;
+struct demo::Value<bool> {};
+namespace misplaced {
+  class demo::Nested<bool> {};
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Duplicate exact specialization") &&
+             hasRelatedDiagnostic(invalid.diagnostics,
+                                  "Previous exact specialization") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must provide a complete definition") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must use the primary declaration's 'class'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must be declared at package scope"),
+         "exact specialization diagnostics should reject canonical "
+         "duplicates, unknown arguments, forward declarations, and "
+         "nested-namespace "
+         "declarations");
+
+  const lang::FrontendResult wrongArity =
+      lang::Frontend().analyze("wrong-arity-exact-specialization.gti", R"(
+namespace demo { class Value<T> {}; }
+class demo::Value<int, bool> {};
+)");
+  expect(!wrongArity.canGenerateCode() &&
+             hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(wrongArity.diagnostics,
+                           "requires 1 generic type argument"),
+         "a malformed exact key should use the exact-specialization "
+         "diagnostic family");
+
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-exact-specialization";
+  const lang::FrontendResult standardHash = lang::Frontend().analyze(
+      root / "hash.gti", R"(
+#include <std/functional>
+class Widget {
+  int value = 42;
+public:
+  int read() { return this.value; }
+};
+class std::hash<Widget> {
+public:
+  size_t operator()(Widget& value) { return size_t(value.read()); }
+};
+int main() {
+  Widget value{};
+  std::hash<Widget> hash{};
+  return int(hash(value)) - 42;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(standardHash.canGenerateCode(),
+         "an application should be able to specialize std::hash for a "
+         "nominal type owned by that application");
+
+  const lang::FrontendResult orphanHash = lang::Frontend().analyze(
+      root / "orphan-hash.gti", R"(
+#include <std/functional>
+class std::hash<int> {
+public:
+  size_t operator()(int& value) { return size_t(value); }
+};
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !orphanHash.canGenerateCode() &&
+          hasDiagnosticCode(orphanHash.diagnostics, "GTI-S2078") &&
+          hasDiagnostic(orphanHash.diagnostics,
+                        "owns neither the primary nor a top-level nominal") &&
+          hasDiagnosticHint(orphanHash.diagnostics, "primary's package"),
+      "the coherence rule should reject a std::hash specialization for a "
+      "builtin type owned by neither side");
+
+  const lang::FrontendResult nestedOrphanHash = lang::Frontend().analyze(
+      root / "nested-orphan-hash.gti", R"(
+#include <std/functional>
+#include <std/vector>
+class Widget {};
+class std::hash<std::vector<Widget>> {
+public:
+  size_t operator()(std::vector<Widget>& value) { return 0; }
+};
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedOrphanHash.canGenerateCode() &&
+             hasDiagnosticCode(nestedOrphanHash.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(nestedOrphanHash.diagnostics,
+                           "owns neither the primary nor a top-level nominal"),
+         "a nominal nested inside a foreign generic argument should not grant "
+         "specialization ownership");
+
+  lang::Lexer lexer;
+  lang::Parser malformedParser(
+      lexer.scan("class demo::Value {}; int recovered() { return 0; }"));
+  const lang::Program recovered = malformedParser.parse();
+  expect(malformedParser.hadError() &&
+             findTopLevelFunction(recovered, "recovered") != nullptr,
+         "a qualified class declaration without an exact argument list "
+         "should diagnose and recover to later declarations");
+}
+
+void testConstrainedGenerics() {
+  const std::string source = R"(
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  return T(left * right);
+}
+
+T remainder<std::integral T>(T left, T right) {
+  return T(left % right);
+}
+
+bool is_zero<std::integral T>(T value) {
+  return value == (0) and (0) == value;
+}
+
+T increment<std::integral T>(T value) {
+  return T(value + 1);
+}
+
+T low_bits<std::integral T>(T value) {
+  return T(value & 3);
+}
+
+T negate<std::signed_numeric T>(T value) { return T(-value); }
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+T square_integral<std::integral T>(T value) {
+  return multiply(value, value);
+}
+
+void consume_integrals<std::integral Values...>(Values... values) {}
+
+class NumericBox<std::numeric T> {
+  T value;
+
+public:
+  NumericBox(T value) : value(value) {}
+  T doubled() { return T(this.value + this.value); }
+};
+
+int main() {
+  int low = minimum(2, 5);
+  int product = multiply(3, 4);
+  int rest = remainder(7, 4);
+  bool zero = is_zero(uint64_t(0));
+  uint64_t incremented = increment(uint64_t(41));
+  uint8_t bits = low_bits(uint8_t(7));
+  int negative = negate(2);
+  int signed_value = signed_integer(2);
+  uint64_t unsigned_value = unsigned_integer(uint64_t(2));
+  float decimal = floating_value(2.5);
+  int square = square_integral(5);
+  consume_integrals(1, uint64_t(2));
+  NumericBox<int> box = NumericBox<int>(6);
+  if (low == 2 and product == 12 and rest == 3 and zero and
+      incremented == 42 and bits == 3 and negative == -2 and
+      signed_value == 2 and unsigned_value == uint64_t(2) and
+      decimal == 2.5 and square == 25 and box.doubled() == 12) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "constrained-generics.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected constrained generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "standard numeric constraints should validate generic operations, "
+         "propagation, packs, and classes");
+
+  bool sawContextualUInt64Literal = false;
+  bool sawContextualUInt8Literal = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    for (const lang::HirValue &value : instance.body.values) {
+      if (!value.literal) {
+        continue;
+      }
+      const auto *magnitude = std::get_if<std::uint64_t>(&*value.literal);
+      if (magnitude == nullptr) {
+        continue;
+      }
+      sawContextualUInt64Literal =
+          sawContextualUInt64Literal ||
+          (instance.source->name().lexeme == "is_zero" && *magnitude == 0 &&
+           value.info.type == lang::SemanticType::UInt64);
+      sawContextualUInt8Literal =
+          sawContextualUInt8Literal ||
+          (instance.source->name().lexeme == "low_bits" && *magnitude == 3 &&
+           value.info.type == lang::SemanticType::UInt8);
+    }
+  }
+  expect(sawContextualUInt64Literal && sawContextualUInt8Literal,
+         "concrete generic reanalysis should retain the contextual integer "
+         "literal type in HIR");
+
+  const lang::FunctionDecl *minimum =
+      findTopLevelFunction(valid.program, "minimum");
+  expect(minimum != nullptr && minimum->genericParameters().size() == 1 &&
+             minimum->genericParameters().front().constraint &&
+             minimum->genericParameters().front().constraint->segments.size() ==
+                 2 &&
+             minimum->genericParameters()
+                     .front()
+                     .constraint->segments.back()
+                     .lexeme == "ordered",
+         "the AST should retain the qualified generic constraint path");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_minimum(T __gti_mir_arg_0, T __gti_mir_arg_1)") !=
+                 std::string::npos &&
+             generated.find(
+                 "_minimum<std::int32_t>(std::int32_t __gti_mir_arg_0") !=
+                 std::string::npos &&
+             generated.find("mir_checked_multiply_v1<std::int32_t>") !=
+                 std::string::npos &&
+             generated.find("requires __gti_std::") == std::string::npos,
+         "constraints should remain frontend metadata while generic numeric "
+         "conversions lower through checked backend casts");
+  expect(generated.find("static_cast<std::uint64_t>(0)") != std::string::npos &&
+             generated.find("static_cast<std::uint8_t>(3)") !=
+                 std::string::npos,
+         "the C++ backend should explicitly preserve contextual generic "
+         "integer literal types");
+
+  lang::FrontendResult capabilities =
+      lang::Frontend().analyze("exact-generic-capabilities.gti", R"(
+class Rank {
+  int value;
+
+public:
+  Rank() : value(0) {}
+  Rank(int value) : value(value) {}
+  int get() { return this.value; }
+
+  bool operator==(Rank& other) { return this.value == other.value; }
+  bool operator!=(Rank& other) { return this.value != other.value; }
+  bool operator<(Rank& other) { return this.value < other.value; }
+  bool operator<=(Rank& other) { return this.value <= other.value; }
+  bool operator>(Rank& other) { return this.value > other.value; }
+  bool operator>=(Rank& other) { return this.value >= other.value; }
+};
+
+class MoveOnly {
+  int value;
+
+public:
+  MoveOnly() : value(0) {}
+  MoveOnly(int value) : value(value) {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+bool equivalent<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+
+T earlier<std::totally_ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T legacy_earlier<std::ordered T>(T left, T right) {
+  return earlier(left, right);
+}
+
+T copy_value<std::copyable T>(T value) { return value; }
+T move_value<std::movable T>(T value) { return std::move(value); }
+T default_value<std::default_initializable T>() { return T(); }
+bool ordered_equal<std::totally_ordered T>(T left, T right) {
+  return equivalent(left, right);
+}
+T numeric_copy<std::numeric T>(T value) { return copy_value(value); }
+T copy_move<std::copyable T>(T value) {
+  return move_value(std::move(value));
+}
+
+int main() {
+  Rank first = Rank(1);
+  Rank second = Rank(2);
+  bool same = equivalent(first, first);
+  Rank lower = earlier(first, second);
+  Rank legacy = legacy_earlier(first, second);
+  Rank copied = copy_value(first);
+  Rank moved_copy = copy_move(first);
+  Rank zero = default_value<Rank>();
+  int copied_number = numeric_copy(4);
+  MoveOnly source = MoveOnly(3);
+  MoveOnly moved = move_value(std::move(source));
+  if (same and ordered_equal(first, first) and lower.get() == 1 and
+      legacy.get() == 1 and copied.get() == 1 and moved_copy.get() == 1 and
+      zero.get() == 0 and copied_number == 4) {
+    return 0;
+  }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!capabilities.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : capabilities.diagnostics) {
+      std::cerr << "Unexpected exact capability diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(capabilities.canGenerateCode(),
+         "exact lifecycle and comparison capabilities should accept "
+         "matching primitives and nominal classes");
+
+  lang::HirConstructorInstanceId defaultRankConstructor = 0;
+  for (const lang::HirConstructorInstance &instance :
+       capabilities.hir.constructorInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "Rank" &&
+        instance.parameterTypes.empty()) {
+      defaultRankConstructor = instance.id;
+      break;
+    }
+  }
+  bool sawExactDefaultConstructionHir = false;
+  bool sawGenericDefaultIntrinsicHir = false;
+  for (const lang::HirFunctionInstance &instance :
+       capabilities.hir.functionInstances()) {
+    for (const lang::HirValue &value : instance.body.values) {
+      sawGenericDefaultIntrinsicHir =
+          sawGenericDefaultIntrinsicHir ||
+          value.intrinsic ==
+              lang::IntrinsicKind::DefaultTypeParameterConstruction;
+      sawExactDefaultConstructionHir =
+          sawExactDefaultConstructionHir ||
+          (defaultRankConstructor != 0 &&
+           value.constructorTarget == defaultRankConstructor &&
+           value.intrinsic == lang::IntrinsicKind::None);
+    }
+  }
+  bool sawExactDefaultConstructionMir = false;
+  bool sawGenericDefaultIntrinsicMir = false;
+  for (const lang::MirFunctionInstance &instance :
+       capabilities.mir.functionInstances()) {
+    for (const lang::MirBlock &block : instance.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        sawGenericDefaultIntrinsicMir =
+            sawGenericDefaultIntrinsicMir ||
+            instruction.intrinsic ==
+                lang::IntrinsicKind::DefaultTypeParameterConstruction;
+        sawExactDefaultConstructionMir =
+            sawExactDefaultConstructionMir ||
+            (instruction.kind == lang::MirInstructionKind::Construct &&
+             defaultRankConstructor != 0 &&
+             instruction.constructorTarget == defaultRankConstructor &&
+             instruction.intrinsic == lang::IntrinsicKind::None);
+      }
+    }
+  }
+  const lang::MirConstructorInstance *defaultRankMir =
+      capabilities.mir.findConstructorInstance(defaultRankConstructor);
+  expect(defaultRankConstructor != 0 && sawExactDefaultConstructionHir &&
+             sawExactDefaultConstructionMir && !sawGenericDefaultIntrinsicHir &&
+             !sawGenericDefaultIntrinsicMir && defaultRankMir != nullptr &&
+             !defaultRankMir->mayRaiseDefinedFailure,
+         "concrete generic default construction should replace the generic "
+         "intrinsic with one exact, failure-free constructor target through "
+         "HIR and MIR");
+
+  const std::string capabilityCpp = gti_test::emitCppText(capabilities);
+  expect(capabilityCpp.find("operator<(") != std::string::npos &&
+             capabilityCpp.find("operator>=(") != std::string::npos &&
+             capabilityCpp.find("std::construct_at(__gti_mir_out_result);") !=
+                 std::string::npos &&
+             capabilityCpp.find("constructor-instance " +
+                                std::to_string(defaultRankConstructor)) !=
+                 std::string::npos &&
+             capabilityCpp.find("concept ") == std::string::npos,
+         "the C++ backend should emit selected relational methods and generic "
+         "default construction without C++ concepts");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-constrained-generics.gti", R"(
+T unsupported_add<T>(T left, T right) { return left + right; }
+T ordered_value<std::ordered T>(T value) { return value; }
+T needs_numeric<std::numeric T>(T value) { return value; }
+T integral_value<std::integral T>(T value) { return value; }
+T signed_number<std::signed_numeric T>(T value) { return value; }
+T forwards_ordered<std::ordered T>(T value) { return needs_numeric(value); }
+T bad_negate<std::numeric T>(T value) { return -value; }
+T bad_modulo<std::numeric T>(T left, T right) { return left % right; }
+T bad_conversion<T>(T value) { return T(1); }
+T unknown<std::mystery T>(T value) { return value; }
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+class EqualOnly {
+public:
+  bool operator==(EqualOnly& other) { return true; }
+};
+
+class AlmostOrdered {
+public:
+  bool operator==(AlmostOrdered& other) { return true; }
+  bool operator!=(AlmostOrdered& other) { return false; }
+  bool operator<(AlmostOrdered& other) { return false; }
+  bool operator<=(AlmostOrdered& other) { return true; }
+  bool operator>(AlmostOrdered& other) { return false; }
+};
+
+class DeletedCopy {
+public:
+  DeletedCopy() {}
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+};
+
+class DeletedMove {
+public:
+  DeletedMove() {}
+  DeletedMove(DeletedMove&& other) = delete;
+};
+
+class CopyConstructOnly {
+  int& value;
+public:
+  CopyConstructOnly(int& source) : value(source) {}
+};
+
+class NoDefault {
+  int stored;
+
+public:
+  NoDefault(int value) : stored(value) {}
+};
+
+bool needs_equality<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+T needs_total_order<std::totally_ordered T>(T value) { return value; }
+T needs_copy_construction<std::copy_constructible T>(T value) {
+  return value;
+}
+T needs_copy<std::copyable T>(T value) { return value; }
+T needs_move<std::movable T>(T value) { return std::move(value); }
+T needs_default<std::default_initializable T>() { return T(); }
+T unconstrained_default<T>() { return T(); }
+
+class NumericBox<std::numeric T> {
+  T value;
+public:
+  NumericBox(T value) : value(value) {}
+};
+
+void use_box(NumericBox<bool> value) {}
+
+int use() {
+  bool invalid_ordered = ordered_value(true);
+  bool invalid_value = needs_numeric(true);
+  float invalid_integral = integral_value(2.0);
+  uint64_t invalid_signed_numeric = signed_number(uint64_t(1));
+  uint64_t invalid_signed_integral = signed_integer(uint64_t(1));
+  int invalid_unsigned_integral = unsigned_integer(1);
+  int invalid_floating_point = floating_value(1);
+  bool invalid_equality = needs_equality(EqualOnly(), EqualOnly());
+  AlmostOrdered invalid_total = needs_total_order(AlmostOrdered());
+  DeletedCopy invalid_construction = needs_copy_construction(DeletedCopy());
+  mut int copy_source = 1;
+  CopyConstructOnly copy_only = CopyConstructOnly(copy_source);
+  CopyConstructOnly invalid_copy = needs_copy(std::move(copy_only));
+  DeletedMove invalid_move = needs_move(DeletedMove());
+  NoDefault invalid_default = needs_default<NoDefault>();
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode(),
+         "unsupported operations and concrete constraint violations should "
+         "fail before backend entry");
+  expect(
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "does not satisfy generic constraint") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Unknown generic concept 'std::mystery'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires the numeric capability") &&
+          hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::signed_integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::unsigned_integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::equality_comparable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::totally_ordered'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::copy_constructible'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::copyable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::movable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::default_initializable'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires the default-initialization capability") &&
+          hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
+          hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
+          hasDiagnostic(invalid.diagnostics, "numeric operands"),
+      "constraint diagnostics should cover declarations, propagation, "
+      "calls, conversions, and required operator capabilities");
+  expect(hasDiagnosticHint(invalid.diagnostics,
+                           "public, read-only bool operator==") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "exact public, read-only bool overloads") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available copy constructor") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available copy construction and assignment") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available move construction and assignment") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "public zero-argument constructor"),
+         "exact capability failures should explain the required public "
+         "contract");
+
+  lang::FrontendResult outOfRangeContextualLiteral = lang::Frontend().analyze(
+      "out-of-range-contextual-integer-literal.gti", R"(
+bool out_of_range<std::integral T>(T value) {
+  return value == 256;
+}
+
+bool negative_out_of_range<std::integral T>(T value) {
+  return value == -1;
+}
+
+int main() {
+  bool result = out_of_range(uint8_t(1));
+  bool negative = negative_out_of_range(uint8_t(1));
+  if (result) { return 1; }
+  if (negative) { return 2; }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(!outOfRangeContextualLiteral.canGenerateCode() &&
+             countDiagnosticCode(outOfRangeContextualLiteral.diagnostics,
+                                 "GTI-S2004") == 2 &&
+             hasDiagnostic(outOfRangeContextualLiteral.diagnostics,
+                           "does not fit the contextual operand type "
+                           "'uint8_t'") &&
+             hasDiagnostic(outOfRangeContextualLiteral.diagnostics,
+                           "Integer literal '-1'"),
+         "concrete generic reanalysis should diagnose a contextual integer "
+         "literal that does not fit the instantiated operand type");
+
+  lang::FrontendResult mixedGenericOperands =
+      lang::Frontend().analyze("mixed-generic-operands.gti", R"(
+bool mixed_value<std::integral T>(T value, int other) {
+  return value == other;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!mixedGenericOperands.canGenerateCode() &&
+             hasDiagnostic(mixedGenericOperands.diagnostics,
+                           "Equality operands have incompatible types"),
+         "non-literal mixed generic operands should remain exact-match "
+         "errors");
+
+  lang::FrontendResult duplicate =
+      lang::Frontend().analyze("duplicate-constrained-overload.gti", R"(
+T select<std::numeric T>(T value) { return value; }
+T select<std::integral T>(T value) { return value; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!duplicate.canGenerateCode() &&
+             hasDiagnostic(duplicate.diagnostics,
+                           "Duplicate overload signature for 'select'"),
+         "constraints should not distinguish or rank overload signatures");
+
+  const std::string formatted = lang::Formatter().format(
+      "T minimum<std::totally_ordered T>(T left,T right){if(left<right){return "
+      "left;}return right;}");
+  expect(
+      formatted.find("T minimum<std::totally_ordered T>(T left, T right) {") !=
+              std::string::npos &&
+          lang::Formatter().format(formatted) == formatted,
+      "constrained generic declarations should format idempotently");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(
+      "T broken<std::numeric>(T value) { return value; } int okay = 1;"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after a missing constrained "
+         "parameter name");
+}
+
+void testConcurrencyTypeCapabilities() {
+  const std::string source = R"(
+struct Scalar {
+  int value = 0;
+};
+
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+
+class Node {
+  int value = 0;
+  mut std::unique_ptr<Node> next = std::unique_ptr<Node>();
+};
+
+class RawBox {
+  int* address = nullptr;
+};
+
+[[no_transfer, unsafe_share]] class PolicyValue {
+  int value = 0;
+};
+
+[[unsafe_transfer]] class AuditedCleanup {
+  int* address = nullptr;
+public:
+  ~AuditedCleanup() {}
+};
+
+[[transfer, share]] interface ConcurrentValue {
+  int read();
+};
+
+class ConcurrentScalar : public ConcurrentValue {
+  int value = 0;
+public:
+  int read() override { return this.value; }
+};
+
+T transfer_value<std::transferable T>(T value) {
+  return std::move(value);
+}
+
+void share_value<std::shareable T>(T& value) {}
+int inspect_transfer<std::transferable T>(T value) { return value(); }
+T relay_transfer<std::transferable T>(T value) {
+  return transfer_value(std::move(value));
+}
+void relay_share<std::shareable T>(T& value) { share_value(value); }
+
+int main() {
+  Scalar scalar = transfer_value(Scalar());
+  Node node = relay_transfer(Node());
+  std::unique_ptr<Scalar> owner = std::make_unique<Scalar>();
+  std::unique_ptr<Scalar> moved_owner = transfer_value(std::move(owner));
+  share_value(scalar);
+  relay_share(node);
+  share_value(moved_owner);
+  Box<int> integer_box = Box<int>(1);
+  Box<std::string_view> view_box = Box<std::string_view>("view");
+  expected<Scalar, int> result = Scalar();
+  int values[2] = {};
+  int* addresses[2] = {nullptr, nullptr};
+  auto callable = [scalar]() -> int { return 1; };
+  int callable_result = inspect_transfer(callable);
+  ConcurrentScalar concurrent = ConcurrentScalar();
+  share_value(concurrent);
+  AuditedCleanup cleanup = transfer_value(AuditedCleanup());
+  return callable_result - 1;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "concurrency-type-capabilities.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected concurrency capability diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "structural transfer/share capabilities should accept scalars, "
+         "recursive owners, reviewed cleanup, interfaces, and safe captures");
+
+  const lang::ClassDecl *node = findTopLevelClass(valid.program, "Node");
+  const lang::ClassDecl *rawBox = findTopLevelClass(valid.program, "RawBox");
+  const lang::ClassDecl *policy =
+      findTopLevelClass(valid.program, "PolicyValue");
+  const lang::ClassDecl *cleanup =
+      findTopLevelClass(valid.program, "AuditedCleanup");
+  const lang::ClassDecl *concurrent =
+      findTopLevelClass(valid.program, "ConcurrentScalar");
+  const lang::ClassDecl *fileHandle =
+      findClassRecursive(valid.program.declarations(), "file_handle");
+  const lang::ClassTypeInfo *nodeInfo =
+      node == nullptr ? nullptr : valid.semantics.findClassType(*node);
+  const lang::ClassTypeInfo *rawInfo =
+      rawBox == nullptr ? nullptr : valid.semantics.findClassType(*rawBox);
+  const lang::ClassTypeInfo *policyInfo =
+      policy == nullptr ? nullptr : valid.semantics.findClassType(*policy);
+  const lang::ClassTypeInfo *cleanupInfo =
+      cleanup == nullptr ? nullptr : valid.semantics.findClassType(*cleanup);
+  const lang::ClassTypeInfo *concurrentInfo =
+      concurrent == nullptr ? nullptr
+                            : valid.semantics.findClassType(*concurrent);
+  const lang::ClassTypeInfo *fileHandleInfo =
+      fileHandle == nullptr ? nullptr
+                            : valid.semantics.findClassType(*fileHandle);
+  expect(nodeInfo != nullptr && nodeInfo->traits.transferCapable &&
+             nodeInfo->traits.shareCapable,
+         "recursive unique ownership should converge to positive structural "
+         "capabilities");
+  expect(rawInfo != nullptr && !rawInfo->traits.transferCapable &&
+             !rawInfo->traits.shareCapable,
+         "raw-pointer state should conservatively deny both capabilities");
+  expect(policyInfo != nullptr && !policyInfo->traits.transferCapable &&
+             policyInfo->traits.shareCapable &&
+             policyInfo->transferPolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied &&
+             policyInfo->sharePolicy ==
+                 lang::ConcurrencyCapabilityPolicy::UnsafeAsserted,
+         "safe opt-out and unsafe positive policy should remain independent "
+         "semantic metadata");
+  expect(cleanupInfo != nullptr && cleanupInfo->traits.transferCapable &&
+             !cleanupInfo->traits.shareCapable,
+         "an unsafe transfer assertion should override cleanup/raw-pointer "
+         "denial without implicitly asserting sharing");
+  expect(concurrentInfo != nullptr && concurrentInfo->traits.transferCapable &&
+             concurrentInfo->traits.shareCapable,
+         "an interface implementation should prove each required capability");
+  expect(fileHandleInfo != nullptr && !fileHandleInfo->traits.transferCapable &&
+             !fileHandleInfo->traits.shareCapable &&
+             fileHandleInfo->transferPolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied &&
+             fileHandleInfo->sharePolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied,
+         "the standard native file handle should retain an explicit "
+         "thread-affinity opt-out despite its integer representation");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const auto bindingTraits =
+      [&](const std::string &name) -> const lang::SemanticTypeTraits * {
+    const lang::VariableDecl *variable = findDirectLocal(main, name);
+    const lang::BindingInfo *binding =
+        variable == nullptr ? nullptr : valid.semantics.findBinding(*variable);
+    return binding == nullptr ? nullptr : &binding->traits;
+  };
+  const lang::SemanticTypeTraits *resultTraits = bindingTraits("result");
+  const lang::SemanticTypeTraits *valuesTraits = bindingTraits("values");
+  const lang::SemanticTypeTraits *addressesTraits = bindingTraits("addresses");
+  const lang::SemanticTypeTraits *callableTraits = bindingTraits("callable");
+  expect(resultTraits != nullptr && resultTraits->transferCapable &&
+             resultTraits->shareCapable,
+         "expected<T, E> should derive capabilities from both alternatives");
+  expect(valuesTraits != nullptr && valuesTraits->transferCapable &&
+             valuesTraits->shareCapable && addressesTraits != nullptr &&
+             !addressesTraits->transferCapable &&
+             !addressesTraits->shareCapable,
+         "fixed arrays should derive capabilities from their element type");
+  expect(callableTraits != nullptr && callableTraits->transferCapable &&
+             callableTraits->shareCapable,
+         "read-only callable values should derive capabilities from captures");
+
+  bool sawIntegerBox = false;
+  bool sawViewBox = false;
+  bool sawNodeHir = false;
+  for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "Box" &&
+        instance.typeArguments.size() == 1) {
+      if (instance.typeArguments.front() == lang::SemanticType::Int32) {
+        sawIntegerBox =
+            instance.traits.transferCapable && instance.traits.shareCapable;
+      } else if (instance.typeArguments.front() ==
+                 lang::SemanticType::StringView) {
+        sawViewBox =
+            !instance.traits.transferCapable && !instance.traits.shareCapable;
+      }
+    }
+    if (instance.source->name().lexeme == "Node") {
+      sawNodeHir =
+          instance.traits.transferCapable && instance.traits.shareCapable;
+    }
+  }
+  expect(sawIntegerBox && sawViewBox && sawNodeHir,
+         "HIR should preserve concrete generic and recursive capability "
+         "facts without backend name recognition");
+
+  const lang::LanguageQueries queries;
+  const std::size_t policyName = source.find("PolicyValue");
+  const std::optional<lang::HoverInfo> policyHover =
+      queries.hover(valid, valid.sourceGraph.entryUnit(), policyName + 1);
+  expect(policyHover &&
+             std::find(policyHover->notes.begin(), policyHover->notes.end(),
+                       "not transfer-capable (explicit opt-out)") !=
+                 policyHover->notes.end() &&
+             std::find(policyHover->notes.begin(), policyHover->notes.end(),
+                       "share-capable (unsafe nominal assertion)") !=
+                 policyHover->notes.end(),
+         "class hover should present compiler-owned capability policy facts");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  const std::size_t emittedProgram =
+      generated.find("namespace __gti_program {");
+  const std::string_view generatedProgram =
+      emittedProgram == std::string::npos
+          ? std::string_view(generated)
+          : std::string_view(generated).substr(emittedProgram);
+  const std::size_t constrainedCallableBody =
+      generatedProgram.find("// GTI verified-MIR body: deduced-callable");
+  const std::size_t constrainedCallable =
+      constrainedCallableBody == std::string_view::npos
+          ? std::string_view::npos
+          : generatedProgram.rfind("inspect_transfer", constrainedCallableBody);
+  expect(constrainedCallableBody != std::string_view::npos &&
+             constrainedCallable != std::string_view::npos &&
+             constrainedCallableBody - constrainedCallable < 512,
+         "frontend-checked generic constraints should retain a verified-MIR "
+         "source-template body for an unnameable callable instance");
+  expect(generatedProgram.find("unsafe_transfer") == std::string_view::npos &&
+             generatedProgram.find("no_transfer") == std::string_view::npos &&
+             generatedProgram.find("transferable") == std::string_view::npos &&
+             generatedProgram.find("shareable") == std::string_view::npos,
+         "capability policy and constraints should remain frontend facts, not "
+         "emitted C++ traits or spellings");
+
+  const std::string invalidSource = R"(
+class RawBox { int* address = nullptr; };
+class Cleanup {
+  int value = 0;
+public:
+  ~Cleanup() {}
+};
+[[no_transfer, no_share]] class Affine { int token = 0; };
+
+T require_transfer<std::transferable T>(T value) { return value; }
+void require_share<std::shareable T>(T& value) {}
+void inspect_transfer<std::transferable T>(T value) {}
+
+int main() {
+  RawBox raw = require_transfer(RawBox());
+  Cleanup cleanup = require_transfer(Cleanup());
+  Affine affine = require_transfer(Affine());
+  std::unique_ptr<Affine> owner = nullptr;
+  std::unique_ptr<Affine> moved = require_transfer(std::move(owner));
+  std::string_view view = "view";
+  require_share(view);
+  RawBox captured = RawBox();
+  auto blocked = [captured]() -> int { return 0; };
+  inspect_transfer(blocked);
+  expected<int, RawBox> result = unexpected(RawBox());
+  expected<int, RawBox> moved_result = require_transfer(result);
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-concurrency-type-capabilities.gti",
+                               invalidSource, {standardLibraryPrelude()});
+  expect(
+      !invalid.canGenerateCode() &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2029") >= 7 &&
+          hasDiagnostic(invalid.diagnostics, "'std::transferable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::shareable'") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "state and cleanup that can safely move") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "read-only shared access that is safe"),
+      "generic constraints should reject raw pointers, cleanup, explicit "
+      "affinity, owners, borrowed views, captures, and expected alternatives");
+
+  const std::string interfaceFailureSource = R"(
+[[transfer, share]] interface Concurrent {};
+[[no_transfer]] class Broken : public Concurrent { int value = 0; };
+)";
+  const lang::FrontendResult interfaceFailure = lang::Frontend().analyze(
+      "invalid-capability-interface.gti", interfaceFailureSource,
+      {standardLibraryPrelude()});
+  const lang::Diagnostic *interfaceDiagnostic =
+      findDiagnosticByCode(interfaceFailure.diagnostics, "GTI-S2059");
+  expect(!interfaceFailure.canGenerateCode() &&
+             interfaceDiagnostic != nullptr &&
+             interfaceDiagnostic->message.find(
+                 "does not satisfy the transfer capability") !=
+                 std::string::npos &&
+             hasRelatedDiagnostic(interfaceFailure.diagnostics,
+                                  "Interface capability required here") &&
+             interfaceDiagnostic->primary.start ==
+                 interfaceFailureSource.find("Broken"),
+         "interface capability proof failures should use a deterministic "
+         "implementation span and related requirement span");
+
+  const std::string policyFailureSource = R"(
+[[transfer]] class WrongPositive {};
+[[unsafe_share]] interface WrongInterface {};
+[[no_share, unsafe_share]] class Conflicting {};
+[[mystery]] struct UnknownPolicy {};
+)";
+  const lang::FrontendResult policyFailure =
+      lang::Frontend().analyze("invalid-capability-policy.gti",
+                               policyFailureSource, {standardLibraryPrelude()});
+  expect(!policyFailure.canGenerateCode() &&
+             countDiagnosticCode(policyFailure.diagnostics, "GTI-S2059") == 4 &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "only valid as an interface capability") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "assertion belongs on an implementing class") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "declared more than once or with conflicting") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "Unknown concurrency capability attribute") &&
+             hasRelatedDiagnostic(policyFailure.diagnostics,
+                                  "first policy is declared here"),
+         "capability policy misuse should produce one focused semantic "
+         "diagnostic per invalid attribute without parser cascades");
+
+  const std::string formatted = lang::Formatter().format(
+      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0;};");
+  expect(formatted == "[[no_transfer, no_share]] class NativeHandle {\n"
+                      "  int descriptor = 0;\n"
+                      "};\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "concurrency capability attributes should format idempotently with "
+         "C++-familiar declaration placement");
+}
+
+void testSourceDefinedConcepts() {
+  const std::string source = R"(
+concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
+concept signed_arithmetic<T> =
+    arithmetic_value<T> and std::signed_numeric<T>;
+
+T numeric_identity<std::numeric T>(T value) { return value; }
+
+T twice<signed_arithmetic T>(T value) {
+  return T(value + value);
+}
+
+T forward<signed_arithmetic T>(T value) {
+  return numeric_identity(value);
+}
+
+int main() {
+  int result = forward(twice(3));
+  if (result == 6) { return 0; }
+  return 1;
+}
+)";
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "source-concepts.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected source concept diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "source-defined concept aliases and conjunctions should propagate "
+         "their exact capabilities");
+
+  const lang::FunctionDecl *twice =
+      findTopLevelFunction(valid.program, "twice");
+  const lang::FunctionInfo *twiceInfo =
+      twice == nullptr ? nullptr : valid.semantics.findFunction(*twice);
+  expect(
+      twiceInfo != nullptr && twiceInfo->genericParameters.size() == 1 &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::Numeric) &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::SignedNumeric) &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::Copyable),
+      "semantic generic metadata should retain the resolved atomic "
+      "capability set rather than a public concept spelling");
+
+  const bool recordedConcept =
+      std::any_of(valid.semantics.database().symbols().begin(),
+                  valid.semantics.database().symbols().end(),
+                  [](const lang::SymbolRecord &symbol) {
+                    return symbol.kind == lang::SymbolKind::Concept &&
+                           symbol.qualifiedName == "signed_arithmetic";
+                  });
+  expect(recordedConcept,
+         "source concepts should be compiler-owned symbols for tooling");
+
+  const lang::SourceUnitId sourceUnit = valid.sourceGraph.entryUnit();
+  const std::size_t constrainedUse =
+      source.find("signed_arithmetic T", source.find("twice"));
+  const std::size_t conceptDeclaration = source.find("signed_arithmetic<T>");
+  const lang::LanguageQueries queries;
+  const std::optional<lang::HoverInfo> conceptHover =
+      queries.hover(valid, sourceUnit, constrainedUse + 1);
+  const std::optional<lang::DefinitionInfo> conceptDefinition =
+      queries.definition(valid, sourceUnit, constrainedUse + 1);
+  expect(conceptHover &&
+             conceptHover->signature ==
+                 "concept signed_arithmetic<T> = arithmetic_value<T> && "
+                 "std::signed_numeric<T>" &&
+             conceptDefinition &&
+             conceptDefinition->target.start == conceptDeclaration,
+         "concept uses should expose their canonical composition and semantic "
+         "definition identity");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(generated.find("concept arithmetic_value") == std::string::npos &&
+             generated.find("concept signed_arithmetic") == std::string::npos &&
+             generated.find("template <typename T>") != std::string::npos,
+         "concepts should remain frontend validity metadata and not delegate "
+         "constraint checking to the C++ backend");
+
+  lang::FrontendResult concreteFailure =
+      lang::Frontend().analyze("source-concept-failure.gti", R"(
+concept signed_value<T> = std::signed_numeric<T> && std::copyable<T>;
+T require_signed<signed_value T>(T value) { return value; }
+int main() {
+  uint64_t value = require_signed(uint64_t(1));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!concreteFailure.canGenerateCode() &&
+             hasDiagnostic(concreteFailure.diagnostics,
+                           "does not satisfy generic constraint "
+                           "'signed_value'"),
+         "concrete arguments should be checked against composed concepts with "
+         "the source concept name in diagnostics");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-source-concepts.gti", R"(
+concept broken<T> = missing<T>;
+concept first<T> = second<T>;
+concept second<T> = first<T>;
+concept wrong<T> = std::copyable<U>;
+concept duplicate<T> = std::copyable<T>;
+concept duplicate<T> = std::movable<T>;
+concept leaked<T> = gti_internal::numeric_capability<T>;
+@compiler_constraint("numeric") concept forged<T>;
+T direct<gti_internal::numeric_capability T>(T value) { return value; }
+int main() { return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2049") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2058") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown concept 'missing'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Concept definition cycle involving") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must apply to the declaration's type parameter") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Duplicate declaration of 'duplicate'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "@compiler_constraint is reserved"),
+         "concept declaration diagnostics should cover unknown dependencies, "
+         "cycles, parameter misuse, duplicates, and forged compiler bindings");
+
+  lang::FrontendResult noPrelude = lang::Frontend().analyze(
+      "concept-without-prelude.gti",
+      "T value<std::numeric T>(T input) { return input; }");
+  expect(!noPrelude.canGenerateCode() &&
+             hasDiagnostic(noPrelude.diagnostics,
+                           "Unknown generic concept 'std::numeric'"),
+         "public standard concepts should come from the prelude rather than "
+         "hard-coded std spellings");
+
+  const std::filesystem::path visibilityRoot =
+      std::filesystem::temp_directory_path() / "gti-concept-visibility";
+  const std::filesystem::path visibilityEntry = visibilityRoot / "main.gti";
+  const std::filesystem::path conceptsUnit = visibilityRoot / "concepts.gti";
+  const std::filesystem::path wrapperUnit = visibilityRoot / "wrapper.gti";
+  const auto canonical = [](const std::filesystem::path &path) {
+    return std::filesystem::weakly_canonical(path).string();
+  };
+  const std::string conceptsSource = R"(
+namespace capabilities {
+concept signed_value<T> = std::signed_numeric<T>;
+}
+)";
+  lang::FrontendResult visible = lang::Frontend().analyze(
+      visibilityEntry,
+      "#include \"concepts.gti\"\n"
+      "namespace cap = capabilities;\n"
+      "T use<cap::signed_value T>(T value) { return value; }\n"
+      "int main() { return use(1) - 1; }\n",
+      {standardLibraryPrelude()}, {{canonical(conceptsUnit), conceptsSource}});
+  expect(visible.canGenerateCode(),
+         "directly included concepts should resolve through namespace aliases");
+
+  lang::FrontendResult hidden = lang::Frontend().analyze(
+      visibilityEntry,
+      "#include \"wrapper.gti\"\n"
+      "T use<capabilities::signed_value T>(T value) { return value; }\n"
+      "int main() { return use(1) - 1; }\n",
+      {standardLibraryPrelude()},
+      {{canonical(wrapperUnit), "#include \"concepts.gti\"\n"},
+       {canonical(conceptsUnit), conceptsSource}});
+  expect(!hidden.canGenerateCode() &&
+             hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
+             hasDiagnosticHint(hidden.diagnostics, "#include \"concepts.gti\""),
+         "concept declarations should obey direct-include visibility without "
+         "transitive re-export");
+
+  lang::Lexer lexer;
+  lang::Parser disjunctionParser(lexer.scan(
+      "concept either<T> = std::integral<T> || std::floating_point<T>; "
+      "int okay = 1;"));
+  const lang::Program recovered = disjunctionParser.parse();
+  expect(disjunctionParser.hadError() &&
+             hasDiagnostic(disjunctionParser.errors(),
+                           "support conjunction only") &&
+             recovered.declarations().size() == 1,
+         "concept disjunction should be rejected explicitly without losing "
+         "the following declaration");
+
+  const std::string formatted = lang::Formatter().format(
+      "concept sortable<T>=std::totally_ordered<T>&&std::movable<T>;");
+  expect(formatted == "concept sortable<T> = std::totally_ordered<T> && "
+                      "std::movable<T>;\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "concept declarations should format with C++-familiar generic and "
+         "conjunction spacing");
+}
+
+void testStructuralRequiresAndAccumulate() {
+  const std::string source = R"(
+#include <std/iterator>
+#include <std/numeric>
+#include <std/vector>
+
+concept compatible_sentinel<Sentinel, Iterator> =
+    std::sentinel_for<Sentinel, Iterator>;
+
+T local_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  for (; first != last; ++first) {
+    init = T(std::move(init) + *first);
+  }
+  return init;
+}
+
+T forward_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));
+}
+
+class NumberSentinel {
+  int limit;
+
+public:
+  NumberSentinel(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class NumberIterator {
+  mut int current;
+
+public:
+  NumberIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(NumberSentinel& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  int local = local_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int standard = std::accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int forwarded =
+      forward_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  int owned = std::accumulate(values.begin(), values.end(), 0);
+  values.push_back(4);
+  mut std::vector<int8_t> narrowValues{};
+  narrowValues.push_back(int8_t(1));
+  narrowValues.push_back(int8_t(2));
+  int8_t narrow = std::accumulate(
+      narrowValues.begin(), narrowValues.end(), int8_t(0));
+  return local + standard + forwarded + owned + narrow - 39;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "structural-requires.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected structural requires diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "trailing structural requirements should admit an exact iterator, "
+         "distinct sentinel, owner-tied std iterator, and numeric "
+         "accumulator");
+
+  const lang::ConceptDecl *sentinelConcept = nullptr;
+  for (const lang::StmtPtr &declaration : valid.program.declarations()) {
+    const auto *conceptDeclaration =
+        dynamic_cast<const lang::ConceptDecl *>(declaration.get());
+    if (conceptDeclaration != nullptr &&
+        conceptDeclaration->name().lexeme == "compatible_sentinel") {
+      sentinelConcept = conceptDeclaration;
+      break;
+    }
+  }
+  const lang::FunctionDecl *local =
+      findTopLevelFunction(valid.program, "local_accumulate");
+  const lang::RequiresClause *requiresClause =
+      local != nullptr && local->requiresClause() ? &*local->requiresClause()
+                                                  : nullptr;
+  expect(sentinelConcept != nullptr &&
+             sentinelConcept->typeParameters().size() == 2 &&
+             sentinelConcept->requirements().size() == 1 &&
+             sentinelConcept->requirements().front().arguments.size() == 2,
+         "the AST should retain multi-parameter concept declarations and "
+         "their relational argument mapping");
+  expect(requiresClause != nullptr &&
+             requiresClause->requirements.size() == 3 &&
+             requiresClause->requirements[0].name.last().lexeme ==
+                 "input_iterator" &&
+             requiresClause->requirements[0].arguments.size() == 1 &&
+             requiresClause->requirements[1].name.last().lexeme ==
+                 "compatible_sentinel" &&
+             requiresClause->requirements[1].arguments.size() == 2 &&
+             requiresClause->requirements[2].name.last().lexeme ==
+                 "accumulates_into" &&
+             requiresClause->requirements[2].arguments.size() == 2,
+         "the AST should preserve each trailing requires application and its "
+         "type-parameter arguments in source order");
+
+  bool foundLocalInstance = false;
+  bool foundStandardInstance = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        (instance.source->name().lexeme != "local_accumulate" &&
+         instance.source->name().lexeme != "accumulate")) {
+      continue;
+    }
+    const auto targetsOperator = [&](const lang::HirValue &value,
+                                     lang::TokenKind token,
+                                     lang::OverloadedOperator operation) {
+      if (value.operation != token || !value.functionTarget ||
+          *value.functionTarget == 0 ||
+          *value.functionTarget > valid.hir.functionInstances().size()) {
+        return false;
+      }
+      const lang::HirFunctionInstance &target =
+          valid.hir.functionInstances()[*value.functionTarget - 1];
+      return target.source != nullptr && target.source->operatorName() &&
+             target.source->operatorName()->kind == operation;
+    };
+    const bool selectedComparison = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::BANG_EQUAL,
+                                 lang::OverloadedOperator::NotEqual);
+        });
+    const bool selectedDereference = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::STAR,
+                                 lang::OverloadedOperator::Dereference);
+        });
+    const bool selectedIncrement = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::PLUS_PLUS,
+                                 lang::OverloadedOperator::PreIncrement);
+        });
+    if (!selectedComparison || !selectedDereference || !selectedIncrement) {
+      continue;
+    }
+    foundLocalInstance = foundLocalInstance ||
+                         instance.source->name().lexeme == "local_accumulate";
+    foundStandardInstance =
+        foundStandardInstance || instance.source->name().lexeme == "accumulate";
+  }
+  expect(foundLocalInstance && foundStandardInstance,
+         "concrete local and std::accumulate HIR instances should retain "
+         "selected comparison, dereference, and increment targets");
+
+  const lang::FrontendResult constrainedGenericClass =
+      lang::Frontend().analyze("constrained-generic-class-method.gti", R"(
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+};
+
+int main() {
+  NumericBox<int> box = NumericBox<int>();
+  return box.doubled(2) - 4;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(constrainedGenericClass.canGenerateCode(),
+         "an ordinary non-generic method of a generic class should be able "
+         "to use an atomic trailing requirement as its symbolic proof");
+
+  const lang::FrontendResult rejectedGenericClass =
+      lang::Frontend().analyze("rejected-generic-class-method.gti", R"(
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+};
+
+int main() {
+  NumericBox<bool> box = NumericBox<bool>();
+  bool value = box.doubled(true);
+  if (value) {
+    return 0;
+  }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !rejectedGenericClass.canGenerateCode() &&
+          hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(rejectedGenericClass.diagnostics,
+                        "does not satisfy generic constraint 'std::numeric'"),
+      "a single non-generic member overload must check requirements after "
+      "substituting its generic class arguments");
+
+  const lang::FrontendResult rejectedConstrainedOperator =
+      lang::Frontend().analyze("rejected-constrained-operator.gti", R"(
+class ConstrainedOperator<T> {
+public:
+  bool operator()(T value)
+    requires std::numeric<T> {
+    return true;
+  }
+
+  bool operator!=(ConstrainedOperator<T>& other)
+    requires std::numeric<T> {
+    return false;
+  }
+};
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedConstrainedOperator.canGenerateCode() &&
+             hasDiagnosticCode(rejectedConstrainedOperator.diagnostics,
+                               "GTI-S2049") &&
+             hasDiagnostic(rejectedConstrainedOperator.diagnostics,
+                           "not supported on operator declarations"),
+         "bounded trailing requirements should reject operator declarations "
+         "instead of creating recursively constrained operator proof");
+  const lang::FrontendResult rejectedPolymorphicRequirements =
+      lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
+class AbstractValues<T> {
+public:
+  virtual T concrete() requires std::numeric<T> { return T(0); }
+  virtual T abstract() requires std::numeric<T> = 0;
+};
+
+interface ValueContract<T> {
+  T value() requires std::numeric<T>;
+};
+
+interface PlainContract<T> {
+  T inherited();
+};
+
+class DerivedValues<T> : public PlainContract<T> {
+public:
+  T inherited() requires std::numeric<T> override { return T(0); }
+};
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedPolymorphicRequirements.canGenerateCode() &&
+             countDiagnosticCode(rejectedPolymorphicRequirements.diagnostics,
+                                 "GTI-S2049") >= 4 &&
+             hasDiagnostic(rejectedPolymorphicRequirements.diagnostics,
+                           "not supported on polymorphic methods"),
+         "bounded trailing requirements should reject virtual, pure, and "
+         "interface contracts whose dispatch cannot preserve them");
+
+  const lang::FrontendResult unprovenForward = lang::Frontend().analyze(
+      "unproven-structural-forward.gti", R"(
+#include <std/numeric>
+T invalid_forward<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init) {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !unprovenForward.canGenerateCode() &&
+          hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'"),
+      "generic forwarding should require the outer declaration to prove "
+      "the callee's exact structural contract");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(
+      generated.find("concept compatible_sentinel") == std::string::npos &&
+          generated.find("requires __gti_std::") == std::string::npos &&
+          generated.find("__gti_operator_dereference") != std::string::npos &&
+          generated.find("__gti_operator_pre_increment") != std::string::npos &&
+          generated.find("__gti_operator_not_equal") != std::string::npos &&
+          generated.find("// GTI verified-MIR body:") != std::string::npos,
+      "the C++ backend should emit already-validated operator calls, not "
+      "GTI concepts or trailing requires clauses");
+
+  const lang::FrontendResult exactSentinelBridges = lang::Frontend().analyze(
+      "exact-sentinel-bridges.gti", R"(
+#include <std/numeric>
+#include <std/iterator>
+
+class BaseEnd {
+};
+
+class DerivedEnd : public BaseEnd {
+  int limit;
+public:
+  DerivedEnd(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class OtherEnd {};
+
+class GenericComparable<T, uint64_t N> {
+public:
+  bool operator!=(GenericComparable<T, N>& other) { return true; }
+  bool differs(GenericComparable<T, N>& other) { return this != other; }
+};
+
+interface IteratorContract {
+  int& operator*();
+  void operator++() mut;
+  bool operator!=(DerivedEnd& end);
+};
+
+class DynamicIterator : public IteratorContract {
+  mut int current;
+public:
+  DynamicIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(DerivedEnd& end) override {
+    return this.current != end.position();
+  }
+};
+
+int dynamic_step<Iterator, Sentinel>(mut Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  ++first;
+  if (first != last) { return *first; }
+  return 0;
+}
+
+class BaseIterator {
+  mut int current;
+public:
+  BaseIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(DerivedEnd& end) {
+    return this.current != end.position();
+  }
+};
+
+class DerivedIterator : public BaseIterator {
+public:
+  DerivedIterator(int value) : BaseIterator(value) {}
+  bool operator!=(BaseEnd& end) { return false; }
+  bool operator!=(mut OtherEnd& end) { return true; }
+};
+
+int main() {
+  mut DerivedIterator iterator = DerivedIterator(1);
+  DerivedEnd end = DerivedEnd(4);
+  bool direct = iterator != end;
+  if (!direct) { return 1; }
+  GenericComparable<int, 4> generic_left = GenericComparable<int, 4>();
+  GenericComparable<int, 4> generic_right = GenericComparable<int, 4>();
+  if (!generic_left.differs(generic_right)) { return 3; }
+  mut DynamicIterator dynamic = DynamicIterator(1);
+  mut IteratorContract& view = dynamic;
+  if (dynamic_step(view, end) != 2) { return 2; }
+  return std::accumulate(DerivedIterator(1), DerivedEnd(4), 0) - 6;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!exactSentinelBridges.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         exactSentinelBridges.diagnostics) {
+      std::cerr << "Unexpected exact sentinel bridge diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(exactSentinelBridges.canGenerateCode(),
+         "an inherited exact sentinel operation should remain valid beside a "
+         "derived convertible overload and mutable-sentinel overload");
+  const std::string exactBridgeCpp =
+      gti_test::emitCppText(exactSentinelBridges);
+  expect(
+      exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
+                          "::__gti_program::DerivedEnd &>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
+                              "::__gti_program::BaseEnd &>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("::gti_internal::backend::exact_type<"
+                              "::__gti_program::OtherEnd &>") ==
+              std::string::npos &&
+          exactBridgeCpp.find(
+              "friend const std::int32_t & __gti_operator_dereference("
+              "const IteratorContract &__gti_receiver)") != std::string::npos &&
+          exactBridgeCpp.find(
+              "_dynamic_step__gti_mir_failure("
+              "::__gti_program::IteratorContract & __gti_mir_arg_0, "
+              "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
+              std::string_view::npos &&
+          exactBridgeCpp.find(
+              "exact_type<const ::__gti_program::GenericComparable<T, N> &>") !=
+              std::string::npos &&
+          exactBridgeCpp.find(
+              "operator!=(const ::__gti_program::GenericComparable<T, N> & "
+              "other)") != std::string::npos &&
+          exactBridgeCpp.find("GenericComparable<void, 0>") ==
+              std::string::npos,
+      "sentinel bridges should tag exact read-only parameter types and "
+      "must not expose mutable-sentinel overloads");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-structural-requires.gti", R"(
+#include <std/iterator>
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MissingDereference {
+  mut int current = 0;
+public:
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  int operator++() mut { return this.current; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongSentinelParameter {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongElement {
+  bool value = false;
+  mut int current = 0;
+public:
+  bool& operator*() { return this.value; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  int missing = std::accumulate(MissingDereference(), End(), 0);
+  int increment = std::accumulate(WrongIncrement(), End(), 0);
+  int sentinel = std::accumulate(WrongSentinelParameter(), End(), 0);
+  int element = std::accumulate(WrongElement(), End(), 0);
+  return missing + increment + sentinel + element;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
+          hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "concept 'std::accumulates_into'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Prefix operator++ must return void") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "public read-only operator*() returning") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "public read-only bool operator!=") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "referent is exactly the required type") &&
+          hasRelatedDiagnostic(
+              invalid.diagnostics,
+              "Required here as 'std::input_iterator<Iterator>'"),
+      "structural requirements should diagnose missing or inexact "
+      "iterator, sentinel, and element operations before backend entry");
+
+  const lang::FrontendResult missingIncrement = lang::Frontend().analyze(
+      "missing-increment.gti", R"(
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MissingIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  return std::accumulate(MissingIncrement(), End(), 0);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingIncrement.canGenerateCode() &&
+             hasDiagnosticCode(missingIncrement.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(missingIncrement.diagnostics,
+                           "concept 'std::input_iterator'") &&
+             hasDiagnosticHint(missingIncrement.diagnostics,
+                               "public void operator++() mut"),
+         "input_iterator should reject an otherwise exact iterator that is "
+         "missing prefix increment");
+
+  const lang::FrontendResult mutableOnlyDereference = lang::Frontend().analyze(
+      "mutable-only-dereference.gti", R"(
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MutableOnlyDereference {
+  mut int current = 0;
+public:
+  mut int& operator*() mut { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  return std::accumulate(MutableOnlyDereference(), End(), 0);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !mutableOnlyDereference.canGenerateCode() &&
+          hasDiagnosticCode(mutableOnlyDereference.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(mutableOnlyDereference.diagnostics,
+                        "concept 'std::input_iterator'"),
+      "input_iterator and accumulates_into should require a read-only "
+      "dereference even when the caller owns a mutable iterator value");
+
+  const lang::FrontendResult wrongArity = lang::Frontend().analyze(
+      "wrong-requires-arity.gti", R"(
+#include <std/iterator>
+T invalid<I, T>(I iterator, T value)
+  requires std::input_iterator<I, T> {
+  return value;
+}
+void invalid_pack<Args...>(Args... args)
+  requires std::input_iterator<Args> {}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!wrongArity.canGenerateCode() &&
+             hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2049") &&
+             hasDiagnostic(wrongArity.diagnostics,
+                           "Concept 'std::input_iterator' requires 1 type "
+                           "argument") &&
+             hasDiagnostic(wrongArity.diagnostics, "unexpanded type pack"),
+         "requires-clause concept applications should enforce exact arity "
+         "and reject unexpanded type packs");
+
+  const lang::FrontendResult duplicate = lang::Frontend().analyze(
+      "duplicate-structural-overload.gti", R"(
+#include <std/iterator>
+#include <std/numeric>
+T select<I, S, T>(I iterator, S sentinel, T value)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> {
+  return value;
+}
+T select<I, S, T>(I iterator, S sentinel, T value)
+  requires std::input_iterator<I> && std::accumulates_into<I, T> {
+  return value;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!duplicate.canGenerateCode() &&
+             hasDiagnostic(duplicate.diagnostics,
+                           "Duplicate overload signature for 'select'"),
+         "trailing requirements should validate candidates without "
+         "distinguishing or ranking otherwise identical overloads");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(R"(
+T broken<I>(I value)
+  requires std::input_iterator<I> || std::input_iterator<I> {
+  return value;
+}
+int okay() { return 0; }
+)"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() &&
+             findTopLevelFunction(recovered, "okay") != nullptr,
+         "requires-clause disjunction should be rejected while parser "
+         "recovery preserves the next declaration");
+
+  const std::string requiresSource =
+      "T sum<I,std::numeric T>(I first,T init)requires "
+      "std::input_iterator<I>&&std::accumulates_into<I,T>{return init;}";
+  const std::string formattedRequires =
+      lang::Formatter().format(requiresSource);
+  expect(formattedRequires.find("requires std::input_iterator<I> &&") !=
+                 std::string::npos &&
+             lang::Formatter().format(formattedRequires) == formattedRequires,
+         "multi-parameter trailing requires syntax should format "
+         "idempotently");
+  expect(formattedRequires == R"(T sum<I, std::numeric T>(I first, T init)
+  requires std::input_iterator<I> && std::accumulates_into<I, T> {
+  return init;
+}
+)",
+         "a trailing requires clause should start its own line one level past "
+         "the declaration, matching the shipped standard-library style");
+
+  lang::FormatOptions singleLineRequires;
+  singleLineRequires.requiresClausePosition =
+      lang::RequiresClausePosition::SingleLine;
+  const std::string joinedRequires =
+      lang::Formatter(singleLineRequires).format(requiresSource);
+  expect(joinedRequires.find(") requires std::input_iterator<I>") !=
+                 std::string::npos &&
+             lang::Formatter(singleLineRequires).format(joinedRequires) ==
+                 joinedRequires,
+         "RequiresClausePosition SingleLine should keep the clause on the "
+         "declaration line");
+
+  const std::string bodylessRequires = lang::Formatter().format(
+      "T probe<I,std::numeric T>(I first,T init)requires "
+      "std::input_iterator<I>;\nint32_t after() { return 0; }\n");
+  expect(bodylessRequires == R"(T probe<I, std::numeric T>(I first, T init)
+  requires std::input_iterator<I>;
+int32_t after() {
+  return 0;
+}
+)",
+         "a bodyless declaration should release the requires indent at its "
+         "semicolon");
+
+  const std::string requiresIdentifier =
+      lang::Formatter().format("int32_t main(){int32_t requires=1;return "
+                               "requires-1;}");
+  expect(requiresIdentifier == R"(int32_t main() {
+  int32_t requires = 1;
+  return requires - 1;
+}
+)",
+         "recovery-oriented formatting should not misindent a non-clause "
+         "'requires' occurrence even though the compiler reserves it as a "
+         "keyword");
+}
+
+void testSymbolicAutoLocalBinding() {
+  const std::string source = R"(
+#include <std/iterator>
+#include <std/vector>
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() {
+  mut std::vector<int64_t> wide = std::vector<int64_t>();
+  wide.push_back(int64_t(2));
+  wide.push_back(int64_t(9));
+  mut std::vector<int32_t> narrow = std::vector<int32_t>();
+  narrow.push_back(3);
+  narrow.push_back(8);
+  bool wide_result = first_less_than_next(wide.begin(), wide.end());
+  bool narrow_result = first_less_than_next(narrow.begin(), narrow.end());
+  return wide_result && narrow_result ? 0 : 1;
+}
+)";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "symbolic-auto-local.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected symbolic auto local diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "a constrained symbolic dereference should infer an exact auto-local "
+         "type independently in each concrete generic instance");
+
+  const lang::SourceUnitId unit = valid.sourceGraph.entryUnit();
+  const lang::SymbolRecord *autoLocal = nullptr;
+  for (const lang::SymbolRecord &symbol :
+       valid.semantics.database().symbols()) {
+    if (symbol.kind == lang::SymbolKind::LocalVariable &&
+        symbol.name == "value" && symbol.sourceUnit == unit) {
+      autoLocal = &symbol;
+      break;
+    }
+  }
+  expect(autoLocal != nullptr &&
+             autoLocal->type == lang::SemanticType::Unknown &&
+             autoLocal->instanceDependentType,
+         "the shared generic declaration symbol should remain explicitly "
+         "instance-dependent instead of taking one specialization's type");
+
+  bool foundInt32 = false;
+  bool foundInt64 = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "first_less_than_next") {
+      continue;
+    }
+    for (const lang::HirBinding &binding : instance.body.bindings) {
+      if (binding.variable == nullptr ||
+          binding.variable->name().lexeme != "value") {
+        continue;
+      }
+      foundInt32 = foundInt32 || binding.info.type == lang::SemanticType::Int32;
+      foundInt64 = foundInt64 || binding.info.type == lang::SemanticType::Int64;
+    }
+  }
+  expect(foundInt32 && foundInt64,
+         "concrete HIR instances should own their distinct inferred local "
+         "types regardless of specialization order");
+
+  const lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      valid.program, valid.semantics, valid.hir, valid.mir, valid.mir, {},
+      lang::TargetInfo::host());
+  const lang::LoweredSymbol *loweredAuto =
+      !lowered.program || autoLocal == nullptr
+          ? nullptr
+          : lowered.program->findSymbol(autoLocal->id);
+  expect(lowered.valid() && loweredAuto != nullptr &&
+             loweredAuto->type == lang::SemanticType::Unknown &&
+             loweredAuto->instanceDependentType,
+         "LoweredProgram should retain the dependent declaration marker while "
+         "concrete bodies retain exact types");
+
+  const std::size_t autoKeyword = source.find("auto value");
+  const std::size_t valueName = source.find("value", autoKeyword);
+  const lang::LanguageQueries queries;
+  const std::optional<lang::HoverInfo> autoHover =
+      queries.hover(valid, unit, autoKeyword + 1);
+  const std::optional<lang::HoverInfo> valueHover =
+      queries.hover(valid, unit, valueName + 1);
+  expect(autoHover && autoHover->signature == "auto" &&
+             !autoHover->notes.empty() && valueHover &&
+             valueHover->signature == "auto value" &&
+             !valueHover->notes.empty(),
+         "tooling should describe a symbolic auto local as instance-dependent, "
+         "not as whichever specialization was analyzed first");
+
+  const lang::FrontendResult uninstantiated = lang::Frontend().analyze(
+      "uninstantiated-symbolic-auto-local.gti", R"(
+#include <std/iterator>
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::LoweredProgramBuild uninstantiatedLowered =
+      lang::LoweredProgramBuilder().build(
+          uninstantiated.program, uninstantiated.semantics, uninstantiated.hir,
+          uninstantiated.mir, uninstantiated.mir, {}, lang::TargetInfo::host());
+  expect(uninstantiated.canGenerateCode() && uninstantiatedLowered.valid(),
+         "an uninstantiated valid generic primary should not need a concrete "
+         "specialization to make its dependent local symbol valid");
+}
+
+void testConstructorLocalTypeGenerics() {
+  const std::string source = R"(
+#include <std/string>
+
+class Capture {
+public:
+  Capture<T>(T value) {}
+};
+
+class Tagged<Stored> {
+  Stored stored;
+
+public:
+  Tagged<Tag>(Stored value, Tag tag) : stored(value) {}
+  Stored read() { return this.stored; }
+};
+
+int main() {
+  Capture integer = Capture(1);
+  Capture boolean = Capture(true);
+  Tagged<int> tagged = Tagged<int>(4, true);
+  mut std::string source = std::string("hello");
+  mut std::string copy = std::string(source.begin(), source.end());
+  source.push_back('!');
+  if (copy == "hello" and source == "hello!" and tagged.read() == 4) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
+                                      "gti-constructor-local-generics/main.gti";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      entry, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected constructor-local generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.mir.valid() &&
+             lang::verifyMirProgram(valid.mir).valid(),
+         "constructor-local type arguments should infer exactly, satisfy "
+         "declared requirements, and lower through verified MIR");
+
+  const lang::ClassDecl *capture = findTopLevelClass(valid.program, "Capture");
+  const lang::ConstructorDecl *captureConstructor = nullptr;
+  if (capture != nullptr) {
+    for (const lang::StmtPtr &member : capture->members()) {
+      if (const auto *constructor =
+              dynamic_cast<const lang::ConstructorDecl *>(member.get())) {
+        captureConstructor = constructor;
+        break;
+      }
+    }
+  }
+  expect(captureConstructor != nullptr &&
+             captureConstructor->genericParameters().size() == 1 &&
+             !captureConstructor->requiresClause(),
+         "the AST should scope a constructor-local type parameter to its "
+         "constructor declaration");
+
+  const lang::ConstructorInfo *captureInfo =
+      captureConstructor == nullptr
+          ? nullptr
+          : valid.semantics.findConstructor(*captureConstructor);
+  expect(captureInfo != nullptr && captureInfo->genericParameters.size() == 1 &&
+             captureInfo->parameterTypes.size() == 1 &&
+             captureInfo->parameterTypes.front().kind ==
+                 lang::SemanticType::TypeParameter,
+         "symbolic constructor metadata should retain its own generic "
+         "parameter identity and parameter pattern");
+
+  const lang::HirConstructorInstance *integerInstance = nullptr;
+  const lang::HirConstructorInstance *booleanInstance = nullptr;
+  const lang::HirConstructorInstance *taggedInstance = nullptr;
+  const lang::HirConstructorInstance *stringRangeInstance = nullptr;
+  for (const lang::HirConstructorInstance &instance :
+       valid.hir.constructorInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "Capture" &&
+        instance.typeArguments.size() == 1 &&
+        instance.parameterTypes.size() == 1) {
+      if (instance.typeArguments.front() == lang::SemanticType::Int32) {
+        integerInstance = &instance;
+      } else if (instance.typeArguments.front() == lang::SemanticType::Bool) {
+        booleanInstance = &instance;
+      }
+    } else if (instance.source->name().lexeme == "Tagged" &&
+               instance.typeArguments.size() == 1 &&
+               instance.typeArguments.front() == lang::SemanticType::Bool) {
+      taggedInstance = &instance;
+    } else if (instance.source->name().lexeme == "string" &&
+               instance.typeArguments.size() == 2 &&
+               instance.parameterTypes.size() == 2) {
+      stringRangeInstance = &instance;
+    }
+  }
+  expect(integerInstance != nullptr && booleanInstance != nullptr &&
+             integerInstance->id != booleanInstance->id &&
+             integerInstance->declaration == booleanInstance->declaration &&
+             integerInstance->parameterTypes.front() ==
+                 lang::SemanticType::Int32 &&
+             booleanInstance->parameterTypes.front() ==
+                 lang::SemanticType::Bool,
+         "different inferred constructor-local types should produce stable, "
+         "distinct concrete constructor identities");
+  expect(taggedInstance != nullptr && stringRangeInstance != nullptr &&
+             stringRangeInstance->typeArguments[0] !=
+                 stringRangeInstance->typeArguments[1],
+         "generic owners and iterator/sentinel construction should preserve "
+         "independent owner and constructor-local arguments in HIR");
+
+  bool mirroredInteger = false;
+  bool mirroredBoolean = false;
+  bool mirroredRange = false;
+  for (const lang::MirConstructorInstance &instance :
+       valid.mir.constructorInstances()) {
+    if (integerInstance != nullptr && instance.id == integerInstance->id) {
+      mirroredInteger =
+          instance.typeArguments == integerInstance->typeArguments &&
+          instance.valueArguments == integerInstance->valueArguments &&
+          instance.parameterTypes == integerInstance->parameterTypes;
+    }
+    if (booleanInstance != nullptr && instance.id == booleanInstance->id) {
+      mirroredBoolean =
+          instance.typeArguments == booleanInstance->typeArguments &&
+          instance.valueArguments == booleanInstance->valueArguments &&
+          instance.parameterTypes == booleanInstance->parameterTypes;
+    }
+    if (stringRangeInstance != nullptr &&
+        instance.id == stringRangeInstance->id) {
+      mirroredRange =
+          instance.typeArguments == stringRangeInstance->typeArguments &&
+          instance.valueArguments == stringRangeInstance->valueArguments &&
+          instance.parameterTypes == stringRangeInstance->parameterTypes;
+    }
+  }
+  expect(mirroredInteger && mirroredBoolean && mirroredRange,
+         "MIR constructor instances should retain the concrete generic "
+         "arguments and parameter types selected by each HIR constructor "
+         "identity");
+
+  const lang::LoweredProgram loweredProgram =
+      gti_test::lowerProgram(valid, valid.mir, valid.mir);
+  const std::string lowered =
+      lang::LoweredProgramPrinter().print(loweredProgram);
+  expect(lowered.find("constructor(id=") != std::string::npos &&
+             lowered.find(";generics=[generic(") != std::string::npos &&
+             lowered.find(";requirements=[{concept=") != std::string::npos &&
+             lowered.find(";requires=1;") != std::string::npos,
+         "the lowered declaration contract should retain constructor "
+         "generics and their symbolic requirements");
+
+  const std::string mirText = lang::MirPrinter().print(valid.mir);
+  expect(mirText.find("move-borrowed-temporary") != std::string::npos,
+         "verified MIR should make the move of owner-tied iterator "
+         "temporaries into constructor parameters explicit");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(
+      generated.find("template <typename T>") != std::string::npos &&
+          generated.find("template <typename Tag>") != std::string::npos &&
+          generated.find("template <typename Iterator, typename Sentinel>") !=
+              std::string::npos &&
+          generated.find("requires std::") == std::string::npos,
+      "the backend should emit constructor templates without delegating "
+      "GTI constraint selection to C++");
+
+  const auto analyze = [&](std::string_view name, std::string text) {
+    return lang::Frontend().analyze(std::filesystem::path(name),
+                                    std::move(text), {standardLibraryPrelude()},
+                                    {}, {standardLibraryRoot()});
+  };
+  const lang::FrontendResult missingInference =
+      analyze("constructor-missing-inference.gti", R"(
+class Wrapper<T> {};
+class Missing {
+public:
+  Missing<T>(Wrapper<T> value) {}
+};
+int main() {
+  Missing value = Missing(1);
+  return 0;
+}
+)");
+  expect(!missingInference.canGenerateCode() &&
+             hasDiagnosticCode(missingInference.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(missingInference.diagnostics,
+                           "Cannot infer constructor-local type parameter "
+                           "'T'") &&
+             hasRelatedDiagnostic(missingInference.diagnostics,
+                                  "Constructor-local generic parameter "
+                                  "declared here") &&
+             hasDiagnosticHint(missingInference.diagnostics, "inference-only"),
+         "a structurally unmatched parameter pattern should report focused "
+         "constructor-local inference failure");
+
+  const lang::FrontendResult conflictingInference =
+      analyze("constructor-conflicting-inference.gti", R"(
+class Conflict {
+public:
+  Conflict<T>(T left, T right) {}
+};
+int main() {
+  Conflict value = Conflict(1, true);
+  return 0;
+}
+)");
+  expect(!conflictingInference.canGenerateCode() &&
+             hasDiagnosticCode(conflictingInference.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(conflictingInference.diagnostics,
+                           "Conflicting types were inferred for "
+                           "constructor-local type parameter 'T'"),
+         "repeated constructor parameter patterns should require one exact "
+         "canonical inferred type");
+
+  const lang::FrontendResult failedConstraint =
+      analyze("constructor-failed-constraint.gti", R"(
+class IntegralOnly {
+public:
+  IntegralOnly<std::integral T>(T value) {}
+};
+int main() {
+  IntegralOnly value = IntegralOnly(true);
+  return 0;
+}
+)");
+  expect(!failedConstraint.canGenerateCode() &&
+             hasDiagnosticCode(failedConstraint.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(failedConstraint.diagnostics,
+                           "does not satisfy generic constraint "
+                           "'std::integral'"),
+         "constructor constraints should be evaluated after exact argument "
+         "inference and before candidate admission");
+
+  const lang::FrontendResult escapedParameter =
+      analyze("constructor-local-parameter-scope.gti", R"(
+class Scoped {
+public:
+  Scoped<T>(T value) {}
+  T leak;
+};
+int main() { return 0; }
+)");
+  expect(!escapedParameter.canGenerateCode() &&
+             hasDiagnostic(escapedParameter.diagnostics, "Unknown type 'T'"),
+         "a constructor-local type parameter should not be visible to later "
+         "class members");
+
+  const lang::FrontendResult invalidDeclarations =
+      analyze("constructor-local-generic-declarations.gti", R"(
+class Owner<T> {
+public:
+  Owner<T>(int value) {}
+};
+class Packed {
+public:
+  Packed<Args...>(Args value) {}
+};
+class Uninferable {
+public:
+  Uninferable<T>(int value) {}
+};
+int main() { return 0; }
+)");
+  expect(!invalidDeclarations.canGenerateCode() &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "Constructor-local generic parameters cannot "
+                           "shadow") &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "Constructor-local generic parameter packs are "
+                           "not supported") &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "must occur in a constructor parameter type"),
+         "constructor-local parameters should retain the bounded shadowing, "
+         "pack, and inference-only declaration rules");
+
+  const lang::FrontendResult wrongElement =
+      analyze("string-range-wrong-element.gti", R"(
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut std::vector<int> values = std::vector<int>();
+  std::string text = std::string(values.begin(), values.end());
+  return 0;
+}
+)");
+  expect(!wrongElement.canGenerateCode() &&
+             hasDiagnosticCode(wrongElement.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(wrongElement.diagnostics, "std::dereferences_to") &&
+             hasRelatedDiagnostic(wrongElement.diagnostics,
+                                  "std::dereferences_to<Iterator, char>"),
+         "the standard string constructor should reject an iterator whose "
+         "read-only element referent is not exactly char");
+
+  const lang::FrontendResult closedRequirement =
+      analyze("constructor-closed-requirement.gti", R"(
+#include <std/iterator>
+class CharacterIterator {
+  char value = 'x';
+public:
+  char& operator*() { return this.value; }
+};
+class CharacterOnly {
+public:
+  CharacterOnly<Iterator>(Iterator value)
+    requires std::dereferences_to<Iterator, char> {}
+};
+int main() {
+  CharacterOnly value = CharacterOnly(CharacterIterator());
+  return 0;
+}
+)");
+  expect(closedRequirement.canGenerateCode(),
+         "a constructor requirement should accept a closed exact type "
+         "argument without making it part of inference");
+
+  const lang::FrontendResult dependentRequirement =
+      analyze("constructor-dependent-requirement.gti", R"(
+class Wrapper<T> {};
+concept copyable_wrapper<T> = std::copyable<T>;
+class Invalid {
+public:
+  Invalid<T>(T value) requires copyable_wrapper<Wrapper<T>> {}
+};
+int main() { return 0; }
+)");
+  expect(!dependentRequirement.canGenerateCode() &&
+             hasDiagnosticCode(dependentRequirement.diagnostics, "GTI-S2049") &&
+             hasDiagnostic(dependentRequirement.diagnostics,
+                           "dependent compound types are not supported"),
+         "the bounded requirement grammar should reject dependent compound "
+         "types instead of widening generic deduction");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box{int value;public:Box<std::integral T>(T input)requires "
+      "std::copyable<T>:value(int(input)){};};");
+  expect(formatted.find("Box<std::integral T>(T input)\n"
+                        "    requires std::copyable<T> : value(int(input)) "
+                        "{};") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "constructor requirements should format idempotently and end before "
+         "an initializer-list colon");
+}
+
+void testValueGenerics() {
+  const std::string source = R"(
+class StaticArray<T, uint64_t N> {
+  T values[N] = {};
+
+public:
+  uint64_t size() { return N; }
+  T first() { return this.values[0]; }
+};
+
+class WrappedArray<T, uint64_t N> {
+  StaticArray<T, N> value = StaticArray<T, N>();
+
+public:
+  uint64_t size() { return this.value.size(); }
+};
+
+int main() {
+  StaticArray<int, 4> four = StaticArray<int, 4>();
+  StaticArray<int, 8> eight = StaticArray<int, 8>();
+  WrappedArray<int, 4> wrapped = WrappedArray<int, 4>();
+  if (four.size() == 4 and eight.size() == 8 and wrapped.size() == 4 and
+      four.first() == 0) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid =
+      lang::Frontend().analyze("value-generics.gti", source);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected value generic diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "uint64_t value parameters should support class identity and array "
+         "extents");
+
+  bool foundFour = false;
+  bool foundEight = false;
+  for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "StaticArray" ||
+        instance.valueArguments.size() != 1 || instance.fields.empty()) {
+      continue;
+    }
+    const lang::CompileTimeValue length = instance.valueArguments.front();
+    const lang::SemanticType &storage = instance.fields.front().info.type;
+    if (length.kind == lang::CompileTimeValue::UInt64 &&
+        storage.kind == lang::SemanticType::Array &&
+        storage.arrayLengthParameterId == 0 &&
+        storage.arrayLength == length.value) {
+      foundFour = foundFour || length.value == 4;
+      foundEight = foundEight || length.value == 8;
+    }
+  }
+  expect(foundFour && foundEight,
+         "HIR should keep value arguments in class identity and substitute "
+         "symbolic array extents");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(generated.find(
+             "template <typename T, std::size_t N>\n  class StaticArray") !=
+                 std::string::npos &&
+             generated.find("std::array<T, N> values = std::array<T, N>{}") !=
+                 std::string::npos &&
+             generated.find("StaticArray<T, N> value") != std::string::npos &&
+             generated.find("StaticArray<std::int32_t, 4>") !=
+                 std::string::npos,
+         "the C++ backend should preserve mixed type and value arguments");
+
+  lang::Lexer lexer;
+  lang::Parser invalidParser(lexer.scan(R"(
+class WrongType<T, int N> {};
+class WrongOrder<uint64_t N, T> {};
+class NeedsValue<T, uint64_t N> {};
+class ImmutableValue<uint64_t N> {
+public:
+  void overwrite() { N = 2; }
+};
+uint64_t invalid_function<uint64_t N>() { return N; }
+NeedsValue<int, int> wrong_value;
+NeedsValue<4, 4> wrong_type;
+NeedsValue<int, Missing> missing_value;
+int invalid_extent[Missing] = {};
+)"));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid value generic programs should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid value generic declarations and arguments should fail");
+  expect(hasDiagnostic(invalidSemantic, "currently require type uint64_t") &&
+             hasDiagnostic(invalidSemantic,
+                           "type parameters must appear before value") &&
+             hasDiagnostic(invalidSemantic,
+                           "must be the extent of a by-value fixed-array") &&
+             hasDiagnostic(invalidSemantic,
+                           "requires a uint64_t compile-time value") &&
+             hasDiagnostic(invalidSemantic, "requires a type argument") &&
+             hasDiagnostic(invalidSemantic,
+                           "Cannot assign to compile-time value parameter") &&
+             hasDiagnostic(invalidSemantic,
+                           "is not an in-scope constexpr integer or uint64_t "
+                           "value generic"),
+         "value generic diagnostics should identify unsupported parameter "
+         "types, ordering, scope, and argument kind");
+
+  const std::string formatted = lang::Formatter().format(
+      "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
+      "values=StaticArray<int,4>();");
+  expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
+                 std::string::npos &&
+             formatted.find("StaticArray<int, 4> values =") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "value generic syntax should format idempotently");
+}
+
+void testContextualArrayArguments() {
+  const std::string source = R"(
+int total<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+T first<T, uint64_t N>(T fallback, T values[N]) { return values[0]; }
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+class Total {
+  int stored;
+
+public:
+  Total<uint64_t N>(int values[N]) : stored(total(values)) {}
+  int read() { return this.stored; }
+  int add<uint64_t N>(int values[N]) { return this.stored + total(values); }
+};
+
+int main() {
+  int summed = total({1, 2, 3});
+  int selected = first(0, {4, 5});
+  int extent = choose({6, 7, 8});
+  Total object = Total({9, 10});
+  int method = object.add({2, 3});
+  int named_values[2] = {11, 12};
+  int named = total(named_values);
+  return summed + selected + extent + object.read() + method + named - 79;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("contextual-arrays.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected contextual-array diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "brace call arguments should form exact contextual fixed-array "
+         "values through semantics, HIR, and MIR");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *summed = main == nullptr || main->body()->statements().empty()
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().front().get());
+  const auto *sumCall =
+      summed == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(summed->initializer().get());
+  const auto *sumInitializer =
+      sumCall == nullptr || sumCall->arguments().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ArrayInitializer *>(
+                sumCall->arguments().front().get());
+  const lang::ResolvedCallInfo *resolvedSum =
+      sumCall == nullptr ? nullptr : frontend.semantics.findCall(*sumCall);
+  expect(sumInitializer != nullptr && sumInitializer->elements().size() == 3 &&
+             resolvedSum != nullptr &&
+             resolvedSum->valueArguments.size() == 1 &&
+             resolvedSum->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             resolvedSum->valueArguments.front().value == 3 &&
+             resolvedSum->parameterTypes.size() == 1 &&
+             resolvedSum->parameterTypes.front().kind ==
+                 lang::SemanticType::Array &&
+             resolvedSum->parameterTypes.front().arrayLength == 3,
+         "the AST and semantic call record should retain the brace elements "
+         "and inferred exact extent");
+
+  const auto *object = main == nullptr || main->body()->statements().size() < 4
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements()[3].get());
+  const auto *objectCall =
+      object == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(object->initializer().get());
+  const lang::ResolvedConstructionInfo *resolvedObject =
+      objectCall == nullptr ? nullptr
+                            : frontend.semantics.findConstruction(*objectCall);
+  expect(resolvedObject != nullptr &&
+             resolvedObject->valueArguments.size() == 1 &&
+             resolvedObject->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             resolvedObject->valueArguments.front().value == 2 &&
+             resolvedObject->parameterTypes.size() == 1 &&
+             resolvedObject->parameterTypes.front().kind ==
+                 lang::SemanticType::Array &&
+             resolvedObject->parameterTypes.front().arrayLength == 2,
+         "generic constructors should infer and retain a brace argument's "
+         "fixed-array extent");
+
+  const lang::FunctionDecl *total =
+      findTopLevelFunction(frontend.program, "total");
+  bool foundTotalThree = false;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != total || instance.valueArguments.size() != 1) {
+      continue;
+    }
+    foundTotalThree =
+        foundTotalThree ||
+        (instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 3 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 3);
+  }
+
+  bool foundConstructorTwo = false;
+  for (const lang::HirConstructorInstance &instance :
+       frontend.hir.constructorInstances()) {
+    foundConstructorTwo =
+        foundConstructorTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "Total" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
+  }
+  bool foundMethodTwo = false;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    foundMethodTwo =
+        foundMethodTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "add" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
+  }
+  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo,
+         "HIR instance identity should include inferred function and "
+         "constructor value arguments, including methods");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(generated.find("std::initializer_list") == std::string::npos &&
+             generated.find("template <std::size_t N>") != std::string::npos &&
+             generated.find("std::array<std::int32_t, 3>{__gti_mir_v_") !=
+                 std::string::npos &&
+             generated.find("std::array<std::int32_t, 2>{__gti_mir_v_") !=
+                 std::string::npos &&
+             generated.find("__gti_fn_1_total__gti_mir_failure(std::array<std::"
+                            "int32_t, 3>") != std::string::npos,
+         "the backend should materialize an explicit std::array value and "
+         "never delegate list semantics to C++ overload resolution");
+
+  const std::string invalidSource = R"(
+int scalar(int value) { return value; }
+int fixed(int values[2]) { return values[0]; }
+int ambiguous(int values[2]) { return 1; }
+int ambiguous(int64_t values[2]) { return 2; }
+int duplicate<uint64_t N>(int values[N]) { return 1; }
+int duplicate<uint64_t M>(int values[M]) { return 2; }
+int uninferable<uint64_t N>() { return int(N); }
+int explicit_extent<uint64_t N>(int values[N]) { return values[0]; }
+T no_common_type<T, uint64_t N>(T values[N]) { return values[0]; }
+
+class DuplicateConstructor {
+public:
+  DuplicateConstructor<uint64_t N>(int values[N]) {}
+  DuplicateConstructor<uint64_t M>(int values[M]) {}
+};
+
+class ShadowedConstructor<uint64_t N> {
+public:
+  ShadowedConstructor<uint64_t N>(int values[N]) {}
+};
+
+int main() {
+  int no_context = scalar({1});
+  int wrong_count = fixed({1, 2, 3});
+  int wrong_element = fixed({1, true});
+  int unresolved = uninferable();
+  int no_common = no_common_type({1, 2});
+  int explicit_value = explicit_extent<2>({1, 2});
+  int ambiguous_value = ambiguous({1, 2});
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-contextual-arrays.gti", invalidSource);
+  expect(
+      !invalid.canGenerateCode() &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2011") == 2 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be the extent of a by-value fixed-array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot infer generic type parameter 'T'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Function value generic arguments are not supported") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Constructor-local generic parameters cannot shadow") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "A brace argument requires one exact fixed-array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot initialize array element") &&
+          hasDiagnostic(invalid.diagnostics, "is ambiguous"),
+      "contextual arrays should reject duplicate generic shapes, missing "
+      "array context, invalid elements, and ambiguous overloads at the GTI "
+      "layer");
+
+  const auto wrongExtent =
+      std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2015" &&
+                            diagnostic.message.find("provides 3 elements") !=
+                                std::string::npos;
+                   });
+  expect(wrongExtent != invalid.diagnostics.end() &&
+             wrongExtent->primary.source.ends_with(
+                 "/invalid-contextual-arrays.gti") &&
+             wrongExtent->primary.start == invalidSource.find("{1, 2, 3}") &&
+             wrongExtent->primary.end == wrongExtent->primary.start + 1 &&
+             wrongExtent->fixes.empty(),
+         "a contextual-array extent diagnostic should point at the written "
+         "brace and avoid an unsafe mechanical conversion");
+
+  const std::string formatted = lang::Formatter().format(
+      "int total<uint64_t N>(int values[N]){return values[0];}int "
+      "main(){return total({1,2,3});}");
+  expect(formatted.find("total({1, 2, 3})") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "contextual brace arguments and inferred value generics should "
+         "format idempotently");
+}
+
+void testVariadicGenerics() {
+  const std::string source = R"(
+void consume<Args...>(Args... values) {}
+
+void route<Rest...>(int first, Rest... rest) { consume(rest...); }
+void route<Rest...>(bool first, Rest... rest) { consume(rest...); }
+
+void relay<Args...>(Args... values) {
+  consume(values...);
+  consume(0, values...);
+  route(1, values...);
+}
+
+T first<T, Rest...>(T value, Rest... rest) {
+  relay(rest...);
+  return value;
+}
+
+class Forwarder {
+public:
+  void send<Args...>(Args... values) {
+    relay(values...);
+  }
+};
+
+int main() {
+  consume();
+  relay(1, true, "gti");
+  int inferred = first(7, false, "tail");
+  int explicit_types = first<int, std::string_view>(9, "tail");
+  Forwarder forwarder = Forwarder();
+  forwarder.send(uint64_t(3), "method");
+  if (inferred == 7 and explicit_types == 9) { return 0; }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "variadic-generics.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected variadic diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "final function type packs should infer, forward, and preserve exact "
+         "concrete MIR parameter roles across equivalent pack groupings");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(generated.find("template <typename... Args>") != std::string::npos &&
+             generated.find("Args... __gti_mir_arg_0") != std::string::npos &&
+             generated.find("_consume__gti_mir_failure("
+                            "std::int32_t __gti_mir_arg_0, bool "
+                            "__gti_mir_arg_1, std::string_view "
+                            "__gti_mir_arg_2") != std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "consume",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+         "variadic declarations and forwarding should lower explicitly");
+  expect(generated.find("_consume__gti_mir_failure("
+                        "std::int32_t __gti_mir_arg_0, std::int32_t "
+                        "__gti_mir_arg_1, bool __gti_mir_arg_2, "
+                        "std::string_view __gti_mir_arg_3") !=
+                 std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "consume",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
+                 "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
+                 "std::string_view __gti_mir_arg_3"),
+         "a final symbolic pack should compose with concrete pack elements");
+  expect(generated.find("template <typename T, typename... Rest>") !=
+                 std::string::npos &&
+             generated.find("_first__gti_mir_failure("
+                            "std::int32_t __gti_mir_arg_0, bool "
+                            "__gti_mir_arg_1, std::string_view "
+                            "__gti_mir_arg_2") != std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "first",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+         "fixed generic arguments and explicit pack elements should lower in "
+         "source order");
+
+  const lang::FrontendResult movePack =
+      lang::Frontend().analyze("move-pack.gti", R"(
+class PackedValue {};
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner<Args...>(Args... values) {
+  consume_owner(values...);
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner(std::move(owner));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  bool foundConcreteOwnerPack = false;
+  for (const lang::HirFunctionInstance &instance :
+       movePack.hir.functionInstances()) {
+    foundConcreteOwnerPack =
+        foundConcreteOwnerPack ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "forward_owner" &&
+         instance.typeArguments.size() == 1 &&
+         instance.typeArguments.front().kind == lang::SemanticType::Class);
+  }
+  expect(movePack.canGenerateCode() && foundConcreteOwnerPack,
+         "a concrete move-only pack should be forwarded once and retained in "
+         "typed HIR");
+
+  const lang::FrontendResult reusedMovePack =
+      lang::Frontend().analyze("reused-move-pack.gti", R"(
+class PackedValue {};
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner_twice<Args...>(Args... values) {
+  consume_owner(values...);
+  consume_owner(values...);
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner_twice(std::move(owner));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!reusedMovePack.canGenerateCode() &&
+             hasDiagnostic(reusedMovePack.diagnostics,
+                           "Value 'values' has already been moved") &&
+             hasRelatedDiagnostic(reusedMovePack.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "a move-only parameter pack should be consumed as a whole and cannot "
+         "be forwarded twice");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-variadic-generics.gti", R"(
+class Packed<T...> {};
+
+void fixed(int value) {}
+void nonfinal_generic<Args..., T>(Args... values, T tail) {}
+void missing_parameter<Args...>() {}
+void wrong_type<Args...>(int... values) {}
+void mutable_pack<Args...>(mut Args... values) {}
+void reference_pack<Args...>(Args&... values) {}
+void direct_use<Args...>(Args... values) { values; }
+void local_pack<Args...>(Args... values) { Args local; }
+void bad_forward<Args...>(Args... values) { fixed(values...); }
+void not_a_pack(int value) { consume(value...); }
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid variadic declarations and expansions should be rejected");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "type packs are currently limited to functions") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "generic type pack must be the final") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be bound by a final parameter pack") &&
+          hasDiagnostic(invalid.diagnostics, "parameter pack type must name") &&
+          hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
+          hasDiagnostic(invalid.diagnostics, "only by-value parameter packs") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be expanded as the final call argument") &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "can only appear in its matching final parameter-pack") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "only be forwarded to another variadic") &&
+          hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
+      "variadic diagnostics should explain every confined first-wave rule");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(R"(
+void consume<Args...>(Args... values) {}
+void bad<Args...>(Args... values) { consume(values..., 1); }
+int okay = 1;
+)",
+                                    "malformed-variadic.gti"));
+  const lang::Program recovered = malformed.parse();
+  const bool recoveredOkay = std::any_of(
+      recovered.declarations().begin(), recovered.declarations().end(),
+      [](const lang::StmtPtr &declaration) {
+        const auto *variable =
+            dynamic_cast<const lang::VariableDecl *>(declaration.get());
+        return variable != nullptr && variable->name().lexeme == "okay";
+      });
+  expect(malformed.hadError() && recoveredOkay,
+         "parser recovery should continue after a non-final pack expansion");
+
+  const std::string formatted = lang::Formatter().format(
+      "void relay<Args...>(Args... values){consume(values...);}");
+  expect(formatted == "void relay<Args...>(Args... values) {\n"
+                      "  consume(values...);\n"
+                      "}\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should preserve compact, idempotent pack syntax");
+
+  const std::string foldSource = R"(
+void touch<T>(mut int& count, T& value) { count++; }
+void other<T>(mut int& count, T& value) { count += 10; }
+
+int visit_all<Values...>(Values... values) {
+  mut int count = 0;
+  (touch(count, values), ...);
+  return count;
+}
+
+int main() {
+  mut int count = 0;
+  int value = 1;
+  other(count, value);
+  return visit_all(1, true, uint64_t(3)) - 3;
+}
+)";
+  const lang::FrontendResult foldFrontend =
+      lang::Frontend().analyze("pack-fold.gti", foldSource);
+  if (!foldFrontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : foldFrontend.diagnostics) {
+      std::cerr << "Unexpected pack-fold diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(foldFrontend.canGenerateCode() &&
+             lang::verifyMirProgram(foldFrontend.mir).valid(),
+         "a bounded call pack fold should select and lower every concrete "
+         "element in source order");
+
+  const lang::FunctionDecl *visitAll =
+      findTopLevelFunction(foldFrontend.program, "visit_all");
+  const auto *foldStatement =
+      visitAll == nullptr ? nullptr
+                          : dynamic_cast<const lang::ExpressionStmt *>(
+                                visitAll->body()->statements().at(1).get());
+  const auto *fold = foldStatement == nullptr
+                         ? nullptr
+                         : dynamic_cast<const lang::PackFold *>(
+                               foldStatement->expression().get());
+  const lang::ResolvedPackFoldInfo *resolvedFold =
+      fold == nullptr ? nullptr : foldFrontend.semantics.findPackFold(*fold);
+  expect(resolvedFold != nullptr && resolvedFold->function != 0 &&
+             resolvedFold->packSymbol != 0 &&
+             resolvedFold->packParameter != 0 &&
+             resolvedFold->packArgument == 1,
+         "semantic pack-fold metadata should retain its one selected "
+         "function, pack identity, and argument position");
+
+  const lang::HirFunctionInstance *concreteFold = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       foldFrontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "visit_all" &&
+        instance.parameterTypes.size() == 3) {
+      concreteFold = &instance;
+      break;
+    }
+  }
+  const lang::HirValue *hirFold = nullptr;
+  if (concreteFold != nullptr) {
+    const auto found = std::find_if(
+        concreteFold->body.values.begin(), concreteFold->body.values.end(),
+        [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::PackFold;
+        });
+    if (found != concreteFold->body.values.end()) {
+      hirFold = &*found;
+    }
+  }
+  expect(hirFold != nullptr && hirFold->packFoldFunction != 0 &&
+             hirFold->packFoldElements.size() == 3 &&
+             std::all_of(hirFold->packFoldElements.begin(),
+                         hirFold->packFoldElements.end(),
+                         [](const lang::HirPackFoldElement &element) {
+                           return element.functionTarget != 0 &&
+                                  element.parameterTypes.size() == 2 &&
+                                  element.parameterTypes.back().kind ==
+                                      lang::SemanticType::Reference;
+                         }),
+         "HIR should retain one exact selected call target for every concrete "
+         "pack element");
+
+  const lang::MirFunctionInstance *mirFunction =
+      concreteFold == nullptr
+          ? nullptr
+          : foldFrontend.mir.findFunctionInstance(concreteFold->id);
+  std::vector<const lang::MirInstruction *> mirFoldCalls;
+  if (mirFunction != nullptr && hirFold != nullptr) {
+    for (const lang::MirBlock &block : mirFunction->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.hirValue == hirFold->id) {
+          mirFoldCalls.push_back(&instruction);
+        }
+      }
+    }
+  }
+  bool orderedMirCalls =
+      hirFold != nullptr && mirFunction != nullptr &&
+      mirFoldCalls.size() == hirFold->packFoldElements.size();
+  for (std::size_t index = 0; orderedMirCalls && index < mirFoldCalls.size();
+       ++index) {
+    const lang::MirInstruction &call = *mirFoldCalls[index];
+    const lang::HirPackFoldElement &element = hirFold->packFoldElements[index];
+    const lang::MirPlace *packElement =
+        call.operands.empty()
+            ? nullptr
+            : mirFunction->body.findPlace(call.operands.back().place);
+    orderedMirCalls =
+        call.functionTarget == element.functionTarget &&
+        call.parameterTypes == element.parameterTypes &&
+        call.operands.size() == element.parameterTypes.size() &&
+        call.operands.back().kind == lang::MirOperandKind::BorrowRead &&
+        packElement != nullptr && packElement->type == element.elementType &&
+        packElement->projections.size() == 1 &&
+        packElement->projections.front().kind ==
+            lang::MirProjectionKind::PackElement &&
+        packElement->projections.front().constantIndex == index;
+  }
+  expect(orderedMirCalls,
+         "MIR should expand a pack fold into ordered exact calls over concrete "
+         "pack-element places without reopening overload resolution");
+
+  lang::MirProgram forgedFold = foldFrontend.mir;
+  bool changedFoldSignature = false;
+  auto &forgedFoldFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forgedFold.functionInstances());
+  const auto forgedFunction = std::find_if(
+      forgedFoldFunctions.begin(), forgedFoldFunctions.end(),
+      [&](const lang::MirFunctionInstance &candidate) {
+        return concreteFold != nullptr && candidate.id == concreteFold->id;
+      });
+  if (forgedFunction != forgedFoldFunctions.end() && hirFold != nullptr) {
+    for (lang::MirBlock &block : forgedFunction->body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.hirValue == hirFold->id;
+          });
+      if (call != block.instructions.end() && !call->parameterTypes.empty()) {
+        call->parameterTypes.back() = lang::SemanticType::Bool;
+        changedFoldSignature = true;
+        break;
+      }
+    }
+  }
+  expect(changedFoldSignature && !lang::verifyMirProgram(forgedFold).valid(),
+         "MIR verification should reject a lowered pack call whose exact "
+         "parameter signature was forged");
+
+  const std::string foldGenerated = gti_test::emitCppText(foldFrontend);
+  expect(resolvedFold != nullptr &&
+             foldGenerated.find(
+                 "__gti_fn_" + std::to_string(resolvedFold->function) +
+                 "_touch__gti_mir_failure(__gti_mir_p_") != std::string::npos &&
+             foldGenerated.find("_touch(count, values), ...") ==
+                 std::string::npos,
+         "the C++ backend should emit the one compiler-selected fold target "
+         "instead of asking native overload resolution to choose per element");
+
+  const std::string invalidFoldSource = R"(
+void overloaded<T>(T& value) {}
+void overloaded<U>(U& value) {}
+int returns_value<T>(T& value) { return 0; }
+void takes_value<T>(T value) {}
+int make_value() { return 1; }
+
+void invalid<Values...>(Values... values) {
+  (overloaded(values), ...);
+  (returns_value(values), ...);
+  (takes_value(values), ...);
+  (takes_value(make_value()), ...);
+}
+
+void not_a_pack(int value) { (takes_value(value), ...); }
+)";
+  const lang::FrontendResult invalidFold =
+      lang::Frontend().analyze("invalid-pack-fold.gti", invalidFoldSource);
+  const auto invalidArgument = std::find_if(
+      invalidFold.diagnostics.begin(), invalidFold.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2023" &&
+               diagnostic.message.find("must be named local values") !=
+                   std::string::npos;
+      });
+  expect(
+      !invalidFold.canGenerateCode() &&
+          hasDiagnosticCode(invalidFold.diagnostics, "GTI-S2023") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must name exactly one function declaration") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "returning void, with one inferred type parameter") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must be named local values") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must name the current function's parameter pack") &&
+          invalidArgument != invalidFold.diagnostics.end() &&
+          invalidArgument->primary.start ==
+              invalidFoldSource.find("make_value()), ...") +
+                  std::string("make_value(").size() &&
+          invalidArgument->primary.end == invalidArgument->primary.start + 1 &&
+          invalidArgument->fixes.empty(),
+      "invalid pack folds should fail with bounded shape diagnostics before "
+      "HIR or native emission and point at the non-repeatable argument");
+}
+
+void testExactFunctionOverloadsAndConversions() {
+  const std::string source = R"(
+namespace math {
+uint64_t pow(uint64_t base, uint64_t exponent) { return base * exponent; }
+float pow(float base, float exponent) { return base * exponent; }
+}
+
+struct Selector<T, U> {
+  T apply(T value) { return value; }
+  U apply(U value) { return value; }
+};
+
+struct Receiver {
+  mut int value = 0;
+  int inspect() { return this.value; }
+  int inspect() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+
+int main() {
+  uint64_t base = uint64_t(2);
+  uint64_t exponent = uint64_t(8);
+  uint64_t whole = math::pow(base, exponent);
+  float decimal = math::pow(2.0, 8.0);
+  Selector<int, float> selector = Selector<int, float>();
+  int selected = selector.apply(2);
+  float selected_decimal = selector.apply(2.0);
+  Receiver read_only = Receiver();
+  mut Receiver writable = Receiver();
+  int read_result = read_only.inspect();
+  int write_result = writable.inspect();
+  return int(whole) + selected + read_result + write_result;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("overloads.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected overload diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "exact namespace and method overloads should validate");
+  expect(
+      frontend.semantics.functionCount() == 7 &&
+          frontend.semantics.resolvedCallCount() == 6,
+      "semantic analysis should retain function identities and selected calls");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto selectedReceiver = [&](std::size_t statementIndex) {
+    if (main == nullptr ||
+        statementIndex >= main->body()->statements().size()) {
+      return static_cast<const lang::ResolvedCallInfo *>(nullptr);
+    }
+    const auto *variable = dynamic_cast<const lang::VariableDecl *>(
+        main->body()->statements()[statementIndex].get());
+    const auto *call =
+        variable == nullptr
+            ? nullptr
+            : dynamic_cast<const lang::Call *>(variable->initializer().get());
+    return call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+  };
+  const lang::ResolvedCallInfo *readCall = selectedReceiver(9);
+  const lang::ResolvedCallInfo *writeCall = selectedReceiver(10);
+  expect(readCall != nullptr && readCall->declaration != nullptr &&
+             readCall->declaration->receiverMutability() ==
+                 lang::ReceiverMutability::ReadOnly &&
+             writeCall != nullptr && writeCall->declaration != nullptr &&
+             writeCall->declaration->receiverMutability() ==
+                 lang::ReceiverMutability::Mutable,
+         "method overload selection should choose the receiver-qualified "
+         "declaration exactly");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find(
+             "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "::__gti_program::math::__gti_fn_2_pow__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("::__gti_program::Selector<std::int32_t, "
+                                    "float>::__gti_fn_3_apply(") !=
+                 std::string::npos &&
+             artifact.contents.find("::__gti_program::Selector<std::int32_t, "
+                                    "float>::__gti_fn_4_apply(") !=
+                 std::string::npos,
+         "the C++ backend should emit the function identity selected by GTI");
+  expect(artifact.contents.find("mir_checked_convert_v1<std::uint64_t>(") !=
+                 std::string::npos &&
+             artifact.contents.find("mir_checked_convert_v1<std::int32_t>(") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "std::bit_cast<float>(std::uint32_t{0x40000000U})") !=
+                 std::string::npos,
+         "explicit conversions and float literals should lower to matching C++ "
+         "types");
+
+  lang::Lexer lexer;
+  auto invalidTokens = lexer.scan(R"(
+int same(int value) { return value; }
+float same(int value) { return float(value); }
+
+int mutate(int value) { return value; }
+int mutate(mut int value) { return value; }
+
+T echo<T>(T value) { return value; }
+U echo<U>(U value) { return value; }
+
+struct MutableOnly {
+  int inspect() mut { return 1; }
+};
+
+int choose(int value) { return value; }
+T choose<T>(T value) { return value; }
+
+uint64_t width(uint64_t value) { return value; }
+float width(float value) { return value; }
+float only_float(float value) { return value; }
+void function_value() {}
+
+int main(int value) { return value; }
+int main() {
+  MutableOnly read_only = MutableOnly();
+  int invalid_receiver = read_only.inspect();
+  function_value;
+  float mismatch = width(1);
+  int ambiguous = choose(1);
+  float inexact = only_float(1);
+  uint8_t too_small = uint8_t(300);
+  int not_numeric = int("text");
+  return 0;
+}
+)");
+  expect(!lexer.hadError(), "invalid overload cases should lex");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid overload cases should remain syntactically valid");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid overloads and conversions should fail semantics");
+  expect(countDiagnosticCode(invalidSemantic, "GTI-S2011") == 4,
+         "return type, by-value mutability, and generic spelling should not "
+         "create distinct overload signatures");
+  expect(
+      hasDiagnostic(invalidSemantic, "main entry point cannot be overloaded"),
+      "the native entry point should remain a unique function");
+  expect(hasDiagnostic(invalidSemantic, "No overload of 'width'") &&
+             hasDiagnostic(invalidSemantic, "argument types (int32_t)"),
+         "overload lookup should reject calls without an exact candidate");
+  expect(hasDiagnostic(invalidSemantic, "ambiguous") &&
+             hasDiagnostic(invalidSemantic, "exactly match"),
+         "generic and concrete exact matches should be diagnosed as ambiguous");
+  expect(hasDiagnostic(invalidSemantic, "parameter requires 'float'"),
+         "single functions should also require exact argument types");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Mutable method requires a mutable receiver"),
+         "receiver-qualified overloads should reject mutable-only methods on "
+         "read-only objects");
+  expect(
+      hasDiagnostic(invalidSemantic, "function values are not supported"),
+      "function overload sets should not escape unresolved into the backend");
+  expect(hasDiagnostic(invalidSemantic, "outside the range of 'uint8_t'") &&
+             hasDiagnostic(invalidSemantic,
+                           "numeric conversions require a numeric value"),
+         "explicit conversions should reject invalid literals and domains");
+
+  const std::string formatted = lang::Formatter().format(
+      "uint64_t pow(uint64_t base,uint64_t exponent){return base*exponent;}int "
+      "main(){uint64_t value=uint64_t(2);return int(value);}");
+  expect(formatted.find("uint64_t value = uint64_t(2);") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "explicit conversion syntax should format like a C++ functional cast");
+}
+
+void testFixedArrays() {
+  const std::string source = R"(
+uint32_t video[64 * 32] = {};
+
+int extent(int values[2]) { return 2; }
+int extent(int values[3]) { return 3; }
+int first(int values[3]) { return values[0]; }
+
+struct Buffers {
+public:
+  mut int samples[3] = {1, 2, 3};
+
+  void bump() mut { this.samples[1] += 4; }
+  uint64_t count() { return this.samples.size(); }
+};
+
+int main() {
+  mut int buffer[2 + 3] = {1, 2, 3, 4, 5};
+  buffer[2] = 10;
+  buffer[1]++;
+  int copy[5] = buffer;
+  int matrix[0x2][0b11] = {{1, 2, 3}, {4, 5, 6}};
+  mut Buffers buffers = Buffers();
+  buffers.bump();
+  uint64_t count = buffer.size();
+  if (count == 5 and first(matrix[1]) == 4 and extent(matrix[0]) == 3 and
+      buffers.count() == 3 and copy[4] == 5) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("arrays.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected fixed array diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "fixed arrays should support value semantics and checked indexing");
+
+  const lang::MirFunctionInstance *bumpMir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "bump") {
+      bumpMir = frontend.mir.findFunctionInstance(instance.id);
+      break;
+    }
+  }
+  const lang::MirInstruction *boundsRead = nullptr;
+  const lang::MirInstruction *checkedAdd = nullptr;
+  const lang::MirInstruction *arrayCommit = nullptr;
+  if (bumpMir != nullptr) {
+    for (const lang::MirBlock &block : bumpMir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Load &&
+            !instruction.localFailureSites.empty()) {
+          boundsRead = &instruction;
+        } else if (instruction.kind == lang::MirInstructionKind::Compute &&
+                   instruction.operation == lang::MirOperation::Add &&
+                   !instruction.localFailureSites.empty()) {
+          checkedAdd = &instruction;
+        } else if (instruction.kind == lang::MirInstructionKind::Assign &&
+                   instruction.operation == lang::MirOperation::Assign &&
+                   instruction.localFailureSites.empty()) {
+          arrayCommit = &instruction;
+        }
+      }
+    }
+  }
+  const auto hasFailureOutcome = [&](const lang::MirInstruction *instruction,
+                                     lang::DefinedFailureCode code) {
+    return instruction != nullptr &&
+           std::any_of(
+               instruction->localFailureSites.begin(),
+               instruction->localFailureSites.end(),
+               [&](lang::FailureSiteId id) {
+                 const lang::FailureSiteDescriptor *site =
+                     frontend.mir.failureMetadata().findSite(id);
+                 return site != nullptr &&
+                        std::any_of(
+                            site->outcomes.begin(), site->outcomes.end(),
+                            [&](const lang::DefinedFailureOutcome &outcome) {
+                              return outcome.code == code;
+                            });
+               });
+  };
+  expect(boundsRead != nullptr && boundsRead->result &&
+             hasFailureOutcome(boundsRead,
+                               lang::DefinedFailureCode::IndexOutOfBounds) &&
+             checkedAdd != nullptr && checkedAdd->result &&
+             hasFailureOutcome(checkedAdd,
+                               lang::DefinedFailureCode::IntegerOverflow) &&
+             checkedAdd->operands.size() == 2 &&
+             checkedAdd->operands.front().value == *boundsRead->result &&
+             arrayCommit != nullptr && arrayCommit->operands.size() == 1 &&
+             arrayCommit->operands.front().value == *checkedAdd->result,
+         "MIR should order fixed-array compound updates as checked read, "
+         "checked arithmetic, and failure-free commit");
+
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().back().get());
+  const auto *buffer = main == nullptr
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().front().get());
+  const lang::BindingInfo *binding =
+      buffer == nullptr ? nullptr : frontend.semantics.findBinding(*buffer);
+  expect(binding != nullptr &&
+             binding->type.kind == lang::SemanticType::Array &&
+             binding->type.arrayLength == 5 &&
+             binding->type.arguments.size() == 1 &&
+             binding->type.arguments[0] == lang::SemanticType::Int32 &&
+             binding->access == lang::AccessMode::Mutable,
+         "fixed array bindings should retain length, element type, and access");
+
+  const lang::SemanticType moveOnlyArray = lang::SemanticType::arrayOf(
+      lang::SemanticType::uniqueOwnerOf(lang::SemanticType::Int32), 2);
+  expect(!lang::semanticTraits(moveOnlyArray).copyable &&
+             lang::semanticTraits(moveOnlyArray).movable,
+         "fixed arrays should inherit element copy and move traits");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(
+      artifact.contents.find("const std::array<std::uint32_t, 2048> video = "
+                             "std::array<std::uint32_t, 2048>{}") !=
+              std::string::npos &&
+          artifact.contents.find("std::array<std::int32_t, 5> __gti_mir_p_") !=
+              std::string::npos &&
+          artifact.contents.find("std::array<std::array<std::int32_t, 3>, 2> "
+                                 "__gti_mir_p_") != std::string::npos &&
+          artifact.contents.find("mir_checked_array_read_v1") !=
+              std::string::npos &&
+          artifact.contents.find("mir_checked_array_write_v1") !=
+              std::string::npos &&
+          artifact.contents.find("mir_checked_add_v1<std::int32_t>") !=
+              std::string::npos &&
+          artifact.contents.find("static_cast<std::uint64_t>") !=
+              std::string::npos,
+      "the C++ backend should preserve array values and checked operations");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-arrays.gti", R"(
+struct NoDefault {
+  int stored;
+  NoDefault(int value) : stored(value) {}
+};
+
+class ReadOnlyArrayReceiver {
+  mut int slots[1] = {0};
+
+public:
+  void write() { slots[0] = 1; }
+};
+
+int overflow_extent[18446744073709551615 + 1] = {};
+int negative_extent[1 - 2] = {};
+int zero_divisor_extent[4 / 0] = {};
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+int main() {
+  int wrong_count[3] = {1, 2};
+  int immutable[1] = {1};
+  immutable[0] = 2;
+  int values[2] = {1, 2};
+  int bad_index = values[1.5];
+  int negative = values[-1];
+  int past_end = values[2];
+  mut int missing[2];
+  NoDefault objects[1] = {};
+  int other[4] = {1, 2, 3, 4};
+  int mismatch = choose(other);
+  uint64_t hidden = other.length();
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid fixed array operations should fail semantic analysis");
+  expect(
+      hasDiagnostic(invalid.diagnostics, "requires exactly 3") &&
+          hasDiagnostic(invalid.diagnostics, "immutable fixed array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot modify field 'slots' because method "
+                        "'write' has no trailing 'mut' receiver qualifier") &&
+          hasDiagnosticHint(invalid.diagnostics, "trailing 'mut'") &&
+          hasRelatedDiagnostic(invalid.diagnostics,
+                               "is declared mutable, but it is writable") &&
+          hasDiagnostic(invalid.diagnostics, "index must have an integer") &&
+          hasDiagnostic(invalid.diagnostics, "valid range [0, 2)") &&
+          hasDiagnostic(invalid.diagnostics, "require an initializer") &&
+          hasDiagnostic(invalid.diagnostics, "default-initializable") &&
+          hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
+          hasDiagnostic(invalid.diagnostics, "Unknown fixed array member") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "extent arithmetic overflows uint64_t") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot produce a negative value") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot divide or take modulo by zero"),
+      "fixed array diagnostics should explain extent, access, and bounds");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan("int broken[] = {}; int recovered = 1;"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after a missing array extent");
+
+  const std::string formatted = lang::Formatter().format(
+      "mut int buffer[1+2]={1,2,3};int matrix[0x2][0b10]={{1,2},{3,4}};");
+  expect(formatted == "mut int buffer[1 + 2] = {1, 2, 3};\n"
+                      "int matrix[0x2][0b10] = {{1, 2}, {3, 4}};\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should preserve compact C++-style array declarations");
+  const std::string constructorFormatted = lang::Formatter().format(
+      "class Pair<T>{T values[2];public:Pair(T left,T right):"
+      "values({left,right}){}};");
+  expect(constructorFormatted.find("values({left, right}) {}") !=
+             std::string::npos,
+         "formatter should keep array constructor initializers compact");
+}
+
+void testLocalTypeInference() {
+  const std::string source = R"(
+class Box {
+  int value = 0;
+
+public:
+  Box(int value) : value(value) {}
+  int read() { return this.value; }
+};
+
+T preserve<T>(T value) {
+  auto inferred = value;
+  return inferred;
+}
+
+int main() {
+  auto integer = 1;
+  mut auto running = preserve(integer);
+  running += 2;
+  auto truth = running == 3;
+  auto text = "gti";
+  auto box = Box(running);
+  int values[2] = {running, 4};
+  auto copied_values = values;
+  auto empty = nullptr;
+  for (mut auto index = 0; index < 2; index++) {
+    running += copied_values[index];
+  }
+  if (truth and text == "gti" and empty == nullptr and box.read() == 3 and
+      running == 10) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("auto-inference.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected auto diagnostic: " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "initialized local auto bindings should pass the frontend");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *integer = main == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  main->body()->statements().front().get());
+  const auto *running = main == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  main->body()->statements().at(1).get());
+  const lang::BindingInfo *integerBinding =
+      integer == nullptr ? nullptr : frontend.semantics.findBinding(*integer);
+  const lang::BindingInfo *runningBinding =
+      running == nullptr ? nullptr : frontend.semantics.findBinding(*running);
+  expect(integerBinding != nullptr &&
+             integerBinding->type == lang::SemanticType::Int32 &&
+             integerBinding->access == lang::AccessMode::ReadOnly &&
+             runningBinding != nullptr &&
+             runningBinding->type == lang::SemanticType::Int32 &&
+             runningBinding->access == lang::AccessMode::Mutable,
+         "semantic bindings should retain concrete inferred types and access");
+
+  const lang::HirFunctionInstance *preserveInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "preserve" &&
+        instance.typeArguments ==
+            std::vector<lang::SemanticType>{lang::SemanticType::Int32}) {
+      preserveInstance = &instance;
+      break;
+    }
+  }
+  expect(preserveInstance != nullptr &&
+             preserveInstance->body.bindings.size() == 2 &&
+             preserveInstance->body.bindings.back().info.type ==
+                 lang::SemanticType::Int32,
+         "instantiated HIR should retain the concrete type of an inferred "
+         "generic local");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("std::int32_t __gti_mir_p_") !=
+                 std::string::npos &&
+             artifact.contents.find("std::string_view __gti_mir_p_") !=
+                 std::string::npos &&
+             artifact.contents.find("std::array<std::int32_t, 2> "
+                                    "__gti_mir_p_") != std::string::npos,
+         "the C++ backend should lower inferred locals to their concrete MIR "
+         "representations");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-auto.gti", R"(
+auto global = 1;
+
+class InvalidField {
+  auto value = 1;
+};
+
+auto inferred_return() { return 1; }
+int inferred_parameter(auto value) { return 0; }
+void perform() {}
+
+int main() {
+  mut int value = 1;
+  auto fixed = value;
+  fixed = 2;
+  auto missing;
+  auto& reference = value;
+  auto array[2] = {1, 2};
+  auto values = {1, 2};
+  auto no_value = perform();
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2028") &&
+             hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
+             hasDiagnostic(invalid.diagnostics, "initialized local binding") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "limited to range-for element bindings") &&
+             hasDiagnostic(invalid.diagnostics, "array extents") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires a fixed array type from its context") &&
+             hasDiagnostic(invalid.diagnostics, "complete value type") &&
+             hasDiagnostic(invalid.diagnostics, "immutable binding 'fixed'"),
+         "auto diagnostics should explain every unsupported declaration and "
+         "inference context");
+
+  const lang::FrontendResult moveOnly =
+      lang::Frontend().analyze("move-only-auto.gti", R"(
+class Value {
+public:
+  int number = 1;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto copied = owner;
+  return copied->number;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!moveOnly.canGenerateCode() &&
+             hasDiagnosticCode(moveOnly.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(moveOnly.diagnostics,
+                           "Cannot initialize inferred binding 'copied'") &&
+             hasDiagnosticHint(moveOnly.diagnostics, "std::move(owner)"),
+         "auto initialization should reject move-only copies in GTI semantics");
+
+  const lang::FrontendResult movedOwner =
+      lang::Frontend().analyze("moved-auto.gti", R"(
+class Value {
+public:
+  int number = 1;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto moved = std::move(owner);
+  return moved->number - 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  const lang::FunctionDecl *movedMain =
+      findTopLevelFunction(movedOwner.program, "main");
+  const auto *moved = movedMain == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                movedMain->body()->statements().at(1).get());
+  const lang::BindingInfo *movedBinding =
+      moved == nullptr ? nullptr : movedOwner.semantics.findBinding(*moved);
+  expect(movedOwner.canGenerateCode() && movedBinding != nullptr &&
+             movedBinding->traits.ownership == lang::OwnershipKind::Unique &&
+             !movedBinding->traits.copyable && movedBinding->traits.movable,
+         "auto should retain ownership traits after an explicit move");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){auto fixed=1;mut auto changing=fixed;for(mut auto i=0;i<2;"
+      "i++){changing+=i;}return changing;}");
+  expect(formatted.find("auto fixed = 1;") != std::string::npos &&
+             formatted.find("mut auto changing = fixed;") !=
+                 std::string::npos &&
+             formatted.find("for (mut auto i = 0; i < 2; i++) {") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "local auto declarations should receive stable C++-style formatting");
+}
+
+void testStructuredBindings() {
+  const std::string source = R"(
+struct Pair<T, U> {
+  T first;
+  U second;
+
+  Pair(T first, U second) : first(first), second(second) {}
+  ~Pair() {}
+};
+
+int main() {
+  int values[2] = {2, 3};
+  auto [left, right] = values;
+  auto [number, enabled] = Pair<int, bool>(4, true);
+  mut int result = 1;
+  if (left == 2 && right == 3 && number == 4 && enabled) {
+    result = 0;
+  }
+  return result;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("structured-bindings.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected structured-binding diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "fixed arrays and public direct aggregate fields should support "
+         "structured bindings");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *arrayBinding =
+      main == nullptr ? nullptr
+                      : dynamic_cast<const lang::StructuredBindingDecl *>(
+                            main->body()->statements().at(1).get());
+  const auto *pairBinding =
+      main == nullptr ? nullptr
+                      : dynamic_cast<const lang::StructuredBindingDecl *>(
+                            main->body()->statements().at(2).get());
+  expect(arrayBinding != nullptr && pairBinding != nullptr &&
+             arrayBinding->bindings().size() == 2 &&
+             pairBinding->bindings().size() == 2,
+         "the AST should retain ordered structured-binding declarations");
+
+  const lang::StructuredBindingInfo *arrayInfo =
+      arrayBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findStructuredBinding(*arrayBinding);
+  const lang::StructuredBindingInfo *pairInfo =
+      pairBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findStructuredBinding(*pairBinding);
+  expect(arrayInfo != nullptr && arrayInfo->elements.size() == 2 &&
+             arrayInfo->elements[0].projection ==
+                 lang::StructuredBindingProjectionKind::ArrayElement &&
+             arrayInfo->elements[0].index == 0 &&
+             arrayInfo->elements[1].index == 1 &&
+             arrayInfo->elements[0].binding.type == lang::SemanticType::Int32 &&
+             arrayInfo->elements[0].binding.access ==
+                 lang::AccessMode::ReadOnly,
+         "array decomposition should record exact immutable element "
+         "projections");
+  expect(pairInfo != nullptr &&
+             pairInfo->source.type.kind == lang::SemanticType::Class &&
+             pairInfo->elements.size() == 2 &&
+             pairInfo->elements[0].projection ==
+                 lang::StructuredBindingProjectionKind::Field &&
+             pairInfo->elements[0].field != 0 &&
+             pairInfo->elements[1].field != 0 &&
+             pairInfo->elements[0].binding.type == lang::SemanticType::Int32 &&
+             pairInfo->elements[1].binding.type == lang::SemanticType::Bool &&
+             pairInfo->elements[0].binding.symbol != 0 &&
+             pairInfo->elements[1].binding.symbol != 0,
+         "aggregate decomposition should substitute field types and retain "
+         "source-visible symbols");
+
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const lang::LanguageQueries queries;
+  const std::size_t leftDeclaration = source.find("left");
+  const std::size_t leftUse = source.rfind("left");
+  const std::optional<lang::HoverInfo> leftHover =
+      queries.hover(frontend, unit, leftDeclaration + 1);
+  const std::optional<lang::DefinitionInfo> leftDefinition =
+      queries.definition(frontend, unit, leftUse + 1);
+  expect(leftHover && leftHover->signature == "int32_t left" &&
+             leftDefinition && leftDefinition->target.start == leftDeclaration,
+         "shared semantic queries should expose hover and definition for "
+         "each decomposed name");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == main) {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *arrayStatement =
+      mainInstance == nullptr || mainInstance->body.roots.size() < 3
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots[1]);
+  const lang::HirStatement *pairStatement =
+      mainInstance == nullptr || mainInstance->body.roots.size() < 3
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots[2]);
+  expect(arrayStatement != nullptr && pairStatement != nullptr &&
+             arrayStatement->kind ==
+                 lang::HirStatementKind::StructuredBinding &&
+             pairStatement->kind == lang::HirStatementKind::StructuredBinding &&
+             arrayStatement->binding && pairStatement->binding &&
+             arrayStatement->structuredBindings.size() == 2 &&
+             pairStatement->structuredBindings.size() == 2 &&
+             arrayStatement->structuredBindings[0].index &&
+             pairStatement->structuredBindings[0].field != 0,
+         "HIR should retain one hidden owner and typed array/field "
+         "projections");
+
+  const lang::MirFunctionInstance *mirMain =
+      mainInstance == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(mainInstance->id);
+  const auto findSourcePlace =
+      [&](const lang::HirStatement *statement) -> const lang::MirPlace * {
+    if (mirMain == nullptr || statement == nullptr || !statement->binding) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(mirMain->body.places.begin(), mirMain->body.places.end(),
+                     [&](const lang::MirPlace &place) {
+                       return place.root == lang::MirPlaceRootKind::Binding &&
+                              place.binding == *statement->binding &&
+                              place.projections.empty();
+                     });
+    return found == mirMain->body.places.end() ? nullptr : &*found;
+  };
+  const lang::MirPlace *arraySource = findSourcePlace(arrayStatement);
+  const lang::MirPlace *pairSource = findSourcePlace(pairStatement);
+  std::size_t arrayInitializations = 0;
+  std::size_t pairInitializations = 0;
+  std::size_t pairDrops = 0;
+  if (mirMain != nullptr) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        arrayInitializations +=
+            arrayStatement != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.hirStatement == arrayStatement->id
+                ? 1
+                : 0;
+        pairInitializations +=
+            pairStatement != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.hirStatement == pairStatement->id
+                ? 1
+                : 0;
+        pairDrops +=
+            pairSource != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Drop &&
+                    instruction.destination == pairSource->id
+                ? 1
+                : 0;
+      }
+    }
+  }
+  const bool hasArrayProjection =
+      mirMain != nullptr && arrayStatement != nullptr &&
+      std::any_of(mirMain->body.places.begin(), mirMain->body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == *arrayStatement->binding &&
+                           std::any_of(
+                               place.projections.begin(),
+                               place.projections.end(),
+                               [](const lang::MirPlaceProjection &projection) {
+                                 return projection.kind ==
+                                        lang::MirProjectionKind::Index;
+                               });
+                  });
+  const bool hasFieldProjection =
+      mirMain != nullptr && pairStatement != nullptr &&
+      std::any_of(mirMain->body.places.begin(), mirMain->body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == *pairStatement->binding &&
+                           std::any_of(
+                               place.projections.begin(),
+                               place.projections.end(),
+                               [](const lang::MirPlaceProjection &projection) {
+                                 return projection.kind ==
+                                        lang::MirProjectionKind::Field;
+                               });
+                  });
+  expect(arraySource != nullptr && pairSource != nullptr &&
+             arrayInitializations == 1 && pairInitializations == 1 &&
+             pairDrops == 1 && hasArrayProjection && hasFieldProjection,
+         "MIR should initialize and destroy each hidden owner once while "
+         "visible names remain projected places");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(
+      artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find("std::array<std::int32_t, 2> "
+                                 "__gti_mir_p_") != std::string::npos &&
+          artifact.contents.find(
+              "mir_lifetime_slot<::__gti_program::Pair<std::int32_t, bool>>") !=
+              std::string::npos &&
+          artifact.contents.find(".get().first") != std::string::npos &&
+          artifact.contents.find(".get().second") != std::string::npos &&
+          artifact.contents.find("const auto [left, right]") ==
+              std::string::npos,
+      "the C++ backend should represent validated structured bindings as "
+      "MIR projections without relying on C++ decomposition declarations");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){int values[2]={1,2};auto[left,right]=values;return left;}");
+  expect(formatted.find("auto [left, right] = values;") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "structured bindings should receive stable C++-style formatting");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-structured-bindings.gti", R"(
+class Hidden {
+  int secret = 1;
+};
+
+struct Base {
+  int base = 1;
+};
+
+struct Derived : public Base {
+  int own = 2;
+};
+
+struct MoveOnly {
+  int value = 1;
+
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+int main() {
+  int values[2] = {1, 2};
+  auto [too, many, names] = values;
+  auto [scalar] = 1;
+  Hidden hidden{};
+  auto [secret] = hidden;
+  Derived derived{};
+  auto [base, own] = derived;
+  auto [same, same] = values;
+  auto [first, second] = values;
+  first = 3;
+  auto moved = std::move(second);
+  MoveOnly owner{};
+  auto [copied] = owner;
+  auto [untyped_left, untyped_right] = {1, 2};
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2048") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "declares 3 names but the source provides 2") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "require a fixed array or a class/struct") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "every direct instance field to be public") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "do not decompose inherited storage") &&
+             hasDiagnostic(invalid.diagnostics, "Duplicate declaration") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot assign to immutable binding 'first'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot partially move structured binding") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot initialize structured binding by copying") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires a fixed array type from its context"),
+         "structured-binding diagnostics should reject ambiguous ownership, "
+         "shape, access, mutation, and untyped initialization");
+
+  lang::Lexer lexer;
+  const auto expectSyntaxError = [&](std::string input,
+                                     std::string_view message) {
+    lang::Parser parser(lexer.scan(input));
+    (void)parser.parse();
+    expect(parser.hadError() &&
+               hasDiagnostic(parser.errors(), std::string(message)),
+           "structured-binding syntax should diagnose " + std::string(message));
+  };
+  expectSyntaxError("auto [left, right] = value;", "local declarations");
+  expectSyntaxError("class Bad { auto [left, right] = value; };",
+                    "cannot declare class or struct fields");
+  expectSyntaxError("int main() { mut auto [left, right] = values; return 0; }",
+                    "Structured bindings are immutable");
+  expectSyntaxError("int main() { auto& [left, right] = values; return 0; }",
+                    "Reference structured bindings are not supported");
+  expectSyntaxError(
+      "int main() { for (auto [left, right] = values; true; left++) {} "
+      "return 0; }",
+      "not supported in a for-loop initializer");
+  lang::Parser autoArrayParser(
+      lexer.scan("int main() { auto[2] values = {1, 2}; return 0; }"));
+  (void)autoArrayParser.parse();
+  expect(!autoArrayParser.hadError(),
+         "structured-binding lookahead should preserve typed array syntax for "
+         "semantic auto diagnostics");
+  lang::Parser recoveryParser(lexer.scan(
+      "int main() { int broken = 1 auto [left, right] = values; return left; "
+      "}"));
+  const lang::Program recovered = recoveryParser.parse();
+  const lang::FunctionDecl *recoveredMain =
+      findTopLevelFunction(recovered, "main");
+  expect(recoveryParser.hadError() && recoveredMain != nullptr &&
+             !recoveredMain->body()->statements().empty() &&
+             dynamic_cast<const lang::StructuredBindingDecl *>(
+                 recoveredMain->body()->statements().front().get()) != nullptr,
+         "parser recovery should resume at a structured binding after a "
+         "missing semicolon");
+}
+
+void testTypeAliases() {
+  lang::Lexer lexer;
+  const std::string source = R"(
+using LaterSize = Size;
+using Size = uint64_t;
+using Triple = int[3];
+
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+using IntBox = Box<int>;
+using Completion = expected<void, int>;
+using Result = int;
+
+Completion complete() { return; }
+
+Result main() {
+  LaterSize count = Size(3);
+  Triple values = {1, 2, 3};
+  IntBox box = IntBox(values[1]);
+  Completion completion = complete();
+  if (count == 3 and box.get() == 2 and completion) { return 0; }
+  return 1;
+}
+)";
+  auto tokens = lexer.scan(source);
+  expect(!lexer.hadError(), "type aliases should lex as declarations");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "namespace-scoped type aliases should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "type aliases should canonicalize before semantic checks");
+
+  const std::string generated = emitAnalyzedSource(source);
+  expect(generated.find("using LaterSize = std::uint64_t;") !=
+                 std::string::npos &&
+             generated.find("using Triple = std::array<std::int32_t, 3>;") !=
+                 std::string::npos &&
+             generated.find(
+                 "using IntBox = ::__gti_program::Box<std::int32_t>;") !=
+                 std::string::npos &&
+             generated.find("static_cast<std::uint64_t>(3)") !=
+                 std::string::npos &&
+             generated.find("#include <expected>") != std::string::npos &&
+             generated.find("int main()") != std::string::npos,
+         "the C++ backend should emit canonical, declaration-order-independent "
+         "aliases");
+
+  auto invalidTokens = lexer.scan(R"(
+using First = Second;
+using Second = First;
+using Borrow = int&;
+using Missing = MissingType;
+using Duplicate = int;
+using Duplicate = uint64_t;
+int main() { return 0; }
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid alias relationships should remain semantic errors");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "cycles, reference aliases, missing targets, and duplicates should "
+         "be rejected");
+  expect(hasDiagnostic(invalidSemantic, "Type alias cycle") &&
+             hasDiagnostic(invalidSemantic, "Reference aliases") &&
+             hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'") &&
+             hasDiagnostic(invalidSemantic, "Duplicate declaration"),
+         "invalid aliases should produce focused diagnostics");
+
+  lang::Parser localAliasParser(
+      lexer.scan("int main() { using Local = int; return 0; }"));
+  (void)localAliasParser.parse();
+  expect(localAliasParser.hadError() &&
+             hasDiagnostic(localAliasParser.errors(), "namespace scope"),
+         "local type aliases should be rejected by the parser");
+}
+
+void testNamespacesAndAliases() {
+  lang::Lexer lexer;
+  const std::string source = R"(
+namespace engine {
+namespace graphics {
+class Renderer {};
+void render() {}
+void renderTwice() {
+  render();
+  render();
+}
+}
+}
+
+namespace gfx = engine::graphics;
+gfx::Renderer createRenderer();
+
+int main() {
+  engine::graphics::render();
+  gfx::renderTwice();
+  return 0;
+}
+)";
+  auto tokens = lexer.scan(source);
+  expect(!lexer.hadError(), "namespace source should lex");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "nested namespaces and aliases should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "qualified calls and namespace aliases should resolve");
+
+  const std::string generated = emitAnalyzedSource(source);
+  expect(generated.find("namespace engine {") != std::string::npos &&
+             generated.find("namespace graphics {") != std::string::npos,
+         "emitter should preserve nested namespaces");
+  expect(generated.find("namespace gfx = engine::graphics;") !=
+             std::string::npos,
+         "emitter should preserve namespace aliases");
+  expect(generated.find("::__gti_program::engine::graphics::Renderer "
+                        "__gti_fn_3_createRenderer();") != std::string::npos &&
+             generated.find("namespace gfx = engine::graphics;") !=
+                 std::string::npos,
+         "qualified types should parse and emit through namespace aliases");
+  expect(generated.find("engine::graphics::__gti_fn_1_render();") !=
+                 std::string::npos &&
+             generated.find("engine::graphics::__gti_fn_2_renderTwice();") !=
+                 std::string::npos,
+         "emitter should preserve qualified calls");
+
+  auto invalidTokens = lexer.scan(R"(
+namespace engine {}
+namespace gfx = engine::missing;
+int main() {
+  engine::missing::render();
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(), "invalid namespace source should parse");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "unknown namespace paths should be rejected");
+  expect(invalidSemantic.errors().size() == 2,
+         "alias targets and qualified calls should both be diagnosed");
+}
+
+void testExternCInterop() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> keywordTokens = lexer.scan("extern \"C\" {}");
+  expect(!keywordTokens.empty() &&
+             keywordTokens.front().kind == lang::TokenKind::EXTERN,
+         "extern should have a dedicated keyword token");
+
+  const std::string source = R"(
+extern "C" {
+  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+  int32_t close(int32_t descriptor);
+}
+
+int main() {
+  int32_t descriptor = socket(2, 1, 0);
+  if (descriptor >= 0) {
+    [[discard]] close(descriptor);
+  }
+  return 0;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("extern-c.gti", source);
+  expect(frontend.canGenerateCode(),
+         "fixed-width extern C declarations and calls should compile");
+  expect(frontend.diagnostics.empty(),
+         "valid extern C declarations should not produce diagnostics");
+
+  const auto *block = frontend.program.declarations().empty()
+                          ? nullptr
+                          : dynamic_cast<const lang::ExternCDecl *>(
+                                frontend.program.declarations().front().get());
+  expect(block != nullptr && block->declarations().size() == 2,
+         "the AST should retain an extern C linkage block and its prototypes");
+  const auto *socketDeclaration =
+      block == nullptr || block->declarations().empty()
+          ? nullptr
+          : dynamic_cast<const lang::FunctionDecl *>(
+                block->declarations().front().get());
+  expect(socketDeclaration != nullptr && socketDeclaration->hasCLinkage() &&
+             !socketDeclaration->body(),
+         "functions inside the linkage block should retain bodyless C "
+         "linkage identity");
+
+  const lang::FunctionInfo *socketInfo =
+      socketDeclaration == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(*socketDeclaration);
+  expect(socketInfo != nullptr &&
+             socketInfo->linkage == lang::LanguageLinkage::C &&
+             socketInfo->externalSymbol == "socket",
+         "semantics should own the exact native linkage and symbol");
+  const auto hirSocket =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.externalSymbol == "socket";
+                   });
+  expect(hirSocket != frontend.hir.functionInstances().end() &&
+             hirSocket->linkage == lang::LanguageLinkage::C,
+         "HIR should retain the selected C linkage and native symbol");
+  const lang::MirFunctionInstance *mirSocket =
+      hirSocket == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(hirSocket->id);
+  expect(mirSocket != nullptr &&
+             mirSocket->linkage == lang::LanguageLinkage::C &&
+             mirSocket->externalSymbol == "socket",
+         "MIR should retain C linkage for future backend consumption");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(generated.find("extern \"C\" {") != std::string::npos &&
+             generated.find(
+                 "std::int32_t socket(std::int32_t domain, std::int32_t "
+                 "type, std::int32_t protocol);") != std::string::npos &&
+             generated.find("std::int32_t close(std::int32_t descriptor);") !=
+                 std::string::npos,
+         "the C++ backend should emit canonical unmangled C prototypes");
+  expect(generated.find("socket(__gti_mir_v_") != std::string::npos &&
+             generated.find("close(__gti_mir_v_") != std::string::npos &&
+             generated.find("__gti_fn_") == std::string::npos,
+         "resolved C calls should use exact native symbols without GTI name "
+         "mangling");
+
+  const lang::FrontendResult lateDeclaration =
+      lang::Frontend().analyze("late-extern-c.gti", R"(
+namespace platform {
+int32_t invoke_close(int32_t descriptor) { return close(descriptor); }
+extern "C" { int32_t close(int32_t descriptor); }
+}
+int main() { return platform::invoke_close(-1); }
+)");
+  expect(lateDeclaration.canGenerateCode(),
+         "namespace-scoped C declarations should resolve before their source "
+         "position");
+  const std::string lateCpp = gti_test::emitCppText(lateDeclaration);
+  const std::size_t latePrototype = lateCpp.find("extern \"C\" {");
+  const std::size_t lateCall =
+      lateCpp.find("::__gti_program::platform::close(__gti_mir_v_");
+  expect(latePrototype != std::string::npos && lateCall != std::string::npos &&
+             latePrototype < lateCall,
+         "the backend should forward namespace-scoped C prototypes before "
+         "earlier callers");
+
+  const lang::FrontendResult ordinaryPrototype =
+      lang::Frontend().analyze("ordinary-prototype.gti", R"(
+int32_t native_like(int32_t value);
+int main() { return native_like(7); }
+)");
+  expect(ordinaryPrototype.canGenerateCode(),
+         "ordinary GTI bodyless functions should remain valid declarations");
+  const std::string ordinaryCpp = gti_test::emitCppText(ordinaryPrototype);
+  expect(ordinaryCpp.find("extern \"C\"") == std::string::npos &&
+             ordinaryCpp.find(
+                 "std::int32_t __gti_fn_1_native_like(const std::int32_t "
+                 "value);") != std::string::npos &&
+             ordinaryCpp.find("__gti_fn_1_native_like(__gti_mir_v_") !=
+                 std::string::npos &&
+             ordinaryCpp.find("native_like__gti_mir_failure") ==
+                 std::string::npos,
+         "ordinary prototypes should retain GTI mangling unless linkage is "
+         "explicitly C");
+
+  const lang::FrontendResult runtime =
+      analyzeTrustedStandalonePreludeFixture("extern-runtime.gti", R"(
+namespace gti_internal {
+class text_view {};
+namespace runtime {
+using native_text = gti_internal::text_view;
+extern "C" {
+int32_t gti_rt_write_stdout(native_text value);
+int64_t gti_rt_open_file_read(native_text path);
+}
+
+void write_stdout(gti_internal::text_view value) {
+  [[discard]] gti_rt_write_stdout(value);
+}
+
+int64_t open_file_read(gti_internal::text_view path) {
+  return gti_rt_open_file_read(path);
+}
+}
+}
+
+int main() {
+  gti_internal::runtime::write_stdout("hello");
+  [[discard]] gti_internal::runtime::open_file_read("input");
+  return 0;
+}
+)");
+  expect(runtime.canGenerateCode(),
+         "counted text buffers should support runtime C ABI migration");
+  const std::string runtimeCpp = gti_test::emitCppText(runtime);
+  expect(runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
+             runtimeCpp.find("#include <gti/runtime.hpp>") ==
+                 std::string::npos &&
+             runtimeCpp.find(
+                 "std::int32_t gti_rt_write_stdout(::gti_c_string_view "
+                 "value);") != std::string::npos &&
+             runtimeCpp.find("::gti_internal::backend::to_c_string_view("
+                             "__gti_mir_v_") != std::string::npos,
+         "text views should cross C linkage through the explicit public "
+         "counted-buffer ABI");
+
+  const lang::FrontendResult shadowedRecord =
+      analyzeTrustedStandalonePreludeFixture("shadowed-c-record.gti", R"(
+namespace gti_internal { class text_view {}; }
+namespace native {
+struct gti_c_string_view {};
+extern "C" {
+int32_t measure_text(gti_internal::text_view value);
+}
+int32_t measure() { return measure_text("x"); }
+}
+int main() { return native::measure() - 1; }
+)");
+  expect(shadowedRecord.canGenerateCode(),
+         "a GTI namespace should be allowed to reuse the public record's "
+         "unqualified spelling");
+  const std::string shadowedRecordCpp = gti_test::emitCppText(shadowedRecord);
+  expect(
+      shadowedRecordCpp.find("inline ::gti_c_string_view to_c_string_view") !=
+              std::string::npos &&
+          shadowedRecordCpp.find(
+              "std::int32_t measure_text(::gti_c_string_view value);") !=
+              std::string::npos,
+      "C ABI text lowering should name the global public record even when "
+      "a source namespace shadows it");
+
+  const lang::FrontendResult legacyRuntime =
+      analyzeTrustedStandalonePreludeFixture("legacy-runtime.gti", R"(
+namespace gti_internal {
+class text_view {};
+namespace runtime {
+@runtime("stdout.write")
+void write_stdout(gti_internal::text_view value);
+}
+}
+int main() {
+  gti_internal::runtime::write_stdout("compatibility");
+  return 0;
+}
+)");
+  expect(legacyRuntime.canGenerateCode(),
+         "the closed compiler-owned runtime attribute should remain a "
+         "compatible internal declaration surface");
+  const std::string legacyRuntimeCpp = gti_test::emitCppText(legacyRuntime);
+  expect(legacyRuntimeCpp.find("#include <gti/runtime.hpp>") !=
+                 std::string::npos &&
+             legacyRuntimeCpp.find("#include <gti/c_abi.h>") ==
+                 std::string::npos,
+         "legacy runtime bindings should stay separate from public C ABI "
+         "lowering");
+
+  const lang::FrontendResult invalidLegacyRuntime =
+      analyzeTrustedStandalonePreludeFixture("invalid-legacy-runtime.gti", R"(
+namespace gti_internal { class text_view {}; }
+@runtime("stdout.write")
+void fake_write(gti_internal::text_view value);
+int main() { fake_write("hello"); return 0; }
+)");
+  expect(!invalidLegacyRuntime.semanticValid &&
+             hasDiagnostic(invalidLegacyRuntime.diagnostics,
+                           "Invalid declaration for runtime binding"),
+         "the legacy runtime attribute should remain compiler-owned rather "
+         "than becoming a second general FFI");
+
+  auto wrongLanguageTokens =
+      lexer.scan("extern \"Rust\" {} int main() { return 0; }");
+  lang::Parser wrongLanguageParser(std::move(wrongLanguageTokens));
+  wrongLanguageParser.parse();
+  expect(wrongLanguageParser.hadError() &&
+             hasDiagnostic(wrongLanguageParser.errors(),
+                           "only the extern \"C\" linkage"),
+         "the parser should reject unknown linkage languages");
+
+  auto bodyTokens = lexer.scan(R"(
+extern "C" { int32_t native() { return 1; } }
+int main() { return 0; }
+)");
+  lang::Parser bodyParser(std::move(bodyTokens));
+  lang::Program recoveredBody = bodyParser.parse();
+  expect(bodyParser.hadError() &&
+             hasDiagnostic(bodyParser.errors(), "must be a bodyless") &&
+             findTopLevelFunction(recoveredBody, "main") != nullptr,
+         "extern C definitions should be rejected without losing following "
+         "declarations during recovery");
+
+  auto variableTokens = lexer.scan(R"(
+extern "C" { int32_t not_a_function; }
+int main() { return 0; }
+)");
+  lang::Parser variableParser(std::move(variableTokens));
+  variableParser.parse();
+  expect(variableParser.hadError() &&
+             hasDiagnostic(variableParser.errors(),
+                           "may contain only function declarations"),
+         "extern C blocks should reject native variables in the bounded ABI");
+
+  auto nestedTokens = lexer.scan(R"(
+extern "C" {
+  extern "C" { int32_t nested(); }
+  int32_t recovered();
+}
+int main() { return 0; }
+)");
+  lang::Parser nestedParser(std::move(nestedTokens));
+  lang::Program recoveredNested = nestedParser.parse();
+  const auto *recoveredBlock =
+      recoveredNested.declarations().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ExternCDecl *>(
+                recoveredNested.declarations().front().get());
+  expect(nestedParser.hadError() && recoveredBlock != nullptr &&
+             recoveredBlock->declarations().size() == 1 &&
+             findTopLevelFunction(recoveredNested, "main") != nullptr,
+         "invalid nested linkage blocks should recover at the next prototype");
+
+  auto misplacedTokens = lexer.scan(R"(
+class Holder {
+  extern "C" { int32_t member_native(); }
+};
+int main() {
+  extern "C" { int32_t local_native(); }
+  return 0;
+}
+)");
+  lang::Parser misplacedParser(std::move(misplacedTokens));
+  lang::Program misplacedProgram = misplacedParser.parse();
+  expect(misplacedParser.hadError() &&
+             countDiagnosticContaining(misplacedParser.errors(),
+                                       "limited to namespace scope") == 2 &&
+             findTopLevelFunction(misplacedProgram, "main") != nullptr,
+         "class and block linkage declarations should fail clearly without "
+         "breaking declaration recovery");
+
+  const lang::FrontendResult externalMain =
+      lang::Frontend().analyze("external-main.gti", R"(
+namespace native {
+extern "C" { int32_t main(); }
+}
+int main() { return native::main(); }
+)");
+  expect(!externalMain.semanticValid &&
+             hasDiagnostic(externalMain.diagnostics,
+                           "C symbol 'main' is reserved"),
+         "a namespaced C declaration must not collide with the unmangled GTI "
+         "entry point");
+
+  const lang::FrontendResult externalStorage =
+      lang::Frontend().analyze("external-storage-collision.gti", R"(
+int32_t native_counter = 0;
+namespace native {
+extern "C" { int32_t native_counter(); }
+}
+int main() { return 0; }
+)");
+  expect(!externalStorage.semanticValid &&
+             hasDiagnostic(externalStorage.diagnostics,
+                           "conflicts with a root namespace GTI variable"),
+         "an exact C symbol must not alias root GTI storage through another "
+         "source namespace");
+
+  const std::string formatted = lang::Formatter().format(
+      "extern \"C\"{int32_t socket(int32_t domain,int32_t type,int32_t "
+      "protocol);int32_t close(int32_t descriptor);}");
+  expect(formatted == "extern \"C\" {\n"
+                      "  int32_t socket(int32_t domain, int32_t type, int32_t "
+                      "protocol);\n"
+                      "  int32_t close(int32_t descriptor);\n"
+                      "}\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should normalize extern C blocks idempotently");
+
+  const lang::FrontendResult invalid =
+      analyzeTrustedPreludeFixture("invalid-extern-c.gti", R"(
+class Handle {};
+enum class Mode { One };
+extern "C" {
+  bool bad_bool(bool value);
+  char bad_char(char value);
+  int32_t bad_reference(int32_t& value);
+  int32_t bad_array(int32_t values[4]);
+  Handle bad_class(Handle value);
+  Mode bad_enum(Mode value);
+  expected<int32_t, int32_t> bad_expected(int32_t value);
+  gti_internal::text_view bad_text_return();
+  static int32_t bad_static(int32_t value);
+  int32_t bad_generic<T>(T value);
+  int32_t duplicate(int32_t value);
+  int32_t duplicate(int64_t value);
+}
+namespace other {
+extern "C" { int32_t duplicate(uint32_t value); }
+}
+int main() { return 0; }
+)");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2054") >= 11 &&
+             hasDiagnostic(invalid.diagnostics,
+                           "C symbol 'duplicate' is declared more than once"),
+         "semantics should reject unsafe ABI types, modifiers, generics, and "
+         "global C-symbol collisions before backend emission");
+}
+
+void testScopedEnums() {
+  const std::string source = R"(
+namespace engine {
+enum class State : uint8_t {
+  Idle,
+  Running = 4,
+  Stopped,
+};
+enum class Mode { editor, game };
+}
+
+using StateAlias = engine::State;
+
+StateAlias next(StateAlias state) {
+  if (state == StateAlias::Idle) {
+    return engine::State::Running;
+  }
+  return StateAlias::Stopped;
+}
+
+int main() {
+  auto state = next(StateAlias::Idle);
+  if (state == engine::State::Running) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("scoped-enums.gti", source);
+  expect(frontend.canGenerateCode(),
+         "scoped enum declarations and qualified enumerators should compile");
+  expect(frontend.diagnostics.empty(),
+         "valid scoped enums should not produce diagnostics");
+  expect(frontend.hir.enumDeclarations().size() == 2,
+         "HIR should retain scoped enum declarations");
+  const lang::HirEnum *stateEnum =
+      frontend.hir.enumDeclarations().empty()
+          ? nullptr
+          : &frontend.hir.enumDeclarations().front();
+  expect(stateEnum != nullptr &&
+             stateEnum->underlyingType == lang::SemanticType::UInt8 &&
+             stateEnum->enumerators.size() == 3 &&
+             stateEnum->enumerators[2].value ==
+                 lang::EnumConstant{.magnitude = 5},
+         "HIR should retain the backing type and evaluated enumerator values");
+
+  bool foundResolvedEnumerator = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.kind == lang::HirValueKind::QualifiedName && value.enumOwner &&
+          value.enumValue) {
+        foundResolvedEnumerator = true;
+      }
+    }
+  }
+  expect(foundResolvedEnumerator,
+         "HIR enum references should carry resolved nominal value identity");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(generated.find("enum class State : std::uint8_t;") !=
+                 std::string::npos &&
+             generated.find("enum class State : std::uint8_t {") !=
+                 std::string::npos &&
+             generated.find("enum class Mode : std::int32_t {") !=
+                 std::string::npos &&
+             generated.find("Running = 4") != std::string::npos,
+         "the C++ backend should emit fixed-backing scoped enums");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-scoped-enums.gti", R"(
+enum class Tiny : uint8_t {
+  First,
+  TooLarge = 256,
+  First = 2,
+};
+enum class Other { First };
+
+int main() {
+  mut Tiny uninitialized;
+  Tiny value = 1;
+  int raw = Tiny::First;
+  if (Tiny::First) {
+    return 1;
+  }
+  bool mixed = Tiny::First == Other::First;
+  auto missing = Tiny::Missing;
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid scoped enum uses should block code generation");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "Scoped enum value does not fit its backing type") &&
+             hasDiagnostic(invalid.diagnostics, "Duplicate enumerator") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Equality operands have incompatible types") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "explicit enumerator initializer") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown enumerator"),
+         "scoped enums should diagnose range, scope, and nominal type errors");
+
+  lang::Lexer lexer;
+  lang::Parser parser(
+      lexer.scan("enum Legacy { Value }; int main() { return 0; }"));
+  const lang::Program recovered = parser.parse();
+  expect(parser.hadError() && recovered.declarations().size() == 1,
+         "unscoped enums should be rejected without preventing parser "
+         "recovery");
+
+  const std::string formatted = lang::Formatter().format(
+      "enum class State:uint8_t{Idle,Running=4,Stopped,};");
+  expect(formatted == R"(enum class State : uint8_t {
+  Idle,
+  Running = 4,
+  Stopped,
+};
+)",
+         "formatter should produce stable C++-style scoped enum layout");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "scoped enum formatting should be idempotent");
+}
+
+void testDefaultParameters() {
+  {
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(
+        "int choose(int required, int fallback = 2) { return required; }"));
+    const lang::Program parsed = parser.parse();
+    const auto *function = parsed.declarations().empty()
+                               ? nullptr
+                               : dynamic_cast<const lang::FunctionDecl *>(
+                                     parsed.declarations().front().get());
+    expect(!parser.hadError() && function != nullptr &&
+               function->parameters().size() == 2 &&
+               !function->parameters()[0].hasDefault() &&
+               function->parameters()[1].hasDefault(),
+           "the parser should retain a trailing default expression on its "
+           "parameter");
+  }
+
+  const std::string source = R"(
+mut int side_effects = 0;
+
+int advance() {
+  side_effects += 1;
+  return side_effects;
+}
+
+int ordinary(int first, int second = advance(), int third = advance()) {
+  return first + second + third;
+}
+
+class Token {
+public:
+  Token() {}
+  int method(int value = advance()) { return value; }
+  static int static_method(int value = advance()) { return value; }
+};
+
+int consume(Token token = Token()) { return 11; }
+
+class Base {
+public:
+  Base(int value = 8) {}
+};
+
+class Derived : public Base {
+public:
+  Derived() {}
+};
+
+T generic_default<T>(T value = 7) { return value; }
+
+constexpr int constant_default(int value = 6) { return value; }
+constexpr int folded = constant_default();
+
+int main() {
+  int omitted = ordinary(1);
+  int explicit_values = ordinary(1, 8, 9);
+  Token token = Token();
+  int method_value = token.method();
+  int static_value = Token::static_method();
+  int owned_value = consume();
+  Derived derived = Derived();
+  int generic_value = generic_default<int>();
+  return omitted + explicit_values + method_value + static_value +
+         owned_value + generic_value + folded;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("default-parameters.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected default-parameter diagnostic ["
+                << diagnostic.code << "]: " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.hir.valid() &&
+             frontend.mirValid && frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "free-function, method, constructor, base-constructor, owned, "
+         "generic, and constexpr defaults should lower through verified MIR");
+
+  const lang::FunctionDecl *ordinary =
+      findTopLevelFunction(frontend.program, "ordinary");
+  const lang::FunctionInfo *ordinaryInfo =
+      ordinary == nullptr ? nullptr
+                          : frontend.semantics.findFunction(*ordinary);
+  if (ordinaryInfo != nullptr) {
+    const lang::SignaturePrinter signatures(frontend.semantics);
+    expect(
+        signatures.function(*ordinaryInfo) ==
+                "int32_t ordinary(int32_t first, int32_t second = <default>, "
+                "int32_t third = <default>)" &&
+            signatures.parameterLabels(ordinaryInfo->parameterTypes,
+                                       &ordinary->parameters(), false) ==
+                std::vector<std::string>{"int32_t first",
+                                         "int32_t second = <default>",
+                                         "int32_t third = <default>"},
+        "compiler-owned signatures should expose which trailing "
+        "parameters have defaults");
+  } else {
+    expect(false, "the default-parameter fixture should retain ordinary()");
+  }
+
+  const std::size_t omittedCall = source.rfind("ordinary(1)");
+  const std::optional<lang::SignatureHelpInfo> signatureHelp =
+      lang::LanguageQueries().signatureHelp(
+          frontend, frontend.sourceGraph.entryUnit(),
+          omittedCall + std::string("ordinary(").size());
+  expect(signatureHelp &&
+             signatureHelp->label ==
+                 "int32_t ordinary(int32_t first, int32_t second = <default>, "
+                 "int32_t third = <default>)" &&
+             signatureHelp->parameterLabels.size() == 3 &&
+             signatureHelp->parameterLabels[1] == "int32_t second = <default>",
+         "signature help should retain omitted parameters and their default "
+         "markers");
+
+  const lang::VariableDecl *folded = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(declaration.get());
+    if (variable != nullptr && variable->name().lexeme == "folded") {
+      folded = variable;
+      break;
+    }
+  }
+  const lang::BindingInfo *foldedBinding =
+      folded == nullptr ? nullptr : frontend.semantics.findBinding(*folded);
+  expect(foldedBinding != nullptr && foldedBinding->constant.has_value(),
+         "constexpr evaluation should evaluate an omitted default at its "
+         "call site");
+
+  std::size_t hirDefaultInputs = 0;
+  bool omittedOrdinaryHasTwoDefaults = false;
+  bool explicitOrdinaryHasNoDefaults = false;
+  const auto inspectHirBody = [&](const lang::HirBody &body) {
+    for (const lang::HirValue &value : body.values) {
+      if (!value.callPlan) {
+        continue;
+      }
+      const std::size_t defaults = std::count_if(
+          value.callPlan->arguments.begin(), value.callPlan->arguments.end(),
+          [](const lang::HirCallArgument &argument) {
+            return argument.defaultArgument;
+          });
+      hirDefaultInputs += defaults;
+      const lang::HirFunctionInstance *target =
+          value.functionTarget
+              ? frontend.hir.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const auto *call = dynamic_cast<const lang::Call *>(value.source);
+      if (target == nullptr || target->source == nullptr || call == nullptr ||
+          target->source->name().lexeme != "ordinary") {
+        continue;
+      }
+      if (call->arguments().size() == 1) {
+        omittedOrdinaryHasTwoDefaults = defaults == 2;
+      } else if (call->arguments().size() == 3) {
+        explicitOrdinaryHasNoDefaults = defaults == 0;
+      }
+    }
+  };
+  inspectHirBody(frontend.hir.module());
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    inspectHirBody(function.body);
+  }
+  for (const lang::HirConstructorInstance &constructor :
+       frontend.hir.constructorInstances()) {
+    inspectHirBody(constructor.body);
+  }
+  if (!(hirDefaultInputs >= 6 && omittedOrdinaryHasTwoDefaults &&
+        explicitOrdinaryHasNoDefaults)) {
+    std::cerr << "Default-parameter HIR evidence: inputs=" << hirDefaultInputs
+              << " omitted-ordinary=" << omittedOrdinaryHasTwoDefaults
+              << " explicit-ordinary=" << explicitOrdinaryHasNoDefaults << '\n';
+  }
+  expect(hirDefaultInputs >= 6 && omittedOrdinaryHasTwoDefaults &&
+             explicitOrdinaryHasNoDefaults,
+         "HIR call plans should append omitted defaults in parameter order "
+         "without marking explicit arguments");
+
+  bool hirImplicitBaseDefault = false;
+  for (const lang::HirConstructorInstance &constructor :
+       frontend.hir.constructorInstances()) {
+    hirImplicitBaseDefault =
+        hirImplicitBaseDefault ||
+        std::any_of(constructor.initializers.begin(),
+                    constructor.initializers.end(),
+                    [](const lang::HirConstructorInitializer &initializer) {
+                      return initializer.kind ==
+                                 lang::ConstructorInitializerTargetKind::Base &&
+                             initializer.explicitArgumentCount == 0 &&
+                             initializer.arguments.size() == 1;
+                    });
+  }
+  bool mirImplicitBaseDefault = false;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    mirImplicitBaseDefault =
+        mirImplicitBaseDefault ||
+        std::any_of(constructor.initializers.begin(),
+                    constructor.initializers.end(),
+                    [](const lang::MirConstructorInitializer &initializer) {
+                      return initializer.kind ==
+                                 lang::ConstructorInitializerTargetKind::Base &&
+                             initializer.explicitArgumentCount == 0 &&
+                             initializer.arguments.size() == 1;
+                    });
+  }
+  expect(hirImplicitBaseDefault && mirImplicitBaseDefault,
+         "implicit base construction should retain its expanded default and "
+         "zero explicit arguments in HIR and MIR");
+
+  std::size_t mirDefaultInputs = 0;
+  const auto inspectMirBody = [&](const lang::MirBody &body) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument &&
+            instruction.defaultArgument) {
+          ++mirDefaultInputs;
+        }
+      }
+    }
+  };
+  inspectMirBody(frontend.mir.module());
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    inspectMirBody(function.body);
+  }
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    inspectMirBody(constructor.body);
+  }
+  if (mirDefaultInputs < 6) {
+    std::cerr << "Default-parameter MIR inputs=" << mirDefaultInputs << '\n';
+  }
+  expect(mirDefaultInputs >= 6,
+         "verified MIR should preserve caller-expanded default-argument "
+         "provenance on prepared call inputs");
+
+  lang::MirProgram forgedDefaultSuffix = frontend.mir;
+  bool forged = false;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedDefaultSuffix.functionInstances());
+  for (lang::MirFunctionInstance &function : forgedFunctions) {
+    std::unordered_map<lang::HirValueId, std::vector<lang::MirInstruction *>>
+        callInputs;
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument) {
+          callInputs[instruction.callSite].push_back(&instruction);
+        }
+      }
+    }
+    for (auto &[_, inputs] : callInputs) {
+      std::ranges::sort(inputs, {}, [](const lang::MirInstruction *input) {
+        return input->callInputIndex;
+      });
+      if (inputs.size() >= 2 &&
+          std::none_of(inputs.begin(), inputs.end(),
+                       [](const lang::MirInstruction *input) {
+                         return input->defaultArgument;
+                       })) {
+        inputs.front()->defaultArgument = true;
+        forged = true;
+        break;
+      }
+    }
+    if (forged) {
+      break;
+    }
+  }
+  const lang::MirVerificationResult forgedVerification =
+      lang::verifyMirProgram(forgedDefaultSuffix);
+  expect(forged && !forgedVerification.valid() &&
+             std::any_of(forgedVerification.errors.begin(),
+                         forgedVerification.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find(
+                                      "trailing parameter suffix") !=
+                                  std::string::npos;
+                         }),
+         "the MIR verifier should reject forged non-trailing default-input "
+         "provenance");
+
+  const std::string nonTrailingSource =
+      "int invalid(int optional = 1, int required) { return required; }";
+  const lang::FrontendResult nonTrailing =
+      lang::Frontend().analyze("default-non-trailing.gti", nonTrailingSource);
+  const lang::Diagnostic *nonTrailingDiagnostic =
+      findDiagnosticByCode(nonTrailing.diagnostics, "GTI-S2077");
+  const std::size_t required = nonTrailingSource.find("required");
+  const bool nonTrailingRejected =
+      !nonTrailing.canGenerateCode() && nonTrailingDiagnostic != nullptr &&
+      std::filesystem::path(nonTrailingDiagnostic->primary.source).filename() ==
+          "default-non-trailing.gti" &&
+      nonTrailingDiagnostic->primary.start == required &&
+      nonTrailingDiagnostic->primary.end ==
+          required + std::string("required").size() &&
+      hasRelatedDiagnostic(nonTrailing.diagnostics,
+                           "default-argument suffix") &&
+      hasDiagnosticHint(nonTrailing.diagnostics, "Move required parameters");
+  if (!nonTrailingRejected && nonTrailingDiagnostic != nullptr) {
+    std::cerr << "Non-trailing diagnostic span="
+              << nonTrailingDiagnostic->primary.start << ".."
+              << nonTrailingDiagnostic->primary.end
+              << " source=" << nonTrailingDiagnostic->primary.source << '\n';
+  }
+  expect(nonTrailingRejected,
+         "GTI-S2077 should point at a required parameter after the default "
+         "suffix and explain the repair");
+
+  const lang::FrontendResult parameterReference = lang::Frontend().analyze(
+      "default-parameter-reference.gti",
+      "int dependent(int first, int second = first) { return second; }");
+  expect(!parameterReference.canGenerateCode() &&
+             hasDiagnosticCode(parameterReference.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(parameterReference.diagnostics,
+                           "cannot reference a parameter") &&
+             hasDiagnosticHint(parameterReference.diagnostics, "function body"),
+         "defaults should resolve in declaration scope without parameter "
+         "bindings");
+
+  const lang::FrontendResult receiverReference = lang::Frontend().analyze(
+      "default-receiver-reference.gti",
+      "class Item { public: int read(int value = this.read()) { return "
+      "value; } };");
+  expect(!receiverReference.canGenerateCode() &&
+             hasDiagnosticCode(receiverReference.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(receiverReference.diagnostics, "cannot use 'this'"),
+         "method defaults should not acquire an implicit receiver");
+
+  const lang::FrontendResult wrongType = lang::Frontend().analyze(
+      "default-type.gti", "int invalid(int value = true) { return value; }");
+  expect(
+      !wrongType.canGenerateCode() &&
+          hasDiagnosticCode(wrongType.diagnostics, "GTI-S2077") &&
+          hasDiagnostic(wrongType.diagnostics, "parameter requires 'int32_t'"),
+      "a default expression should be checked against its concrete "
+      "parameter type");
+
+  const lang::FrontendResult recursive = lang::Frontend().analyze(
+      "default-cycle.gti",
+      "int recurse(int value = recurse()) { return value; }");
+  expect(!recursive.canGenerateCode() &&
+             hasDiagnosticCode(recursive.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(recursive.diagnostics, "recursive expansion") &&
+             hasDiagnosticHint(recursive.diagnostics, "Break the cycle"),
+         "recursive default expansion should be rejected before HIR "
+         "lowering");
+
+  const lang::FrontendResult ambiguous = lang::Frontend().analyze(
+      "default-overload.gti",
+      "int choose(int value) { return value; }\n"
+      "int choose(int value, int fallback = 1) { return value + fallback; }\n"
+      "int main() { return choose(1); }\n");
+  expect(!ambiguous.canGenerateCode() &&
+             hasDiagnosticCode(ambiguous.diagnostics, "GTI-S2013") &&
+             hasDiagnostic(ambiguous.diagnostics, "2 overloads exactly match"),
+         "defaults should affect viability without silently changing exact "
+         "overload ranking");
+
+  const lang::FrontendResult ambiguousImplicitBase = lang::Frontend().analyze(
+      "default-base-ambiguity.gti",
+      "class Base { public: Base(int value = 1) {} Base(bool value = true) "
+      "{} };\n"
+      "class Derived : public Base { public: Derived() {} };\n"
+      "int main() { return 0; }\n");
+  expect(
+      !ambiguousImplicitBase.canGenerateCode() &&
+          hasDiagnosticCode(ambiguousImplicitBase.diagnostics, "GTI-S2013") &&
+          hasDiagnostic(ambiguousImplicitBase.diagnostics,
+                        "Implicit construction of base") &&
+          hasDiagnosticHint(ambiguousImplicitBase.diagnostics,
+                            "explicit base initializer") &&
+          hasRelatedDiagnostic(ambiguousImplicitBase.diagnostics,
+                               "Candidate: Base(int") &&
+          hasRelatedDiagnostic(ambiguousImplicitBase.diagnostics,
+                               "Candidate: Base(bool"),
+      "implicit base construction should reject multiple constructors "
+      "that accept zero explicit arguments");
+
+  const lang::FrontendResult uninferred =
+      lang::Frontend().analyze("default-generic-inference.gti",
+                               "T make<T>(T value = 1) { return value; }\n"
+                               "int main() { return make(); }\n");
+  expect(!uninferred.canGenerateCode() &&
+             hasDiagnosticCode(uninferred.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(uninferred.diagnostics,
+                           "provide explicit type arguments"),
+         "an omitted default should not infer a generic argument");
+
+  struct UnsupportedDefaultCase {
+    std::string name;
+    std::string source;
+    std::string message;
+  };
+  const std::array<UnsupportedDefaultCase, 7> unsupported{{
+      {"default-extern-c.gti", "extern \"C\" { int native(int value = 1); }",
+       "extern \"C\" declarations"},
+      {"default-operator.gti",
+       "class Number { public: int operator[](uint64_t value = 1) { return "
+       "int(value); "
+       "} };",
+       "operator declarations"},
+      {"default-virtual.gti",
+       "class Base { public: virtual int inspect(int value = 1) { return "
+       "value; } };",
+       "virtual, override, or interface methods"},
+      {"default-lambda.gti",
+       "int main() { auto fn = [](int value = 1) -> int { return value; }; "
+       "return 0; }",
+       "lambda parameters"},
+      {"default-pack.gti", "void relay<Args...>(Args... values = 1) {}",
+       "parameter pack"},
+      {"default-reference.gti", "int inspect(int& value = 1) { return value; }",
+       "owned or plain value"},
+      {"default-main.gti", "int main(int value = 0) { return value; }",
+       "the main entry point"},
+  }};
+  for (const UnsupportedDefaultCase &test : unsupported) {
+    const lang::FrontendResult result =
+        lang::Frontend().analyze(test.name, test.source);
+    const bool rejected = !result.canGenerateCode() &&
+                          hasDiagnosticCode(result.diagnostics, "GTI-S2077") &&
+                          hasDiagnostic(result.diagnostics, test.message);
+    if (!rejected) {
+      for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+        std::cerr << test.name << " [" << diagnostic.code
+                  << "]: " << diagnostic.message << '\n';
+      }
+    }
+    expect(rejected,
+           "GTI-S2077 should reject the unsupported default context in " +
+               test.name);
+  }
+
+  const std::string formatted = lang::Formatter().format(
+      "int choose(int required,int fallback=2){return required+fallback;}");
+  expect(formatted == R"(int choose(int required, int fallback = 2) {
+  return required + fallback;
+}
+)" && lang::Formatter().format(formatted) == formatted,
+         "the formatter should space default parameters and remain "
+         "idempotent");
+}
+
+constexpr NamedTest kTests[] = {
+    {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},
+    {"testInferredVoidGenericArguments", testInferredVoidGenericArguments},
+    {"testTrustedIntrinsicDeclarations", testTrustedIntrinsicDeclarations},
+    {"testThisReceiverKeyword", testThisReceiverKeyword},
+    {"testClassesStructsAndAccess", testClassesStructsAndAccess},
+    {"testMutableFieldGroups", testMutableFieldGroups},
+    {"testConstructorsAndReceiverMutability",
+     testConstructorsAndReceiverMutability},
+    {"testInheritanceAndInterfaces", testInheritanceAndInterfaces},
+    {"testInheritedGenericTargetInstances",
+     testInheritedGenericTargetInstances},
+    {"testDirectBraceConstruction", testDirectBraceConstruction},
+    {"testRecursiveClassLayouts", testRecursiveClassLayouts},
+    {"testNamedGenerics", testNamedGenerics},
+    {"testExactQualifiedClassSpecializations",
+     testExactQualifiedClassSpecializations},
+    {"testConstrainedGenerics", testConstrainedGenerics},
+    {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
+    {"testSourceDefinedConcepts", testSourceDefinedConcepts},
+    {"testStructuralRequiresAndAccumulate",
+     testStructuralRequiresAndAccumulate},
+    {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
+    {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
+    {"testValueGenerics", testValueGenerics},
+    {"testContextualArrayArguments", testContextualArrayArguments},
+    {"testVariadicGenerics", testVariadicGenerics},
+    {"testExactFunctionOverloadsAndConversions",
+     testExactFunctionOverloadsAndConversions},
+    {"testFixedArrays", testFixedArrays},
+    {"testLocalTypeInference", testLocalTypeInference},
+    {"testStructuredBindings", testStructuredBindings},
+    {"testTypeAliases", testTypeAliases},
+    {"testNamespacesAndAliases", testNamespacesAndAliases},
+    {"testExternCInterop", testExternCInterop},
+    {"testScopedEnums", testScopedEnums},
+    {"testDefaultParameters", testDefaultParameters},
+};
+
+} // namespace
+
+int main(int argc, char **argv) {
+  lang::installCrashHandlers("gti_compiler_declarations_tests");
+  return runNamedTests(argc, argv, kTests, "declarations");
+}

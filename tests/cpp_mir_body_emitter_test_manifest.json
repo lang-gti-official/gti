@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "tests": [
+    {
+      "name": "testDischargedCompoundOperatorVocabulary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testExhaustiveEnumClassification",
+      "suite": "preflight"
+    },
+    {
+      "name": "testReadyBodyAndRepresentationFailures",
+      "suite": "preflight"
+    },
+    {
+      "name": "testHostedStartupOwnsRemainingAuthorityGap",
+      "suite": "preflight"
+    },
+    {
+      "name": "testVerifiedProgramInitializationPlanClassification",
+      "suite": "preflight"
+    },
+    {
+      "name": "testSafeIndexUsesBoundsNotRawMemory",
+      "suite": "preflight"
+    },
+    {
+      "name": "testUnsafeRawPointerVocabulary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testConcreteGenericFieldOwner",
+      "suite": "preflight"
+    },
+    {
+      "name": "testAmbiguousStaticStorageFailsClosed",
+      "suite": "preflight"
+    },
+    {
+      "name": "testGlobalClassStorageMemberProjection",
+      "suite": "preflight"
+    },
+    {
+      "name": "testConcreteClassStaticStorage",
+      "suite": "preflight"
+    },
+    {
+      "name": "testDischargedStorageReadAnalysis",
+      "suite": "preflight"
+    },
+    {
+      "name": "testExpectedExtractionStateAdmissionFailsClosed",
+      "suite": "preflight"
+    },
+    {
+      "name": "testDeclarationOnlyCallBoundary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testDeclarationOnlyMemberCallBoundary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveReturnSignedMinimumAndRepresentationSlot",
+      "suite": "preflight"
+    },
+    {
+      "name": "testSingleUseClassSsaRepresentationSlot",
+      "suite": "preflight"
+    },
+    {
+      "name": "testRepresentationOnlyPublicationRearmsBeforeConstruction",
+      "suite": "preflight"
+    },
+    {
+      "name": "testCopyParameterFieldPublicationAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testFailureFormSubscriptCompatibilityBoundary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testFieldInitializerExpressionVocabulary",
+      "suite": "text"
+    },
+    {
+      "name": "testInlineClosureChainEmission",
+      "suite": "text"
+    },
+    {
+      "name": "testClosureCaptureFreezeMaterializes",
+      "suite": "text"
+    },
+    {
+      "name": "testLexicalCopyCaptureThroughCallableTemplate",
+      "suite": "text"
+    },
+    {
+      "name": "testInlineCapturingLiteralAsAlgorithmArgument",
+      "suite": "text"
+    },
+    {
+      "name": "testInlineCaptureControlFlowProofFailsClosed",
+      "suite": "text"
+    },
+    {
+      "name": "testGenericMemberFailureOverloadOnOrdinaryOwner",
+      "suite": "text"
+    },
+    {
+      "name": "testCallableTemplateBodyVocabulary",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedCallableReceiverMutableFallback",
+      "suite": "text"
+    },
+    {
+      "name": "testDeducedCallableTemplateEmission",
+      "suite": "text"
+    },
+    {
+      "name": "testForwardedConcretePackLayout",
+      "suite": "text"
+    },
+    {
+      "name": "testRetainedReferenceAddressAndConcreteDefaultReturn",
+      "suite": "text"
+    },
+    {
+      "name": "testStoredBorrowReferenceAliasAddresses",
+      "suite": "text"
+    },
+    {
+      "name": "testExpectedValueOrBorrowedReceiver",
+      "suite": "text"
+    },
+    {
+      "name": "testContextualSignedMinimumInFailureCaller",
+      "suite": "text"
+    },
+    {
+      "name": "testPlainCopyReturnUsesExactSourcePlace",
+      "suite": "text"
+    },
+    {
+      "name": "testReferenceParameterBorrowUsesReferentCarrier",
+      "suite": "text"
+    },
+    {
+      "name": "testAdjacentClassCopyAssignmentFusion",
+      "suite": "text"
+    },
+    {
+      "name": "testNestedReferenceReturnForwardsCallResultPointer",
+      "suite": "text"
+    },
+    {
+      "name": "testNativeCallbackFactoryBody",
+      "suite": "text"
+    },
+    {
+      "name": "testInvokePublishesScalarEdgeArguments",
+      "suite": "text"
+    },
+    {
+      "name": "testOwningCheckedBodyEmitsWholeCleanupProof",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testRichFieldInitializerSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDependentFieldInitializerSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testContainedOwningFieldConstructor",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testContainedOwningStringFieldConstructor",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBodyOrderedOwnedParameterConstructor",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveOwnedParameterConstructorFields",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testMoveOnlyClassResultReceiverFieldTransfer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testMoveOnlyReceiverFieldLifecycleSchedules",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedReceiverFieldProjection",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testContainedAbstractBaseConstructor",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupFixtureFunctionBodiesAreReady",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwnedLifecycleConstructionBodiesReady",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDefaultConstructionPreparedParameterStaging",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testReferenceReturnFailureAbi",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGenericOwnerReferenceReturnFailureAbi",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testStoredReferenceConstructorSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGenericOwnerConstructorSpecialization",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConcreteGenericConstructorAndMemberPackPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveConstructorFailureSummary",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveFixedArrayFailureClosure",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwningFixedArrayAggregateAndCheckedMove",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPolymorphicClassArrayFieldLifecycleSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveClassArrayMoveAssignmentSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCheckedClassArrayElementAssignmentFamily",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedSpecialMemberConstructionSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConditionalClassReturnAndPreparedResultStage",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConditionalFailureDestructorDrop",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testVirtualFailureInterfaceFamily",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConcreteOnlyGenericVirtualContractRoots",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testAbstractBaseFailureFamilyAndInheritedMembers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testUniqueOwnerUpcastFailureBody",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExpectedLifetimeSlotObserverFusion",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExpectedOwningPayloadPublicationAndForwarding",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupOwningTemporaryArgumentTransfer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFailureCapableClassReturnTemporaryReceiver",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFailureCapableClassReturnFieldRead",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupFreeConstructorTemporaryFieldRead",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExampleCorpusEmissionReadiness",
+      "suite": "corpus"
+    },
+    {
+      "name": "testGeneralTextStepMatchesProductionEmission",
+      "suite": "corpus"
+    }
+  ]
+}
