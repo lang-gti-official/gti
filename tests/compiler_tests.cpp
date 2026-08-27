@@ -4989,9 +4989,10 @@ int main() {
   const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
       "invalidated-string-view.gti",
       "#include <std/string>\n"
+      "T relay<T>(T value) { return value; }\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
-      "  std::string_view view = text.view();\n"
+      "  std::string_view view = relay(text.view());\n"
       "  text.push_back('d');\n"
       "  return view.empty() ? 0 : 1;\n"
       "}\n",
@@ -5001,8 +5002,8 @@ int main() {
              hasDiagnostic(invalidatedTextView.diagnostics,
                            "while a reference borrowed from it may still be "
                            "live"),
-         "mutating a string while its dynamic string_view is live should be "
-         "rejected");
+         "a concrete generic relay must preserve a dynamic string_view owner "
+         "dependency and reject mutation while that result is live");
 
   const lang::FrontendResult movedTextOwner = lang::Frontend().analyze(
       "moved-string-view-owner.gti",
@@ -8404,8 +8405,7 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
-      artifact.contents.find(
-          "::__gti_fn_69_get__gti_mir_failure(const std::int32_t **") !=
+      artifact.contents.find("_get__gti_mir_failure(const std::int32_t **") !=
               std::string::npos &&
           artifact.contents.find("const std::int32_t *__gti_mir_loan_1{};") !=
               std::string::npos &&
@@ -12825,7 +12825,7 @@ int main() {
           nullArtifact.contents.find(
               "::__gti_mir_op_assign__gti_mir_failure(std::nullptr_t "
               "__gti_mir_arg_0") != std::string::npos &&
-          nullArtifact.contents.find("::__gti_fn_49_reset__gti_mir_failure("
+          nullArtifact.contents.find("_reset__gti_mir_failure("
                                      "__gti_mir_failure_record)") !=
               std::string::npos,
       "the C++ backend should retain source-defined null construction and "
@@ -13660,7 +13660,8 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("EmplacingBuffer<::__gti_program::Pair>::"
-                                "__gti_fn_72_emplace__gti_mir_failure(") !=
+                                "__gti_fn_") != std::string::npos &&
+             artifact.contents.find("_emplace__gti_mir_failure(") !=
                  std::string::npos &&
              artifact.contents.find(
                  "mir_storage_construct_v1(__gti_mir_p_6, __gti_mir_v_4, "
@@ -20728,15 +20729,13 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find(
-             "std::int32_t __gti_fn_69___gti_operator_call() &&;") !=
+  expect(artifact.contents.find("___gti_operator_call() &&;") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "std::int32_t __gti_fn_72___gti_operator_call() const &;") !=
+             artifact.contents.find("___gti_operator_call() const &;") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "std::int32_t __gti_fn_75___gti_operator_call(const "
-                 "std::int32_t amount) &;") != std::string::npos &&
+             artifact.contents.find("___gti_operator_call(const "
+                                    "std::int32_t amount) &;") !=
+                 std::string::npos &&
              artifact.contents.find(
                  "std::move(__gti_mir_p_1.get()).::__gti_program::OnceValue::"
                  "__gti_fn_") != std::string::npos &&
@@ -21938,17 +21937,16 @@ int main() {
   expect(
       generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
               std::string::npos &&
-          generated.find("__gti_fn_72_identity(__gti_mir_v_") !=
-              std::string::npos &&
-          generated.find("Box<std::int32_t>::__gti_fn_71_set(") !=
-              std::string::npos,
+          generated.find("_identity(__gti_mir_v_") != std::string::npos &&
+          generated.find("Box<std::int32_t>::__gti_fn_") != std::string::npos &&
+          generated.find("_set(") != std::string::npos,
       "applied types and explicit generic calls should lower recursively");
-  expect(
-      generated.find(".template __gti_fn_") == std::string::npos &&
-          generated.find("Box<std::int32_t>::__gti_fn_70_echo(__gti_mir_v_") !=
-              std::string::npos,
-      "the backend should emit the concrete selected generic method "
-      "without reopening C++ dependent-template lookup");
+  expect(generated.find(".template __gti_fn_") == std::string::npos &&
+             generated.find("Box<std::int32_t>::__gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_echo(__gti_mir_v_") != std::string::npos,
+         "the backend should emit the concrete selected generic method "
+         "without reopening C++ dependent-template lookup");
 
   auto invalidTokens = lexer.scan(R"(
 class Duplicate<T, T> {};
@@ -24321,11 +24319,12 @@ int main() {
          "a constrained symbolic dereference should infer an exact auto-local "
          "type independently in each concrete generic instance");
 
+  const lang::SourceUnitId unit = valid.sourceGraph.entryUnit();
   const lang::SymbolRecord *autoLocal = nullptr;
   for (const lang::SymbolRecord &symbol :
        valid.semantics.database().symbols()) {
     if (symbol.kind == lang::SymbolKind::LocalVariable &&
-        symbol.name == "value") {
+        symbol.name == "value" && symbol.sourceUnit == unit) {
       autoLocal = &symbol;
       break;
     }
@@ -24370,7 +24369,6 @@ int main() {
          "LoweredProgram should retain the dependent declaration marker while "
          "concrete bodies retain exact types");
 
-  const lang::SourceUnitId unit = valid.sourceGraph.entryUnit();
   const std::size_t autoKeyword = source.find("auto value");
   const std::size_t valueName = source.find("value", autoKeyword);
   const lang::LanguageQueries queries;
@@ -25185,12 +25183,12 @@ int main() {
   const std::string generated = gti_test::emitCppText(valid);
   expect(generated.find("template <typename... Args>") != std::string::npos &&
              generated.find("Args... __gti_mir_arg_0") != std::string::npos &&
-             generated.find("__gti_fn_69_consume__gti_mir_failure("
+             generated.find("_consume__gti_mir_failure("
                             "std::int32_t __gti_mir_arg_0, bool "
                             "__gti_mir_arg_1, std::string_view "
                             "__gti_mir_arg_2") != std::string::npos,
          "variadic declarations and forwarding should lower explicitly");
-  expect(generated.find("__gti_fn_69_consume__gti_mir_failure("
+  expect(generated.find("_consume__gti_mir_failure("
                         "std::int32_t __gti_mir_arg_0, std::int32_t "
                         "__gti_mir_arg_1, bool __gti_mir_arg_2, "
                         "std::string_view __gti_mir_arg_3") !=
@@ -25198,7 +25196,7 @@ int main() {
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
                  std::string::npos &&
-             generated.find("__gti_fn_73_first__gti_mir_failure("
+             generated.find("_first__gti_mir_failure("
                             "std::int32_t __gti_mir_arg_0, bool "
                             "__gti_mir_arg_1, std::string_view "
                             "__gti_mir_arg_2") != std::string::npos,

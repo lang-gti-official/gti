@@ -1092,11 +1092,14 @@ move-only lifecycle for the class. This avoids a hidden allocation on
 assignment; duplication is visible at the call site as `value.clone()`.
 
 Dynamic views may be copied among local bindings and relayed from one exact
-read-only parameter or receiver. Their retained loan prevents mutation,
-movement, or destruction of the owner until the last local carrier ends. A
-dynamic view cannot escape a local owner, originate from temporary storage, be
-assigned into existing storage, or be nested in a field, global, static,
-array, or dynamic container. Mutable, multiple-origin, nested, and
-reassignable view graphs remain deliberately unsupported. These restrictions
-are semantic and survive through HIR and verified MIR; emitted C++ does not
-decide the lifetime.
+read-only parameter or receiver. Concrete generic instantiation derives this
+same return dependency after substituting the exact parameter and return
+types. A literal-backed argument remains an ownerless static view and needs no
+runtime loan; a dynamic argument transfers its existing owner dependency to
+the result. That retained loan prevents mutation, movement, or destruction of
+the owner until the last local carrier ends. A dynamic view cannot escape a
+local owner, originate from temporary storage, be assigned into existing
+storage, or be nested in a field, global, static, array, or dynamic container.
+Mutable, multiple-origin, nested, and reassignable view graphs remain
+deliberately unsupported. These restrictions are semantic and survive through
+HIR and verified MIR; emitted C++ does not decide the lifetime.

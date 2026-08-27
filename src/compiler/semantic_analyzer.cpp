@@ -478,7 +478,13 @@ public:
         argument = substituteType(argument, substitution);
       }
     }
-    if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+    if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
+            dynamicStringViewReturnBorrowSummary(concreteFunction)) {
+      concreteFunction.returnBorrowOrigin = dynamicView->origin;
+      concreteFunction.returnBorrowParameter = dynamicView->parameter;
+      concreteFunction.returnBorrowAccess = dynamicView->access;
+      concreteFunction.returnBorrowPlace = dynamicView->place;
+    } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
       const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
           concreteFunction.returnType, concreteFunction.parameterTypes,
           concreteFunction.ownerClass, concreteFunction.staticMember,
@@ -15880,7 +15886,7 @@ private:
                          FunctionCandidate &resolved,
                          std::vector<SemanticType> &resolvedTypeArguments,
                          std::vector<CompileTimeValue> &resolvedValueArguments,
-                         ConstraintFailure *constraintFailure = nullptr) const {
+                         ConstraintFailure *constraintFailure = nullptr) {
     resolved = candidate;
     resolvedTypeArguments.clear();
     resolvedValueArguments.clear();
@@ -16038,6 +16044,24 @@ private:
       resolved.requiredParameterCount = resolved.parameterTypes.size();
     }
     resolved.parameterPack = false;
+
+    const FunctionInfo *declarationInfo =
+        semanticModel.findFunction(resolved.id);
+    if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
+      declarationInfo = instanceBaseModel->findFunction(resolved.id);
+    }
+    if (declarationInfo != nullptr) {
+      FunctionInfo concrete = *declarationInfo;
+      concrete.returnType = resolved.returnType;
+      concrete.parameterTypes = resolved.parameterTypes;
+      if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
+              dynamicStringViewReturnBorrowSummary(concrete)) {
+        resolved.returnBorrowOrigin = dynamicView->origin;
+        resolved.returnBorrowParameter = dynamicView->parameter;
+        resolved.returnBorrowAccess = dynamicView->access;
+        resolved.returnBorrowPlace = dynamicView->place;
+      }
+    }
     return true;
   }
 
@@ -29695,6 +29719,16 @@ private:
       }
       if (type.kind == SemanticType::StringView && resolved != nullptr &&
           resolved->borrowOrigin != BorrowOriginKind::None) {
+        if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+            resolved->borrowArgument < call.arguments().size()) {
+          const ExpressionInfo *sourceInfo = semanticModel.findExpression(
+              *call.arguments()[resolved->borrowArgument]);
+          if (sourceInfo != nullptr &&
+              sourceInfo->type.kind == SemanticType::StringView &&
+              !sourceInfo->traits.containsBorrowedState) {
+            return expressionInfo(std::move(type));
+          }
+        }
         return ownerDependentStringViewInfo();
       }
     }

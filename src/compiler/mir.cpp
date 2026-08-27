@@ -10388,10 +10388,17 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             instruction.borrowArgument != target->returnBorrowParameter ||
             instruction.borrowAccess != target->returnBorrowAccess ||
             instruction.borrowPlace != target->returnBorrowPlace) {
-          return failure(body, owner,
-                         "call-result borrow origin does not match the target "
-                         "function summary",
-                         block.id, instruction.id);
+          return failure(
+              body, owner,
+              "call-result borrow origin does not match the target "
+              "function summary (call origin " +
+                  std::to_string(static_cast<int>(instruction.borrowOrigin)) +
+                  ", parameter " + std::to_string(instruction.borrowArgument) +
+                  "; target origin " +
+                  std::to_string(static_cast<int>(target->returnBorrowOrigin)) +
+                  ", parameter " +
+                  std::to_string(target->returnBorrowParameter) + ")",
+              block.id, instruction.id);
         }
         if (!exactParameterRoles(instruction.parameterTypes,
                                  target->parameterTypes)) {
@@ -10545,6 +10552,36 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         continue;
       }
       if (!instruction.loan) {
+        const MirInstruction *argumentInput =
+            instruction.kind == MirInstructionKind::Call &&
+                    instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                    instruction.borrowArgument < instruction.operands.size() &&
+                    instruction.operands[instruction.borrowArgument].kind ==
+                        MirOperandKind::Value
+                ? definitionFor(
+                      body,
+                      instruction.operands[instruction.borrowArgument].value)
+                : nullptr;
+        const bool staticStringViewResult =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.borrowOrigin == BorrowOriginKind::Argument &&
+            instruction.borrowAccess == AccessMode::ReadOnly &&
+            !instruction.borrowPlace &&
+            instruction.info.type.kind == SemanticType::StringView &&
+            !instruction.info.traits.containsBorrowedState &&
+            instruction.borrowArgument < instruction.parameterTypes.size() &&
+            instruction.parameterTypes[instruction.borrowArgument].kind ==
+                SemanticType::StringView &&
+            argumentInput != nullptr &&
+            argumentInput->kind == MirInstructionKind::CallInput &&
+            argumentInput->callInputRole == MirCallInputRole::Argument &&
+            argumentInput->callInputIndex == instruction.borrowArgument &&
+            argumentInput->callInputKind == HirCallInputKind::Value &&
+            argumentInput->info.type.kind == SemanticType::StringView &&
+            !argumentInput->info.traits.containsBorrowedState;
+        if (staticStringViewResult) {
+          continue;
+        }
         return failure(body, owner,
                        "owner-dependent call or construct is missing its "
                        "result loan",
