@@ -1,0 +1,544 @@
+#pragma once
+
+#include "gti/ast.h"
+#include "gti/checked_integer.h"
+#include "gti/constant_evaluator.h"
+#include "gti/diagnostic.h"
+#include "gti/failure.h"
+#include "gti/generic_constraint.h"
+#include "gti/source_graph.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+namespace lang {
+
+struct FrontendWorkMetrics;
+
+using ClassId = std::size_t;
+using ConceptId = std::size_t;
+using ConstructorId = std::size_t;
+using EnumId = std::size_t;
+using GenericParameterId = std::size_t;
+using FunctionId = std::size_t;
+using LambdaId = std::size_t;
+using ProgramInitializationStepId = std::size_t;
+using SemanticLoanId = std::size_t;
+using SymbolId = std::size_t;
+using TypeAliasId = std::size_t;
+
+struct PlaceDomain {
+  std::size_t snapshot = 0;
+  std::size_t body = 0;
+  std::size_t revision = 0;
+
+  friend bool operator==(const PlaceDomain &, const PlaceDomain &) = default;
+};
+
+[[nodiscard]] std::size_t acquirePlaceSnapshotIdentity();
+
+enum class PlaceProjectionKind {
+  Field,
+  ConstantIndex,
+  DynamicIndex,
+  Dereference,
+};
+
+struct PlaceProjection {
+  PlaceProjectionKind kind = PlaceProjectionKind::Field;
+  SymbolId field = 0;
+  std::uint64_t index = 0;
+  std::size_t selection = 0;
+
+  friend bool operator==(const PlaceProjection &,
+                         const PlaceProjection &) = default;
+};
+
+struct PlaceKey {
+  PlaceDomain domain;
+  SymbolId root = 0;
+  bool receiver = false;
+  std::vector<PlaceProjection> projections;
+
+  [[nodiscard]] bool valid() const { return root != 0 || receiver; }
+
+  friend bool operator==(const PlaceKey &, const PlaceKey &) = default;
+};
+
+enum class PlaceRelation {
+  Equal,
+  LeftStrictPrefix,
+  RightStrictPrefix,
+  Disjoint,
+  MayAlias,
+};
+
+struct PlaceRelationResult {
+  PlaceRelation relation = PlaceRelation::MayAlias;
+  bool compatibleDomain = true;
+};
+
+[[nodiscard]] PlaceRelationResult placeRelation(const PlaceKey &left,
+                                                const PlaceKey &right);
+
+[[nodiscard]] bool placesMayOverlap(const PlaceKey &left,
+                                    const PlaceKey &right);
+
+enum class OwnershipState : std::uint8_t {
+  Uninitialized = 1U << 0U,
+  Available = 1U << 1U,
+  Moved = 1U << 2U,
+};
+
+struct OwnershipStateSet {
+  std::uint8_t bits = static_cast<std::uint8_t>(OwnershipState::Available);
+
+  static const OwnershipStateSet Uninitialized;
+  static const OwnershipStateSet Available;
+  static const OwnershipStateSet Moved;
+  static const OwnershipStateSet MaybeMoved;
+
+  [[nodiscard]] constexpr bool definitely(OwnershipState state) const {
+    return bits == static_cast<std::uint8_t>(state);
+  }
+
+  [[nodiscard]] constexpr bool contains(OwnershipState state) const {
+    return (bits & static_cast<std::uint8_t>(state)) != 0;
+  }
+
+  friend constexpr OwnershipStateSet operator|(OwnershipStateSet left,
+                                               OwnershipStateSet right) {
+    return {.bits = static_cast<std::uint8_t>(left.bits | right.bits)};
+  }
+
+  friend bool operator==(OwnershipStateSet, OwnershipStateSet) = default;
+};
+
+inline constexpr OwnershipStateSet OwnershipStateSet::Uninitialized{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Uninitialized)};
+inline constexpr OwnershipStateSet OwnershipStateSet::Available{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Available)};
+inline constexpr OwnershipStateSet OwnershipStateSet::Moved{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Moved)};
+inline constexpr OwnershipStateSet OwnershipStateSet::MaybeMoved{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Available) |
+            static_cast<std::uint8_t>(OwnershipState::Moved)};
+
+enum class OwnershipEventKind {
+  Read,
+  Move,
+  Reinitialize,
+  DropBoundary,
+};
+
+struct OwnershipEvent {
+  OwnershipEventKind kind = OwnershipEventKind::Read;
+  PlaceKey place;
+  OwnershipStateSet before = OwnershipStateSet::Available;
+  OwnershipStateSet after = OwnershipStateSet::Available;
+  bool reachable = true;
+
+  friend bool operator==(const OwnershipEvent &,
+                         const OwnershipEvent &) = default;
+};
+
+struct GenericParameterInfo {
+  GenericParameterId id = 0;
+  Token name;
+  bool pack = false;
+  bool value = false;
+  GenericConstraintSet constraints = 0;
+  std::optional<NamePath> constraintName;
+};
+
+struct CompileTimeValue {
+  enum Kind {
+    Unknown,
+    UInt64,
+    Parameter,
+  };
+
+  [[nodiscard]] static CompileTimeValue uint64(std::uint64_t value) {
+    return CompileTimeValue{.kind = UInt64, .value = value};
+  }
+
+  [[nodiscard]] static CompileTimeValue
+  parameter(GenericParameterId parameterId) {
+    return CompileTimeValue{.kind = Parameter, .parameterId = parameterId};
+  }
+
+  friend bool operator==(const CompileTimeValue &,
+                         const CompileTimeValue &) = default;
+
+  Kind kind = Unknown;
+  std::uint64_t value = 0;
+  GenericParameterId parameterId = 0;
+};
+
+enum class ArrayExtentEvaluationError {
+  None,
+  NonLiteral,
+  Overflow,
+  Underflow,
+  ZeroDivisor,
+};
+
+struct ArrayExtentEvaluation {
+  std::optional<std::uint64_t> value;
+  ArrayExtentEvaluationError error = ArrayExtentEvaluationError::None;
+  const Token *token = nullptr;
+};
+
+[[nodiscard]] ArrayExtentEvaluation
+evaluateArrayExtent(const ArrayExtentExpr &expression);
+
+enum class ValueCategory {
+  Value,
+  Place,
+};
+
+enum class AccessMode {
+  ReadOnly,
+  Mutable,
+};
+
+enum class OwnershipKind {
+  Value,
+  Borrowed,
+  Unique,
+  Shared,
+};
+
+enum class DropKind {
+  Trivial,
+  Lexical,
+};
+
+enum class ConcurrencyCapabilityPolicy : std::uint8_t {
+  Structural,
+  Denied,
+  Required,
+  UnsafeAsserted,
+};
+
+struct ConcurrencyCapabilities {
+  bool transferCapable = false;
+  bool shareCapable = false;
+};
+
+struct SemanticType {
+  enum Kind {
+    Unknown,
+    Void,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    Float,
+    Double,
+    Bool,
+    Char,
+    StringView,
+    CString,
+    NullPtr,
+    RawPointer,
+    Array,
+    Class,
+    Enum,
+    Reference,
+    UniqueOwner,
+    SharedPointer,
+    Storage,
+    TypeParameter,
+    TypePack,
+    TypeName,
+    Function,
+    NativeFunction,
+    Lambda,
+    Expected,
+    Unexpected,
+    PrefixStorage,
+  };
+
+  SemanticType(Kind kind = Unknown) : kind(kind) {}
+  SemanticType(Kind kind, std::vector<SemanticType> arguments)
+      : kind(kind), arguments(std::move(arguments)) {}
+
+  [[nodiscard]] static SemanticType
+  classType(ClassId id, std::vector<SemanticType> arguments = {},
+            std::vector<CompileTimeValue> valueArguments = {}) {
+    SemanticType type(Class, std::move(arguments));
+    type.classId = id;
+    type.valueArguments = std::move(valueArguments);
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typeParameter(GenericParameterId id) {
+    SemanticType type(TypeParameter);
+    type.genericParameterId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType enumType(EnumId id) {
+    SemanticType type(Enum);
+    type.enumId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typePack(GenericParameterId id) {
+    SemanticType type(TypePack);
+    type.genericParameterId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  concreteTypePack(GenericParameterId id, std::vector<SemanticType> elements) {
+    SemanticType type(TypePack, std::move(elements));
+    type.genericParameterId = id;
+    type.concretePack = true;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typeName(ClassId id) {
+    SemanticType type(TypeName);
+    type.classId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  nativeFunctionType(SemanticType returnType,
+                     std::span<const SemanticType> parameterTypes) {
+    SemanticType type(NativeFunction);
+    type.arguments.reserve(parameterTypes.size() + 1);
+    type.arguments.emplace_back(std::move(returnType));
+    type.arguments.insert(type.arguments.end(), parameterTypes.begin(),
+                          parameterTypes.end());
+    return type;
+  }
+
+  [[nodiscard]] bool hasNativeFunctionShape() const {
+    return kind == NativeFunction && !arguments.empty();
+  }
+
+  [[nodiscard]] const SemanticType *nativeFunctionReturnType() const {
+    return hasNativeFunctionShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] std::span<const SemanticType>
+  nativeFunctionParameterTypes() const {
+    return hasNativeFunctionShape()
+               ? std::span<const SemanticType>(arguments).subspan(1)
+               : std::span<const SemanticType>{};
+  }
+
+  [[nodiscard]] static SemanticType
+  lambdaType(LambdaId id, SemanticType returnType,
+             std::span<const SemanticType> parameterTypes,
+             std::span<const SemanticType> captureTypes,
+             std::span<const SemanticType> classTypeArguments = {},
+             std::span<const SemanticType> functionTypeArguments = {},
+             std::span<const CompileTimeValue> classValueArguments = {},
+             std::span<const CompileTimeValue> functionValueArguments = {}) {
+    SemanticType type(Lambda);
+    type.lambdaId = id;
+    type.lambdaParameterCount = parameterTypes.size();
+    type.lambdaCaptureCount = captureTypes.size();
+    type.arguments.reserve(1 + parameterTypes.size() + captureTypes.size());
+    type.arguments.emplace_back(std::move(returnType));
+    type.arguments.insert(type.arguments.end(), parameterTypes.begin(),
+                          parameterTypes.end());
+    type.arguments.insert(type.arguments.end(), captureTypes.begin(),
+                          captureTypes.end());
+    type.lambdaEnclosingClassTypes.assign(classTypeArguments.begin(),
+                                          classTypeArguments.end());
+    type.lambdaEnclosingFunctionTypes.assign(functionTypeArguments.begin(),
+                                             functionTypeArguments.end());
+    type.lambdaEnclosingClassValues.assign(classValueArguments.begin(),
+                                           classValueArguments.end());
+    type.lambdaEnclosingFunctionValues.assign(functionValueArguments.begin(),
+                                              functionValueArguments.end());
+    return type;
+  }
+
+  [[nodiscard]] bool hasLambdaShape() const {
+    return kind == Lambda && !arguments.empty() &&
+           lambdaParameterCount + lambdaCaptureCount == arguments.size() - 1;
+  }
+
+  [[nodiscard]] const SemanticType *lambdaReturnType() const {
+    return hasLambdaShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaParameterTypes() const {
+    return hasLambdaShape() ? std::span<const SemanticType>(arguments).subspan(
+                                  1, lambdaParameterCount)
+                            : std::span<const SemanticType>{};
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaCaptureTypes() const {
+    return hasLambdaShape() ? std::span<const SemanticType>(arguments).subspan(
+                                  1 + lambdaParameterCount, lambdaCaptureCount)
+                            : std::span<const SemanticType>{};
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaClassTypeArguments() const {
+    return lambdaEnclosingClassTypes;
+  }
+
+  [[nodiscard]] std::span<const SemanticType>
+  lambdaFunctionTypeArguments() const {
+    return lambdaEnclosingFunctionTypes;
+  }
+
+  [[nodiscard]] std::span<const CompileTimeValue>
+  lambdaClassValueArguments() const {
+    return lambdaEnclosingClassValues;
+  }
+
+  [[nodiscard]] std::span<const CompileTimeValue>
+  lambdaFunctionValueArguments() const {
+    return lambdaEnclosingFunctionValues;
+  }
+
+  [[nodiscard]] static SemanticType arrayOf(SemanticType element,
+                                            std::uint64_t length) {
+    SemanticType type(Array, {std::move(element)});
+    type.arrayLength = length;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType arrayOf(SemanticType element,
+                                            CompileTimeValue length) {
+    SemanticType type(Array, {std::move(element)});
+    if (length.kind == CompileTimeValue::UInt64) {
+      type.arrayLength = length.value;
+    } else if (length.kind == CompileTimeValue::Parameter) {
+      type.arrayLengthParameterId = length.parameterId;
+    }
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
+    SemanticType type(Reference, {std::move(referent)});
+    type.referenceAccess = access;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  rawPointerTo(SemanticType pointee, AccessMode access = AccessMode::Mutable) {
+    SemanticType type(RawPointer, {std::move(pointee)});
+    type.pointerAccess = access;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType uniqueOwnerOf(SemanticType pointee) {
+    return SemanticType(UniqueOwner, {std::move(pointee)});
+  }
+
+  [[nodiscard]] static SemanticType sharedPointerTo(SemanticType pointee) {
+    return SemanticType(SharedPointer, {std::move(pointee)});
+  }
+
+  [[nodiscard]] static SemanticType storageOf(SemanticType element) {
+    return SemanticType(Storage, {std::move(element)});
+  }
+
+  [[nodiscard]] static SemanticType prefixStorageOf(SemanticType element) {
+    return SemanticType(PrefixStorage, {std::move(element)});
+  }
+
+  friend bool operator==(const SemanticType &, const SemanticType &) = default;
+
+  Kind kind;
+  std::vector<SemanticType> arguments;
+  std::vector<CompileTimeValue> valueArguments;
+  ClassId classId = 0;
+  EnumId enumId = 0;
+  GenericParameterId genericParameterId = 0;
+  LambdaId lambdaId = 0;
+  std::uint64_t lambdaParameterCount = 0;
+  std::uint64_t lambdaCaptureCount = 0;
+  std::vector<SemanticType> lambdaEnclosingClassTypes;
+  std::vector<SemanticType> lambdaEnclosingFunctionTypes;
+  std::vector<CompileTimeValue> lambdaEnclosingClassValues;
+  std::vector<CompileTimeValue> lambdaEnclosingFunctionValues;
+  std::uint64_t arrayLength = 0;
+  GenericParameterId arrayLengthParameterId = 0;
+  AccessMode referenceAccess = AccessMode::ReadOnly;
+  AccessMode pointerAccess = AccessMode::Mutable;
+  bool concretePack = false;
+};
+
+struct AppliedConceptRequirement {
+  ConceptId conceptId = 0;
+  const ConceptApplication *syntax = nullptr;
+  std::vector<SemanticType> arguments;
+};
+
+[[nodiscard]] std::optional<CheckedIntegerDomain>
+constantIntegerDomain(const SemanticType &type);
+
+[[nodiscard]] std::optional<BinaryFloatFormat>
+semanticFloatFormat(const SemanticType &type);
+
+[[nodiscard]] SemanticType semanticIntegerType(CheckedIntegerDomain domain);
+
+struct SemanticTypeTraits {
+  OwnershipKind ownership = OwnershipKind::Value;
+  DropKind drop = DropKind::Trivial;
+  bool copyable = true;
+  bool movable = true;
+  bool copyAssignable = true;
+  bool moveAssignable = true;
+  bool containsBorrowedState = false;
+  bool transferCapable = true;
+  bool shareCapable = true;
+
+  friend bool operator==(const SemanticTypeTraits &,
+                         const SemanticTypeTraits &) = default;
+};
+
+// Nominal class traits require collected field metadata. Semantic analysis
+// records those resolved traits in ExpressionInfo and BindingInfo.
+[[nodiscard]] SemanticTypeTraits semanticTraits(const SemanticType &type);
+
+struct ExpressionInfo {
+  SemanticType type = SemanticType::Unknown;
+  ValueCategory category = ValueCategory::Value;
+  AccessMode access = AccessMode::ReadOnly;
+  SemanticTypeTraits traits{};
+
+  friend bool operator==(const ExpressionInfo &,
+                         const ExpressionInfo &) = default;
+};
+
+struct BindingInfo {
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  SemanticTypeTraits traits{};
+  std::optional<ConstantValue> constant;
+  bool explicitlyMoved = false;
+  SymbolId symbol = 0;
+  bool staticStorage = false;
+  bool internalLinkage = false;
+  SemanticLoanId retainedLoan = 0;
+
+  friend bool operator==(const BindingInfo &, const BindingInfo &) = default;
+};
+
+} // namespace lang

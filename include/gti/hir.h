@@ -4,7 +4,7 @@
 #include "gti/concurrency.h"
 #include "gti/diagnostic.h"
 #include "gti/hir_instance_index.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 #include "gti/target.h"
 
 #include <algorithm>
@@ -18,6 +18,8 @@
 #include <vector>
 
 namespace lang {
+
+class SemanticInstanceProvider;
 
 using HirValueId = std::size_t;
 using HirBindingId = std::size_t;

@@ -1,4 +1,4 @@
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 
 namespace lang {
 

@@ -5,7 +5,7 @@
 #pragma once
 
 #include "gti/ast.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 
 #include <string>
 #include <string_view>

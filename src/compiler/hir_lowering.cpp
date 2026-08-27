@@ -1,14 +1,16 @@
 #include "gti/hir.h"
 
+#include "gti/semantic_analyzer.h"
+
 namespace lang {
 
 class HirLowerer::Impl {
 public:
   explicit Impl(TargetInfo target) : target(std::move(target)) {}
 
-  [[nodiscard]] HirLoweringResult
-  lower(const Program &source, const SemanticModel &semantics,
-        SemanticInstanceProvider &provider) {
+  [[nodiscard]] HirLoweringResult lower(const Program &source,
+                                        const SemanticModel &semantics,
+                                        SemanticInstanceProvider &provider) {
     instanceProvider = &provider;
     baseModel = &semantics;
     output = {};
@@ -907,12 +909,12 @@ private:
         fieldInitializers.roots.push_back(
             appendStatement(std::move(statement), fieldInitializers));
       }
-      fields.push_back(
-          {.declaration = field.declaration,
-           .binding = binding,
-           .initializer = initializer,
-           .info = info,
-           .requiresActiveCleanup = instanceProvider->requiresActiveCleanupFor(type)});
+      fields.push_back({.declaration = field.declaration,
+                        .binding = binding,
+                        .initializer = initializer,
+                        .info = info,
+                        .requiresActiveCleanup =
+                            instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, false);
@@ -970,7 +972,8 @@ private:
            .binding = lowered.binding,
            .initializer = lowered.initializer,
            .info = info,
-           .requiresActiveCleanup = instanceProvider->requiresActiveCleanupFor(type)});
+           .requiresActiveCleanup =
+               instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, false);
@@ -2179,8 +2182,8 @@ private:
                    .info = {.type = payload.binding.type,
                             .category = ValueCategory::Value,
                             .access = AccessMode::ReadOnly,
-                            .traits =
-                                instanceProvider->traitsFor(payload.binding.type)},
+                            .traits = instanceProvider->traitsFor(
+                                payload.binding.type)},
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,
@@ -2830,7 +2833,8 @@ private:
         .info = {.type = construction.constructedType,
                  .category = ValueCategory::Value,
                  .access = AccessMode::ReadOnly,
-                 .traits = instanceProvider->traitsFor(construction.constructedType)},
+                 .traits =
+                     instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
@@ -3007,14 +3011,15 @@ private:
         return extraction;
       }
       const HirValueId id = nextValueId++;
-      body.values.push_back({.id = id,
-                             .kind = HirValueKind::Move,
-                             .info = {.type = type,
-                                      .category = ValueCategory::Value,
-                                      .access = AccessMode::ReadOnly,
-                                      .traits = instanceProvider->traitsFor(type)},
-                             .operands = {extraction},
-                             .intrinsic = IntrinsicKind::Move});
+      body.values.push_back(
+          {.id = id,
+           .kind = HirValueKind::Move,
+           .info = {.type = type,
+                    .category = ValueCategory::Value,
+                    .access = AccessMode::ReadOnly,
+                    .traits = instanceProvider->traitsFor(type)},
+           .operands = {extraction},
+           .intrinsic = IntrinsicKind::Move});
       return id;
     };
 
@@ -3530,7 +3535,8 @@ private:
       } else {
         value.packExpansionElements.reserve(value.info.type.arguments.size());
         for (const SemanticType &element : value.info.type.arguments) {
-          const SemanticTypeTraits traits = instanceProvider->traitsFor(element);
+          const SemanticTypeTraits traits =
+              instanceProvider->traitsFor(element);
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
