@@ -25,6 +25,10 @@ const navigationEntries: ReferenceNavigationEntry[] = referencePages.map(
   }),
 );
 
+const sidebarEntries = navigationEntries.filter(
+  (entry) => entry.kind !== "member",
+);
+
 function NavigationSection({
   title,
   entries,
@@ -50,10 +54,10 @@ function NavigationSection({
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  const languageEntries = navigationEntries.filter(
+  const languageEntries = sidebarEntries.filter(
     (entry) => entry.route !== "std" && !entry.route.startsWith("std/"),
   );
-  const libraryEntries = navigationEntries.filter((entry) =>
+  const libraryEntries = sidebarEntries.filter((entry) =>
     entry.route === "std" || entry.route.startsWith("std/"),
   );
   return (

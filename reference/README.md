@@ -40,9 +40,13 @@ site's content model; each reference page owns purpose-built examples beside
 its MDX.
 
 The current end-to-end slice includes the standard-library and `<std/vector>`
-landing pages plus `/std/vector/vector/`. That entity page renders current
-compiler signatures and traits, authored usage guidance, and a dedicated
-vector program that CI compiles and runs with GTI.
+landing pages, `/std/vector/vector/`, and dedicated child routes for all 22
+current public vector constructor/member groups. Every member name in the type
+synopsis is clickable. A detail route renders its exact compiler signature,
+authored operation-specific guidance, an availability tag drawn from repository
+history, and a dedicated example where the operation is callable. CI compiles
+every displayed program with GTI and runs examples that publish expected
+output.
 
 ## Local workflow
 

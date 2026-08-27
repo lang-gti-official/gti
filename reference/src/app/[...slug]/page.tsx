@@ -8,6 +8,16 @@ import { referencePages } from "@/generated/reference-pages";
 
 export const dynamicParams = false;
 
+const memberRoutes = new Map<string, string>();
+for (const page of referencePages) {
+  if (page.metadata.kind !== "member") {
+    continue;
+  }
+  for (const groupKey of page.metadata.api) {
+    memberRoutes.set(groupKey, page.route);
+  }
+}
+
 export function generateStaticParams() {
   return referencePages.map((page) => ({ slug: page.route.split("/") }));
 }
@@ -79,11 +89,20 @@ export default async function ReferencePage({
         </ol>
       </nav>
       <header className="page-heading">
-        <p className="eyebrow">{page.metadata.kind.replaceAll("-", " ")}</p>
+        <div className="page-version-row">
+          <p className="eyebrow">{page.metadata.kind.replaceAll("-", " ")}</p>
+          {page.metadata.since ? (
+            <span className="since-tag">since {page.metadata.since}</span>
+          ) : null}
+        </div>
         <h1>{page.metadata.title}</h1>
         <p className="summary">{page.metadata.description}</p>
       </header>
-      <ApiReference declarations={page.apiDeclarations} />
+      <ApiReference
+        declarations={page.apiDeclarations}
+        memberRoutes={memberRoutes}
+        currentRoute={page.route}
+      />
       <div className="reference-prose">
         <Content />
       </div>

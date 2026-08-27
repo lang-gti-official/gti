@@ -1,0 +1,6 @@
+{
+  "title": "Read and update the first element",
+  "description": "Uses a scoped mutable borrow so the updated vector can be read afterward.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

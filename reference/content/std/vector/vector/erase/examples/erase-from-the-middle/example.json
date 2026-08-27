@@ -1,0 +1,6 @@
+{
+  "title": "Erase one element",
+  "description": "Removes the middle value and shows that later elements retain their order.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

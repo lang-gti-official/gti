@@ -3,16 +3,18 @@ import Link from "next/link";
 import { referencePages } from "@/generated/reference-pages";
 
 export default function HomePage() {
-  const declarationCount = referencePages.reduce(
-    (total, page) => total + page.apiDeclarations.length,
-    0,
-  );
+  const declarationCount = new Set(
+    referencePages.flatMap((page) =>
+      page.apiDeclarations.map((declaration) => declaration.key),
+    ),
+  ).size;
   const exampleCount = referencePages.reduce(
     (total, page) => total + page.examples.length,
     0,
   );
   const libraryPages = referencePages.filter((page) =>
-    page.route === "std" || page.route.startsWith("std/"),
+    (page.route === "std" || page.route.startsWith("std/")) &&
+    page.metadata.kind !== "member",
   );
   return (
     <article className="reference-page home-page">

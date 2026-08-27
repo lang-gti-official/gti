@@ -1,0 +1,21 @@
+---
+title: std::vector::resize
+description: Changes the live element count by dropping, default-constructing, or copying elements.
+kind: member
+since: 0.105.0
+api:
+  - std/vector|method|std::vector::resize
+examples:
+  - grow-and-shrink
+---
+
+Changes `size()` to `requested`.
+
+- If `requested` is smaller, trailing elements are destroyed.
+- `resize(requested)` grows with default-constructed elements and therefore
+  requires `std::default_initializable<T>`.
+- `resize(requested, value)` grows by copying `value` and therefore requires
+  `std::copyable<T>`.
+
+Growing may reallocate storage. Any incompatible outstanding loan must end
+before the call.

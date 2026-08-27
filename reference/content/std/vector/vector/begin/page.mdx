@@ -1,0 +1,19 @@
+---
+title: std::vector::begin
+description: Returns a read-only iterator positioned at the first element.
+kind: member
+since: 0.80.0
+api:
+  - std/vector|method|std::vector::begin
+examples:
+  - iterate-explicitly
+---
+
+Returns the read-only iterator used at the start of vector traversal. The
+iterator carries a loan of the vector's storage and dereferences to `T&`.
+
+Ordinary `for (T& value : values)` syntax selects `begin()` automatically. An
+explicit cursor is useful when an algorithm needs to advance manually.
+
+Moving or reallocating the vector is rejected while an iterator loan remains
+live.
