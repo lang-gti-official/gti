@@ -4,6 +4,7 @@ import type {
   CompilerDocumentationDeclaration,
   CompilerDocumentationKind,
 } from "@/content/types";
+import { HighlightedCode } from "@/highlighting/HighlightedCode";
 
 const primaryKinds = new Set<CompilerDocumentationKind>([
   "class",
@@ -106,9 +107,11 @@ function DeclarationList({
               </div>
               <div className="member-signatures">
                 {declarations.map((declaration) => (
-                  <pre key={declaration.key}>
-                    <code>{declaration.signature ?? declaration.qualifiedName}</code>
-                  </pre>
+                  <HighlightedCode
+                    code={declaration.signature ?? declaration.qualifiedName}
+                    language="gti"
+                    key={declaration.key}
+                  />
                 ))}
                 {documentation ? (
                   <p>
@@ -164,9 +167,11 @@ export function ApiReference({
       {primary ? (
         <div className="primary-declaration">
           {primary.declarations.map((declaration) => (
-            <pre key={declaration.key}>
-              <code>{declaration.signature ?? declaration.qualifiedName}</code>
-            </pre>
+            <HighlightedCode
+              code={declaration.signature ?? declaration.qualifiedName}
+              language="gti"
+              key={declaration.key}
+            />
           ))}
           {primaryDeclaration?.documentationMarkdown ? (
             <p>

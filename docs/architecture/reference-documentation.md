@@ -102,6 +102,13 @@ copying its implementation. Every content page receives:
 - rendered, page-owned source examples and expected results; and
 - page-specific title and description metadata.
 
+Authored MDX uses GitHub-flavored Markdown, including tables, rather than the
+smaller CommonMark-only default. Fenced source blocks, compiler-projected GTI
+signatures, and page-owned examples all pass through the same build-time Shiki
+renderer. The GTI grammar layers language-specific keywords and directives
+over the maintained C++ grammar, emits both light and dark token colors, and
+adds no client-side highlighting runtime to the static export.
+
 When present, the heading renders `since` as a compact availability tag. The
 current page-level value records the earliest availability of the documented
 overload group. Later overload-specific history remains authored prose until
@@ -123,15 +130,17 @@ prevents a type overview from publishing decorative, non-navigable member
 rows.
 
 The persistent header and sidebar are derived from the validated content
-registry. The header search filters the same page metadata entirely in the
-browser, so static export requires no search service and cannot return a route
-that was not built. Because member groups are first-class pages, search indexes
-their names and summaries without a separate symbol index. Member pages stay
-out of the global sidebar; command detail pages follow the same rule and are
-linked from their tooling overview. Their owning type or tooling table supplies
-the scalable local navigation surface. Type, function, concept, and member
-bindings all contribute canonical detail links when a broader header synopsis
-presents the same compiler group.
+registry. The home route is a compact contents index for language, library,
+and tooling sections; coverage counters, promotional calls to action, and
+featured-page marketing are deliberately excluded. The header search filters
+the same page metadata entirely in the browser, so static export requires no
+search service and cannot return a route that was not built. Because member
+groups are first-class pages, search indexes their names and summaries without
+a separate symbol index. Member pages stay out of the global sidebar; command
+detail pages follow the same rule and are linked from their tooling overview.
+Their owning type or tooling table supplies the scalable local navigation
+surface. Type, function, concept, and member bindings all contribute canonical
+detail links when a broader header synopsis presents the same compiler group.
 
 ## Page-Owned Examples
 
@@ -167,7 +176,9 @@ The reference CI job:
 3. runs content-contract tests;
 4. compiles/runs page-owned examples;
 5. type-checks the generated registry; and
-6. completes the Next.js static production build.
+6. completes the Next.js static production build; and
+7. inspects representative exported pages for rendered tables, syntax-token
+   markup, and the intentionally compact home index.
 
 Reference-only changes run this job without forcing the general compiler
 matrix. Any compiler/toolchain-visible change also runs it, because semantic
