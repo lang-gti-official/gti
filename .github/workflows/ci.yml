@@ -139,15 +139,16 @@ jobs:
       - name: Check out GTI
         uses: actions/checkout@v6
 
-      - name: Install LLVM 18
+      - name: Install Ninja, LLVM 18, libclang, and Clang
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends llvm-18-dev
+          sudo apt-get install --no-install-recommends \
+            clang libclang-18-dev llvm-18-dev ninja-build
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
       - name: Configure reference tools
         run: >-
-          cmake -S . -B build-reference
+          cmake -S . -B build-reference -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_BUILD_LSP=OFF
           -DBUILD_TESTING=OFF
