@@ -1,0 +1,124 @@
+#include <std/memory>
+
+mut int32_t destruction_trace = 0;
+
+class tracked_value {
+  mut int32_t stored;
+
+public:
+  tracked_value(int32_t value) : stored(value) {}
+  tracked_value(tracked_value& other) = delete;
+  tracked_value(tracked_value&& other) = default;
+
+  int32_t get() {
+    return this.stored;
+  }
+
+  void set(int32_t value) mut {
+    this.stored = value;
+  }
+
+  ~tracked_value() {
+    destruction_trace = destruction_trace * 10 + this.stored;
+  }
+};
+
+int main() {
+  {
+    mut auto created = std::try_make_arena<tracked_value>(std::size_t(3));
+    if (!created) {
+      return 1;
+    }
+    mut std::arena<tracked_value> values = std::move(created).value();
+    if (!values.empty() || values.full() ||
+        values.size() != std::size_t(0) ||
+        values.capacity() != std::size_t(3)) {
+      return 2;
+    }
+
+    mut auto first = values.try_insert(tracked_value(1));
+    mut auto second = values.try_insert(tracked_value(2));
+    mut auto third = values.try_insert(tracked_value(3));
+    if (!first || !second || !third ||
+        first.value() != std::size_t(0) ||
+        second.value() != std::size_t(1) ||
+        third.value() != std::size_t(2) || !values.full() ||
+        values.get(std::size_t(1)).get() != 2) {
+      return 3;
+    }
+
+    values.get_mut(std::size_t(1)).set(4);
+    values.reset();
+    if (!values.empty() || values.full() || destruction_trace != 341) {
+      return 4;
+    }
+
+    mut auto reused = values.try_insert(tracked_value(5));
+    if (!reused || reused.value() != std::size_t(0) ||
+        values.get(std::size_t(0)).get() != 5) {
+      return 5;
+    }
+  }
+  if (destruction_trace != 3415) {
+    return 6;
+  }
+
+  destruction_trace = 0;
+  {
+    mut auto created = std::try_make_pool<tracked_value>(std::size_t(2));
+    if (!created) {
+      return 7;
+    }
+    mut std::pool<tracked_value> values = std::move(created).value();
+    mut auto first = values.try_insert(tracked_value(6));
+    mut auto second = values.try_insert(tracked_value(7));
+    if (!first || !second || first.value() != std::size_t(0) ||
+        second.value() != std::size_t(1) || !values.full() ||
+        !values.contains(std::size_t(0)) ||
+        values.contains(std::size_t(2))) {
+      return 8;
+    }
+
+    values.erase(std::size_t(0));
+    if (destruction_trace != 6 || values.size() != std::size_t(1) ||
+        values.contains(std::size_t(0))) {
+      return 9;
+    }
+
+    mut auto reused = values.try_insert(tracked_value(8));
+    if (!reused || reused.value() != std::size_t(0) ||
+        values.get(std::size_t(0)).get() != 8) {
+      return 10;
+    }
+
+    values.clear();
+    if (destruction_trace != 678 || !values.empty()) {
+      return 11;
+    }
+  }
+  if (destruction_trace != 678) {
+    return 12;
+  }
+
+  mut auto zero = std::try_make_arena<int32_t>(std::size_t(0));
+  if (!zero) {
+    return 13;
+  }
+  mut std::arena<int32_t> empty = std::move(zero).value();
+  mut auto rejected = empty.try_insert(int32_t(9));
+  if (rejected || rejected.error() != std::arena_errc::full) {
+    return 14;
+  }
+
+  mut auto one = std::try_make_pool<int32_t>(std::size_t(1));
+  if (!one) {
+    return 15;
+  }
+  mut std::pool<int32_t> bounded = std::move(one).value();
+  mut auto accepted = bounded.try_insert(int32_t(1));
+  mut auto full = bounded.try_insert(int32_t(2));
+  if (!accepted || full || full.error() != std::pool_errc::full) {
+    return 16;
+  }
+  return 0;
+}

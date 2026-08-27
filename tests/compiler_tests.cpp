@@ -13776,11 +13776,17 @@ int main() {
   if (!allocated) { return 1; }
   mut std::storage<int32_t> values = std::move(allocated).value();
   values.construct(std::size_t(0), int32_t(42));
-  return values.get(std::size_t(0)) - 42;
+  int32_t observed = values.get(std::size_t(0));
+  mut auto arena = std::try_make_arena<int32_t>(std::size_t(1));
+  mut auto pool = std::try_make_pool<int32_t>(std::size_t(1));
+  if (!arena || !pool) { return 2; }
+  return observed - 42;
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  bool ordinaryPublicFactory = false;
+  bool ordinaryStorageFactory = false;
+  bool ordinaryArenaFactory = false;
+  bool ordinaryPoolFactory = false;
   for (const lang::HirFunctionInstance &function :
        publicStorage.hir.functionInstances()) {
     if (function.source == nullptr ||
@@ -13792,16 +13798,24 @@ int main() {
           value.functionTarget
               ? publicStorage.hir.findFunctionInstance(*value.functionTarget)
               : nullptr;
-      ordinaryPublicFactory = ordinaryPublicFactory ||
-                              (target != nullptr && target->source != nullptr &&
-                               target->source->name().lexeme == "try_storage" &&
-                               value.intrinsic == lang::IntrinsicKind::None);
+      if (target == nullptr || target->source == nullptr ||
+          value.intrinsic != lang::IntrinsicKind::None) {
+        continue;
+      }
+      ordinaryStorageFactory = ordinaryStorageFactory ||
+                               target->source->name().lexeme == "try_storage";
+      ordinaryArenaFactory = ordinaryArenaFactory ||
+                             target->source->name().lexeme == "try_make_arena";
+      ordinaryPoolFactory = ordinaryPoolFactory ||
+                            target->source->name().lexeme == "try_make_pool";
     }
   }
   expect(
-      publicStorage.canGenerateCode() && ordinaryPublicFactory,
-      "std::allocator and std::storage should remain ordinary source-defined "
-      "policy while only their private implementation calls are intrinsic");
+      publicStorage.canGenerateCode() && ordinaryStorageFactory &&
+          ordinaryArenaFactory && ordinaryPoolFactory,
+      "std allocator, storage, arena, and pool policy should remain ordinary "
+      "source-defined calls while only private implementation calls are "
+      "intrinsic");
 
   const lang::FrontendResult checkedConstructorStorage =
       lang::Frontend().analyze("checked-constructor-storage.gti", R"(

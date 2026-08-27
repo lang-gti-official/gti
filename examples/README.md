@@ -219,6 +219,12 @@ for the duration of one call; neither rule creates a storable reference.
 observing a `std::filesystem::path` does not access the host filesystem, and
 `string()` returns a fresh owned `std::string` that output may consume directly.
 
+`75-bounded-arena-pool.gti` allocates fixed typed capacity without exposing a
+raw address. The arena inserts monotonically and destroys all values on reset;
+the pool erases and reuses its lowest empty numeric position. Both owners are
+move-only, return allocation and full-policy errors through `expected`, and
+retain checked receiver-tied element access.
+
 `73-constructor-local-generics.gti` demonstrates inference-only constructor
 parameters. They do not add class-template argument deduction or explicit
 constructor type arguments. The standard string iterator/sentinel constructor

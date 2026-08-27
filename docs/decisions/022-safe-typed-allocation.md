@@ -209,10 +209,20 @@ pool can additionally keep an ordinary GTI free list and use `initialized` to
 check its internal invariant. Neither needs an exposed allocation address or
 manual deallocation.
 
-Allocator-state ownership, arena reset generations, pool handles, stale-handle
-diagnostics, and one allocator-aware container are S-ALLOC-03 work. They must
-be expressed as ordinary GTI policy over this owner rather than by adding raw
-escape hatches to the first slice.
+The implemented first policy clients are fixed-capacity `std::arena<T>` and
+`std::pool<T>`. Their `try_make_*` factories retain allocation failure as
+`alloc_errc`; insertion has the separate recoverable `arena_errc::full` or
+`pool_errc::full` outcome. The arena chooses positions monotonically and can
+destroy all values before reset. The pool chooses the lowest empty position
+and supports checked erase and reuse. Both are move-only and use receiver-tied
+borrows and reverse-slot cleanup inherited from storage.
+
+Their returned `size_t` positions deliberately are not generation-bearing
+handles. Reset or erase ends the current slot lifetime, and reuse may assign
+the same numeric position to another value. Stateful allocator ownership,
+generation-safe handles, allocator-aware growth/propagation, and heterogeneous
+arenas remain later work. Those features must remain ordinary GTI policy over
+the typed owner rather than add raw escape hatches.
 
 ## Why This Is Safer Than The C++ Model
 
@@ -260,12 +270,13 @@ mechanics, not GTI source semantics.
 
 - GTI can allocate and partially initialize typed capacity from safe
   application code without exposing raw memory management.
-- The first surface is suitable for homogeneous arenas, pools, and future
-  allocator-aware containers, but not heterogeneous byte arenas, custom
+- The public surface now includes homogeneous fixed-capacity arenas and pools
+  and remains suitable for future allocator-aware containers, but not
+  heterogeneous byte arenas, custom
   placement layouts, memory mapping, DMA, or native buffer adoption.
 - Owner-wide borrowing is intentionally conservative. Per-slot disjoint
   mutable borrows require indexed place/epoch precision and must preserve this
   API's stale-reference guarantees.
 - Stateful allocators, allocator propagation, arbitrary in-slot emplacement,
-  bulk initialization, growth, shrinking, pool handles, and arena reset are
-  later coherent slices rather than optional parameters on this one.
+  bulk initialization, growth, shrinking, and generation-bearing pool handles
+  are later coherent slices rather than optional parameters on this one.

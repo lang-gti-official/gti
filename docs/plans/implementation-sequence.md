@@ -2016,18 +2016,32 @@ do not expose C++ object layout as GTI semantics.
   rejected.
 - **Unlocks:** `S-ALLOC-03` container integration.
 
-### S-ALLOC-03: Allocator-Aware Containers
+### S-ALLOC-03: Bounded Arena And Pool Clients
 
-- **State/role:** ready and deliberately separate; prerequisites
+- **State/role:** complete first composition slice; prerequisites
   `S-ALLOC-02` and `L-RANGE-02` are complete; bounded-first systems-readiness
-  integration for one real container.
-- **Scope:** Add allocator policy to one container without C++ allocator-traits
-  complexity. Specify move/copy propagation, allocator lifetime, failure, and
-  iterator invalidation before generalizing.
-- **Exit gate:** the selected container proves allocator lifetime, move/copy
-  propagation, failure, cleanup, and iterator invalidation under sanitizers and
-  O0/O3 runtime tests without recognizing a public allocator name in compiler
+  evidence for source-owned allocation policy.
+- **Scope:** Implement fixed-capacity homogeneous arena and pool policies over
+  typed storage without C++ allocator-traits complexity. Define movement,
+  allocation/insertion failure, reset/erase invalidation, and cleanup before
+  generalizing to allocator-aware growing containers.
+- **Non-goals:** stateful allocator propagation, public raw storage, growth,
+  heterogeneous allocation, or generation-bearing pool handles.
+- **Exit gate:** the selected clients prove allocator lifetime, move-only
+  propagation, failure, cleanup, reuse, and receiver-borrow invalidation across
+  C++20/C++23 and O0/O3 without recognizing a public allocator name in compiler
   code.
+- **Completion evidence:** `<std/memory>` implements ordinary source-defined
+  `std::arena<T>`, `std::pool<T>`, and recoverable `try_make_*` factories over
+  `std::storage<T>`. Arena insertion is monotonic until reset; pool insertion
+  reuses the lowest empty position. Both are move-only, support successful zero
+  capacity, distinguish allocation from full-policy errors, retain checked
+  receiver-tied access, and destroy live values in reverse slot order. Runtime
+  evidence covers reset/erase/reuse, bounds and empty-slot failures, cleanup
+  while producing an input value fails, and deterministic teardown. Compile
+  evidence rejects copying, nonmovable elements, forged storage adoption, and
+  mutation during a retained element borrow. The compiler recognizes only the
+  pre-existing exact private storage operations.
 
 ### S-FREE-01: Freestanding Target Profile
 

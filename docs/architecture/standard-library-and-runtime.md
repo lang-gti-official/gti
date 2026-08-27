@@ -101,6 +101,17 @@ while creating the argument remains under ordinary MIR cleanup;
 arbitrary in-slot emplacement is intentionally not delegated to the private
 C++ representation. ADR 022 owns the public provenance and failure contract.
 
+`std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
+`std::try_make_pool` are the first bounded allocation-policy clients. They are
+also ordinary GTI source and retain logical size, monotonic/reset policy,
+lowest-empty-slot reuse, and public error mapping outside the compiler. Their
+constructors consume newly allocated `std::storage<T>` behind an ordinary
+source-defined `gti_internal::empty_storage_adoption` seal. The private
+namespace makes the precondition unavailable to applications; the seal itself
+has no intrinsic identity or backend behavior. HIR therefore selects ordinary
+public factories and methods, then reaches exact private storage operations
+only inside their bodies.
+
 The unique-owner upcast capability consumes one private owner after semantics
 has proved an exact public derived-to-base relationship and polymorphic
 destruction. The storage shift capabilities move initialized slots through a

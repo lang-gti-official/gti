@@ -1,0 +1,45 @@
+#include <std/memory>
+
+class particle {
+  mut int32_t health;
+
+public:
+  particle(int32_t value) : health(value) {}
+  particle(particle& other) = delete;
+  particle(particle&& other) = default;
+
+  int32_t current_health() {
+    return this.health;
+  }
+};
+
+int main() {
+  mut auto arena_result =
+      std::try_make_arena<particle>(std::size_t(64));
+  if (!arena_result) {
+    return 1;
+  }
+  mut std::arena<particle> frame = std::move(arena_result).value();
+  mut auto first = frame.try_insert(particle(100));
+  if (!first || frame.get(first.value()).current_health() != 100) {
+    return 2;
+  }
+  frame.reset();
+
+  mut auto pool_result = std::try_make_pool<particle>(std::size_t(8));
+  if (!pool_result) {
+    return 3;
+  }
+  mut std::pool<particle> active = std::move(pool_result).value();
+  mut auto slot = active.try_insert(particle(75));
+  if (!slot) {
+    return 4;
+  }
+  std::size_t position = slot.value();
+  active.erase(position);
+  mut auto reused = active.try_insert(particle(50));
+  if (!reused || reused.value() != position) {
+    return 5;
+  }
+  return 0;
+}

@@ -213,6 +213,25 @@ exposes no address, raw byte view, manual deallocation, `new`, or `delete`.
 ADR 022 defines its provenance and comparison with other systems-language
 models.
 
+The same module implements two fixed-capacity policies over that owner:
+
+- `try_make_arena<T>(capacity)` returns
+  `expected<arena<T>, alloc_errc>`. The move-only arena inserts monotonically,
+  reports `arena_errc::full`, and `reset()` destroys all values before reusing
+  positions from zero.
+- `try_make_pool<T>(capacity)` returns
+  `expected<pool<T>, alloc_errc>`. The move-only pool inserts into the lowest
+  empty position, reports `pool_errc::full`, and permits checked `erase()` and
+  reuse.
+
+Both provide `capacity`, `size`, `empty`, `full`, checked `get`/`get_mut`, and
+deterministic reverse-slot cleanup. A returned `size_t` is a position, not a
+generation-bearing handle: arena reset or pool erase ends that slot lifetime,
+and later reuse may assign the same number to another value. Receiver-tied
+borrows prevent mutation, movement, or cleanup while an element reference is
+retained. The factories and classes are ordinary GTI source; only their
+underlying typed-storage operations are compiler-private.
+
 The initial `std::vector<T>` requires movable elements and rejects element
 types that retain borrowed state. It is move-only even when `T` is copyable.
 `vector(n)` constructs `n` value-initialized elements, matching the familiar
@@ -366,7 +385,8 @@ The following component families remain planned or incomplete:
   breadth, connected networking, traffic buffers, atomics, mutexes, condition
   variables, stop tokens, detached/scoped tasks, typed argument packs, and
   broader threading;
-- stateful allocator policy, allocator-aware containers, and safe pools/arenas;
+- stateful allocator policy, allocator-aware growing containers,
+  generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks, including general pointer nesting and ownership transfer, array

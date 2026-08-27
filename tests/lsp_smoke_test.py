@@ -3260,8 +3260,11 @@ def test_compiler_private_tooling_boundary(executable, root):
         "  int value = 1;\n"
         "  int moved = std::move(value);\n"
         "  std::allocator allocator = std::allocator();\n"
+        "  auto public_arena = std::try_make_arena<int32_t>(std::size_t(0));\n"
         "  int public_completion_probe = std::mo;\n"
         "  int allocator_completion_probe = std::al;\n"
+        "  int arena_completion_probe = std::ar;\n"
+        "  int pool_completion_probe = std::po;\n"
         "  int direct_probe = gti_internal::allocate_storage;\n"
         "  int alias_probe = hidden::allocate_storage;\n"
         "  int private_completion_probe = gti_internal::sto;\n"
@@ -3439,16 +3442,38 @@ def test_compiler_private_tooling_boundary(executable, root):
         assert allocator_definition is not None
         assert allocator_definition["uri"] != uri
 
+        arena_prefix = source.index("ar;", source.index("arena_completion_probe"))
+        arena_completion = semantic_request(
+            13, "textDocument/completion", arena_prefix + len("ar")
+        )
+        assert {"arena", "arena_errc"} <= {
+            item["label"] for item in arena_completion["items"]
+        }
+
+        pool_prefix = source.index("po;", source.index("pool_completion_probe"))
+        pool_completion = semantic_request(
+            14, "textDocument/completion", pool_prefix + len("po")
+        )
+        assert {"pool", "pool_errc"} <= {
+            item["label"] for item in pool_completion["items"]
+        }
+
+        public_arena_factory = source.index("try_make_arena")
+        arena_hover = semantic_request(
+            15, "textDocument/hover", public_arena_factory + 1
+        )
+        assert "std::try_make_arena" in arena_hover["contents"]["value"]
+
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 13,
+                "id": 16,
                 "method": "textDocument/semanticTokens/full",
                 "params": {"textDocument": {"uri": uri}},
             }
         )
         semantic_data = session.receive_until(
-            lambda message: message.get("id") == 13
+            lambda message: message.get("id") == 16
         )["result"]["data"]
         semantic_tokens = semantic_tokens_by_position(semantic_data)
         for offset in (
@@ -3505,7 +3530,7 @@ def test_compiler_private_tooling_boundary(executable, root):
             )
             private_call = stdlib_source.index("storage_read")
             trusted_hover = semantic_request(
-                14,
+                17,
                 "textDocument/hover",
                 private_call + 1,
                 stdlib_uri,
@@ -3515,7 +3540,7 @@ def test_compiler_private_tooling_boundary(executable, root):
                 "contents"
             ]["value"]
             trusted_definition = semantic_request(
-                15,
+                18,
                 "textDocument/definition",
                 private_call + 1,
                 stdlib_uri,
@@ -7989,11 +8014,17 @@ def main():
     if len(sys.argv) not in (2, 3):
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
-            "[constexpr-aggregate|owner-dependent-views]"
+            "[allocator-policy|constexpr-aggregate|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
-        if sys.argv[2] == "constexpr-aggregate":
+        if sys.argv[2] == "allocator-policy":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-allocator-") as root:
+                test_compiler_private_tooling_boundary(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            print("GTI allocator policy LSP test passed")
+        elif sys.argv[2] == "constexpr-aggregate":
             with tempfile.TemporaryDirectory(
                 prefix="gti-lsp-constexpr-"
             ) as directory:
