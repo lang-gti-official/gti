@@ -1,8 +1,8 @@
 # Compiler Structural Refactor
 
 > **Plan status:** Active structural gate. In-flight work was reconciled at
-> `4d4c8ae242fe08511db8de41fcafe117dde06dba`; **R-STRUCT-00** is complete and
-> **R-STRUCT-01** is complete and **R-STRUCT-02** is the active implementation
+> `4d4c8ae242fe08511db8de41fcafe117dde06dba`; **R-STRUCT-00** through
+> **R-STRUCT-02** are complete and **R-STRUCT-03** is the active implementation
 > slice. No new compiler feature
 > campaign begins until the exit gate in this plan passes.
 >
@@ -323,6 +323,17 @@ borrow/lifecycle, generic/variadic instances, and HIR instance discovery pass
 their focused suites and the aggregate oracle. A semantic implementation edit
 does not recompile LSP, driver, backend, or unrelated tests solely through a
 public umbrella include.
+
+**Completed evidence:** lexical-unit/configuration services pass their focused
+source/cache/recovery tests. The declaration, ownership, constexpr,
+diagnostics, and end-to-end semantic suites pass, and the manifest-backed
+125-test aggregate passes in 82.28 seconds. Catalog sealing is exercised by
+every program and concrete-instance analysis. `semantic_header_boundary` and
+three independent header compilation units pass. After bringing the CLI, C++
+backend, driver, and LSP current, touching only `semantic_analyzer.h` rebuilt
+exactly `frontend.cpp`, `hir_lowering.cpp`, and `semantic_analyzer.cpp`, then
+relinked the compiler/CLI/LSP; no backend, driver, LSP, or unrelated test object
+recompiled.
 
 ## R-STRUCT-03: MIR Construction, Verification, And Replay
 
