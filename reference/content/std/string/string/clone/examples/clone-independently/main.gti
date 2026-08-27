@@ -1,0 +1,10 @@
+#include <std/string>
+
+int main() {
+  std::string source = std::string("first");
+  mut std::string copy = source.clone();
+  copy[std::size_t(0)] = 'F';
+  std::println(source);
+  std::println(copy);
+  return 0;
+}

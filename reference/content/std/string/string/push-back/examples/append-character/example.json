@@ -1,0 +1,6 @@
+{
+  "title": "Append one character",
+  "description": "Grows a mutable owner by one character at the end.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

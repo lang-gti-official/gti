@@ -1,0 +1,14 @@
+---
+title: std::string::operator==
+description: Compares an owning string with another owner or a string view by character value.
+kind: member
+since: 0.36.0
+api:
+  - std/string|operator|std::string::operator==
+examples:
+  - compare-equal-text
+---
+
+Equality requires the same length and the same character at every position.
+The comparison does not transfer either owner and accepts a literal through
+the `std::string_view` overload.

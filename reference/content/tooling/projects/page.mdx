@@ -1,0 +1,66 @@
+---
+title: Projects and gti.toml
+description: Packages, targets, profiles, workspaces, dependencies, native inputs, and reproducible project commands.
+kind: tooling
+api: []
+examples: []
+---
+
+Project mode discovers the nearest `gti.toml`, resolves a target and profile,
+then invokes the same frontend and backend used by direct compilation.
+
+## Minimal executable package
+
+```toml
+manifest-version = 1
+
+[package]
+name = "hello"
+version = "0.1.0"
+
+[targets.hello]
+kind = "executable"
+root = "src/main.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+keep-cpp = false
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+keep-cpp = false
+```
+
+```sh
+gti check
+gti run
+gti build --release
+```
+
+Test targets use `kind = "test"` and run through `gti test`. When more than
+one eligible target exists, name the target explicitly. `gti run` accepts
+program arguments after `--`.
+
+## Dependencies and workspaces
+
+```toml
+[dependencies]
+math = { path = "../math" }
+
+[workspace]
+members = ["packages/game", "packages/math"]
+```
+
+Local dependencies never perform network access. Pinned Git dependencies are
+acquired explicitly with `gti fetch`; `--offline` forbids Git access and
+`--locked` requires complete lockfile coverage.
+
+## Build policy
+
+Profiles select optimization, C++ standard, generated-source retention, and
+the execution profile. A top-level `[build]` table can supply valueless GTI
+configuration flags. Manifests can also declare bounded C/C++ sources, include
+directories, libraries, and platform fragments. The driver validates output
+paths and publishes artifacts atomically inside its managed build tree.

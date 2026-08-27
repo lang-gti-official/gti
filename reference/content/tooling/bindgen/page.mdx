@@ -1,0 +1,38 @@
+---
+title: gti bindgen
+description: Generate deterministic bounded C bindings using Clang parsing and GTI's native ABI rules.
+kind: tooling
+api: []
+examples: []
+---
+
+```sh
+gti bindgen header.h -o bindings.gti \
+  --namespace native \
+  --target x86_64-unknown-linux-gnu \
+  -I include -D FEATURE=1
+```
+
+`gti bindgen` preprocesses and parses a C17 header with Clang, maps the
+supported ABI surface into ordinary GTI declarations, and records every item
+it cannot express. Generated source has no special compiler privileges: the
+normal `extern "C"`, `[[c_abi]]`, and `[[c_opaque]]` checks remain authoritative.
+
+## Current import surface
+
+The implemented C importer covers fixed-width scalar values, supported
+pointers, `const char*` as `c_string`, bindable records, opaque handles, enums,
+typedefs, callback aliases, fixed record-field arrays, and function
+prototypes. Unsupported declarations are reported instead of being silently
+dropped.
+
+Without `-o`, generated GTI is written to standard output. Repeated `-I`, `-D`,
+and `-U` options preserve native preprocessing order. `--target` selects the
+LP64 or LLP64 data model used for implementation-defined C integer widths.
+
+## Deliberate limits
+
+C++ declaration import is not implemented. C variadics, arbitrary nested
+pointers, ownership-transfer inference, native variables, and unsupported ABI
+attributes are skipped. The generated declarations still need the
+corresponding native implementation to be linked by the application build.

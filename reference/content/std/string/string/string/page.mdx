@@ -1,0 +1,17 @@
+---
+title: std::string::string
+description: Constructs an empty string, consumes an owner, copies text from a view, or copies an exact character range.
+kind: member
+since: 0.36.0
+api:
+  - std/string|constructor|std::string::string
+examples:
+  - construct-strings
+---
+
+The default constructor creates an empty owner. A `std::string_view` or exact
+`char[N]` value copies its characters. The iterator/sentinel constructor copies
+an exact input range whose dereference type is `char`.
+
+Copy construction is deleted. Move construction is defaulted and transfers
+the allocation and cleanup obligation.

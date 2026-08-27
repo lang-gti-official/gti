@@ -1,0 +1,13 @@
+---
+title: std::string::clone
+description: Allocates an independent copy of every character in the string.
+kind: member
+since: 0.36.0
+api:
+  - std/string|method|std::string::clone
+examples:
+  - clone-independently
+---
+
+`std::string` does not copy implicitly. `clone()` makes the allocation and
+linear character copy visible at the call site and returns a fresh owner.

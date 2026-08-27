@@ -17,12 +17,48 @@ logical state, and error behavior. Narrow compiler-private capabilities support
 storage or host boundaries, but application code does not use those
 capabilities directly.
 
-## Available reference pages
+## Detailed reference families
 
-- [`<std/vector>`](/std/vector/) — the dynamic sequence header.
-- [`std::vector`](/std/vector/vector/) — move-only contiguous ownership,
-  checked access, capacity management, and iteration.
+- [`std::array<T, N>`](/std/array/array/) — fixed-size inline ownership and
+  checked access.
+- [`std::string`](/std/string/string/) — dynamic character ownership,
+  mutation, explicit cloning, and iteration.
+- [`std::vector<T>`](/std/vector/vector/) — dynamic contiguous ownership,
+  capacity management, mutation, and iteration.
 
-This reference grows one verified facility at a time. A missing page means the
-documentation has not yet reached the same confidence level as the compiler;
-it does not necessarily mean the library unit is absent.
+Every member shown on these type pages links to an operation-specific page.
+Examples are compiled against the current toolchain; declaration-only members
+are identified explicitly instead of being shown as callable.
+
+## Shipped header catalogue
+
+“Partial” means that useful operations are implemented but the familiar C++
+surface also contains documented gaps. “Scaffold” means declarations exist for
+future implementation and must not be assumed to link.
+
+| Include | Current usable surface | State |
+| --- | --- | --- |
+| `<std/algorithm>` | Selection, predicates, find/count, `for_each`, and forward-range binary search. | Partial |
+| [`<std/array>`](/std/array/) | Fixed-size ownership, checked access, and fill. | Implemented except `swap` and iteration |
+| `<std/cmath>` | Binary32 `abs`, `isfinite`, `isinf`, and `isnan`. | Partial |
+| `<std/cstdio>` | Unbuffered input and read-only file ownership. | Bounded implementation |
+| `<std/filesystem>` | Pure `std::filesystem::path` manipulation; no filesystem access. | Bounded implementation |
+| `<std/format>` | Sequential integral `{}` replacement and checked format errors. | Bounded implementation |
+| `<std/forward_list>` | Unique-owner front insertion, removal, access, and clear. | Partial |
+| `<std/functional>` | Comparison function objects. | Partial; generic hash is a scaffold |
+| `<std/iterator>` | Input/forward concepts plus forward `advance`, `distance`, and `next`. | Partial |
+| `<std/list>` | API shape only. | Scaffold |
+| `<std/memory>` | Shared/weak ownership declarations; unique ownership is supplied by the prelude. | Scaffold |
+| `<std/numeric>` | Checked, wrapping and saturating arithmetic, integral utilities, and bounded reductions. | Partial |
+| `<std/optional>` | API shape only. | Scaffold |
+| `<std/random>` | Deterministic seeded engine and fallible host entropy. | Bounded implementation |
+| `<std/span>` | API shape only. | Scaffold |
+| [`<std/string>`](/std/string/) | Owning strings, output overloads, integer conversion, and hashing. | Implemented except `swap` |
+| `<std/tcp>` | POSIX IPv4 stream-socket creation and close. | Bounded implementation |
+| `<std/thread>` | Managed autojoining workers and typed results. | Bounded implementation |
+| `<std/utility>` | `pair` and `make_pair`. | Partial; `swap` and `exchange` are scaffolds |
+| [`<std/vector>`](/std/vector/) | Dynamic sequence ownership and safe iteration. | Implemented except `swap` |
+
+A catalogue entry without a dedicated link is still shipped, but its
+per-symbol reference has not yet completed the same authored and
+compiler-verified coverage as the detailed families above.

@@ -47,7 +47,7 @@ export function ReferenceSearch({
           id={`${resultsId}-input`}
           type="search"
           value={query}
-          placeholder="Search types and members"
+          placeholder="Search the reference"
           autoComplete="off"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {

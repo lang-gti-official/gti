@@ -2,24 +2,24 @@
 
 Each publishable page is one directory whose path is its URL and whose
 `page.mdx` frontmatter satisfies the schema in
-`src/content/contract.ts`. The implemented `std::vector` page has this
+`src/content/contract.ts`. A detailed standard-library type has this
 layout:
 
 ```text
 content/
 └── std/
-    └── vector/
-        └── vector/
+    └── string/
+        └── string/
             ├── page.mdx
             ├── examples/
-            │   └── construction-and-iteration/
+            │   └── build-and-edit-text/
             │       ├── example.json
             │       ├── main.gti
             │       └── stdout.txt
-            └── push-back/
+            └── append/
                 ├── page.mdx
                 └── examples/
-                    └── append-values/
+                    └── append-text/
                         ├── example.json
                         ├── main.gti
                         └── stdout.txt
@@ -28,6 +28,11 @@ content/
 The header-like segment and entity segment are both intentional. They keep
 familiar cppreference-style routes such as `/std/vector/vector/` while
 allowing member pages below the entity.
+
+Non-API tooling pages use the same graph, breadcrumbs, metadata, search, and
+static-build validation with empty `api` and `examples` arrays. The `tooling`
+and `command` kinds keep them out of the language/library classification;
+command detail pages remain searchable but do not flood the global sidebar.
 
 A page declares the compiler API groups it presents and the IDs of its own
 examples:

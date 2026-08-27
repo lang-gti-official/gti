@@ -1,0 +1,8 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("GTI!");
+  text.pop_back();
+  std::println(text);
+  return 0;
+}

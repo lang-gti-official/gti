@@ -1,0 +1,9 @@
+#include <std/string>
+
+int main() {
+  std::string text = std::string("left");
+  if (text != "right") {
+    std::println("different");
+  }
+  return 0;
+}

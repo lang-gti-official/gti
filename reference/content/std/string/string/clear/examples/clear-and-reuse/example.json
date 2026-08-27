@@ -1,0 +1,6 @@
+{
+  "title": "Clear and reuse an owner",
+  "description": "Removes all characters and then appends new text to the same string.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}
