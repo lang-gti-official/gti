@@ -3478,11 +3478,10 @@ void testOwnedLifecycleConstructionBodiesReady() {
          "legitimately keep their containment flags");
 }
 
-// A prefix-storage read whose bounds proof the enclosing trusted container
-// discharged (the logical-size check precedes it) records its site with no
-// failure edge. The analysis accepts that shape instead of reporting
-// missing checked-failure control flow; every OTHER checked operation
-// still demands its exact Invoke successor.
+// Safety discharge and CFG simplification are independent optimizer facts. A
+// prefix-storage read may be proven safe while its checked Invoke remains in
+// the optimized MIR. Since the backend emits only the success edge, it must
+// use the unchecked read helper and omit the dead failure-status carrier.
 void testDischargedStorageReadAnalysis() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-discharged-read.gti", R"(
@@ -3499,53 +3498,78 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility =
+      pipeline.run(frontend.hir, lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      pipeline.run({.hir = frontend.hir,
+                    .mir = frontend.mir,
+                    .level = lang::OptimizationLevel::O3,
+                    .compatibility = &compatibility});
+  expect(optimized.valid(),
+         "the discharged-read fixture should produce coherent O3 MIR");
+  if (!optimized.valid()) {
+    return;
+  }
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, optimized.sourceMir, optimized.mir, lang::TargetInfo::host(),
+      optimized.report.transformations);
   const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-  std::size_t dischargedReadBodies = 0;
-  std::size_t checkedFlowIssues = 0;
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(optimized.mir, map);
+  std::size_t dischargedInvokes = 0;
+  bool exactUncheckedEmission = true;
   for (const lang::MirFunctionInstance &instance :
-       frontend.mir.functionInstances()) {
-    bool hasDischargedRead = false;
+       optimized.mir.functionInstances()) {
     for (const lang::MirBlock &block : instance.body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Call ||
             (instruction.intrinsic != lang::IntrinsicKind::PrefixStorageRead &&
              instruction.intrinsic !=
                  lang::IntrinsicKind::PrefixStorageReadMut) ||
-            instruction.definedFailure.localOrigins.empty()) {
+            !lang::allMirLocalFailuresDischarged(instruction) ||
+            block.terminator.kind != lang::MirTerminatorKind::Invoke ||
+            block.terminator.invokeInstruction != instruction.id) {
           continue;
         }
-        bool invoked = false;
-        for (const lang::MirBlock &owner : instance.body.blocks) {
-          if (owner.terminator.kind == lang::MirTerminatorKind::Invoke &&
-              owner.terminator.invokeInstruction == instruction.id &&
-              owner.id == block.id) {
-            invoked = true;
-          }
+        ++dischargedInvokes;
+        const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                           .owner = instance.id};
+        const lang::CppMirBodyEmissionText text =
+            instance.mayRaiseDefinedFailure
+                ? emitter.emitFailureBodyText(
+                      address, "discharged-storage-read-regression-v1", 1)
+                : emitter.emitBodyText(
+                      address, "discharged-storage-read-regression-v1", 1);
+        const std::string status =
+            "__gti_mir_failure_status_" + std::to_string(instruction.id);
+        const std::string checkedHelper =
+            instruction.intrinsic == lang::IntrinsicKind::PrefixStorageRead
+                ? "::gti_internal::backend::mir_prefix_read_v1"
+                : "::gti_internal::backend::mir_prefix_read_mut_v1";
+        const std::string uncheckedHelper =
+            instruction.intrinsic == lang::IntrinsicKind::PrefixStorageRead
+                ? "::gti_internal::backend::prefix_storage_read_unchecked"
+                : "::gti_internal::backend::prefix_storage_read_mut_unchecked";
+        const bool exact =
+            text.emitted() &&
+            text.text.find(uncheckedHelper) != std::string::npos &&
+            text.text.find(checkedHelper) == std::string::npos &&
+            text.text.find(status) == std::string::npos;
+        if (!exact) {
+          std::cerr << "discharged checked prefix read " << instruction.id
+                    << " did not emit solely through its unchecked helper\n";
         }
-        if (!invoked) {
-          hasDischargedRead = true;
-        }
+        exactUncheckedEmission = exactUncheckedEmission && exact;
       }
     }
-    if (!hasDischargedRead) {
-      continue;
-    }
-    ++dischargedReadBodies;
-    const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(
-        {.kind = lang::MirBodyKind::Function, .owner = instance.id});
-    if (hasIssue(analysis, lang::CppMirBodyEmissionIssueKind::
-                               MissingCheckedFailureControlFlow)) {
-      ++checkedFlowIssues;
-    }
   }
-  expect(dischargedReadBodies > 0,
-         "the vector fixture should reach at least one trusted body whose "
-         "storage read is flow-discharged");
-  expect(checkedFlowIssues == 0,
-         "a flow-discharged storage read must not be reported as missing "
-         "checked-failure control flow");
+  expect(dischargedInvokes > 0,
+         "the vector fixture should retain at least one checked prefix read "
+         "after its failure outcomes are safety-discharged");
+  expect(exactUncheckedEmission,
+         "every safety-discharged prefix read should use the unchecked helper "
+         "without a dead failure-status carrier");
 }
 
 } // namespace
