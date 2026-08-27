@@ -293,6 +293,7 @@ add_library(
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
+  "src/compiler/configuration_directive_processor.cpp"
   "src/compiler/constant_evaluator.cpp"
   "src/compiler/diagnostic.cpp"
   "src/compiler/documentation.cpp"
@@ -307,6 +308,7 @@ add_library(
   "src/compiler/hir_lowering.cpp"
   "src/compiler/language_queries.cpp"
   "src/compiler/lexer.cpp"
+  "src/compiler/loaded_lexical_unit.cpp"
   "src/compiler/lowered_program.cpp"
   "src/compiler/lowered_program_printer.cpp"
   "src/compiler/mir.cpp"
@@ -770,6 +772,11 @@ if(BUILD_TESTING)
   add_executable("gti_block_comment_tests" "tests/block_comment_tests.cpp")
   target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
   add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)
+
+  add_executable("gti_source_unit_services_tests"
+                 "tests/source_unit_services_tests.cpp")
+  target_link_libraries("gti_source_unit_services_tests" PRIVATE gti_compiler)
+  add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
   add_executable("gti_pack_fold_syntax_tests"
                  "tests/pack_fold_syntax_tests.cpp")
