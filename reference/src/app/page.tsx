@@ -1,97 +1,68 @@
 import Link from "next/link";
 
-import { referencePages } from "@/generated/reference-pages";
+const referenceSections = [
+  {
+    title: "Language",
+    href: "/language/",
+    description: "Syntax, types, ownership, control flow, and interoperability.",
+    links: [{ title: "Language overview", href: "/language/" }],
+  },
+  {
+    title: "Standard library",
+    href: "/std/",
+    description:
+      "Shipped headers, types, functions, and implementation status.",
+    links: [
+      { title: "Header index", href: "/std/" },
+      { title: "std::array", href: "/std/array/array/" },
+      { title: "std::string", href: "/std/string/string/" },
+      { title: "std::vector", href: "/std/vector/vector/" },
+    ],
+  },
+  {
+    title: "Tooling",
+    href: "/tooling/",
+    description:
+      "Compiler, project, native-binding, formatting, and editor workflows.",
+    links: [
+      { title: "Command-line interface", href: "/tooling/cli/" },
+      { title: "Projects and gti.toml", href: "/tooling/projects/" },
+      { title: "C header bindings", href: "/tooling/bindgen/" },
+      { title: "Formatter", href: "/tooling/formatting/" },
+      { title: "Language server", href: "/tooling/lsp/" },
+    ],
+  },
+] as const;
 
 export default function HomePage() {
-  const declarationCount = new Set(
-    referencePages.flatMap((page) =>
-      page.apiDeclarations.map((declaration) => declaration.key),
-    ),
-  ).size;
-  const exampleCount = referencePages.reduce(
-    (total, page) => total + page.examples.length,
-    0,
-  );
-  const featuredRoutes = new Set([
-    "std/vector/vector",
-    "std/array/array",
-    "std/string/string",
-    "tooling/cli",
-    "tooling/projects",
-    "tooling/bindgen",
-  ]);
-  const featuredPages = referencePages.filter((page) =>
-    featuredRoutes.has(page.route),
-  );
   return (
     <article className="reference-page home-page">
-      <section className="home-hero">
-        <div>
-          <p className="eyebrow">GTI language and standard library</p>
-          <h1>Learn the language. Check the exact API.</h1>
-          <p className="summary">
-            A practical reference for writing GTI, shaped like the C++
-            reference you already know and backed by the declarations the GTI
-            compiler actually understands.
-          </p>
-          <div className="hero-actions">
-            <Link className="primary-action" href="/language/">
-              Start with the language
-            </Link>
-            <Link className="secondary-action" href="/std/vector/vector/">
-              Explore std::vector
-            </Link>
-          </div>
-        </div>
-        <dl className="reference-facts">
-          <div>
-            <dt>Published pages</dt>
-            <dd>{referencePages.length}</dd>
-          </div>
-          <div>
-            <dt>Compiler declarations</dt>
-            <dd>{declarationCount}</dd>
-          </div>
-          <div>
-            <dt>Verified examples</dt>
-            <dd>{exampleCount}</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="home-section" aria-labelledby="browse-heading">
-        <div className="section-heading">
-          <p className="section-kicker">Reference map</p>
-          <h2 id="browse-heading">Browse what is implemented</h2>
-        </div>
-        <div className="reference-card-grid">
-          <Link className="reference-card" href="/language/">
-            <span>Language</span>
-            <strong>Core GTI concepts</strong>
-            <p>Syntax, ownership, programs, build workflow, and interoperation.</p>
-          </Link>
-          <Link className="reference-card" href="/std/">
-            <span>Standard library</span>
-            <strong>Headers and APIs</strong>
-            <p>Containers, algorithms, I/O, ownership, and host facilities.</p>
-          </Link>
-          <Link className="reference-card" href="/tooling/">
-            <span>Tooling</span>
-            <strong>Build and editor workflow</strong>
-            <p>Compiler commands, projects, native bindings, formatting, and LSP.</p>
-          </Link>
-          {featuredPages.map((page) => (
-            <Link
-              className="reference-card"
-              href={`/${page.route}/`}
-              key={page.route}
-            >
-              <span>{page.metadata.kind.replaceAll("-", " ")}</span>
-              <strong>{page.metadata.title}</strong>
-              <p>{page.metadata.description}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
+      <header className="home-heading">
+        <h1>GTI reference</h1>
+        <p className="summary">
+          Language syntax, standard-library APIs, compiler commands, project
+          configuration, and editor tooling.
+        </p>
+      </header>
+      <nav className="reference-index" aria-label="Reference contents">
+        {referenceSections.map((section) => (
+          <section key={section.href}>
+            <header>
+              <h2>
+                <Link href={section.href}>{section.title}</Link>
+              </h2>
+              <p>{section.description}</p>
+            </header>
+            <ul>
+              {section.links.map((link) => (
+                <li key={link.href}>
+                  <Link href={link.href}>{link.title}</Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </nav>
     </article>
   );
 }
