@@ -39,6 +39,21 @@ gti build|check|run|test|clean|metadata project mode
   so LSP availability no longer depends on discovering or bundling a separate
   json-c library.
 
+The root `CMakeLists.txt` owns product targets, build options, the installed
+target graph, and package/install rules. When `BUILD_TESTING` is enabled it
+delegates once to `tests/CMakeLists.txt`; that file owns test executables,
+corpus tools, and every CTest registration. Test executables retain their
+project-build-root locations so repository scripts and structural evidence do
+not acquire a path-dependent compatibility branch. A static CMake ownership
+gate rejects test registrations or test-source paths returning to the root.
+
+The installed `gti_compiler` and `gti_cpp_backend` archives remain the real
+compiled phase boundary. The refactor does not add object libraries without
+an independent link-graph client: semantic, MIR, lowered-program, and C++
+backend APIs instead enforce direction through self-contained headers and
+repository boundary checks. Formatting-only C++ writers are additionally
+forbidden from including MIR or `LoweredProgram` authority.
+
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
 seam. The driver runs the same frontend and optimization gates, constructs and
 verifies one `LoweredProgram`, and then invokes a caller-provided `Backend`

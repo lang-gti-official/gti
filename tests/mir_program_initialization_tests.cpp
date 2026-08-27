@@ -1,6 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
 #include <algorithm>

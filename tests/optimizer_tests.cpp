@@ -4,6 +4,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"

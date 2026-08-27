@@ -1,5 +1,6 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 #include "gti/native_header.h"
 #include "gti/optimizer.h"
 
