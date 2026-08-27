@@ -2699,7 +2699,8 @@ public:
                                     .roles = OccurrenceRole::Declaration |
                                              OccurrenceRole::Definition |
                                              OccurrenceRole::TypeUse,
-                                    .name = stmt.name().lexeme});
+                                    .name = stmt.name().lexeme,
+                                    .conceptDeclaration = &stmt});
     const std::size_t count = std::min(stmt.typeParameters().size(),
                                        conceptInfo.parameterSymbols.size());
     for (std::size_t index = 0; index < count; ++index) {

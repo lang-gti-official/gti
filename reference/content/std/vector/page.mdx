@@ -1,0 +1,22 @@
+---
+title: <std/vector>
+description: Dynamic contiguous storage and checked element access for movable values.
+kind: library-header
+api: []
+examples: []
+---
+
+The `<std/vector>` unit provides GTI's source-defined dynamic sequence owner.
+
+```gti
+#include <std/vector>
+```
+
+## Types
+
+| Type | Description |
+| --- | --- |
+| [`std::vector<T>`](/std/vector/vector/) | Move-only contiguous ownership for elements satisfying `std::movable`. |
+
+The implementation keeps its logical size, growth policy, and safe indexing in
+ordinary GTI. Private storage operations are not part of the public API.

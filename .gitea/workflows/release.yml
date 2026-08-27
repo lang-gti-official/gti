@@ -82,7 +82,7 @@ jobs:
             fi
           fi
 
-      - name: Install Linux build dependencies and Ninja
+      - name: Install Linux build dependencies, Ninja, and Clang
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -92,7 +92,7 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            build-essential cmake ninja-build
+            build-essential clang cmake ninja-build
 
       - name: Install CMake and Ninja
         if: runner.os == 'macOS'
