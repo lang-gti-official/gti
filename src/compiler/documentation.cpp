@@ -338,6 +338,19 @@ documentationTraits(const SemanticTypeTraits &traits) {
           .shareCapable = traits.shareCapable};
 }
 
+[[nodiscard]] SemanticTypeTraits
+effectiveDocumentationTraits(const SymbolRecord &symbol,
+                             const SemanticOccurrence *declaration,
+                             const SemanticModel &semantics) {
+  if (declaration != nullptr && declaration->classType != nullptr) {
+    if (const ClassLifecycleInfo *lifecycle =
+            semantics.findClassLifecycle(*declaration->classType)) {
+      return lifecycle->traits;
+    }
+  }
+  return symbol.traits;
+}
+
 [[nodiscard]] std::string makeGroupKey(std::string_view unit,
                                        DocumentationKind kind,
                                        std::string_view qualifiedName) {
@@ -520,7 +533,8 @@ DocumentationIndexResult DocumentationQueries::standardLibraryIndex(
     entry.signature = signature(symbol, declaration, semantics);
     entry.documentationMarkdown = symbol.documentationMarkdown;
     if (presentsTraits(*kind)) {
-      entry.traits = documentationTraits(symbol.traits);
+      entry.traits = documentationTraits(
+          effectiveDocumentationTraits(symbol, declaration, semantics));
     }
     const SourceLocation location = snapshot.sources.locate(symbol.nameSpan);
     entry.source = {.unit = *unit->standardLibraryName,

@@ -1,0 +1,14 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({4, 7, 9});
+
+  std::println(values.front());
+  {
+    mut int32_t& first = values.front();
+    first = 10;
+  }
+  std::println(values.front());
+  return 0;
+}

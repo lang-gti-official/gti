@@ -1,0 +1,6 @@
+{
+  "title": "Iterate from begin",
+  "description": "Walks a string with its read-only cursor and sentinel types.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

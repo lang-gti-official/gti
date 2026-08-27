@@ -1,0 +1,6 @@
+{
+  "title": "Update the first element",
+  "description": "Borrows the first element mutably and changes it in place.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

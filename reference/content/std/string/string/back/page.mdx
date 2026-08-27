@@ -1,0 +1,13 @@
+---
+title: std::string::back
+description: Borrows the final character of a non-empty string.
+kind: member
+since: 0.105.0
+api:
+  - std/string|method|std::string::back
+examples:
+  - update-last-character
+---
+
+Returns the character at `size() - 1`, preserving receiver mutability. Calling
+`back()` on an empty string follows the defined bounds-failure path.

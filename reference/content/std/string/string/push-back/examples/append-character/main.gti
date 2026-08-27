@@ -1,0 +1,8 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("GT");
+  text.push_back('I');
+  std::println(text);
+  return 0;
+}

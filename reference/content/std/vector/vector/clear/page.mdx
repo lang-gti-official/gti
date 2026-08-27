@@ -1,0 +1,17 @@
+---
+title: std::vector::clear
+description: Destroys every element while retaining the current allocation.
+kind: member
+since: 0.80.0
+api:
+  - std/vector|method|std::vector::clear
+examples:
+  - clear-and-reuse
+---
+
+Destroys all live elements and sets `size()` to zero. The vector retains its
+capacity, allowing later insertions to reuse the allocation.
+
+Each element receives deterministic cleanup before the call returns. As with
+other structural mutations, incompatible element and iterator loans must have
+ended.

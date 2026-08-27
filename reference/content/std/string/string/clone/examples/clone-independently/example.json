@@ -1,0 +1,6 @@
+{
+  "title": "Clone independent storage",
+  "description": "Duplicates an owner explicitly and mutates only the clone.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

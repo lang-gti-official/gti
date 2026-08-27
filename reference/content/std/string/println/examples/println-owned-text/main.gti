@@ -1,0 +1,6 @@
+#include <std/string>
+
+int main() {
+  std::println(std::to_string(int32_t(42)));
+  return 0;
+}

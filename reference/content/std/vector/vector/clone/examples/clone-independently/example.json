@@ -1,0 +1,6 @@
+{
+  "title": "Create an independent vector",
+  "description": "Changes the clone and demonstrates that the original value is unaffected.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

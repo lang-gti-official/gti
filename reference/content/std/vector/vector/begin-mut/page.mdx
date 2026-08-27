@@ -1,0 +1,21 @@
+---
+title: std::vector::begin_mut
+description: Returns the exclusive iterator used for mutable range traversal.
+kind: member
+since: 0.301.0
+api:
+  - std/vector|method|std::vector::begin_mut
+examples:
+  - mutate-a-range
+---
+
+Returns a mutable iterator whose dereference operation can produce `mut T&`.
+The iterator carries one exclusive loan of the parent vector for the traversal.
+
+You normally select this operation with
+`for (mut T& value : values)`. The compiler confines the iterator carrier to
+that range and prevents capacity changes, movement, or a second incompatible
+borrow until traversal finishes.
+
+`begin_mut()` is intentionally separate from `begin()` so mutable iteration is
+visible in both the receiver and loop binding.
