@@ -1,8 +1,8 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "f1dc8bd66fefe43333ced68b7a4e3427277e7c093b53b1b6fff9a33e7670b6d5",
-    "stdlib/std/algorithm.gti": "feda2c56b2d9a5d0f2ee9f9c99e4035ba3d3c6e14c75b4f5a109e3dd59b71203",
+    "stdlib/prelude.gti": "d99eac6797d6fdfc893643f003e7f391eff9a4ac3f96a220cb22f758a9b54ad7",
+    "stdlib/std/algorithm.gti": "ebfafdb53acb944829f2f83876072307a6c940246ddce97922e625f953cb50a4",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
@@ -10,7 +10,7 @@
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
     "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
-    "stdlib/std/iterator.gti": "023260ec12c328b581752a25a760e9697e4a42d32919ce2cf24b96c3d1630f84",
+    "stdlib/std/iterator.gti": "26f28bebc19ddd9fd58a2fcc6af778bcd90094e9d45fe57d88f939ea82736066",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "8994829d83715c6d855a758d9ce701231ec68a16f45bd9e5d2aeb42710fab86e",
     "stdlib/std/numeric.gti": "2c18e9978aa15a9140e7a2bdf682122ee99d27dd98863283984d676ca2cb4ebf",
@@ -21,7 +21,7 @@
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "1b69a3eb8384638ef7b2c222705bcb1a94906be2a03de7e405a55fc7406e5313"
+    "stdlib/std/vector.gti": "1f64abdc69282c4a5a36306c6a5319dabc53f4a8cd64ccae1aa92494f3973ef8"
   },
   "cases": [
     {
