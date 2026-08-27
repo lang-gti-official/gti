@@ -7866,6 +7866,9 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
         ownedBindings = cppMirOwnedParameterFieldBindings(mir, constructor);
     const std::optional<std::vector<CppMirCopyParameterFieldBinding>>
         copiedBindings = cppMirCopyParameterFieldBindings(mir, constructor);
+    const std::vector<CppMirConstructedFieldInitializerBinding>
+        constructedBindings =
+            cppMirConstructedFieldInitializerBindings(mir, constructor);
     const bool bodyStagedOwnedParameters =
         failureForm && owner != nullptr &&
         cppMirFailureConstructorEmptyStateEligible(mir, owner->id) &&
@@ -7875,7 +7878,7 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
         (!ownedBindings && !bodyStagedOwnedParameters)) {
       return;
     }
-    enum class BindingKind { Base, Field, EmptyField };
+    enum class BindingKind { Base, Field, EmptyField, ConstructedField };
     struct InitializerBinding {
       BindingKind kind = BindingKind::Field;
       std::size_t initializer = 0;
@@ -7905,6 +7908,14 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
       initializers.push_back({.initializer = binding.initializer,
                               .field = binding.field,
                               .parameter = binding.parameter});
+    }
+    for (const CppMirConstructedFieldInitializerBinding &binding :
+         constructedBindings) {
+      initializers.push_back({.kind = BindingKind::ConstructedField,
+                              .initializer = binding.initializer,
+                              .field = binding.field,
+                              .fieldType = binding.fieldType,
+                              .baseParameters = binding.parameters});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -7989,6 +8000,23 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
       if (fieldName.empty()) {
         throw std::logic_error(
             "verified MIR field initializer lost its field name");
+      }
+      if (initializer.kind == BindingKind::ConstructedField) {
+        // C++17 guaranteed elision constructs the field directly from this
+        // prvalue: one construction, no intermediate object, and no invented
+        // copy or move. The proof already fixed declaration order.
+        output << fieldName << '(';
+        emitSemanticType(initializer.fieldType);
+        output << '(';
+        for (std::size_t argument = 0;
+             argument < initializer.baseParameters.size(); ++argument) {
+          if (argument != 0) {
+            output << ", ";
+          }
+          output << "__gti_mir_arg_" << initializer.baseParameters[argument];
+        }
+        output << "))";
+        continue;
       }
       if (initializer.kind == BindingKind::EmptyField) {
         output << fieldName;
