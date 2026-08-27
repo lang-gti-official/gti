@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type {
   CompilerDocumentationDeclaration,
   CompilerDocumentationKind,
@@ -54,9 +56,13 @@ function DocumentationSummary({ text }: { text: string }) {
 function DeclarationList({
   groups,
   title,
+  memberRoutes,
+  currentRoute,
 }: {
   groups: DeclarationGroup[];
   title: string;
+  memberRoutes: ReadonlyMap<string, string>;
+  currentRoute: string;
 }) {
   if (groups.length === 0) {
     return null;
@@ -67,14 +73,36 @@ function DeclarationList({
       <div className="member-list">
         {groups.map(({ key, declarations }) => {
           const first = declarations[0];
+          const memberRoute = memberRoutes.get(key);
+          const detailRoute =
+            memberRoute === undefined || memberRoute === currentRoute
+              ? undefined
+              : memberRoute;
           const documentation = declarations.find(
             (declaration) => declaration.documentationMarkdown !== null,
           )?.documentationMarkdown;
           return (
             <article className="member-row" key={key}>
-              <div className="member-name">
-                <code>{first.name}</code>
-                <span>{first.kind.replaceAll("-", " ")}</span>
+              <div
+                className={`member-name${detailRoute ? " has-detail" : ""}`}
+              >
+                {detailRoute ? (
+                  <Link
+                    className="member-detail-link"
+                    href={`/${detailRoute}/`}
+                    aria-label={`Read the ${first.qualifiedName} reference`}
+                  >
+                    <code>{first.name}</code>
+                    <span>
+                      {first.kind.replaceAll("-", " ")} · details →
+                    </span>
+                  </Link>
+                ) : (
+                  <>
+                    <code>{first.name}</code>
+                    <span>{first.kind.replaceAll("-", " ")}</span>
+                  </>
+                )}
               </div>
               <div className="member-signatures">
                 {declarations.map((declaration) => (
@@ -98,8 +126,12 @@ function DeclarationList({
 
 export function ApiReference({
   declarations,
+  memberRoutes,
+  currentRoute,
 }: {
   declarations: CompilerDocumentationDeclaration[];
+  memberRoutes: ReadonlyMap<string, string>;
+  currentRoute: string;
 }) {
   if (declarations.length === 0) {
     return null;
@@ -125,7 +157,6 @@ export function ApiReference({
   return (
     <section className="api-reference" aria-labelledby="synopsis-heading">
       <div className="section-heading">
-        <p className="section-kicker">Compiler-projected API</p>
         <h2 id="synopsis-heading">Synopsis</h2>
       </div>
       {primary ? (
@@ -170,9 +201,24 @@ export function ApiReference({
           </div>
         </dl>
       ) : null}
-      <DeclarationList groups={constructors} title="Constructors" />
-      <DeclarationList groups={members} title="Member functions" />
-      <DeclarationList groups={related} title="Related declarations" />
+      <DeclarationList
+        groups={constructors}
+        title="Constructors"
+        memberRoutes={memberRoutes}
+        currentRoute={currentRoute}
+      />
+      <DeclarationList
+        groups={members}
+        title="Member functions"
+        memberRoutes={memberRoutes}
+        currentRoute={currentRoute}
+      />
+      <DeclarationList
+        groups={related}
+        title="Related declarations"
+        memberRoutes={memberRoutes}
+        currentRoute={currentRoute}
+      />
     </section>
   );
 }

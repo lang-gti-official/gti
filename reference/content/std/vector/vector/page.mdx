@@ -2,6 +2,7 @@
 title: std::vector
 description: Move-only contiguous storage with checked access, capacity management, and safe iteration.
 kind: type
+since: 0.80.0
 api:
   - std/vector|class|std::vector
   - std/vector|constructor|std::vector::vector
@@ -33,6 +34,10 @@ examples:
 `std::vector<T>` owns a dynamically sized, contiguous sequence. `T` must
 satisfy `std::movable` and must not retain borrowed state. The vector itself is
 move-only even when its elements are copyable.
+
+Select any constructor or member name in the synopsis for its exact overloads,
+operation-specific rules, and a compiler-verified example where the operation
+is currently callable.
 
 ## Construction
 

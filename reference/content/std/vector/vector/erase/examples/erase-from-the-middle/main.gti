@@ -1,0 +1,12 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({4, 7, 9});
+  values.erase(std::size_t(1));
+
+  for (int32_t value : values) {
+    std::println(value);
+  }
+  return 0;
+}

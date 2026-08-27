@@ -1,0 +1,20 @@
+---
+title: std::vector::empty
+description: Tests whether the vector contains no elements.
+kind: member
+since: 0.80.0
+api:
+  - std/vector|method|std::vector::empty
+examples:
+  - test-empty-state
+---
+
+Returns `true` when `size()` is zero and `false` otherwise. Reserved capacity
+does not affect the result.
+
+Use `empty()` when the intent is to test for an element rather than comparing
+the size manually.
+
+## Return value
+
+`true` if the vector has no live elements.
