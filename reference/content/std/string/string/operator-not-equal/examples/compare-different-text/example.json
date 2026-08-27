@@ -1,0 +1,6 @@
+{
+  "title": "Detect different text",
+  "description": "Compares an owning string against a different literal view.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

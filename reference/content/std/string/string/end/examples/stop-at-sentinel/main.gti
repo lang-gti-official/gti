@@ -1,0 +1,14 @@
+#include <std/string>
+
+int main() {
+  std::string text = std::string("four");
+  mut auto cursor = text.begin();
+  auto finish = text.end();
+  mut std::size_t count = std::size_t(0);
+  while (cursor != finish) {
+    count++;
+    ++cursor;
+  }
+  std::println(count);
+  return 0;
+}

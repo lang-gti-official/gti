@@ -42,6 +42,8 @@ const ReferencePageMetadataSchema = z
       "member",
       "concept",
       "diagnostic",
+      "tooling",
+      "command",
     ]),
     api: z.array(z.string().trim().min(1)).default([]),
     examples: z.array(z.string().regex(routeSegment)).default([]),

@@ -8,13 +8,25 @@ import { referencePages } from "@/generated/reference-pages";
 
 export const dynamicParams = false;
 
-const memberRoutes = new Map<string, string>();
+const detailRoutes = new Map<string, string>();
 for (const page of referencePages) {
-  if (page.metadata.kind !== "member") {
-    continue;
+  if (
+    (page.metadata.kind === "member" ||
+      page.metadata.kind === "function" ||
+      page.metadata.kind === "concept") &&
+    page.metadata.api.length === 1
+  ) {
+    detailRoutes.set(page.metadata.api[0], page.route);
   }
-  for (const groupKey of page.metadata.api) {
-    memberRoutes.set(groupKey, page.route);
+  if (page.metadata.kind === "type") {
+    const typeDeclaration = page.apiDeclarations.find((declaration) =>
+      ["class", "struct", "interface", "union", "enum"].includes(
+        declaration.kind,
+      ),
+    );
+    if (typeDeclaration) {
+      detailRoutes.set(typeDeclaration.groupKey, page.route);
+    }
   }
 }
 
@@ -100,7 +112,7 @@ export default async function ReferencePage({
       </header>
       <ApiReference
         declarations={page.apiDeclarations}
-        memberRoutes={memberRoutes}
+        detailRoutes={detailRoutes}
         currentRoute={page.route}
       />
       <div className="reference-prose">

@@ -8,7 +8,9 @@ export type ReferencePageKind =
   | "function"
   | "member"
   | "concept"
-  | "diagnostic";
+  | "diagnostic"
+  | "tooling"
+  | "command";
 
 export interface ReferencePageMetadata {
   title: string;

@@ -1,0 +1,13 @@
+---
+title: std::array::front
+description: Borrows the first element of a non-empty array.
+kind: member
+since: 0.105.0
+api:
+  - std/array|method|std::array::front
+examples:
+  - update-first-element
+---
+
+Returns element zero, preserving receiver mutability. Calling `front()` when
+`N` is zero follows the defined bounds-failure path.

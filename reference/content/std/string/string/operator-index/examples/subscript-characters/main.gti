@@ -1,0 +1,8 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("code");
+  text[std::size_t(0)] = 'm';
+  std::println(text);
+  return 0;
+}

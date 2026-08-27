@@ -56,12 +56,12 @@ function DocumentationSummary({ text }: { text: string }) {
 function DeclarationList({
   groups,
   title,
-  memberRoutes,
+  detailRoutes,
   currentRoute,
 }: {
   groups: DeclarationGroup[];
   title: string;
-  memberRoutes: ReadonlyMap<string, string>;
+  detailRoutes: ReadonlyMap<string, string>;
   currentRoute: string;
 }) {
   if (groups.length === 0) {
@@ -73,11 +73,11 @@ function DeclarationList({
       <div className="member-list">
         {groups.map(({ key, declarations }) => {
           const first = declarations[0];
-          const memberRoute = memberRoutes.get(key);
+          const detailPageRoute = detailRoutes.get(key);
           const detailRoute =
-            memberRoute === undefined || memberRoute === currentRoute
+            detailPageRoute === undefined || detailPageRoute === currentRoute
               ? undefined
-              : memberRoute;
+              : detailPageRoute;
           const documentation = declarations.find(
             (declaration) => declaration.documentationMarkdown !== null,
           )?.documentationMarkdown;
@@ -126,11 +126,11 @@ function DeclarationList({
 
 export function ApiReference({
   declarations,
-  memberRoutes,
+  detailRoutes,
   currentRoute,
 }: {
   declarations: CompilerDocumentationDeclaration[];
-  memberRoutes: ReadonlyMap<string, string>;
+  detailRoutes: ReadonlyMap<string, string>;
   currentRoute: string;
 }) {
   if (declarations.length === 0) {
@@ -152,7 +152,9 @@ export function ApiReference({
     (group) => !constructors.includes(group) && !members.includes(group),
   );
   const primaryDeclaration = primary?.declarations[0];
-  const traits = primaryDeclaration?.traits;
+  const traits = primaryDeclaration?.signature?.includes("<")
+    ? undefined
+    : primaryDeclaration?.traits;
 
   return (
     <section className="api-reference" aria-labelledby="synopsis-heading">
@@ -204,19 +206,19 @@ export function ApiReference({
       <DeclarationList
         groups={constructors}
         title="Constructors"
-        memberRoutes={memberRoutes}
+        detailRoutes={detailRoutes}
         currentRoute={currentRoute}
       />
       <DeclarationList
         groups={members}
         title="Member functions"
-        memberRoutes={memberRoutes}
+        detailRoutes={detailRoutes}
         currentRoute={currentRoute}
       />
       <DeclarationList
         groups={related}
         title="Related declarations"
-        memberRoutes={memberRoutes}
+        detailRoutes={detailRoutes}
         currentRoute={currentRoute}
       />
     </section>

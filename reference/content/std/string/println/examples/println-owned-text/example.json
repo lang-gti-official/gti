@@ -1,0 +1,6 @@
+{
+  "title": "Print a fresh owned result",
+  "description": "Transfers the fresh result of std::to_string directly into println.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

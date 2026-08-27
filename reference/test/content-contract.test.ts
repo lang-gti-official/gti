@@ -155,6 +155,52 @@ test("since accepts release versions and editions but rejects free-form labels",
   }
 });
 
+test("tooling and command pages remain valid without compiler API bindings", () => {
+  const temporary = mkdtempSync(
+    path.join(os.tmpdir(), "gti-reference-contract-"),
+  );
+  try {
+    mkdirSync(path.join(temporary, "content/tooling/build"), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(temporary, "content/tooling/page.mdx"),
+      `---
+title: Tooling
+description: Tooling overview.
+kind: tooling
+api: []
+examples: []
+---
+`,
+    );
+    writeFileSync(
+      path.join(temporary, "content/tooling/build/page.mdx"),
+      `---
+title: Build
+description: Build command.
+kind: command
+api: []
+examples: []
+---
+`,
+    );
+    const pages = compileContentGraph({
+      projectRoot: temporary,
+      contentRoot: "content",
+    });
+    assert.deepEqual(
+      pages.map((page) => [page.route, page.metadata.kind]),
+      [
+        ["tooling", "tooling"],
+        ["tooling/build", "command"],
+      ],
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("API-bound pages fail closed without a compiler index", () => {
   assert.throws(
     () =>

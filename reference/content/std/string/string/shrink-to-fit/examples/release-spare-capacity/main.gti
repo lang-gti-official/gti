@@ -1,0 +1,9 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("GTI");
+  text.reserve(std::size_t(32));
+  text.shrink_to_fit();
+  std::println(text.capacity());
+  return 0;
+}
