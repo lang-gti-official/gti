@@ -2,8 +2,9 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
-#include "gti/mir_printer.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"

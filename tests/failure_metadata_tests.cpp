@@ -1,6 +1,8 @@
 #include "gti/failure_metadata.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
