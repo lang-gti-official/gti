@@ -4741,50 +4741,49 @@ int switch_reactivation(mut int& parent) {
       invokeSuccess(*retainedCallChain, secondChainCallBlock, secondChainCall);
   const lang::MirBlock *secondChainFailure =
       invokeFailure(*retainedCallChain, secondChainCallBlock, secondChainCall);
-  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
-      chainLoanEvents;
-  if (secondChainSuccess != nullptr && chainEntry != nullptr &&
-      chainChild != nullptr && chainTransients.size() == 2) {
+  // `parent.get_inner().get_left()` reaches the retained referent through two
+  // call-result links hanging off the reference parameter's entry loan. The
+  // binding retains the outermost link itself; lowering does not end the chain
+  // on the success route to recreate a child reborrow from the semantic place,
+  // because that place records the returned referent's type over a projection
+  // chain that stops at the entry loan plus the receiver subobject. Both links
+  // stay live for the retained loan's extent instead, and the defined-failure
+  // routes still end them child-first.
+  std::size_t chainSuccessEndings = 0;
+  if (secondChainSuccess != nullptr && chainTransients.size() == 2) {
     for (const lang::MirInstruction &instruction :
          secondChainSuccess->instructions) {
-      if (!instruction.loan) {
-        continue;
-      }
-      if ((instruction.kind == lang::MirInstructionKind::EndBorrow &&
-           (*instruction.loan == chainTransients[0]->id ||
-            *instruction.loan == chainTransients[1]->id)) ||
-          (instruction.kind == lang::MirInstructionKind::Borrow &&
-           *instruction.loan == chainChild->id)) {
-        chainLoanEvents.emplace_back(instruction.kind, *instruction.loan);
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan &&
+          (*instruction.loan == chainTransients[0]->id ||
+           *instruction.loan == chainTransients[1]->id)) {
+        ++chainSuccessEndings;
       }
     }
   }
-  const bool orderedChainRetirement =
-      chainEntry != nullptr && chainChild != nullptr &&
+  const bool retainedChainAncestry =
+      chainEntry != nullptr && chainChild == nullptr &&
       chainTransients.size() == 2 &&
-      firstChainSuccess == secondChainCallBlock &&
-      chainLoanEvents.size() == 3 &&
-      chainLoanEvents[0] == std::pair{lang::MirInstructionKind::EndBorrow,
-                                      chainTransients[1]->id} &&
-      chainLoanEvents[1] == std::pair{lang::MirInstructionKind::EndBorrow,
-                                      chainTransients[0]->id} &&
-      chainLoanEvents[2] ==
-          std::pair{lang::MirInstructionKind::Borrow, chainChild->id};
-  expect(orderedChainRetirement &&
-             chainTransients[0]->parent == chainEntry->id &&
-             chainTransients[1]->parent == chainTransients[0]->id &&
-             chainChild->parent == chainEntry->id &&
+      firstChainSuccess == secondChainCallBlock && chainSuccessEndings == 0 &&
+      chainTransients[0]->parent == chainEntry->id &&
+      chainTransients[0]->carriers.empty() &&
+      chainTransients[0]->semanticLoan == 0 &&
+      chainTransients[1]->parent == chainTransients[0]->id &&
+      chainTransients[1]->carriers.size() == 1 &&
+      chainTransients[1]->semanticLoan != 0 && !chainTransients[1]->escapes;
+  expect(retainedChainAncestry &&
              endsLoan(firstChainFailure, chainTransients[0]->id) &&
              endsLoan(secondChainFailure, chainTransients[1]->id) &&
              endsLoan(secondChainFailure, chainTransients[0]->id) &&
              lang::verifyMirBody(*retainedCallChain).valid() &&
              lang::verifyMirBody(*nonretainedCallMember).valid(),
-         "receiver-tied call-result chains should retain exact transient "
-         "ancestry, retire leaf-to-root when retained, and authorize "
-         "non-retained member access through the derived result");
+         "receiver-tied call-result chains reached through a reference "
+         "parameter should retain the outermost link under the retaining "
+         "carrier, keep exact transient ancestry, end child-first only on the "
+         "failure routes, and authorize non-retained member access through the "
+         "derived result");
 
-  if (chainEntry != nullptr && chainChild != nullptr &&
-      chainTransients.size() == 2) {
+  if (chainEntry != nullptr && chainTransients.size() == 2) {
     lang::MirBody wrongCallParent = *retainedCallChain;
     wrongCallParent.loans[chainTransients[1]->id - 1].parent = chainEntry->id;
     expect(hasError(lang::verifyMirBody(wrongCallParent),
@@ -4792,11 +4791,12 @@ int switch_reactivation(mut int& parent) {
            "a derived call result should reject a parent that is not its "
            "actual receiver loan");
 
-    lang::MirBody siblingCallParent = *retainedCallChain;
-    siblingCallParent.loans[chainTransients[1]->id - 1].parent = chainChild->id;
-    expect(!lang::verifyMirBody(siblingCallParent).valid(),
-           "a derived call result should reject an unrelated sibling as its "
-           "loan parent");
+    lang::MirBody invertedChain = *retainedCallChain;
+    invertedChain.loans[chainTransients[0]->id - 1].parent =
+        chainTransients[1]->id;
+    expect(!lang::verifyMirBody(invertedChain).valid(),
+           "a retained call-result chain should reject ancestry that makes a "
+           "link its own descendant");
   }
 
   if (entry != nullptr && field != nullptr && leaf != nullptr &&

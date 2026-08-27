@@ -4376,6 +4376,45 @@ private:
         });
   }
 
+  // A retained binding may name a call result the expression reached through
+  // more than one link: in `carrier.right.reach().write()` the receiver of
+  // `write()` is itself a borrowed call result, so lowering builds a chain of
+  // call-result reborrows before the binding retains the outermost one.
+  //
+  // Report whether every link from `outermost` up to — but excluding —
+  // `ancestor` is such a reborrow, built by this expression for `valueId`
+  // alone: a call result that carries nothing, does not escape, is still
+  // active, and is at least as permissive as `access`. When it is, the
+  // outermost link designates exactly what the retained binding names, and
+  // the chain already bottoms out at `ancestor`, so retaining it preserves
+  // that loan's suspension and reactivation.
+  [[nodiscard]] bool retainableCallResultChain(MirLoanId outermost,
+                                               MirLoanId ancestor,
+                                               HirValueId valueId,
+                                               AccessMode access) const {
+    if (outermost == 0 || outermost == ancestor ||
+        output.findLoan(ancestor) == nullptr) {
+      return false;
+    }
+    std::unordered_set<MirLoanId> visited;
+    MirLoanId link = outermost;
+    while (link != ancestor) {
+      const MirLoan *candidate = output.findLoan(link);
+      if (candidate == nullptr || !visited.insert(link).second ||
+          candidate->kind != MirLoanKind::CallResult ||
+          !candidate->carriers.empty() || candidate->escapes ||
+          !loanIsActive(scopes, link) ||
+          (access != AccessMode::ReadOnly &&
+           candidate->access != AccessMode::Mutable) ||
+          (link == outermost ? candidate->producedBy != valueId
+                             : candidate->producedBy == 0)) {
+        return false;
+      }
+      link = candidate->parent;
+    }
+    return true;
+  }
+
   static void removeLoanFromState(
       MirLoanId loan, std::vector<Scope> &scopeState,
       std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
@@ -5510,33 +5549,34 @@ private:
 
       MirLoanId parent = 0;
       if (desired->parent != 0) {
-        const auto found = semanticLoans.find(desired->parent);
-        if (found == semanticLoans.end()) {
-          valid = false;
-          return {};
-        }
-        parent = found->second;
-        const MirLoan *derivedCallResult = existing == 0 || existing == parent
-                                               ? nullptr
-                                               : output.findLoan(existing);
-        if (!exactRangeElement && derivedCallResult != nullptr &&
-            derivedCallResult->kind == MirLoanKind::CallResult &&
-            derivedCallResult->parent == parent &&
-            derivedCallResult->producedBy == valueId &&
-            derivedCallResult->carriers.empty() &&
-            !derivedCallResult->escapes && loanIsActive(scopes, existing) &&
-            (desired->access == AccessMode::ReadOnly ||
-             derivedCallResult->access == AccessMode::Mutable)) {
-          // This call-result loan already hangs from exactly the parent the
-          // retained binding's semantic loan names, so it is the exact
-          // runtime referent for the same reason a root call-result loan is
-          // below. Retain that identity instead of ending it and recreating
-          // a Local loan from the receiver origin: the recreated loan's
-          // source place spells the receiver subobject while the loan
-          // designates what the call returned, so its recorded type states
-          // the returned referent while its projection chain derives the
-          // receiver's. No later stage can key such a place, and it cannot
-          // recover the returned address for backend publication either.
+        if (const auto retainedParent = semanticLoans.find(desired->parent);
+            !exactRangeElement && retainedParent != semanticLoans.end() &&
+            retainableCallResultChain(existing, retainedParent->second, valueId,
+                                      desired->access)) {
+          // The call-result chain this expression built for this very value
+          // already bottoms out at exactly the loan the retained semantic
+          // loan names as its parent, so its outermost link is the exact
+          // runtime referent — the same reason a parentless call-result chain
+          // retains its own below. A reference carrier is what gives a
+          // retained loan a semantic parent at all, so this is the route
+          // every multi-link chain reached through a reference parameter or a
+          // local reference binding takes.
+          //
+          // Retain that identity rather than ending the chain and recreating
+          // a Local loan from the semantic place. That place states the
+          // returned referent's type over a projection chain that stops at
+          // the loan's coarser overlap identity — the parent plus the
+          // receiver subobject, never the address the outer call returned. No
+          // later stage can key it, and the backend cannot publish the
+          // returned address from it. Deciding before `placeForLoan` also
+          // keeps that place out of the body: materializing it and leaving it
+          // unused would still fail the emitter's place-coherence scan, which
+          // reads every place a body records.
+          //
+          // The links this reborrows stay live. A parent must outlive its
+          // child reborrow on every edge, which the full-expression release
+          // preserves for a retained chain, and the owning scope ends the
+          // whole chain child-first.
           recordLoanIdentity(existing, *desired, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
@@ -5554,6 +5594,12 @@ private:
         if (desiredSource == 0) {
           return {};
         }
+        const auto found = semanticLoans.find(desired->parent);
+        if (found == semanticLoans.end()) {
+          valid = false;
+          return {};
+        }
+        parent = found->second;
         if (existing != 0 && existing != parent) {
           const MirLoan *parentLoan = output.findLoan(parent);
           std::vector<MirLoanId> transientChain;
