@@ -42,6 +42,10 @@ enum class StructuralConstraintKind : std::uint8_t {
   RandomAccessIterator,
   SubscriptsToMut,
   SizedSentinelFor,
+  Adds,
+  Subtracts,
+  Negates,
+  ScalesBy,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -94,7 +98,7 @@ inline constexpr std::array<CompilerConstraintRecord, 14> compilerConstraints{{
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 9>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 13>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -107,6 +111,10 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 9>
          StructuralConstraintKind::RandomAccessIterator, 1},
         {"subscripts_to_mut", StructuralConstraintKind::SubscriptsToMut, 2},
         {"sized_sentinel_for", StructuralConstraintKind::SizedSentinelFor, 2},
+        {"adds", StructuralConstraintKind::Adds, 1},
+        {"subtracts", StructuralConstraintKind::Subtracts, 1},
+        {"negates", StructuralConstraintKind::Negates, 1},
+        {"scales_by", StructuralConstraintKind::ScalesBy, 2},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

@@ -167,6 +167,27 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "std::ptrdiff_t operator-(S&) for the exact sentinel type, "
           "returning the signed distance from the iterator to the sentinel.");
       break;
+    case StructuralConstraintKind::Adds:
+      diagnostic.hints.emplace_back(
+          "The domain type must provide a public read-only "
+          "'T operator+(T&)' returning an owned value of its own type.");
+      break;
+    case StructuralConstraintKind::Subtracts:
+      diagnostic.hints.emplace_back(
+          "The domain type must provide a public read-only "
+          "'T operator-(T&)' returning an owned value of its own type.");
+      break;
+    case StructuralConstraintKind::Negates:
+      diagnostic.hints.emplace_back(
+          "The domain type must provide a public read-only unary "
+          "'T operator-()' returning an owned value of its own type.");
+      break;
+    case StructuralConstraintKind::ScalesBy:
+      diagnostic.hints.emplace_back(
+          "The domain type must provide a public read-only "
+          "'T operator*(Scalar)' returning an owned value of its own type "
+          "for the exact scalar type.");
+      break;
     case StructuralConstraintKind::None:
       break;
     }

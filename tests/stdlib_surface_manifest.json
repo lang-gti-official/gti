@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "f7503978a1cfb085e5950c9729af3afe859f21549ad057bb09e90681b918f360",
+    "stdlib/prelude.gti": "f1dc8bd66fefe43333ced68b7a4e3427277e7c093b53b1b6fff9a33e7670b6d5",
     "stdlib/std/algorithm.gti": "feda2c56b2d9a5d0f2ee9f9c99e4035ba3d3c6e14c75b4f5a109e3dd59b71203",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
@@ -13,7 +13,7 @@
     "stdlib/std/iterator.gti": "023260ec12c328b581752a25a760e9697e4a42d32919ce2cf24b96c3d1630f84",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "8994829d83715c6d855a758d9ce701231ec68a16f45bd9e5d2aeb42710fab86e",
-    "stdlib/std/numeric.gti": "4cfbbf95a38d1d850f10211568d85aa486fc79ab2e56689b3bbac428dfea5e12",
+    "stdlib/std/numeric.gti": "2c18e9978aa15a9140e7a2bdf682122ee99d27dd98863283984d676ca2cb4ebf",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
@@ -576,7 +576,9 @@
         "std::gcd",
         "std::inner_product",
         "std::lcm",
+        "std::lerp",
         "std::midpoint",
+        "std::negated",
         "std::saturating_add",
         "std::saturating_mul",
         "std::saturating_sub",

@@ -168,13 +168,37 @@ The current structural capability set is intentionally small:
   bidirectional and random-access concepts compose their movement facts over
   it, so only copyable read cursors satisfy them; and
 - `accumulates_into<I, T>` is the numeric-library composition of the same
-  exact dereference relationship.
+  exact dereference relationship;
+- `adds<T>`, `subtracts<T>`, and `negates<T>` each require one exact public
+  read-only member — `T operator+(T&)`, `T operator-(T&)`, and unary
+  `T operator-()` — returning an *owned* value of the domain type itself; and
+- `scales_by<T, Scalar>` requires public read-only `T operator*(Scalar)`
+  returning an owned domain value for that exact scalar type.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies
 `cursor[offset] = value`; a mutable receiver prefers the mutable structural
 form when the active requirements prove both a read-only and a mutable one,
 mirroring concrete member selection.
+
+The four domain-value capabilities are spelled publicly as `std::addable`,
+`std::subtractable`, `std::negatable`, and `std::scalable_by`, and compose into
+`std::vector_space<T, Scalar>` together with `std::copyable<T>`.
+
+A borrowed operator result does not satisfy these capabilities: the produced
+value would be tied to a receiver whose lifetime the requirement cannot name.
+The operand may be declared by read-only reference or by value, which lets a
+domain type take a peer by reference and a scalar by value without either
+choice becoming part of the contract.
+
+This family is deliberately **member-only**, matching the language's
+member-only user-operator rule. A built-in numeric type therefore does not
+satisfy it — built-in arithmetic keeps its own checked semantics and its
+`std::numeric` contract, and admitting it here would resolve its operators as
+symbolic member calls and drop the canonical local failure outcomes that
+checked integer arithmetic must retain. Library functions that want to serve
+both worlds provide an exact built-in overload alongside the generic form, as
+`std::lerp` does.
 
 Copy construction is deliberately a separate lifecycle fact. A read-only
 owner-tied cursor may be copied into another independently positioned cursor
