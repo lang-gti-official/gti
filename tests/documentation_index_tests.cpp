@@ -61,6 +61,13 @@ private:
   int secret = 1;
 };
 
+/// A move-only documented owner.
+class owner {
+public:
+  owner(owner& other) = delete;
+  owner(owner&& other) = default;
+};
+
 /// Doubles a value.
 int twice(int value) {
   return value * 2;
@@ -158,6 +165,13 @@ int main() {
   expect(widget != nullptr && widget->traits &&
              widget->traits->ownership == "value",
          "type traits should be projected as presentation data");
+
+  const lang::DocumentationDeclaration *owner = findDeclaration(
+      projected.index, "std::owner", lang::DocumentationKind::Class);
+  expect(owner != nullptr && owner->traits && !owner->traits->copyable &&
+             owner->traits->movable,
+         "class traits should use effective lifecycle policy rather than "
+         "the declaration symbol's provisional field traits");
 
   const lang::DocumentationDeclaration *conceptEntry =
       findDeclaration(projected.index, "std::sample_copyable",
