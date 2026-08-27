@@ -6168,7 +6168,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (bindingKind != (obligation.binding != 0)) ||
         ((valueKind != (obligation.value != 0)) && !rollbackKind) ||
         (rollbackKind && (obligation.value != 0 || obligation.binding != 0)) ||
-        !exactFullExpression || (obligation.initiallyActive && !bindingKind) ||
+        !exactFullExpression ||
+        (obligation.initiallyActive && !bindingKind &&
+         !(rollbackKind && body.kind == MirBodyKind::Constructor)) ||
         (rollbackKind && body.kind == MirBodyKind::Constructor &&
          (place->root != MirPlaceRootKind::This ||
           place->projections.size() != 1 ||
@@ -6572,13 +6574,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             const MirLoan *published =
                 instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
             const MirLoan *retained = body.findLoan(operand.loan);
+            const bool storedCarrier =
+                retained != nullptr && retained->kind == MirLoanKind::Stored &&
+                retained->entry && retained->designatedField != 0;
+            const bool callResult =
+                retained != nullptr &&
+                retained->kind == MirLoanKind::CallResult && !retained->entry &&
+                !retained->escapes && retained->producedBy != 0;
             return instruction.kind != MirInstructionKind::Borrow ||
-                   instruction.operands.size() != 1 || operand.place != 0 ||
-                   published == nullptr ||
+                   instruction.operands.size() != 1 || published == nullptr ||
                    published->kind != MirLoanKind::Return ||
-                   retained == nullptr ||
-                   retained->kind != MirLoanKind::Stored || !retained->entry ||
-                   retained->designatedField == 0;
+                   (!storedCarrier &&
+                    (!callResult || operand.place != 0 || operand.value != 0));
           });
       if (instruction.id == 0 ||
           !instructionIds.insert(instruction.id).second ||
@@ -6860,8 +6867,39 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        const bool callResultReturnTransfer = [&] {
+          if (produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              source.type != instruction.info.type) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr ||
+              retained->kind != MirLoanKind::CallResult || retained->entry ||
+              retained->escapes || retained->producedBy == 0 ||
+              retained->source != produced.source ||
+              retained->access != produced.access) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
-             !storedCarrierReturnTransfer) ||
+             !storedCarrierReturnTransfer && !callResultReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,
@@ -16680,6 +16718,112 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     const MirClassInstance *constructorOwner =
         program.findClassInstance(instance.owner);
+    bool exactDefaultFieldRollbackEntry = constructorOwner != nullptr;
+    std::unordered_map<SymbolId, const MirDropObligation *>
+        defaultFieldRollbackSources;
+    if (constructorOwner != nullptr) {
+      for (const MirDropObligation &rollback :
+           constructorOwner->fieldInitializers.dropObligations) {
+        if (rollback.kind !=
+            MirDropObligationKind::ConstructionRollback) {
+          continue;
+        }
+        const MirPlace *place =
+            constructorOwner->fieldInitializers.findPlace(rollback.place);
+        const auto field = std::find_if(
+            constructorOwner->declaredFields.begin(),
+            constructorOwner->declaredFields.end(),
+            [&](const MirClassFieldInfo &candidate) {
+              return place != nullptr && candidate.field == place->binding &&
+                     candidate.symbol == place->symbol;
+            });
+        if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
+            !place->projections.empty() || rollback.initiallyActive ||
+            field == constructorOwner->declaredFields.end() ||
+            place->type != field->type ||
+            rollback.dropType.type != field->type ||
+            !defaultFieldRollbackSources
+                 .emplace(field->symbol, &rollback)
+                 .second) {
+          exactDefaultFieldRollbackEntry = false;
+        }
+      }
+    }
+
+    std::unordered_set<SymbolId> explicitlyInitializedFields;
+    for (const MirConstructorInitializer &initializer :
+         instance.initializers) {
+      if (initializer.kind == ConstructorInitializerTargetKind::Field &&
+          initializer.field != 0) {
+        explicitlyInitializedFields.insert(initializer.field);
+      }
+    }
+
+    std::vector<SymbolId> expectedDefaultRollbackOrder;
+    if (constructorOwner != nullptr &&
+        instance.definitionKind == MirDefinitionKind::Source) {
+      for (const MirClassFieldInfo &field : constructorOwner->declaredFields) {
+        if (field.dropKind == DropKind::Lexical &&
+            field.requiresActiveCleanup &&
+            !explicitlyInitializedFields.contains(field.symbol) &&
+            defaultFieldRollbackSources.contains(field.symbol)) {
+          expectedDefaultRollbackOrder.push_back(field.symbol);
+        }
+      }
+    }
+
+    std::vector<SymbolId> actualDefaultRollbackOrder;
+    std::unordered_set<SymbolId> actualDefaultRollbackFields;
+    for (const MirDropObligation &rollback :
+         instance.body.dropObligations) {
+      if (rollback.kind != MirDropObligationKind::ConstructionRollback ||
+          !rollback.initiallyActive) {
+        continue;
+      }
+      const MirPlace *place = instance.body.findPlace(rollback.place);
+      const MirClassFieldInfo *field = nullptr;
+      if (constructorOwner != nullptr && place != nullptr &&
+          place->projections.size() == 1) {
+        const SymbolId symbol = place->projections.front().field;
+        const auto found = std::find_if(
+            constructorOwner->declaredFields.begin(),
+            constructorOwner->declaredFields.end(),
+            [&](const MirClassFieldInfo &candidate) {
+              return candidate.symbol == symbol;
+            });
+        if (found != constructorOwner->declaredFields.end()) {
+          field = &*found;
+        }
+      }
+      const auto source =
+          field == nullptr
+              ? defaultFieldRollbackSources.end()
+              : defaultFieldRollbackSources.find(field->symbol);
+      if (place == nullptr || place->root != MirPlaceRootKind::This ||
+          place->projections.size() != 1 ||
+          place->projections.front().kind != MirProjectionKind::Field ||
+          field == nullptr || place->type != field->type ||
+          field->dropKind != DropKind::Lexical ||
+          !field->requiresActiveCleanup ||
+          explicitlyInitializedFields.contains(field->symbol) ||
+          source == defaultFieldRollbackSources.end() ||
+          source->second->dropType != rollback.dropType ||
+          !actualDefaultRollbackFields.insert(field->symbol).second) {
+        exactDefaultFieldRollbackEntry = false;
+        continue;
+      }
+      actualDefaultRollbackOrder.push_back(field->symbol);
+    }
+    exactDefaultFieldRollbackEntry =
+        exactDefaultFieldRollbackEntry &&
+        actualDefaultRollbackOrder == expectedDefaultRollbackOrder;
+    if (!exactDefaultFieldRollbackEntry) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Constructor,
+           .owner = instance.id,
+           .message = "constructor entry rollback obligations do not exactly "
+                      "match completed default field initializers"});
+    }
     const auto scalarInitializerType = [](const SemanticType &type) {
       switch (type.kind) {
       case SemanticType::Int8:

@@ -11162,6 +11162,35 @@ loanReferentType(const MirProgram &program, const MirBody &body,
   if (source == nullptr) {
     return std::nullopt;
   }
+  if (loan.kind == MirLoanKind::Return) {
+    const MirInstruction *producer = nullptr;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Borrow ||
+            !instruction.loan || *instruction.loan != loan.id) {
+          continue;
+        }
+        if (producer != nullptr) {
+          return std::nullopt;
+        }
+        producer = &instruction;
+      }
+    }
+    if (producer != nullptr && producer->operands.size() == 1 &&
+        producer->operands.front().kind == MirOperandKind::Loan) {
+      const MirOperand &runtime = producer->operands.front();
+      if (runtime.place != 0) {
+        const MirPlace *place = body.findPlace(runtime.place);
+        return place == nullptr ? std::nullopt
+                                : std::optional<SemanticType>{place->type};
+      }
+      const MirLoan *retained = body.findLoan(runtime.loan);
+      if (retained == nullptr || retained->id == loan.id) {
+        return std::nullopt;
+      }
+      return loanReferentType(program, body, *retained);
+    }
+  }
   if (loan.kind == MirLoanKind::CallResult) {
     const MirInstruction *producer = nullptr;
     for (const MirBlock &block : body.blocks) {
@@ -16224,6 +16253,17 @@ public:
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
+      if (loan.kind == MirLoanKind::Return) {
+        const std::optional<SemanticType> referent =
+            loanReferentType(program, facts.body, loan);
+        if (!referent) {
+          throw std::logic_error(
+              "verified MIR return loan lost its runtime referent type");
+        }
+        output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
+               << "{};\n";
+        continue;
+      }
       const SemanticType *loanedType = &source->type;
       if (source->type.kind == SemanticType::Reference) {
         if (source->type.arguments.size() != 1) {
@@ -17965,6 +18005,30 @@ private:
         writeIndent();
         output << "// GTI MIR stored-value return loan " << loan->id
                << " publishes in the returned class value\n";
+        return;
+      }
+      if (loan != nullptr && loan->kind == MirLoanKind::Return &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Loan) {
+        const MirOperand &runtime = instruction.operands.front();
+        output << "__gti_mir_loan_" << loan->id << " = ";
+        if (runtime.place != 0) {
+          const MirPlace *place = facts.body.findPlace(runtime.place);
+          if (place == nullptr) {
+            throw std::logic_error(
+                "verified MIR return loan lost its runtime place");
+          }
+          output << '&';
+          emitStoragePlaceValue(facts, *place);
+        } else {
+          const MirLoan *retained = facts.body.findLoan(runtime.loan);
+          if (retained == nullptr) {
+            throw std::logic_error(
+                "verified MIR return loan lost its runtime source loan");
+          }
+          output << "__gti_mir_loan_" << retained->id;
+        }
+        output << ";\n";
         return;
       }
       if (loan != nullptr &&
@@ -25312,7 +25376,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         return false;
       }
     }
-    if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
+    if (loan.kind == MirLoanKind::Return) {
+      const std::optional<SemanticType> referent =
+          loanReferentType(program_, body, loan);
+      const bool represented =
+          referent && std::any_of(
+                          representations_.types().begin(),
+                          representations_.types().end(),
+                          [&](const CppMirTypeRepresentation &row) {
+                            return row.type == *referent &&
+                                   !row.spelling.empty();
+                          });
+      if (!represented) {
+        return false;
+      }
+      continue;
+    }
+    if (loan.kind == MirLoanKind::Local) {
       continue;
     }
     if (loan.kind == MirLoanKind::CallArgument) {

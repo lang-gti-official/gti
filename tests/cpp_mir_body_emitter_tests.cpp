@@ -1848,6 +1848,26 @@ int32_t main() {
   if (ownerConstructor == nullptr) {
     return;
   }
+  const std::size_t defaultFieldRollbacks = std::count_if(
+      ownerConstructor->body.dropObligations.begin(),
+      ownerConstructor->body.dropObligations.end(),
+      [](const lang::MirDropObligation &drop) {
+        return drop.kind ==
+                   lang::MirDropObligationKind::ConstructionRollback &&
+               drop.initiallyActive;
+      });
+  expect(defaultFieldRollbacks == 1,
+         "the completed owning in-class initializer should enter Holder's "
+         "constructor as one active rollback obligation");
+  const lang::CppMirBodyEmissionAnalysis constructorAnalysis =
+      emitter.analyze({.kind = lang::MirBodyKind::Constructor,
+                       .owner = ownerConstructor->id});
+  expect(constructorAnalysis.ready() &&
+             !hasIssue(constructorAnalysis,
+                       lang::CppMirBodyEmissionIssueKind::
+                           MissingPartialConstructionRollbackMir),
+         "the body emitter should consume the verified default-field "
+         "rollback instead of reporting a construction gap");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,

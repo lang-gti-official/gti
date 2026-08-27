@@ -30990,6 +30990,178 @@ int main() {
          "the rollback-bearing field-initializer program should verify");
 }
 
+void testDefaultFieldRollbackEntersConstructor() {
+  const std::string source = R"(
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Bundle {
+public:
+  Resource held = Resource(5);
+  int32_t checked = 0;
+  Bundle(int32_t seed) : checked(seed + seed) {}
+};
+
+int main() {
+  Bundle bundle = Bundle(4);
+  return bundle.held.value + bundle.checked - 13;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("default-field-constructor-rollback.gti", source);
+  expect(frontend.canGenerateCode(),
+         "a constructor with an owning default field should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *bundleConstructor = nullptr;
+  const lang::MirDropObligation *entryRollback = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    for (const lang::MirDropObligation &drop :
+         constructor.body.dropObligations) {
+      if (drop.kind ==
+              lang::MirDropObligationKind::ConstructionRollback &&
+          drop.initiallyActive) {
+        bundleConstructor = &constructor;
+        entryRollback = &drop;
+      }
+    }
+  }
+  expect(bundleConstructor != nullptr && entryRollback != nullptr,
+         "the completed in-class initializer should enter the constructor "
+         "as one active rollback obligation");
+  if (bundleConstructor == nullptr || entryRollback == nullptr) {
+    return;
+  }
+
+  const lang::MirClassInstance *owner =
+      frontend.mir.findClassInstance(bundleConstructor->owner);
+  const lang::MirPlace *entryPlace =
+      bundleConstructor->body.findPlace(entryRollback->place);
+  expect(owner != nullptr && entryPlace != nullptr &&
+             entryPlace->root == lang::MirPlaceRootKind::This &&
+             entryPlace->projections.size() == 1 &&
+             entryPlace->projections.front().kind ==
+                 lang::MirProjectionKind::Field,
+         "the constructor-entry rollback should name one exact This-rooted "
+         "field");
+  if (owner == nullptr || entryPlace == nullptr ||
+      entryPlace->projections.size() != 1) {
+    return;
+  }
+
+  const lang::SymbolId fieldSymbol = entryPlace->projections.front().field;
+  std::size_t matchingInitializerRollbacks = 0;
+  for (const lang::MirDropObligation &drop :
+       owner->fieldInitializers.dropObligations) {
+    const lang::MirPlace *place = owner->fieldInitializers.findPlace(drop.place);
+    matchingInitializerRollbacks +=
+        drop.kind == lang::MirDropObligationKind::ConstructionRollback &&
+                place != nullptr &&
+                place->root == lang::MirPlaceRootKind::Binding &&
+                place->symbol == fieldSymbol &&
+                drop.dropType == entryRollback->dropType
+            ? 1
+            : 0;
+  }
+  expect(matchingInitializerRollbacks == 1,
+         "constructor-entry rollback must be copied from one exact completed "
+         "field-initializer schedule");
+
+  bool failureDropsField = false;
+  bool normalTransfersField = false;
+  for (const lang::MirBlock &block : bundleConstructor->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+        failureDropsField =
+            failureDropsField ||
+            (block.failureParameter != 0 &&
+             event.kind == lang::MirLifecycleEventKind::Drop &&
+             event.source == entryRollback->id && event.failureCleanup);
+        normalTransfersField =
+            normalTransfersField ||
+            (block.failureParameter == 0 &&
+             event.kind == lang::MirLifecycleEventKind::TransferOut &&
+             event.source == entryRollback->id && !event.failureCleanup);
+      }
+    }
+  }
+  expect(failureDropsField && normalTransfersField,
+         "failure must drop the default field and normal completion must "
+         "transfer it to the completed object");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "the default-field constructor rollback program should verify");
+
+  lang::MirProgram forged = frontend.mir;
+  auto &constructors =
+      const_cast<std::vector<lang::MirConstructorInstance> &>(
+          forged.constructorInstances());
+  bool forgedField = false;
+  for (lang::MirConstructorInstance &constructor : constructors) {
+    for (const lang::MirDropObligation &drop :
+         constructor.body.dropObligations) {
+      if (drop.kind !=
+              lang::MirDropObligationKind::ConstructionRollback ||
+          !drop.initiallyActive) {
+        continue;
+      }
+      auto &places = const_cast<std::vector<lang::MirPlace> &>(
+          constructor.body.places);
+      places[drop.place - 1].projections.front().field = fieldSymbol + 1;
+      forgedField = true;
+    }
+  }
+  expect(forgedField && !lang::verifyMirProgram(forged).valid(),
+         "the program verifier should reject an entry rollback that is not "
+         "derived from its owner's exact field-initializer schedule");
+
+  const lang::FrontendResult overridden = lang::Frontend().analyze(
+      "overridden-default-field-constructor.gti", R"(
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+class Bundle {
+public:
+  Resource held = Resource(5);
+  Bundle(int32_t seed) : held(Resource(seed)) {}
+};
+int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }
+)");
+  expect(overridden.canGenerateCode(),
+         "an explicit initializer should continue to override the in-class "
+         "initializer");
+  if (overridden.canGenerateCode()) {
+    bool inheritedDefaultRollback = false;
+    for (const lang::MirConstructorInstance &constructor :
+         overridden.mir.constructorInstances()) {
+      inheritedDefaultRollback =
+          inheritedDefaultRollback ||
+          std::any_of(constructor.body.dropObligations.begin(),
+                      constructor.body.dropObligations.end(),
+                      [](const lang::MirDropObligation &drop) {
+                        return drop.kind ==
+                                   lang::MirDropObligationKind::
+                                       ConstructionRollback &&
+                               drop.initiallyActive;
+                      });
+    }
+    expect(!inheritedDefaultRollback &&
+               lang::verifyMirProgram(overridden.mir).valid(),
+           "an explicitly initialized field must not also inherit its "
+           "default-field rollback state");
+  }
+}
+
 void testOwnedParameterStageArmsRollback() {
   const std::string source = R"(
 class Resource {
@@ -32449,6 +32621,13 @@ int main(int argc, char **argv) {
     testReadOnlyReceiverDiagnostics();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "construction-rollback") {
+    testConstructorPartialRollbackRepresentation();
+    testOwnedParameterStageArmsRollback();
+    testFieldInitializerRollbackAndFailureEdges();
+    testDefaultFieldRollbackEntersConstructor();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "operators") {
     testRestrictedMemberOperators();
     return failures == 0 ? 0 : 1;
@@ -32461,6 +32640,7 @@ int main(int argc, char **argv) {
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
+  testDefaultFieldRollbackEntersConstructor();
   testFrontendStopPhase();
   testToolingOccurrenceOptOut();
   testTargetTripleParsing();

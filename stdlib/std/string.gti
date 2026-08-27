@@ -1,4 +1,5 @@
 #include <std/iterator>
+#include <std/span>
 
 // The storage-backed value, capacity, and indexed operations are implemented.
 // A dynamic string_view remains unavailable until views can retain an
@@ -149,6 +150,11 @@ namespace std {
 
     detail::storage_sentinel end() {
       return detail::storage_sentinel(this.count);
+    }
+
+    /// Returns a checked read-only character view tied to this string.
+    span<char> as_span() {
+      return span<char>(this.data, size_t(0), this.count);
     }
 
     char& at(int index) {

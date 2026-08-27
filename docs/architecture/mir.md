@@ -720,8 +720,16 @@ owning declaration initializers arm rollback on the field's binding place
 (their place domain roots fields in bindings rather than `this`), they route
 defined-failure edges under the same body-wide unarmed-transfer rule, and
 the emission analysis treats a fully armed body as carrying its complete
-construction schedule. Base subobjects, static-field initializer bodies,
-and the destructor double-failure envelope remain M-FAIL-01 work.
+construction schedule. A source constructor receives every unoverridden,
+active-cleanup field completed by that schedule as an initially active
+`ConstructionRollback` on the corresponding This-rooted field place. Program
+verification requires a unique matching field-initializer obligation with the
+same owner, field identity, type, and cleanup descriptor; an explicit
+constructor initializer suppresses the default entry obligation. The
+constructor then drains those fields on failure or transfers them to the
+completed object on success without a backend reconstructing source
+initialization. Base subobjects, static-field initializer bodies, and the
+destructor double-failure envelope remain M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters

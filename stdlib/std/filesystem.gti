@@ -36,9 +36,6 @@ namespace std {
       path(path& other) = delete;
       path(path&& other) = default;
 
-      // Construction from text. Callers on a compiler predating the class-value
-      // constructor emission fix should use `path()` followed by `assign()`,
-      // which is equivalent and is itself part of the C++ surface.
       /// Constructs a path containing `source` exactly as supplied.
       path(std::string_view source) {
         this.text.append(source);
