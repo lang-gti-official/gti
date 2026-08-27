@@ -7,15 +7,17 @@ over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
 lookup or type inference.
 
-`include/gti/semantic_analyzer.h` exposes snapshot-owned semantic records,
-`SemanticModel`, and the narrow `SemanticVisitor` analysis/query facade.
-Declaration registration, lookup, overload selection, flow/lifecycle analysis,
-generic reanalysis, and AST visitor algorithms compile once in
-`src/compiler/semantic_analyzer.cpp`. Snapshot/database operations and shared
-place, trait, extent, and intrinsic classifications compile in
-`src/compiler/semantic_model.cpp`; canonical type rendering compiles in
-`src/compiler/semantic_type_printer.cpp`. Consumers cannot depend on mutable
-analysis state or visitor internals.
+The public dependency boundary has three layers. `semantic_core.h` owns IDs,
+places, semantic types, traits, and basic expression/binding facts.
+`semantic_model.h` owns published records, `SemanticDatabase`, `SemanticModel`,
+queries, and instance-analysis results. `semantic_analyzer.h` is the narrow
+`SemanticVisitor`/`SemanticInstanceProvider` facade. HIR, the frontend result,
+backends, drivers, and LSP state include the model or core contract rather than
+the facade. Declaration registration, lookup, overload selection,
+flow/lifecycle analysis, generic reanalysis, and AST visitor algorithms compile
+in `src/compiler/semantic_analyzer.cpp`. Snapshot/database operations compile
+in `src/compiler/semantic_model.cpp`; canonical type rendering compiles in
+`src/compiler/semantic_type_printer.cpp`.
 
 ## Analysis Order
 
@@ -33,8 +35,9 @@ on declaration-wide registration. It currently:
    summaries;
 6. derives transfer/share facts and validates inherited interface capability
    requirements;
-7. records class types and lifecycle facts;
-8. analyzes declaration bodies in lexical scopes;
+7. records class types and lifecycle facts, then seals the declaration catalog;
+8. copies namespace-symbol value state into the body-owned value-flow session
+   and analyzes declaration bodies in lexical scopes;
 9. finalizes callable forwarding and argument contracts; and
 10. finalizes the program-initialization plan and semantic occurrences.
 
@@ -45,12 +48,24 @@ analysis, and finalization—not only a visitor method.
 ## Request Sessions
 
 One call to either public `SemanticVisitor::check` overload owns one complete
-semantic request session. `SemanticVisitor::Impl::RequestSessionState` is the
-single mutable owner for diagnostics, `SemanticModel`, scopes and declaration
-indexes, AST-keyed facts, substitutions, loan/value-flow state, contextual
-types, program effects, and request-local identity counters. Both program and
+semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
+private `SemanticCatalog`, one published `SemanticModel`, diagnostics,
+substitutions, contextual state, program effects, and the body-scoped
+`ConstexprInterpreter`, `LoanFlowState`, and `ValueFlowState`. Both program and
 standalone-expression analysis enter through the same `resetRequestState`
 operation before publishing any result.
+
+Registration mutates `SemanticCatalog` in the ordered prepasses above. It owns
+namespace and visibility indexes, aliases, concepts, classes, enums,
+inheritance/member tables, exact specializations, native declarations, generic
+parameter identities, and one stable `CallableDeclaration` per source
+function. `FunctionInfo` publication is one explicit projection from that
+record. Overload resolution copies only a bounded `CallableCandidate` view for
+type substitution, receiver/access, dispatch, borrow-result, and viability
+state. The catalog is sealed before body visitation; body namespace value state
+is a `ValueFlowState` copy, constexpr binding values remain model/body facts,
+and a seal-shape assertion guards body and concrete-instance analysis against
+catalog insertion or identity drift.
 
 The selected target, source-graph pointer, tooling-occurrence mode, and metrics
 sink are visitor configuration and remain outside the session. Reusing a
@@ -59,11 +74,11 @@ IDs, AST pointers, flow facts, diagnostics, or return/expression context from a
 previous check. Concrete-instance analysis still operates against the current
 snapshot; it does not establish an unrelated public request.
 
-Borrow-summary publication builds one `FunctionId`-to-candidate index after
-declaration registration and updates only the candidate rows for each resolved
-function. It does not rescan every namespace/member overload table once per
-function. The index is analysis-local and contains no durable or cached symbol
-identity.
+Borrow-summary publication builds one `FunctionId`-to-candidate index during
+registration and updates the catalog declaration plus only the candidate views
+for that resolved function. It does not rescan every namespace/member overload
+table once per function. The index is request-local and contains no durable or
+process-global identity.
 
 Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
@@ -257,6 +272,12 @@ instances. Concrete substitutions revalidate ownership, value parameters,
 packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
+
+`HirLowerer` receives the immutable base `SemanticModel` and a narrow
+`SemanticInstanceProvider`; it cannot start a fresh semantic request or mutate
+the visitor facade. The provider adapts the existing request-local
+delta/rebase bracket and reads the sealed catalog while producing an instance
+model and diagnostics.
 
 Default expressions do not supply missing generic inference evidence. Once
 written arguments select a concrete instance, instance analysis rechecks the
