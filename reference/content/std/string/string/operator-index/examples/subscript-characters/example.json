@@ -1,0 +1,6 @@
+{
+  "title": "Use checked subscript syntax",
+  "description": "Updates one character through the mutable subscript overload.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

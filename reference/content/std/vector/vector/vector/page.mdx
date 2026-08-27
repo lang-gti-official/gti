@@ -1,0 +1,26 @@
+---
+title: std::vector::vector
+description: Constructs an empty, sized, initialized, or moved vector; implicit copying is deleted.
+kind: member
+since: 0.80.0
+api:
+  - std/vector|constructor|std::vector::vector
+examples:
+  - construct-vectors
+---
+
+Creates a vector in one of the supported initial states.
+
+- `vector()` creates an empty vector with no reserved elements.
+- `vector(initial_size)` creates that many default-initialized elements.
+- `vector(T[N] initial)` copies or transfers a contextual fixed array into
+  contiguous storage.
+- Move construction is defaulted and transfers the allocation.
+- Copy construction is deleted. Use `clone()` for an explicit independent copy
+  when `T` is copyable.
+
+The element type must satisfy `std::movable` and must not retain borrowed
+state.
+
+The constructor group dates to `0.80.0`; the contextual fixed-array overload
+was added in `0.130.0`.

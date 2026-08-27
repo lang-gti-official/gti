@@ -1,15 +1,5 @@
 import type { ReferenceExample } from "@/content/types";
-
-function modeLabel(example: ReferenceExample): string {
-  switch (example.mode) {
-    case "compile":
-      return "compile checked";
-    case "run":
-      return "compiled and run";
-    case "diagnostic":
-      return "diagnostic checked";
-  }
-}
+import { HighlightedCode } from "@/highlighting/HighlightedCode";
 
 export function ExampleReference({
   examples,
@@ -22,7 +12,6 @@ export function ExampleReference({
   return (
     <section className="examples-reference" aria-labelledby="examples-heading">
       <div className="section-heading">
-        <p className="section-kicker">Page-owned programs</p>
         <h2 id="examples-heading">
           {examples.length === 1 ? "Example" : "Examples"}
         </h2>
@@ -34,13 +23,10 @@ export function ExampleReference({
               <h3>{example.title}</h3>
               <p>{example.description}</p>
             </div>
-            <span className="verification-badge">{modeLabel(example)}</span>
           </header>
           <div className="code-panel">
             <div className="code-panel-label">GTI</div>
-            <pre>
-              <code>{example.sourceText}</code>
-            </pre>
+            <HighlightedCode code={example.sourceText} language="gti" />
           </div>
           {example.mode === "run" && example.expectedStdout !== undefined ? (
             <div className="output-panel">

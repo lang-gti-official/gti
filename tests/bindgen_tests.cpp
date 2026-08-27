@@ -90,18 +90,19 @@ int always(void);
          "the guarded declaration should survive preprocessing");
   expect(!contains(printed, "win_only"),
          "the false conditional should exclude its declarations");
+  expect(contains(printed, "constant MAGIC = 42"),
+         "the object-like integer macro should import as a constant");
+  expect(!contains(printed, "GUARD_H"),
+         "the include guard's empty macro should stay out of the model");
   bool sawInclude = false;
-  bool sawMacro = false;
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : read.diagnostics) {
     sawInclude = sawInclude || contains(diagnostic.message, "#include");
-    sawMacro = sawMacro || contains(diagnostic.message, "macro definitions");
     // Conditionals evaluate natively now; the bounded reader's
     // conditional-block policy note is gone.
     expect(!contains(diagnostic.message, "conditional block"),
            "conditionals should evaluate without a policy note");
   }
-  expect(sawInclude && sawMacro,
-         "include and macro policies should each report");
+  expect(sawInclude, "the unresolved include policy should report");
 }
 
 // Native C errors surface as reader diagnostics, and the declaration that
@@ -590,6 +591,182 @@ int engine_variadic(const char *format, ...);
          "the skip report should name what was not imported");
 }
 
+// Object-like integer macros import as constants: literal bases and
+// suffixes, operator expressions, references to earlier macro constants,
+// and C redefinition (latest value at the first position). Function-like
+// macros and include guards are code and structure, never constants; an
+// object-like macro that does not evaluate is noted, not approximated.
+void testMacroConstantImport() {
+  const lang::bindgen::BindgenResult result =
+      lang::bindgen::runCBindgen(R"(
+#define BASE 3
+#define HEXFLAG 0x40
+#define SHIFTED (1 << 5)
+#define COMBINED (BASE | HEXFLAG)
+#define NEGATIVE (-BASE)
+#define SUFFIXED 7ull
+#define WIDE 5000000000
+#define REDEFINED 1
+#undef REDEFINED
+#define REDEFINED 2
+#define GUARD_ONLY
+#define CALL(x) ((x) + 1)
+#define STRINGY "text"
+#define FLOATY 1.5
+#define TOO_BIG 0xffffffffffffffff
+int use_base(int value);
+)",
+                                 "constants.h");
+  expect(result.usable(), "the macro header should read");
+  const std::string &source = result.gtiSource;
+  expect(contains(source, "constexpr int32_t BASE = 3;"),
+         "a plain integer macro should import");
+  expect(contains(source, "constexpr int32_t HEXFLAG = 64;"),
+         "a hex literal should evaluate");
+  expect(contains(source, "constexpr int32_t SHIFTED = 32;"),
+         "a shift expression should evaluate");
+  expect(contains(source, "constexpr int32_t COMBINED = 67;"),
+         "a reference to earlier macro constants should resolve");
+  expect(contains(source, "constexpr int32_t NEGATIVE = int32_t(-3);"),
+         "a negative value should emit through a conversion");
+  expect(contains(source, "constexpr int32_t SUFFIXED = 7;"),
+         "integer suffixes should strip");
+  expect(contains(source, "constexpr int64_t WIDE = 5000000000;"),
+         "a value beyond int32 should widen to int64_t");
+  expect(contains(source, "constexpr int32_t REDEFINED = 2;"),
+         "redefinition should keep the latest value");
+  expect(!contains(source, "GUARD_ONLY") && !contains(source, "CALL"),
+         "guards and function-like macros should stay silent");
+  expect(!contains(source, "STRINGY = ") && !contains(source, "FLOATY = ") &&
+             !contains(source, "TOO_BIG"),
+         "non-integer and out-of-range macros should not import");
+  bool notedString = false;
+  for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
+    notedString =
+        notedString || contains(diagnostic.message,
+                                "'STRINGY' is not a bounded integer constant");
+  }
+  expect(notedString,
+         "a non-evaluable object-like macro should be noted, not dropped");
+}
+
+// An inline function-pointer parameter or field binds through a synthesized
+// named callback alias — the language's own admitted form — deduplicated by
+// shape and emitted before its first use. A shape the bounded ABI cannot
+// express still skips with its reason, and a skipped declaration leaves no
+// orphaned alias behind.
+void testSynthesizedCallbackAliases() {
+  const lang::bindgen::BindgenResult result =
+      lang::bindgen::runCBindgen(R"(
+typedef struct Engine Engine;
+void engine_on_event(Engine *engine, void (*handler)(int code));
+void engine_on_error(Engine *engine, void (*handler)(int code));
+typedef struct Hooks { void (*on_tick)(void *user); } Hooks;
+void engine_bad(void (*handler)(int code), char *broken);
+int engine_no_proto(void (*handler)());
+)",
+                                 "hooks.h");
+  expect(result.usable(), "the callback header should read");
+  const std::string &source = result.gtiSource;
+  expect(
+      contains(source, "using engine_on_event_handler_fn = (int32_t) -> void;"),
+      "the inline function pointer should synthesize a named alias");
+  expect(contains(source, "engine_on_event(Engine* engine, "
+                          "engine_on_event_handler_fn handler)"),
+         "the parameter should spell the synthesized alias");
+  expect(contains(source, "engine_on_error(Engine* engine, "
+                          "engine_on_event_handler_fn handler)"),
+         "an identical shape should reuse the first alias");
+  expect(!contains(source, "engine_on_error_handler_fn"),
+         "no second alias should exist for the same shape");
+  expect(contains(source, "using Hooks_on_tick_fn = (void*) -> void;") &&
+             contains(source, "mut Hooks_on_tick_fn on_tick;"),
+         "a function-pointer field should bind through a synthesized alias");
+  expect(contains(source, "[[c_abi]]\nstruct Hooks {"),
+         "the callback field should keep the record on the [[c_abi]] path");
+  const lang::bindgen::BindingItem *bad = findItem(result.plan, "engine_bad");
+  expect(bad != nullptr && bad->kind == lang::bindgen::BindingItemKind::Skipped,
+         "the declaration with an unbindable second parameter should skip");
+  expect(!contains(source, "engine_bad_handler_fn"),
+         "a skipped declaration should leave no orphaned alias");
+  const lang::bindgen::BindingItem *noProto =
+      findItem(result.plan, "engine_no_proto");
+  expect(noProto != nullptr &&
+             noProto->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(noProto->reason, "without a prototype"),
+         "a prototype-less function pointer should skip with its reason");
+  const std::size_t aliasAt = source.find("using engine_on_event_handler_fn");
+  const std::size_t useAt = source.find("engine_on_event(Engine*");
+  expect(aliasAt != std::string::npos && useAt != std::string::npos &&
+             aliasAt < useAt,
+         "the synthesized alias should emit before its first use");
+}
+
+// Read-only string arrays (`const char* const*`) share the language's
+// c_string* spelling with `const char**` out parameters; a writable char**
+// stays outside the bounded surface.
+void testStringArrayParameters() {
+  const lang::bindgen::BindgenResult result =
+      lang::bindgen::runCBindgen(R"(
+int run_tool(const char *const *arguments, int count);
+int take_out(const char **out_message);
+int take_writable(char **buffers);
+)",
+                                 "argv.h");
+  expect(result.usable(), "the string-array header should read");
+  const std::string &source = result.gtiSource;
+  expect(contains(source, "run_tool(c_string* arguments, int32_t count)"),
+         "a const char* const* parameter should bind as c_string*");
+  expect(contains(source, "take_out(c_string* out_message)"),
+         "the const char** out parameter should stay bound");
+  const lang::bindgen::BindingItem *writable =
+      findItem(result.plan, "take_writable");
+  expect(writable != nullptr &&
+             writable->kind == lang::bindgen::BindingItemKind::Skipped,
+         "a writable char** should stay outside the bounded surface");
+}
+
+// Shapes real system headers exposed: a use must never spell a typedef the
+// plan skipped (it spells the canonical type instead), C prototype-scoped
+// forward references of one tag collapse to one handle, and a record whose
+// name GTI cannot spell (an interior '__') poisons every use instead of
+// emitting an invalid declaration.
+void testRealHeaderShapes() {
+  const lang::bindgen::BindgenResult result =
+      lang::bindgen::runCBindgen(R"(
+typedef struct Info Info;
+typedef Info **InfoHandle;
+void info_init(InfoHandle handle);
+int first_use(struct SharedTag *tag);
+int second_use(struct SharedTag *tag);
+struct util__queue { int head; };
+int queue_size(struct util__queue *queue);
+)",
+                                 "shapes.h");
+  expect(result.usable(), "the shapes header should read");
+  const std::string &source = result.gtiSource;
+  expect(contains(source, "info_init(Info** handle)"),
+         "a use of a skipped Handle** typedef should spell the canonical "
+         "out-parameter form");
+  expect(!contains(source, "InfoHandle handle"),
+         "the skipped typedef name should not appear at a use site");
+  std::size_t handles = 0;
+  for (std::size_t at = source.find("[[c_opaque]] struct SharedTag;");
+       at != std::string::npos;
+       at = source.find("[[c_opaque]] struct SharedTag;", at + 1)) {
+    ++handles;
+  }
+  expect(handles == 1,
+         "prototype-scoped forward references should collapse to one handle");
+  expect(!contains(source, "struct util__queue {"),
+         "a record with a reserved '__' spelling should not emit");
+  const lang::bindgen::BindingItem *use = findItem(result.plan, "queue_size");
+  expect(use != nullptr &&
+             use->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(use->reason, "__"),
+         "a use of the reserved-spelling record should skip with the reason");
+}
+
 // -- Frontend acceptance ----------------------------------------------------
 
 // The closing gate: generated bindings must be accepted by the real
@@ -599,6 +776,8 @@ void testGeneratedBindingsCompile() {
       lang::bindgen::runCBindgen(R"(
 #ifndef DEVICE_H
 #define DEVICE_H
+#define DEVICE_MAGIC 0x40
+#define DEVICE_MASK (DEVICE_MAGIC | 0x3)
 typedef struct Device Device;
 typedef struct Extent { unsigned int width; unsigned int height; } Extent;
 typedef struct Report { long long stamp; Extent extent; void *user; } Report;
@@ -622,6 +801,8 @@ int device_channels(const Device *restrict device,
                     Channels *restrict out_channels);
 const char *device_vendor(const Device *device);
 void device_on_lost(Device *device, DeviceLostCallback callback);
+void device_watch(Device *device, void (*observer)(int event, void *user));
+int device_run(const char *const *arguments, int count);
 #endif
 )",
                                  "device.h");
@@ -662,6 +843,10 @@ int main() {
   testTargetDataModels();
   testEnumAndTypedefPlanning();
   testWriterShapeAndDeterminism();
+  testMacroConstantImport();
+  testSynthesizedCallbackAliases();
+  testStringArrayParameters();
+  testRealHeaderShapes();
   testGeneratedBindingsCompile();
   if (failures != 0) {
     std::cerr << failures << " bindgen test failure(s)\n";

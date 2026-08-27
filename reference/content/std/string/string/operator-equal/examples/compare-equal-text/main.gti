@@ -1,0 +1,9 @@
+#include <std/string>
+
+int main() {
+  std::string text = std::string("same");
+  if (text == "same") {
+    std::println("equal");
+  }
+  return 0;
+}

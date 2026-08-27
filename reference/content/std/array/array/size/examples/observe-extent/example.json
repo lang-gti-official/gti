@@ -1,0 +1,6 @@
+{
+  "title": "Observe the exact extent",
+  "description": "Reads the value-generic element count as std::size_t.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

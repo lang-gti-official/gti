@@ -1,0 +1,6 @@
+{
+  "title": "Stop at the vector sentinel",
+  "description": "Counts elements by advancing from begin until end is reached.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

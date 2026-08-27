@@ -8,6 +8,28 @@ import { referencePages } from "@/generated/reference-pages";
 
 export const dynamicParams = false;
 
+const detailRoutes = new Map<string, string>();
+for (const page of referencePages) {
+  if (
+    (page.metadata.kind === "member" ||
+      page.metadata.kind === "function" ||
+      page.metadata.kind === "concept") &&
+    page.metadata.api.length === 1
+  ) {
+    detailRoutes.set(page.metadata.api[0], page.route);
+  }
+  if (page.metadata.kind === "type") {
+    const typeDeclaration = page.apiDeclarations.find((declaration) =>
+      ["class", "struct", "interface", "union", "enum"].includes(
+        declaration.kind,
+      ),
+    );
+    if (typeDeclaration) {
+      detailRoutes.set(typeDeclaration.groupKey, page.route);
+    }
+  }
+}
+
 export function generateStaticParams() {
   return referencePages.map((page) => ({ slug: page.route.split("/") }));
 }
@@ -79,11 +101,20 @@ export default async function ReferencePage({
         </ol>
       </nav>
       <header className="page-heading">
-        <p className="eyebrow">{page.metadata.kind.replaceAll("-", " ")}</p>
+        <div className="page-version-row">
+          <p className="eyebrow">{page.metadata.kind.replaceAll("-", " ")}</p>
+          {page.metadata.since ? (
+            <span className="since-tag">since {page.metadata.since}</span>
+          ) : null}
+        </div>
         <h1>{page.metadata.title}</h1>
         <p className="summary">{page.metadata.description}</p>
       </header>
-      <ApiReference declarations={page.apiDeclarations} />
+      <ApiReference
+        declarations={page.apiDeclarations}
+        detailRoutes={detailRoutes}
+        currentRoute={page.route}
+      />
       <div className="reference-prose">
         <Content />
       </div>

@@ -1,0 +1,14 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({1, 2, 3});
+
+  for (mut int32_t& value : values) {
+    value *= 2;
+  }
+  for (int32_t value : values) {
+    std::println(value);
+  }
+  return 0;
+}

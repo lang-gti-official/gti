@@ -1,0 +1,6 @@
+{
+  "title": "Test empty and non-empty owners",
+  "description": "Checks logical size without inspecting reserved capacity.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

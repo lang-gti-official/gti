@@ -1,0 +1,6 @@
+{
+  "title": "Test a zero-extent array",
+  "description": "Uses empty to distinguish zero and nonzero value-generic extents.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

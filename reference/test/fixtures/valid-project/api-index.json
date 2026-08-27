@@ -30,6 +30,25 @@
       },
       "mutableBinding": false,
       "staticMember": false
+    },
+    {
+      "key": "std/vector|method|std::vector::size|uint64_t std::vector::size()",
+      "groupKey": "std/vector|method|std::vector::size",
+      "kind": "method",
+      "name": "size",
+      "qualifiedName": "std::vector::size",
+      "ownerQualifiedName": "std::vector",
+      "signature": "uint64_t std::vector::size()",
+      "documentationMarkdown": "Returns the number of live elements.",
+      "traits": null,
+      "source": {
+        "unit": "std/vector",
+        "line": 114,
+        "start": 3036,
+        "end": 3040
+      },
+      "mutableBinding": false,
+      "staticMember": false
     }
   ]
 }

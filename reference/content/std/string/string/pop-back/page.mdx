@@ -1,0 +1,13 @@
+---
+title: std::string::pop_back
+description: Removes the final character from a non-empty string.
+kind: member
+since: 0.105.0
+api:
+  - std/string|method|std::string::pop_back
+examples:
+  - remove-last-character
+---
+
+The operation decreases size by one without promising to reduce capacity.
+Calling it on an empty string follows the defined bounds-failure path.

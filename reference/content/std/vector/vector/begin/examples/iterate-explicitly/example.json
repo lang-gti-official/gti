@@ -1,0 +1,6 @@
+{
+  "title": "Advance a read-only cursor",
+  "description": "Uses begin and end directly to total the stored values.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

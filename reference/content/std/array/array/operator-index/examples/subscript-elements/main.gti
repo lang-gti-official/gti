@@ -1,0 +1,10 @@
+#include <std/array>
+
+int main() {
+  mut std::array<int32_t, 3> values =
+      std::array<int32_t, 3>({2, 3, 4});
+  values[std::size_t(1)] = 30;
+  std::println(values[std::size_t(0)] + values[std::size_t(1)] +
+               values[std::size_t(2)]);
+  return 0;
+}

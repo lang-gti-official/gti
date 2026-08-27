@@ -163,6 +163,10 @@ std::string printNativeModel(const NativeModel &model) {
       out << '\n';
       break;
     }
+    case NativeDeclarationKind::Constant:
+      out << "constant " << declaration->name << " = "
+          << declaration->constantValue << '\n';
+      break;
     }
   }
   return out.str();

@@ -1,0 +1,14 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({4, 7, 9});
+
+  std::println(values.at(std::size_t(1)));
+  {
+    mut int32_t& selected = values.at(std::size_t(1));
+    selected = 8;
+  }
+  std::println(values.at(std::size_t(1)));
+  return 0;
+}
