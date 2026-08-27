@@ -2960,6 +2960,18 @@ private:
     }
   }
 
+  // A plain (non-compound) store through an overloaded subscript or
+  // dereference target. Such a store never reads the prior element value, so
+  // its exclusive receiver-tied loan is confined to the commit: the right
+  // operand is evaluated, and its transient element loans end, before the
+  // checked access call that begins the write loan. A compound store must
+  // instead read the stabilized prior value through the once-formed target
+  // before its right operand, so it cannot take this schedule.
+  [[nodiscard]] static bool plainOverloadedBorrowStore(const HirValue &value) {
+    return !value.operation ||
+           assignmentOperation(*value.operation) == MirOperation::Assign;
+  }
+
   [[nodiscard]] static MirOperation
   orderedCompoundArithmetic(MirOperation assignment) {
     switch (assignment) {
@@ -5047,6 +5059,21 @@ private:
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
         if (overloadedBorrowStore) {
+          // Target-first operand evaluation with a commit-time element loan:
+          // the receiver place and the index value are formed before the
+          // right operand, and for a plain store the checked subscript call
+          // that begins the exclusive receiver-tied loan is deferred until
+          // the right operand has been evaluated and its transient element
+          // loans have ended. This mirrors the fixed-array element store,
+          // whose commit performs the checked write after the right operand,
+          // so `values[i] = values[i] + delta` reads before the write loan
+          // begins instead of failing loan verification.
+          emitPlaceDependencies(value->operands[0]);
+          (void)valueOperand(value->operands[1]);
+          if (plainOverloadedBorrowStore(*value) &&
+              value->operands.size() >= 3) {
+            (void)valueOperand(value->operands.back());
+          }
           emitCall(*value, true);
         } else if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
           (void)valueOperand(value->operands[0]);
@@ -5059,6 +5086,15 @@ private:
       } else if (value->kind == HirValueKind::DereferenceSet &&
                  !value->operands.empty()) {
         if (overloadedBorrowStore) {
+          // The same commit-time contract as the overloaded subscript store:
+          // a plain store through a checked nominal dereference evaluates
+          // its right operand before the call that begins the exclusive
+          // referent loan.
+          emitPlaceDependencies(value->operands.front());
+          if (plainOverloadedBorrowStore(*value) &&
+              value->operands.size() >= 2) {
+            (void)valueOperand(value->operands.back());
+          }
           emitCall(*value, true);
         } else {
           (void)valueOperand(value->operands.front());

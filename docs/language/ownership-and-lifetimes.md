@@ -491,6 +491,15 @@ includes a borrow used to compute an `if`, loop, or switch condition. Retaining
 the result in a reference or borrowed-state value still uses the applicable
 retained-loan rule above.
 
+A plain assignment whose target is reached through a mutable checked subscript
+or dereference confines its exclusive element loan to the commit. The right
+operand is evaluated first and its transient element loans end before the
+checked access call that begins the write loan, so
+`values[i] = values[i] + delta` on a container is valid under
+[Execution Section 4.2.1](execution.md#421-operands-calls-and-assignments) and
+mirrors the fixed-array element store. A retained overlapping borrow still
+rejects the write through the ordinary loan rules above.
+
 Nested owner projections remain outside this checkpoint. In particular, a
 borrow reached through `expected<owner, E>.value()` may be consumed immediately
 within the same full expression, but it cannot be retained or returned through
