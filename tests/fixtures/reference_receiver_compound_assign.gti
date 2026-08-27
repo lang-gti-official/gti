@@ -1,0 +1,65 @@
+// Compound assignment through a reference-parameter receiver must record a
+// receiver place whose result type agrees with its reference root and
+// dereference projection chain. Regression for the GTI-B0001 rejection
+// "place projection result type disagrees with its concrete root and
+// projection chain".
+class stepper {
+  mut std::ptrdiff_t position = 0;
+
+public:
+  stepper() {}
+
+  void operator+=(std::ptrdiff_t distance) mut { this.position += distance; }
+  void operator-=(std::ptrdiff_t distance) mut { this.position -= distance; }
+  void operator*=(std::ptrdiff_t factor) mut { this.position *= factor; }
+  std::ptrdiff_t at() { return this.position; }
+};
+
+void jump(mut stepper& cursor, std::ptrdiff_t distance) {
+  cursor += distance;
+}
+
+void retreat(mut stepper& cursor, std::ptrdiff_t distance) {
+  cursor -= distance;
+}
+
+void scale(mut stepper& cursor, std::ptrdiff_t factor) {
+  cursor *= factor;
+}
+
+// The reference parameter is forwarded through a nested call before the
+// compound assignment fires, so the receiver root is a reference binding
+// re-borrowed from another reference binding.
+void jump_indirect(mut stepper& cursor, std::ptrdiff_t distance) {
+  jump(cursor, distance);
+}
+
+int main() {
+  mut stepper cursor = stepper();
+  jump(cursor, std::ptrdiff_t(4));
+  if (cursor.at() != std::ptrdiff_t(4)) {
+    return 1;
+  }
+  retreat(cursor, std::ptrdiff_t(1));
+  if (cursor.at() != std::ptrdiff_t(3)) {
+    return 2;
+  }
+  scale(cursor, std::ptrdiff_t(5));
+  if (cursor.at() != std::ptrdiff_t(15)) {
+    return 3;
+  }
+  jump_indirect(cursor, std::ptrdiff_t(6));
+  if (cursor.at() != std::ptrdiff_t(21)) {
+    return 4;
+  }
+
+  // A local receiver stays on the direct binding-place path.
+  mut stepper local = stepper();
+  local += std::ptrdiff_t(2);
+  local *= std::ptrdiff_t(3);
+  local -= std::ptrdiff_t(1);
+  if (local.at() != std::ptrdiff_t(5)) {
+    return 5;
+  }
+  return 0;
+}
