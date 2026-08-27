@@ -4680,32 +4680,30 @@ int switch_reactivation(mut int& parent) {
       invokeSuccess(*retainedCallChild, callBlock, callInstruction);
   const lang::MirBlock *callFailure =
       invokeFailure(*retainedCallChild, callBlock, callInstruction);
-  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
-      retainedChildEvents;
-  if (callSuccess != nullptr && callTransient != nullptr &&
-      callChild != nullptr) {
+  // The retained call result keeps its own loan. Ending it on the success
+  // route and recreating a child reborrow from the receiver origin would
+  // give that reborrow a source place recording the returned referent over a
+  // projection chain deriving the receiver's subobject, which no later stage
+  // can key; the failure route still ends the loan.
+  std::size_t retainedChildEndings = 0;
+  if (callSuccess != nullptr && callTransient != nullptr) {
     for (const lang::MirInstruction &instruction : callSuccess->instructions) {
-      if (instruction.loan == callTransient->id &&
-          instruction.kind == lang::MirInstructionKind::EndBorrow) {
-        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
-      } else if (instruction.loan == callChild->id &&
-                 instruction.kind == lang::MirInstructionKind::Borrow) {
-        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan == callTransient->id) {
+        ++retainedChildEndings;
       }
     }
   }
-  expect(
-      callEntry != nullptr && callTransient != nullptr &&
-          callChild != nullptr && callChild->parent == callEntry->id &&
-          callTransient->carriers.empty() && !callTransient->escapes &&
-          retainedChildEvents ==
-              std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>{
-                  {lang::MirInstructionKind::EndBorrow, callTransient->id},
-                  {lang::MirInstructionKind::Borrow, callChild->id}} &&
-          endsLoan(callFailure, callTransient->id) &&
-          lang::verifyMirBody(*retainedCallChild).valid(),
-      "retaining a receiver-tied mutable call result should end its "
-      "unretained transient before producing the semantic child reborrow");
+  expect(callEntry != nullptr && callTransient != nullptr &&
+             callChild == nullptr && callTransient->parent == callEntry->id &&
+             callTransient->carriers.size() == 1 &&
+             callTransient->semanticLoan != 0 && !callTransient->escapes &&
+             retainedChildEndings == 0 &&
+             endsLoan(callFailure, callTransient->id) &&
+             lang::verifyMirBody(*retainedCallChild).valid(),
+         "retaining a receiver-tied mutable call result should keep that call "
+         "result's own loan under the retaining carrier instead of ending it "
+         "for a recreated child reborrow");
 
   const lang::MirLoan *chainEntry = nullptr;
   const lang::MirLoan *chainChild = nullptr;

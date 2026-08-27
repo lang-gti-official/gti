@@ -5447,6 +5447,38 @@ private:
 
       MirLoanId parent = 0;
       if (desired->parent != 0) {
+        const auto found = semanticLoans.find(desired->parent);
+        if (found == semanticLoans.end()) {
+          valid = false;
+          return {};
+        }
+        parent = found->second;
+        const MirLoan *derivedCallResult = existing == 0 || existing == parent
+                                               ? nullptr
+                                               : output.findLoan(existing);
+        if (!exactRangeElement && derivedCallResult != nullptr &&
+            derivedCallResult->kind == MirLoanKind::CallResult &&
+            derivedCallResult->parent == parent &&
+            derivedCallResult->producedBy == valueId &&
+            derivedCallResult->carriers.empty() &&
+            !derivedCallResult->escapes && loanIsActive(scopes, existing) &&
+            (desired->access == AccessMode::ReadOnly ||
+             derivedCallResult->access == AccessMode::Mutable)) {
+          // This call-result loan already hangs from exactly the parent the
+          // retained binding's semantic loan names, so it is the exact
+          // runtime referent for the same reason a root call-result loan is
+          // below. Retain that identity instead of ending it and recreating
+          // a Local loan from the receiver origin: the recreated loan's
+          // source place spells the receiver subobject while the loan
+          // designates what the call returned, so its recorded type states
+          // the returned referent while its projection chain derives the
+          // receiver's. No later stage can key such a place, and it cannot
+          // recover the returned address for backend publication either.
+          recordLoanIdentity(existing, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = existing,
+                  .type = value->info.type};
+        }
         // Mutable range elements have a concrete indexed/dereference place
         // even though their semantic overlap identity is deliberately rooted
         // at the protected owner. Use that concrete place for transient-chain
@@ -5459,12 +5491,6 @@ private:
         if (desiredSource == 0) {
           return {};
         }
-        const auto found = semanticLoans.find(desired->parent);
-        if (found == semanticLoans.end()) {
-          valid = false;
-          return {};
-        }
-        parent = found->second;
         if (existing != 0 && existing != parent) {
           const MirLoan *parentLoan = output.findLoan(parent);
           std::vector<MirLoanId> transientChain;
