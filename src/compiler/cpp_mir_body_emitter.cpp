@@ -2330,8 +2330,18 @@ classFreshAssignmentFusion(const MirProgram &program, const MirBody &body,
   for (const MirBlock &block : body.blocks) {
     for (std::size_t index = 0; index + 1 < block.instructions.size();
          ++index) {
-      if (block.instructions[index].id == construct->id &&
-          block.instructions[index + 1].id == assignment->id) {
+      if (block.instructions[index].id != construct->id) {
+        continue;
+      }
+      std::size_t assignmentIndex = index + 1;
+      if (loanDestination && destinationLoan->twoPhase &&
+          block.instructions[assignmentIndex].kind ==
+              MirInstructionKind::ActivateBorrow &&
+          block.instructions[assignmentIndex].loan == destinationLoan->id) {
+        ++assignmentIndex;
+      }
+      if (assignmentIndex < block.instructions.size() &&
+          block.instructions[assignmentIndex].id == assignment->id) {
         return {.construct = construct,
                 .assignment = assignment,
                 .destination = destination};
@@ -5033,8 +5043,12 @@ inlineNestedCallResult(const MirProgram &program,
 // order (an inline place read in the argument list would race sibling
 // arguments under C++'s unspecified evaluation order), and auto needs no
 // representation row beyond the copy-construction proof its admission
-// requires. Nothing between the load and the call may write any place, and
-// nothing may touch the copied source place.
+// requires. This route is specific to a borrowed-state carrier for which MIR
+// records no value-rooted storage or drop obligation; moving that copied
+// carrier into the parameter therefore leaves only a representation-trivial
+// shell. Once materialized, intervening instructions cannot change the
+// already-copied value; same-block order and the single consuming use are the
+// complete sequencing proof.
 [[nodiscard]] const MirInstruction *
 sequencedCopiedArgument(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
@@ -5047,8 +5061,21 @@ sequencedCopiedArgument(const MirBody &body, MirValueId valueId) {
       definition->operands.front().kind != MirOperandKind::Copy ||
       definition->operands.front().place == 0 ||
       body.findPlace(definition->operands.front().place) == nullptr ||
+      !value->info.traits.copyable ||
+      !value->info.traits.containsBorrowedState ||
       !definition->localFailureSites.empty() ||
       !definition->definedFailure.empty()) {
+    return nullptr;
+  }
+  if (std::any_of(body.places.begin(), body.places.end(),
+                  [&](const MirPlace &place) {
+                    return place.root == MirPlaceRootKind::Value &&
+                           place.value == valueId;
+                  }) ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.generatedValue == valueId;
+                  })) {
     return nullptr;
   }
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
@@ -5061,7 +5088,6 @@ sequencedCopiedArgument(const MirBody &body, MirValueId valueId) {
   if (consumer == nullptr || consumer->kind != MirInstructionKind::Call) {
     return nullptr;
   }
-  const MirPlaceId copiedPlace = definition->operands.front().place;
   for (const MirBlock &block : body.blocks) {
     bool sawDefinition = false;
     for (const MirInstruction &instruction : block.instructions) {
@@ -5074,25 +5100,6 @@ sequencedCopiedArgument(const MirBody &body, MirValueId valueId) {
       }
       if (instruction.id == consumer->id) {
         return definition;
-      }
-      switch (instruction.kind) {
-      case MirInstructionKind::Move:
-      case MirInstructionKind::CallInput:
-      case MirInstructionKind::Compute:
-      case MirInstructionKind::Load:
-      case MirInstructionKind::Lifecycle:
-        break;
-      default:
-        return nullptr;
-      }
-      if (instruction.destination == copiedPlace ||
-          (instruction.receiver &&
-           instruction.receiver->place == copiedPlace) ||
-          std::any_of(instruction.operands.begin(), instruction.operands.end(),
-                      [&](const MirOperand &operand) {
-                        return operand.place == copiedPlace;
-                      })) {
-        return nullptr;
       }
     }
     if (sawDefinition) {
@@ -19844,8 +19851,9 @@ private:
         const std::optional<CheckedArrayElementDestination> checked =
             checkedArrayElementDestination(facts.body, *fusion.destination);
         if (!checked) {
-          // The bare mutable binding assigns the construction directly; MIR
-          // gave the prvalue no storage or cleanup identity of its own.
+          // A bare mutable binding or an already-produced mutable loan assigns
+          // the construction directly; MIR gave the cleanup-free prvalue no
+          // storage or cleanup identity of its own.
           emitStoragePlaceValue(facts, *fusion.destination);
           output << " = ";
           emitClassConstructionExpression(facts, *fusion.construct);

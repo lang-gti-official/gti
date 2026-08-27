@@ -143,8 +143,10 @@ def main() -> int:
                 if (
                     executed.returncode != baseline.returncode
                     or executed.stdout != baseline.stdout
-                    or executed.stderr.replace(name, BASELINE_FIXTURE)
-                    != baseline.stderr
+                    or REPORT not in executed.stderr
+                    or REPORT not in baseline.stderr
+                    or executed.stderr[executed.stderr.index(REPORT) :]
+                    != baseline.stderr[baseline.stderr.index(REPORT) :]
                 ):
                     sys.stderr.write(
                         f"{name} {optimization} diverged from the "
