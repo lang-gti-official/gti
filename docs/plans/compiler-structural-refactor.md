@@ -2,7 +2,8 @@
 
 > **Plan status:** Active structural gate. In-flight work was reconciled at
 > `4d4c8ae242fe08511db8de41fcafe117dde06dba`; **R-STRUCT-00** is complete and
-> **R-STRUCT-01** is the active implementation slice. No new compiler feature
+> **R-STRUCT-01** is complete and **R-STRUCT-02** is the active implementation
+> slice. No new compiler feature
 > campaign begins until the exit gate in this plan passes.
 >
 > This is an internal architecture plan. It does not define GTI language
@@ -222,9 +223,16 @@ Apply the same ownership rule to `cpp_mir_body_emitter_tests.cpp`: separate
 preflight/representation, ordinary text, lifecycle/failure, and corpus protocol
 tests while preserving the existing exact-census aggregate sweeps.
 
-**Exit evidence:** reuse regressions pass; every former test runs exactly once
-in the aggregate gate; focused targets can build and run without compiling the
-entire former monolith; no diagnostic or generated artifact changes.
+**Exit evidence:** complete. Program-to-program and program-to-expression reuse
+regressions prove that names, IDs, AST pointers, loans, diagnostics, and
+return/expression context are cleared by one request reset. The
+`compiler_pipeline` aggregate first validates a 125-test manifest and then runs
+six independently buildable suites exactly once. The emitter census validates
+81 registrations across four executables; its 79 non-corpus tests and both
+per-source corpus sweeps pass. The largest compiler-test source is 15,784 lines
+(down from 34,112), and the largest emitter-test source is 4,870 lines (down
+from 10,161). Existing diagnostic assertions and the corpus production-text
+agreement gate pass without a reviewed output change.
 
 ## R-STRUCT-02: Frontend And Semantic Boundaries
 

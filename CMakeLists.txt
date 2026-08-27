@@ -727,9 +727,45 @@ if(BUILD_TESTING)
   target_link_libraries("gti_project_tests" PRIVATE gti_driver)
   add_test(NAME project_model COMMAND gti_project_tests)
 
-  add_executable("gti_tests" "tests/compiler_tests.cpp")
-  target_link_libraries("gti_tests" PRIVATE gti_cpp_backend)
-  add_test(NAME compiler_pipeline COMMAND gti_tests)
+  set(GTI_COMPILER_TEST_SUITES
+      frontend
+      declarations
+      ownership
+      constexpr
+      diagnostics
+      e2e)
+  set(GTI_COMPILER_TEST_TARGETS)
+  set(GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
+  foreach(suite IN LISTS GTI_COMPILER_TEST_SUITES)
+    set(target "gti_compiler_${suite}_tests")
+    add_executable("${target}" "tests/compiler_${suite}_tests.cpp")
+    target_link_libraries("${target}" PRIVATE gti_cpp_backend)
+    list(APPEND GTI_COMPILER_TEST_TARGETS "${target}")
+    list(APPEND GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS
+         "${suite}=$<TARGET_FILE:${target}>")
+  endforeach()
+  # Preserve the familiar build target without retaining the monolithic test
+  # executable. Each owned suite remains independently buildable and runnable.
+  add_custom_target(gti_tests DEPENDS ${GTI_COMPILER_TEST_TARGETS})
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME compiler_pipeline
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_test_manifest.json"
+              ${GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS}
+    )
+    add_test(
+      NAME partitioned_test_protocol
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/partitioned_test_protocol_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/named_test_census.py"
+    )
+  else()
+    message(FATAL_ERROR
+            "Python 3 is required to enforce the compiler-test census")
+  endif()
 
   add_executable("gti_block_comment_tests" "tests/block_comment_tests.cpp")
   target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
@@ -856,27 +892,43 @@ if(BUILD_TESTING)
                         PRIVATE gti_cpp_backend)
   add_test(NAME cpp_mir_control_flow COMMAND gti_cpp_mir_control_flow_tests)
 
-  add_executable("gti_cpp_mir_body_emitter_tests"
-                 "tests/cpp_mir_body_emitter_tests.cpp")
-  target_link_libraries("gti_cpp_mir_body_emitter_tests"
-                        PRIVATE gti_cpp_backend)
-  # The binary owns 77 lightweight tests and two aggregate corpus sweeps. Four
-  # interleaved shards keep every lightweight test running exactly once. The
-  # Python coordinator below reserves four CTest processors, runs both corpus
-  # sweeps once per exact census source, and re-aggregates the original
-  # whole-corpus assertions without one indivisible sanitizer test. Invoking
-  # `gti_cpp_mir_body_emitter_tests` with no arguments still runs all 79 tests.
+  set(GTI_CPP_MIR_BODY_EMITTER_TEST_SUITES
+      preflight
+      text
+      lifecycle
+      corpus)
+  set(GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS)
+  set(GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS)
+  foreach(suite IN LISTS GTI_CPP_MIR_BODY_EMITTER_TEST_SUITES)
+    set(target "gti_cpp_mir_body_emitter_${suite}_tests")
+    add_executable("${target}"
+                   "tests/cpp_mir_body_emitter_${suite}_tests.cpp")
+    target_link_libraries("${target}" PRIVATE gti_cpp_backend)
+    list(APPEND GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS "${target}")
+    list(APPEND GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS
+         "${suite}=$<TARGET_FILE:${target}>")
+  endforeach()
+  add_custom_target(
+    gti_cpp_mir_body_emitter_tests
+    DEPENDS ${GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS}
+  )
+  add_test(NAME cpp_mir_body_emitter_preflight
+           COMMAND gti_cpp_mir_body_emitter_preflight_tests)
+  add_test(NAME cpp_mir_body_emitter_text
+           COMMAND gti_cpp_mir_body_emitter_text_tests)
+  add_test(NAME cpp_mir_body_emitter_lifecycle
+           COMMAND gti_cpp_mir_body_emitter_lifecycle_tests)
   if(Python3_Interpreter_FOUND)
-    foreach(shard RANGE 1 4)
-      add_test(NAME cpp_mir_body_emitter_${shard}of4
-               COMMAND gti_cpp_mir_body_emitter_tests --shard ${shard}/4)
-    endforeach()
+    add_test(
+      NAME cpp_mir_body_emitter_census
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/named_test_census.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp_mir_body_emitter_test_manifest.json"
+              ${GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS}
+    )
   else()
-    # Fail closed when the corpus coordinator cannot run: the no-argument
-    # binary executes all 79 tests, including both aggregate corpus sweeps.
-    add_test(NAME cpp_mir_body_emitter
-             COMMAND gti_cpp_mir_body_emitter_tests)
-    set_tests_properties(cpp_mir_body_emitter PROPERTIES PROCESSORS 4)
+    message(FATAL_ERROR
+            "Python 3 is required to enforce the emitter-test census")
   endif()
 
   add_executable(
@@ -1001,7 +1053,7 @@ if(BUILD_TESTING)
       NAME cpp_mir_body_emitter_corpus
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
-              "$<TARGET_FILE:gti_cpp_mir_body_emitter_tests>"
+              "$<TARGET_FILE:gti_cpp_mir_body_emitter_corpus_tests>"
               "${CMAKE_CURRENT_SOURCE_DIR}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
               --jobs=4
