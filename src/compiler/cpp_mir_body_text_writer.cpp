@@ -9,31 +9,24 @@ namespace {
                                          std::string_view familyLabel,
                                          std::size_t indentation) {
   std::string rendered(text);
-  std::size_t marker = rendered.find(cppMirBodyEmissionFamilyPlaceholder);
-  if (marker == std::string::npos) {
+  const auto replaceAll = [&](std::string_view marker,
+                              std::string_view replacement) {
+    std::size_t at = rendered.find(marker);
+    if (at == std::string::npos) {
+      return false;
+    }
+    while (at != std::string::npos) {
+      rendered.replace(at, marker.size(), replacement);
+      at = rendered.find(marker, at + replacement.size());
+    }
+    return true;
+  };
+  if (!replaceAll(cppMirBodyEmissionFamilyPlaceholder, familyLabel)) {
     return {};
   }
-  while (marker != std::string::npos) {
-    rendered.replace(marker, cppMirBodyEmissionFamilyPlaceholder.size(),
-                     familyLabel);
-    marker = rendered.find(cppMirBodyEmissionFamilyPlaceholder,
-                           marker + familyLabel.size());
-  }
-  if (indentation == 0) {
-    return rendered;
-  }
-
   const std::string prefix(indentation * 2, ' ');
-  std::string indented;
-  indented.reserve(rendered.size() + prefix.size() * 8);
-  for (std::size_t index = 0; index < rendered.size(); ++index) {
-    indented.push_back(rendered[index]);
-    if (rendered[index] == '\n' && index + 1 < rendered.size() &&
-        rendered[index + 1] != '\n') {
-      indented += prefix;
-    }
-  }
-  return indented;
+  replaceAll(cppMirBodyEmissionIndentationPlaceholder, prefix);
+  return rendered;
 }
 
 } // namespace
@@ -42,9 +35,16 @@ CppMirBodyEmissionText CppMirBodyTextWriter::write(
     const CppMirBodyEmissionPlan &plan, CppMirBodyTextForm form,
     std::string_view familyLabel, std::size_t indentation) {
   CppMirBodyEmissionText result{.analysis = plan.analysis()};
-  const std::string &text = form == CppMirBodyTextForm::Failure
-                                ? plan.failureTextTemplate_
-                                : plan.plainTextTemplate_;
+  const bool deducedCallable = familyLabel.starts_with("deduced-callable");
+  const std::string &deducedText =
+      form == CppMirBodyTextForm::Failure
+          ? plan.failureDeducedCallableTextTemplate_
+          : plan.plainDeducedCallableTextTemplate_;
+  const std::string &text =
+      deducedCallable && !deducedText.empty()
+          ? deducedText
+          : (form == CppMirBodyTextForm::Failure ? plan.failureTextTemplate_
+                                                 : plan.plainTextTemplate_);
   const bool supported = form == CppMirBodyTextForm::Failure
                              ? plan.supportsFailureText()
                              : plan.supportsPlainText();
