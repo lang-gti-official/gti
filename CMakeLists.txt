@@ -1582,6 +1582,14 @@ if(BUILD_TESTING)
     )
     set_tests_properties(nested_borrow_chain_runtime
                          PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME mut_reference_retained_chain_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mut_reference_retained_chain_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(mut_reference_retained_chain_runtime
+                         PROPERTIES TIMEOUT 300)
     # Sharded by (optimization, standard) configuration; three shards of two
     # configurations each, union = the full six-configuration matrix.
     foreach(shard RANGE 1 3)
@@ -1764,6 +1772,7 @@ if(BUILD_TESTING)
         disjoint_field_projection_runtime
         retained_borrowed_call_result_runtime
         nested_borrow_chain_runtime
+        mut_reference_retained_chain_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
         mir_backend_scalar_failure_callgraph_runtime_2of3
         mir_backend_scalar_failure_callgraph_runtime_3of3

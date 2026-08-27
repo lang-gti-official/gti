@@ -936,6 +936,21 @@ loan that reborrows them, child-first. Loan release by expression extent alone
 would end such a link while the retained child is still active, which
 verification rejects.
 
+A reference binding that retains a call-result reborrow chain keeps that
+chain's outermost link and adds itself as a carrier, including when the chain
+already bottoms out at the loan the retained semantic loan names as its parent.
+That is the shape a reference carrier produces: a reference parameter's entry
+loan, or a local reference binding's loan, is what gives a retained loan a
+semantic parent at all. Lowering does not end such a chain and recreate a child
+loan from the semantic place, and it decides before materializing that place.
+The place records the returned referent's type over a projection chain that
+stops at the parent loan plus the receiver subobject, so it can name neither
+the returned address for backend publication nor one coherent referent for any
+later stage — and a body that records it fails the emitter's place-coherence
+scan even when nothing uses it. The links the retained loan reborrows stay
+live for its extent, keeping every parent outliving its child on each edge, and
+the owning scope ends the whole chain child-first.
+
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access
 mode, parent range loan, child element loan, condition/body/increment/cleanup
