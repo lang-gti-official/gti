@@ -3478,10 +3478,10 @@ void testOwnedLifecycleConstructionBodiesReady() {
          "legitimately keep their containment flags");
 }
 
-// Safety discharge and CFG simplification are independent optimizer facts. A
-// prefix-storage read may be proven safe while its checked Invoke remains in
-// the optimized MIR. Since the backend emits only the success edge, it must
-// use the unchecked read helper and omit the dead failure-status carrier.
+// A safety discharge proves every local failure outcome impossible even when
+// the optimized CFG still carries its structural Invoke. The terminator emits
+// only the success edge, so the read must use the unchecked helper and omit a
+// dead status carrier. Near misses have no discharge and remain checked.
 void testDischargedStorageReadAnalysis() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-discharged-read.gti", R"(

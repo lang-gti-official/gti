@@ -636,15 +636,15 @@ int main(int argc, char **argv) {
   constexpr std::string_view nonzeroRemainderCall =
       "::gti_internal::backend::mir_nonzero_remainder_v1";
   constexpr std::string_view checkedStorageCall =
-      "&::gti_internal::backend::storage_read(";
+      " = ::gti_internal::backend::mir_storage_read_v1(";
   constexpr std::string_view uncheckedStorageCall =
       "&::gti_internal::backend::storage_read_unchecked(";
   constexpr std::string_view checkedPrefixStorageCall =
-      "&::gti_internal::backend::prefix_storage_read(";
+      " = ::gti_internal::backend::mir_prefix_read_v1(";
   constexpr std::string_view uncheckedPrefixStorageCall =
       "&::gti_internal::backend::prefix_storage_read_unchecked(";
   constexpr std::string_view checkedPrefixStorageMutCall =
-      "&::gti_internal::backend::prefix_storage_read_mut(";
+      " = ::gti_internal::backend::mir_prefix_read_mut_v1(";
   constexpr std::string_view uncheckedPrefixStorageMutCall =
       "&::gti_internal::backend::prefix_storage_read_mut_unchecked(";
   constexpr std::string_view publicPrefixBoundsCall =
@@ -734,30 +734,30 @@ int main(int argc, char **argv) {
   }
   expect(baseline[0].built && baseline[0].exitStatus == 0,
          "O0 success mode should preserve result and deterministic cleanup");
-  expect(
-      baseline[1].exitStatus != 0 &&
-          baseline[1].stderrText.find("index_out_of_bounds in fixed_array") !=
-              std::string::npos &&
-          baseline[2].exitStatus != 0 &&
-          baseline[2].stderrText.find(
-              "accessed an uninitialized storage slot") != std::string::npos &&
-          baseline[3].exitStatus != 0 &&
-          baseline[3].stderrText.find("integer_overflow in addition") !=
-              std::string::npos &&
-          baseline[4].exitStatus != 0 &&
-          baseline[4].stderrText.find("modulo_by_zero in integer_modulo") !=
-              std::string::npos &&
-          baseline[5].exitStatus != 0 &&
-          baseline[5].stderrText.find("index_out_of_bounds in vector") !=
-              std::string::npos &&
-          baseline[6].exitStatus != 0 &&
-          baseline[6].stderrText.find("index_out_of_bounds in vector") !=
-              std::string::npos &&
-          baseline[7].exitStatus != 0 &&
-          baseline[7].stderrText.find("index_out_of_bounds in vector") !=
-              std::string::npos,
-      "O0 near misses should expose the exact checked-operation or sealed "
-      "storage-guard identity, including public vector access failures");
+  expect(baseline[1].exitStatus != 0 &&
+             baseline[1].stderrText.find(
+                 "index_out_of_bounds in fixed_array") != std::string::npos &&
+             baseline[2].exitStatus != 0 &&
+             baseline[2].stderrText.find(
+                 "invalid_storage_state in uninitialized_access") !=
+                 std::string::npos &&
+             baseline[3].exitStatus != 0 &&
+             baseline[3].stderrText.find("integer_overflow in addition") !=
+                 std::string::npos &&
+             baseline[4].exitStatus != 0 &&
+             baseline[4].stderrText.find("modulo_by_zero in integer_modulo") !=
+                 std::string::npos &&
+             baseline[5].exitStatus != 0 &&
+             baseline[5].stderrText.find("index_out_of_bounds in vector") !=
+                 std::string::npos &&
+             baseline[6].exitStatus != 0 &&
+             baseline[6].stderrText.find("index_out_of_bounds in vector") !=
+                 std::string::npos &&
+             baseline[7].exitStatus != 0 &&
+             baseline[7].stderrText.find("index_out_of_bounds in vector") !=
+                 std::string::npos,
+         "O0 near misses should expose the exact checked-operation or sealed "
+         "storage-guard identity, including public vector access failures");
 
   for (std::size_t level = 1; level < binaries.size(); ++level) {
     for (std::size_t scenario = 0; scenario < scenarios.size(); ++scenario) {

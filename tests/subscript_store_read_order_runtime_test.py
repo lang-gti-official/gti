@@ -36,6 +36,30 @@ public:
 
 mut GlobalSlot global_slot = GlobalSlot();
 
+class MutableValue {
+public:
+  mut int32_t value = 0;
+
+  void bump() mut { this.value++; }
+  int32_t read() { return this.value; }
+};
+
+class MutableHandle {
+public:
+  mut MutableValue value = MutableValue();
+
+  MutableValue& operator->() { return this.value; }
+  mut MutableValue& operator->() mut { return this.value; }
+};
+
+class MutableSlots {
+public:
+  mut MutableHandle value = MutableHandle();
+
+  MutableHandle& operator[](std::size_t index) { return this.value; }
+  mut MutableHandle& operator[](std::size_t index) mut { return this.value; }
+};
+
 std::size_t traced_index() {
   stamp = stamp * 10 + 1;
   return std::size_t(0);
@@ -54,6 +78,12 @@ int main() {
   global_slot[std::size_t(0)] = 9;
   if (global_slot[std::size_t(0)] != 9) {
     return 6;
+  }
+
+  mut MutableSlots slots = MutableSlots();
+  slots[std::size_t(0)]->bump();
+  if (slots[std::size_t(0)]->read() != 1) {
+    return 7;
   }
 
   mut std::vector<int32_t> values = std::vector<int32_t>();

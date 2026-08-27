@@ -34,17 +34,6 @@ STDLIB_SELECTED = (
     "read_stdin_byte",
     "read_file_byte",
     "close_file",
-    # String-view signatures joined the boundary in 0.175.0: the C-linkage
-    # call marshals the view through the shipped to_c_string_view converter.
-    "write_stdout",
-    "open_file_read",
-    # The failure-free effect proof widened to passive views and native
-    # calls in 0.177.0, so print's whole callee chain now proves and the
-    # body emits from verified MIR.
-    "print",
-    # String-view literals joined the vocabulary in 0.178.0.
-    "println",
-    "print_decimal_digit",
 )
 FAILURE_SELECTED = (
     "compatibility_checked",
@@ -52,6 +41,13 @@ FAILURE_SELECTED = (
     "compatibility_call",
     "compatibility_reference",
     "release",
+    # The native-boundary and formatting chains can report a defined host
+    # failure, so they publish exclusively through the explicit failure ABI.
+    "write_stdout",
+    "open_file_read",
+    "print",
+    "println",
+    "print_decimal_digit",
 )
 
 
@@ -85,7 +81,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     if (
         generated.count(f"{MARKER} function-instance")
         != len(SELECTED) + len(STDLIB_SELECTED)
-        or generated.count(f"{FAILURE_MARKER} function-instance") != 8
+        or generated.count(f"{FAILURE_MARKER} function-instance") != 13
         # file_handle's computed negate(1) default joined the verified
         # initializer schedule as a terminally-contained expression.
         or generated.count(f"{MARKER} field-initializers-instance") != 3
