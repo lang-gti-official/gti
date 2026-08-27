@@ -87,6 +87,22 @@ if(GTI_STAGED_LIBCLANG STREQUAL "")
   message(FATAL_ERROR
           "Release staging is missing lib/gti/llvm/libclang (the bindgen C reader's runtime library)")
 endif()
+if(GTI_PLATFORM MATCHES "^linux-")
+  set(GTI_STAGED_LIBCLANG_SONAME_FOUND FALSE)
+  foreach(candidate IN LISTS GTI_STAGED_LIBCLANG)
+    get_filename_component(candidate_name "${candidate}" NAME)
+    if(candidate_name MATCHES "^libclang\\.so\\.[0-9]" AND
+       IS_SYMLINK "${candidate}")
+      set(GTI_STAGED_LIBCLANG_SONAME_FOUND TRUE)
+      break()
+    endif()
+  endforeach()
+  if(NOT GTI_STAGED_LIBCLANG_SONAME_FOUND)
+    message(
+      FATAL_ERROR
+        "Release staging is missing libclang's versioned SONAME symlink; the installed gti executable cannot load the bundled C reader")
+  endif()
+endif()
 
 # Stamp the build identity into the staged toolchain before archiving. On the
 # nightly channel VERSION does not change between builds, so this is the only
