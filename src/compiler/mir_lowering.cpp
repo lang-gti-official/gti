@@ -6741,6 +6741,25 @@ private:
             if (!validTail || transientChain.empty()) {
               valid = false;
             } else {
+              const HirValue *value = findValue(*statement.value);
+              const MirLoanId returnedReference = borrow.loan;
+              const MirLoanId normalized =
+                  createLoan(MirLoanKind::Return, sourcePlace,
+                             function->returnBorrowAccess, *statement.value);
+              // The Return loan's source is the summarized lifetime origin.
+              // Its operand is the exact pointer produced by the final
+              // reference-returning call. Keeping both facts prevents a
+              // receiver shell from being emitted as the returned referent.
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = MirOperandKind::Loan,
+                                 .loan = returnedReference,
+                                 .type = value == nullptr
+                                             ? SemanticType::Unknown
+                                             : value->info.type}},
+                   .loan = normalized,
+                   .info = value == nullptr ? ExpressionInfo{} : value->info});
               for (const MirLoanId ended : transientChain) {
                 (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                          .hirValue = *statement.value,
@@ -6753,21 +6772,6 @@ private:
                                          .loan = summarizedEntry});
                 removeLoanFromState(summarizedEntry, scopes, bindingLoans);
               }
-              const HirValue *value = findValue(*statement.value);
-              const MirLoanId normalized =
-                  createLoan(MirLoanKind::Return, sourcePlace,
-                             function->returnBorrowAccess, *statement.value);
-              (void)appendInstruction(
-                  {.kind = MirInstructionKind::Borrow,
-                   .hirValue = *statement.value,
-                   .operands = {{.kind = function->returnBorrowAccess ==
-                                                 AccessMode::Mutable
-                                             ? MirOperandKind::BorrowWrite
-                                             : MirOperandKind::BorrowRead,
-                                 .place = sourcePlace,
-                                 .type = output.returnType}},
-                   .loan = normalized,
-                   .info = value == nullptr ? ExpressionInfo{} : value->info});
               borrow.loan = normalized;
             }
           }
@@ -6788,7 +6792,7 @@ private:
           if (retained == 0 || retained > output.loans.size()) {
             valid = false;
           } else {
-            // A borrow-carrying class value owns two temporally distinct
+            // A borrow-carrying value owns two temporally distinct
             // capabilities at a return: its live body-local/entry loan, then
             // the dependency exported by the returned object.  Reclassifying
             // the original loan globally would make it a Return loan from the
@@ -6806,15 +6810,23 @@ private:
             const bool exactStoredCarrierEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && retainedLoan.designatedField != 0;
-            if (exactStoredCarrierEntry && returnedValue == 0) {
+            const bool exactStringViewEntry =
+                retainedLoan.kind == MirLoanKind::Stored &&
+                retainedLoan.entry && retainedLoan.designatedField == 0 &&
+                value->info.type.kind == SemanticType::StringView &&
+                output.returnType.kind == SemanticType::StringView;
+            if ((exactStoredCarrierEntry || exactStringViewEntry) &&
+                returnedValue == 0) {
               valid = false;
             }
             (void)appendInstruction(
                 {.kind = MirInstructionKind::Borrow,
                  .hirValue = *statement.value,
                  .operands = {{.kind = MirOperandKind::Loan,
-                               .value =
-                                   exactStoredCarrierEntry ? returnedValue : 0,
+                               .value = exactStoredCarrierEntry ||
+                                                exactStringViewEntry
+                                            ? returnedValue
+                                            : 0,
                                .loan = retained,
                                .type = value->info.type}},
                  .loan = published,

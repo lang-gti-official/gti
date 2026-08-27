@@ -252,6 +252,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .movesValue = true,
                     .dropsValue = true,
                     .invokesUserCode = true},
+    // PrefixStorageTextView: a read-only owner-dependent view over the live
+    // character prefix.
+    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty
@@ -432,6 +435,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "prefix-storage-relocate",
     "prefix-storage-insert",
     "prefix-storage-erase",
+    "prefix-storage-text-view",
     "string-view-size",
     "string-view-empty",
     "expected-value",

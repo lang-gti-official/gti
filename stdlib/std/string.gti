@@ -1,8 +1,8 @@
 #include <std/iterator>
+#include <std/span>
 
-// The storage-backed value, capacity, and indexed operations are implemented.
-// A dynamic string_view remains unavailable until views can retain an
-// owner-tied lifetime.
+// The storage-backed value, capacity, indexed operations, and owner-dependent
+// read-only views are implemented.
 #include <std/functional>
 #include <std/numeric>
 
@@ -149,6 +149,16 @@ namespace std {
 
     detail::storage_sentinel end() {
       return detail::storage_sentinel(this.count);
+    }
+
+    /// Returns a counted read-only text view tied to this string.
+    string_view view() {
+      return gti_internal::prefix_storage_text_view(this.data);
+    }
+
+    /// Returns a checked read-only character view tied to this string.
+    span<char> as_span() {
+      return span<char>(this.data, size_t(0), this.count);
     }
 
     char& at(int index) {

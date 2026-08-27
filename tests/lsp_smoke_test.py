@@ -7814,8 +7814,18 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit(
+            "usage: lsp_smoke_test.py /path/to/gti_lsp "
+            "[owner-dependent-views]"
+        )
+
+    if len(sys.argv) == 3:
+        if sys.argv[2] != "owner-dependent-views":
+            raise SystemExit(f"unknown focused LSP test: {sys.argv[2]}")
+        with tempfile.TemporaryDirectory(prefix="gti-lsp-owner-view-") as root:
+            test_owner_dependent_span_tooling(sys.argv[1], pathlib.Path(root))
+        return
 
     expected_version = (
         pathlib.Path(__file__).resolve().parent.parent / "VERSION"
@@ -7890,6 +7900,7 @@ def main():
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
     test_range_loan_tooling(sys.argv[1], root)
+    test_owner_dependent_span_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
@@ -8982,6 +8993,297 @@ def test_range_loan_tooling(executable, root):
         assert not any(
             item.get("code") == "GTI-S2083" for item in incomplete_diagnostics
         ), incomplete_diagnostics
+    finally:
+        session.close()
+
+
+def test_owner_dependent_span_tooling(executable, root):
+    valid_source = (
+        "#include <std/vector>\n"
+        "#include <std/span>\n"
+        "int main() {\n"
+        "  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});\n"
+        "  {\n"
+        "    std::span<int32_t> view = values.as_span();\n"
+        "    int32_t first = view.front();\n"
+        "  }\n"
+        "  values.push_back(3);\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    invalidated_source = valid_source.replace("  {\n", "").replace(
+        "  }\n  values.push_back(3);", "  values.push_back(3);"
+    ).replace("  return 0;", "  return view.empty() ? 0 : 1;")
+    escaped_source = (
+        "#include <std/vector>\n"
+        "#include <std/span>\n"
+        "std::span<int32_t> escape() {\n"
+        "  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});\n"
+        "  return values.as_span();\n"
+        "}\n"
+    )
+    valid_text_source = (
+        "#include <std/string>\n"
+        "std::string_view relay(std::string_view view) { return view; }\n"
+        "int main() {\n"
+        "  mut std::string text = std::string(\"abc\");\n"
+        "  {\n"
+        "    std::string_view view = text.view();\n"
+        "    std::string_view copied = relay(view);\n"
+        "    uint64_t size = copied.size();\n"
+        "  }\n"
+        "  text.push_back('d');\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    invalidated_text_source = valid_text_source.replace("  {\n", "").replace(
+        "  }\n  text.push_back('d');", "  text.push_back('d');"
+    ).replace("  return 0;", "  return copied.empty() ? 0 : 1;")
+    escaped_text_source = (
+        "#include <std/string>\n"
+        "std::string_view escape() {\n"
+        "  mut std::string text = std::string(\"abc\");\n"
+        "  return text.view();\n"
+        "}\n"
+    )
+    path = root / "owner-dependent-span.gti"
+    path.write_text(valid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, valid_source)
+
+        as_span = valid_source.index("as_span")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(valid_source, as_span + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert hover and "checked read-only view" in hover["contents"]["value"], hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalidated_source}],
+                },
+            }
+        )
+        invalidated = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and any(
+                diagnostic.get("code") == "GTI-S2017"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in invalidated["diagnostics"]
+            if item.get("code") == "GTI-S2017"
+        )
+        mutation = invalidated_source.index(
+            ")", invalidated_source.index("push_back")
+        )
+        assert diagnostic["range"]["start"] == lsp_position(
+            invalidated_source, mutation
+        ), diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["hints"] == [
+            "Place the borrowed value in a narrower block when an explicit "
+            "lexical end is required across control flow."
+        ], diagnostic
+        assert any(
+            related["message"] == "Retained borrow originates here."
+            for related in diagnostic["relatedInformation"]
+        ), diagnostic
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": escaped_source}],
+                },
+            }
+        )
+        escaped = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and any(
+                diagnostic.get("code") == "GTI-S2045"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        assert any(
+            "borrowed return requires either one exact global/static storage "
+            "origin" in item["message"]
+            for item in escaped["diagnostics"]
+            if item.get("code") == "GTI-S2045"
+        ), escaped
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+            and not message["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 5},
+                    "contentChanges": [{"text": valid_text_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 5
+            and not message["params"]["diagnostics"]
+        )
+
+        view_call = valid_text_source.index("text.view") + len("text.")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(valid_text_source, view_call),
+                },
+            }
+        )
+        text_hover = session.receive_until(
+            lambda message: message.get("id") == 3
+        )["result"]
+        assert text_hover and "tied to this string" in text_hover["contents"][
+            "value"
+        ], text_hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 6},
+                    "contentChanges": [{"text": invalidated_text_source}],
+                },
+            }
+        )
+        invalidated_text = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 6
+            and any(
+                diagnostic.get("code") == "GTI-S2017"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        assert any(
+            related["message"] == "Retained borrow originates here."
+            for diagnostic in invalidated_text["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2017"
+            for related in diagnostic.get("relatedInformation", [])
+        ), invalidated_text
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 7},
+                    "contentChanges": [{"text": escaped_text_source}],
+                },
+            }
+        )
+        escaped_text = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 7
+            and any(
+                diagnostic.get("code") == "GTI-S2045"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        assert any(
+            "dynamic std::string_view cannot escape" in item["message"]
+            for item in escaped_text["diagnostics"]
+            if item.get("code") == "GTI-S2045"
+        ), escaped_text
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 8},
+                    "contentChanges": [{"text": valid_text_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 8
+            and not message["params"]["diagnostics"]
+        )
     finally:
         session.close()
 

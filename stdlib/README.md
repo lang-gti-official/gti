@@ -302,7 +302,7 @@ them repeatedly, and reject consuming once-callables.
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
-| `<std/span>` | A move-only read-only indexed view shape without source construction, mutable access, iteration, or a raw-address `data()` API |
+| `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
 | `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does

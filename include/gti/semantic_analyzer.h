@@ -792,6 +792,7 @@ enum class IntrinsicKind {
   PrefixStorageRelocate,
   PrefixStorageInsert,
   PrefixStorageErase,
+  PrefixStorageTextView,
   StringViewSize,
   StringViewEmpty,
   ExpectedValue,

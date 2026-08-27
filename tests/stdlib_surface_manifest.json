@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "2d007b1a2844cc5ac199384bf24e80b1266e8625d9551d9245c4409beddef976",
+    "stdlib/prelude.gti": "77c36d8a4f5509066c1bdf5c886ce08aaa39eb5eec4bb5a5a5cfd562c8ca985a",
     "stdlib/std/algorithm.gti": "feda2c56b2d9a5d0f2ee9f9c99e4035ba3d3c6e14c75b4f5a109e3dd59b71203",
     "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
@@ -16,12 +16,12 @@
     "stdlib/std/numeric.gti": "0ce4f0056bc9d79823c8371fc2838181a40aabbd62e9636e65a4bdd0eeee93fc",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
-    "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
-    "stdlib/std/string.gti": "c445e1c2a90e6b5f28ec4f1dc5c172593862e13031f645f39bc3f1e3402055ff",
+    "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
+    "stdlib/std/string.gti": "6b7632100f3ddf38ea14e8aaf75428293733e0a650b001dc9cd586967c8f7964",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "ddab7cb4aaf6f2c435dfe783c90743d39e7aa3ee9e16e9ee295792feac732945"
+    "stdlib/std/vector.gti": "1b69a3eb8384638ef7b2c222705bcb1a94906be2a03de7e405a55fc7406e5313"
   },
   "cases": [
     {
@@ -144,6 +144,13 @@
         "stdout": "random: all checks passed\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "span",
+      "mode": "run",
+      "source": "tests/fixtures/span_owner_dependent.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "string",
@@ -572,12 +579,25 @@
       "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
     },
     {
-      "id": "span.scaffold",
+      "id": "span.executable",
       "source": "stdlib/std/span.gti",
-      "status": "scaffold",
-      "operations": ["std::span public surface"],
-      "reason": "span has a declaration-only read-only indexed shape and no source construction.",
-      "evidence": ["stdlib/std/span.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "status": "executable",
+      "operations": [
+        "std::span::at",
+        "std::span::back",
+        "std::span::begin",
+        "std::span::empty",
+        "std::span::end",
+        "std::span::first",
+        "std::span::front",
+        "std::span::last",
+        "std::span::operator[]",
+        "std::span::size",
+        "std::span::subspan"
+      ],
+      "case_ids": ["span"],
+      "required_instantiations": ["std::span<int32_t>", "std::span<char>"],
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "stdlib/std/span.gti"]
     },
     {
       "id": "string.executable",
@@ -585,6 +605,7 @@
       "status": "executable",
       "operations": [
         "std::string::append",
+        "std::string::as_span",
         "std::string::at",
         "std::string::back",
         "std::string::begin",
@@ -602,11 +623,12 @@
         "std::string::resize",
         "std::string::shrink_to_fit",
         "std::string::size",
+        "std::string::view",
         "std::to_string"
       ],
-      "case_ids": ["string"],
+      "case_ids": ["span", "string"],
       "required_instantiations": ["std::to_string for every fixed-width integer family"],
-      "evidence": ["tests/fixtures/stdlib_surface_string.gti", "stdlib/std/string.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "stdlib/std/string.gti"]
     },
     {
       "id": "string.scaffold",
@@ -656,6 +678,7 @@
       "source": "stdlib/std/vector.gti",
       "status": "executable",
       "operations": [
+        "std::vector::as_span",
         "std::vector::at",
         "std::vector::back",
         "std::vector::begin",
@@ -678,9 +701,9 @@
         "std::vector::size",
         "std::vector::vector"
       ],
-      "case_ids": ["vector"],
+      "case_ids": ["span", "vector"],
       "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])"],
-      "evidence": ["tests/fixtures/stdlib_surface_vector.gti", "stdlib/std/vector.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "stdlib/std/vector.gti"]
     },
     {
       "id": "vector.scaffold",
