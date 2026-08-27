@@ -2207,6 +2207,107 @@ def main():
         )
         run([gti, "run"], cwd=chained_native_app)
 
+        # --- Manifest-declared bindgen imports (BUILD-01) ---
+        clang = shutil.which("clang")
+        if clang is None:
+            raise AssertionError("project bindgen test requires clang on PATH")
+        bindgen_project = root / "bindgen-project"
+        (bindgen_project / "src").mkdir(parents=True)
+        (bindgen_project / "native").mkdir()
+        (bindgen_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "bindgen-project"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'c-sources = ["native/counter.c"]\n'
+            'c-compile-args = ["-DCOUNTER_STEP=2"]\n\n'
+            "[targets.bindgen-project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[bindgen.counter]\n"
+            'header = "native/counter.h"\n'
+            'defines = ["COUNTER_STEP=2"]\n',
+            encoding="utf-8",
+        )
+        (bindgen_project / "native/counter.h").write_text(
+            "#ifndef COUNTER_H\n"
+            "#define COUNTER_H\n"
+            "#ifndef COUNTER_STEP\n"
+            "#define COUNTER_STEP 1\n"
+            "#endif\n"
+            "#define COUNTER_LIMIT (40 + COUNTER_STEP)\n"
+            "typedef struct Counter Counter;\n"
+            "Counter *counter_create(int start);\n"
+            "void counter_step(Counter *counter, void (*observer)(int value));\n"
+            "int counter_value(const Counter *counter);\n"
+            "void counter_destroy(Counter *counter);\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        (bindgen_project / "native/counter.c").write_text(
+            '#include "counter.h"\n'
+            "#include <stdlib.h>\n"
+            "struct Counter { int value; };\n"
+            "Counter *counter_create(int start) {\n"
+            "  Counter *counter = malloc(sizeof(Counter));\n"
+            "  counter->value = start;\n"
+            "  return counter;\n"
+            "}\n"
+            "void counter_step(Counter *counter, void (*observer)(int value)) {\n"
+            "  counter->value += COUNTER_STEP;\n"
+            "  if (observer) { observer(counter->value); }\n"
+            "}\n"
+            "int counter_value(const Counter *counter) {\n"
+            "  return counter->value;\n"
+            "}\n"
+            "void counter_destroy(Counter *counter) { free(counter); }\n",
+            encoding="utf-8",
+        )
+        (bindgen_project / "src/main.gti").write_text(
+            "#include <counter/bindings>\n"
+            "\n"
+            "int main() {\n"
+            "  unsafe {\n"
+            "    mut Counter* counter = counter_create(40);\n"
+            "    counter_step(counter, nullptr);\n"
+            "    int32_t value = counter_value(counter);\n"
+            "    counter_destroy(counter);\n"
+            "    if (value != COUNTER_LIMIT) {\n"
+            "      return 1;\n"
+            "    }\n"
+            "  }\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        # The imported macro constant, the opaque handle, the synthesized
+        # callback alias, and the C implementation cross one real build+run.
+        bindgen_build = run([gti, "build"], cwd=bindgen_project)
+        assert "Generated bindings counter (" in bindgen_build.stdout
+        generated_bindings = (
+            bindgen_project / "build/gti/bindgen/bindgen-project/counter/bindings.gti"
+        )
+        assert generated_bindings.is_file()
+        assert "COUNTER_LIMIT" in generated_bindings.read_text(encoding="utf-8")
+        run([gti, "run"], cwd=bindgen_project)
+        # An unchanged header reuses the published bindings silently.
+        bindgen_rebuild = run([gti, "build"], cwd=bindgen_project)
+        assert "Generated bindings" not in bindgen_rebuild.stdout
+        # A header edit regenerates through the reuse key.
+        with (bindgen_project / "native/counter.h").open("a") as header:
+            header.write("int counter_reset(Counter *counter);\n")
+        bindgen_regenerate = run([gti, "check"], cwd=bindgen_project)
+        assert "Generated bindings counter (" in bindgen_regenerate.stdout
+        # A header escaping the package is refused at manifest validation.
+        (bindgen_project / "gti.toml").write_text(
+            (bindgen_project / "gti.toml")
+            .read_text(encoding="utf-8")
+            .replace('header = "native/counter.h"', 'header = "../outside.h"'),
+            encoding="utf-8",
+        )
+        escaped = run([gti, "build"], expected=65, cwd=bindgen_project)
+        assert "GTI-B1104" in escaped.stderr
 
 
 if __name__ == "__main__":
