@@ -6,13 +6,13 @@ Passing a NAMED borrowing local (a copyable class value holding a
 reference field, e.g. `std::detail::vector_iterator<T>`) by value into a
 generic function used to raise GTI-B0001: HIR plans no call-input stage
 for a borrowed-state copy, so the argument arrives in MIR as a bare Load
-copy that the C++ emitter had no vocabulary for. The emitter now spells
-the source place at the consuming call, so C++ copy-constructs the
-parameter at the boundary and the copy keeps its owner dependency
-exactly like the fresh prvalue argument.
+copy that the C++ emitter had no vocabulary for. The emitter now materializes
+that copy at the MIR Load and moves the sequenced local into the consuming
+call, preserving both the owner dependency and MIR's copy-before-call order.
 """
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,9 +82,11 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit O0", emitted)
         generated_text = generated.read_text(encoding="utf8")
-        if "stages a by-value argument copy" not in generated_text:
+        if "auto __gti_mir_v_" not in generated_text or not re.search(
+            r"std::move\(__gti_mir_v_\d+\)", generated_text
+        ):
             sys.stderr.write(
-                "O0 emission lost the by-value argument copy spelling\n"
+                "O0 emission lost the sequenced by-value argument copy\n"
             )
             return 1
 
