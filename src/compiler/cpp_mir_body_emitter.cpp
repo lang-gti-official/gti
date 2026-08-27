@@ -13237,10 +13237,11 @@ storageAllocationFailureCall(const MirProgram &program,
          site->outcomes.front().detail == DefinedFailureDetail::PrivateStorage;
 }
 
-// A storage read with no Invoke is terminally contained by the sealed helper.
-// Prefix storage reaches this after a logical-bound proof; sparse storage also
-// retains its initialized-slot check. The element address feeds the loan
-// directly in either case.
+// A storage read with no live failure edge is terminally contained by the
+// sealed helper. An Invoke may remain structurally after every local outcome
+// is discharged; its terminator emits only the success edge, so the read uses
+// the unchecked helper rather than producing a dead failure status. The
+// element address feeds the loan directly in either case.
 [[nodiscard]] bool storageReferenceReadCall(const MirBody &body,
                                             const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call &&
@@ -13248,7 +13249,8 @@ storageAllocationFailureCall(const MirProgram &program,
          !instruction.definedFailure.localOrigins.empty() &&
          instruction.definedFailure.propagation ==
              FailurePropagationKind::None &&
-         !invokePairedInstruction(body, instruction.id);
+         (!invokePairedInstruction(body, instruction.id) ||
+          allMirLocalFailuresDischarged(instruction));
 }
 
 // The identity-bound public logical-size check (P-STORAGE-01). Its plain form
@@ -16428,6 +16430,9 @@ public:
     if (failureForm) {
       for (const MirBlock &block : facts.body.blocks) {
         for (const MirInstruction &instruction : block.instructions) {
+          const bool failureStatusRequired =
+              !allMirLocalFailuresDischarged(instruction) ||
+              invokePairedInstruction(facts.body, instruction.id);
           if (instruction.kind == MirInstructionKind::Compute &&
               (!cppMirCheckedOperationHelperSpelling(instruction.operation)
                     .empty() ||
@@ -16435,7 +16440,7 @@ public:
               !instruction.localFailureSites.empty() &&
               instruction.info.type.kind != SemanticType::Float &&
               instruction.info.type.kind != SemanticType::Double &&
-              !allMirLocalFailuresDischarged(instruction)) {
+              failureStatusRequired) {
             writeIndent();
             output << "::gti_internal::backend::mir_failure_status_v1 "
                       "__gti_mir_failure_status_"
@@ -16445,7 +16450,7 @@ public:
           if ((instruction.kind == MirInstructionKind::Load ||
                instruction.kind == MirInstructionKind::Assign) &&
               instruction.localFailureSites.size() == 1 &&
-              !allMirLocalFailuresDischarged(instruction)) {
+              failureStatusRequired) {
             writeIndent();
             output << "::gti_internal::backend::mir_failure_status_v1 "
                       "__gti_mir_failure_status_"
@@ -16466,7 +16471,8 @@ public:
                 invokePairedInstruction(facts.body, instruction.id)) ||
                (prefixStorageIntrinsic(instruction.intrinsic) &&
                 !instruction.localFailureSites.empty())) &&
-              !allMirLocalFailuresDischarged(instruction)) {
+              !storageReferenceReadCall(facts.body, instruction) &&
+              failureStatusRequired) {
             writeIndent();
             output << "::gti_internal::backend::mir_failure_status_v1 "
                       "__gti_mir_failure_status_"

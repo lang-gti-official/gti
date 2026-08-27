@@ -2202,7 +2202,7 @@ public:
         return;
       }
       const SemanticType valueType =
-          analyzeInitializer(stmt.value(), currentReturnType.arguments[0]);
+          analyzeInitializer(stmt.value(), currentReturnType);
       forceProgramStorageBoundaryAccess(stmt.value());
       validateReferenceReturn(currentReturnType, valueType, stmt.value());
       requireInitializedReceiver(stmt.keyword());
@@ -2915,11 +2915,6 @@ public:
       analyzingFieldInitializer = currentClass && functionDepth == 0;
       const bool directInitializer =
           exprAs<DirectInitializer>(stmt.initializer().get()) != nullptr;
-      const SemanticType expectedInitializer =
-          declaredType.kind == SemanticType::Reference &&
-                  declaredType.arguments.size() == 1 && !directInitializer
-              ? declaredType.arguments[0]
-              : declaredType;
       const bool establishesLoan =
           !directInitializer &&
           (declaredType.kind == SemanticType::Reference ||
@@ -2929,7 +2924,7 @@ public:
         ++programStoragePlaceUseDepth;
       }
       initializerType =
-          analyzeInitializer(stmt.initializer(), expectedInitializer, true);
+          analyzeInitializer(stmt.initializer(), declaredType, true);
       if (establishesLoan) {
         --suppressLoanPlaceAccessDepth;
         --programStoragePlaceUseDepth;
