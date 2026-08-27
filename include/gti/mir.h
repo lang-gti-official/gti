@@ -641,15 +641,6 @@ struct MirScalarPromotionRewrite {
                          const MirScalarPromotionRewrite &) = default;
 };
 
-struct MirBody;
-
-// Applies the canonical conservative scalar-to-SSA rewrite used by both the
-// optimizer editor and source/optimized coherence replay. Failure leaves the
-// body byte-identical. The current client is deliberately acyclic and excludes
-// failure, ownership, loan, raw-memory, synchronization, and cleanup state.
-[[nodiscard]] std::optional<MirScalarPromotionRewrite>
-rewriteMirScalarPlace(MirBody &body, MirPlaceId place);
-
 struct MirProgramConstantSubstitution {
   HirValueId hirValue = 0;
   ConstantValue constant;
@@ -906,22 +897,6 @@ struct MirTemporaryMaterialization {
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
 
-struct MirVerificationError {
-  MirBodyKind bodyKind = MirBodyKind::Function;
-  std::size_t owner = 0;
-  MirBlockId block = 0;
-  MirInstructionId instruction = 0;
-  std::string message;
-};
-
-struct MirVerificationResult {
-  std::vector<MirVerificationError> errors;
-
-  [[nodiscard]] bool valid() const { return errors.empty(); }
-};
-
-void rebuildMirReachability(MirBody &body);
-[[nodiscard]] bool rebuildMirValueUses(MirBody &body);
 [[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
 // Body-level refinement: a constructor whose lowering silently transferred a
 // subobject into `this` without arming rollback routes no defined-failure
@@ -935,9 +910,6 @@ enum class MirFailureControlFlowPosition {
 [[nodiscard]] bool
 requiresMirFailureControlFlow(const MirInstruction &instruction,
                               MirFailureControlFlowPosition position);
-[[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
-                                                  std::size_t owner = 0);
-
 struct MirFieldDrop {
   HirBindingId field = 0;
   SymbolId symbol = 0;
@@ -1502,9 +1474,6 @@ public:
 
 private:
   friend class MirLowerer;
-  friend MirVerificationResult verifyMirOptimizationCoherence(
-      const MirProgram &source, const MirProgram &optimized,
-      const std::vector<MirTransformRecord> &records);
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
@@ -1532,127 +1501,5 @@ enumerateMirBodyAddresses(const MirProgram &program);
 [[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
-
-[[nodiscard]] MirVerificationResult verifyMirProgram(const MirProgram &program);
-
-// One literal operand of a compute fold, carried with the type that fixes
-// its evaluation domain.
-struct MirComputeFoldOperand {
-  Literal literal;
-  SemanticType type;
-};
-
-struct MirDeadInstructionRewrite {
-  MirBodyAddress body;
-  MirBlockId block = 0;
-  MirInstructionId instruction = 0;
-  HirValueId sourceValue = 0;
-  HirStatementId sourceStatement = 0;
-  std::optional<MirValueId> result;
-
-  friend bool operator==(const MirDeadInstructionRewrite &,
-                         const MirDeadInstructionRewrite &) = default;
-};
-
-struct MirUnreachableBlockRewrite {
-  MirBlockId block = 0;
-  HirValueId sourceValue = 0;
-  HirStatementId sourceStatement = 0;
-  std::vector<MirInstructionId> removedInstructions;
-
-  friend bool operator==(const MirUnreachableBlockRewrite &,
-                         const MirUnreachableBlockRewrite &) = default;
-};
-
-// Canonical destructive rewrites used by both pass/editor application and
-// source-MIR coherence replay. Failure leaves the supplied MIR byte-identical.
-[[nodiscard]] std::optional<MirDeadInstructionRewrite>
-rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress body,
-                          MirInstructionId instruction);
-[[nodiscard]] std::optional<MirUnreachableBlockRewrite>
-rewriteMirUnreachableBlock(MirBody &body, MirBlockId block);
-
-// The single evaluation authority for MIR compute folds: the optimizer
-// derives a fold through it and the verifier replays the same call, so a
-// folded literal can never disagree with its proof. Returns nothing for
-// any operation, operand shape, or domain outside the folded vocabulary
-// (currently the boolean-producing comparisons and logical not).
-[[nodiscard]] std::optional<Literal>
-evaluateMirComputeFold(MirOperation operation,
-                       const std::vector<MirComputeFoldOperand> &operands,
-                       const SemanticType &resultType);
-
-// Verifies that `optimized` is exactly `source` plus rewrites admitted by the
-// controlled MIR editor. Every transformation record is treated as an
-// untrusted claim and replayed through the canonical rewrite authority.
-[[nodiscard]] MirVerificationResult
-verifyMirOptimizationCoherence(const MirProgram &source,
-                               const MirProgram &optimized,
-                               const std::vector<MirTransformRecord> &records);
-
-struct MirDefinedFailureEffects {
-  std::vector<bool> functions;
-  std::vector<bool> constructors;
-  std::vector<bool> destructors;
-
-  friend bool operator==(const MirDefinedFailureEffects &,
-                         const MirDefinedFailureEffects &) = default;
-};
-
-// Failure-dimension slice of O-MIR-02. Each result is indexed by its concrete
-// instance ID and remains conservative (`true`) unless an acyclic, closed,
-// bounded scalar/static-call/construction/normal-cleanup graph is proved from
-// MIR alone.
-[[nodiscard]] MirDefinedFailureEffects
-deriveMirDefinedFailureEffects(const MirProgram &program);
-
-// Proves that moving a value cannot execute a GTI defined-failure edge. For a
-// class this requires an exact concrete MIR instance, a generated move member,
-// and recursively failure-free structural state; declared move bodies remain
-// outside the proof.
-[[nodiscard]] bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
-                                                   const SemanticType &type);
-
-// Compatibility accessor for clients of MIR v20's function-only slice.
-[[nodiscard]] std::vector<bool>
-deriveMirScalarDefinedFailureEffects(const MirProgram &program);
-
-struct MirLoweringResult {
-  MirProgram program;
-
-  [[nodiscard]] bool valid() const { return program.valid(); }
-};
-
-class MirLowerer {
-public:
-  [[nodiscard]] MirLoweringResult
-  lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
-
-private:
-  [[nodiscard]] static MirLoweringResult
-  lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
-               const MirDefinedFailureEffects &definedFailureEffects,
-               bool includeProgramInitialization);
-
-  [[nodiscard]] static MirBody lowerBody(
-      const HirProgram &program, const FailureMetadata &failureMetadata,
-      const HirBody &body, MirBodyKind kind, SemanticType returnType,
-      const std::vector<HirValueId> &prologueValues,
-      const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
-      bool implicitZeroReturn = false,
-      const std::vector<HirConstructorInitializer> *initializers = nullptr,
-      const HirFunctionInstance *function = nullptr,
-      const HirConstructorInstance *constructor = nullptr,
-      const HirLambda *lambda = nullptr,
-      const HirProgramInitializationPlan *programInitialization = nullptr,
-      MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
-      bool compilerTrusted = false,
-      const MirClassInstance *constructorOwner = nullptr);
-
-  [[nodiscard]] static bool
-  lowerHostedStartup(const HirProgram &source,
-                     const FailureMetadata &failureMetadata,
-                     MirProgram &program);
-};
 
 } // namespace lang

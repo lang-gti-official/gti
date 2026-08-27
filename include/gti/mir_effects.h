@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 
@@ -30,22 +31,41 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 [[nodiscard]] MirEffectTraits effects(IntrinsicKind intrinsic);
 [[nodiscard]] MirEffectTraits effects(SynchronizationOperationKind kind);
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);
-// Refines an exact static call/construct/drop through independently verified
-// per-instance summaries. Dynamic and unresolved boundaries remain maximally
-// conservative.
 [[nodiscard]] MirEffectTraits effects(const MirProgram &program,
                                       const MirInstruction &instruction);
 
-// Returns the merged verified summary only when an invocation has a closed,
-// exact static target set. Native, dynamic, unresolved, and private-runtime
-// boundaries return no summary and must remain conservative in clients.
 [[nodiscard]] std::optional<MirEffectSummary>
 exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction);
 
 [[nodiscard]] MirProgramEffectSummaries
 deriveMirProgramEffectSummaries(const MirProgram &program);
-[[nodiscard]] MirVerificationResult
-verifyMirEffectSummaries(const MirProgram &program);
+
+struct MirDefinedFailureEffects {
+  std::vector<bool> functions;
+  std::vector<bool> constructors;
+  std::vector<bool> destructors;
+
+  friend bool operator==(const MirDefinedFailureEffects &,
+                         const MirDefinedFailureEffects &) = default;
+};
+
+// Failure-dimension slice of O-MIR-02. Each result is indexed by its concrete
+// instance ID and remains conservative (`true`) unless an acyclic, closed,
+// bounded scalar/static-call/construction/normal-cleanup graph is proved from
+// MIR alone.
+[[nodiscard]] MirDefinedFailureEffects
+deriveMirDefinedFailureEffects(const MirProgram &program);
+
+// Proves that moving a value cannot execute a GTI defined-failure edge. For a
+// class this requires an exact concrete MIR instance, a generated move member,
+// and recursively failure-free structural state; declared move bodies remain
+// outside the proof.
+[[nodiscard]] bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
+                                                   const SemanticType &type);
+
+// Compatibility accessor for clients of MIR v20's function-only slice.
+[[nodiscard]] std::vector<bool>
+deriveMirScalarDefinedFailureEffects(const MirProgram &program);
 
 } // namespace lang

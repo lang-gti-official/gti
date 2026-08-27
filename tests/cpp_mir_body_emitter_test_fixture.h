@@ -6,6 +6,9 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/loops.h"
 #include "gti/optimizer.h"
 

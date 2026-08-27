@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
 #include "gti/optimizer.h"
 

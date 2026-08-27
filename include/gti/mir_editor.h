@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/mir.h"
+#include "gti/mir_verifier.h"
 
 #include <cstddef>
 #include <string>
@@ -11,6 +12,55 @@ namespace lang {
 
 class MirBodyAnalysisManager;
 struct MirClosedCallSafetyAnalysis;
+
+void rebuildMirReachability(MirBody &body);
+[[nodiscard]] bool rebuildMirValueUses(MirBody &body);
+
+// One literal operand of a compute fold, carried with the type that fixes its
+// evaluation domain.
+struct MirComputeFoldOperand {
+  Literal literal;
+  SemanticType type;
+};
+
+struct MirDeadInstructionRewrite {
+  MirBodyAddress body;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+  std::optional<MirValueId> result;
+
+  friend bool operator==(const MirDeadInstructionRewrite &,
+                         const MirDeadInstructionRewrite &) = default;
+};
+
+struct MirUnreachableBlockRewrite {
+  MirBlockId block = 0;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+  std::vector<MirInstructionId> removedInstructions;
+
+  friend bool operator==(const MirUnreachableBlockRewrite &,
+                         const MirUnreachableBlockRewrite &) = default;
+};
+
+// Canonical lower-level operations used by MirEditor and coherence replay.
+// Failure leaves the supplied MIR byte-identical.
+[[nodiscard]] std::optional<MirScalarPromotionRewrite>
+rewriteMirScalarPlace(MirBody &body, MirPlaceId place);
+[[nodiscard]] std::optional<MirDeadInstructionRewrite>
+rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress body,
+                          MirInstructionId instruction);
+[[nodiscard]] std::optional<MirUnreachableBlockRewrite>
+rewriteMirUnreachableBlock(MirBody &body, MirBlockId block);
+
+// The single evaluation authority for MIR compute folds. Optimizer admission
+// and coherence replay both use this operation.
+[[nodiscard]] std::optional<Literal>
+evaluateMirComputeFold(MirOperation operation,
+                       const std::vector<MirComputeFoldOperand> &operands,
+                       const SemanticType &resultType);
 
 struct MirInstructionKey {
   MirBodyAddress body;
@@ -33,7 +83,9 @@ struct MirEditResult {
   bool changed = false;
   std::size_t appliedPatches = 0;
   bool valueUsesRebuilt = false;
+  bool analysesInvalidated = false;
   MirAnalysisInvalidation invalidation;
+  std::vector<std::string> invalidatedAnalyses;
   std::vector<MirTransformRecord> transformations;
   MirVerificationResult verification;
 
@@ -45,9 +97,9 @@ struct MirEditResult {
 // claims against an immutable snapshot and commits them atomically after repair
 // and verification. General insertion, arbitrary erasure/CFG editing, and
 // mutable body access remain outside this interface.
-class MirProgramEditor final {
+class MirEditor final {
 public:
-  MirProgramEditor(MirProgram &program, std::string pass)
+  MirEditor(MirProgram &program, std::string pass)
       : program(program), pass(std::move(pass)) {}
 
   // Compatibility accessors delegate to core MIR navigation. New passes can

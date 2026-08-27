@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gti/optimization/rewrite.h"
+#include "gti/mir_editor.h"
 
 #include <array>
 #include <cstddef>

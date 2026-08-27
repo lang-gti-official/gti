@@ -1,6 +1,6 @@
 #include "gti/mir_printer.h"
 
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
 
 #include <cstddef>
 #include <cstdint>

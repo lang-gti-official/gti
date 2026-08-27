@@ -1,4 +1,5 @@
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_verifier.h"
 
 #include "gti/ast.h"
 #include "gti/failure_metadata.h"

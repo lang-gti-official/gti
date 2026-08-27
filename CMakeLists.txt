@@ -318,11 +318,11 @@ add_library(
   "src/compiler/mir_backend.cpp"
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
-  "src/compiler/optimization/effects.cpp"
+  "src/compiler/mir_effects.cpp"
   "src/compiler/optimization/loops.cpp"
   "src/compiler/optimization/pass.cpp"
   "src/compiler/optimization/report.cpp"
-  "src/compiler/optimization/rewrite.cpp"
+  "src/compiler/mir_editor.cpp"
   "src/compiler/optimization/safety.cpp"
   "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
@@ -794,6 +794,24 @@ if(BUILD_TESTING)
   target_link_libraries(gti_semantic_header_smoke PRIVATE gti_compiler)
   add_test(NAME semantic_header_self_containment
            COMMAND gti_semantic_header_smoke)
+
+  add_test(
+    NAME mir_header_boundary
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_header_boundary_test.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+
+  add_executable(
+    gti_mir_header_smoke
+    tests/mir_model_header_smoke.cpp
+    tests/mir_effects_header_smoke.cpp
+    tests/mir_editor_header_smoke.cpp
+    tests/mir_lowering_header_smoke.cpp
+    tests/mir_verifier_header_smoke.cpp
+  )
+  target_link_libraries(gti_mir_header_smoke PRIVATE gti_compiler)
+  add_test(NAME mir_header_self_containment COMMAND gti_mir_header_smoke)
 
   add_executable("gti_pack_fold_syntax_tests"
                  "tests/pack_fold_syntax_tests.cpp")

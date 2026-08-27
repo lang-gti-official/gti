@@ -1,6 +1,6 @@
 #include "gti/optimization/loops.h"
 
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <functional>

@@ -1,5 +1,8 @@
 #include "gti/optimizer.h"
 
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/pass.h"
 
 #include <algorithm>
@@ -371,11 +374,13 @@ struct LiteralIdentityFoldResult {
   OptimizationPassReport report;
   std::vector<MirTransformRecord> transformations;
   MirVerificationResult verification;
+  bool analysesInvalidated = false;
 };
 
 [[nodiscard]] LiteralIdentityFoldResult
 foldLiteralIdentities(MirProgram &program,
-                      const OptimizationResult &compatibility) {
+                      const OptimizationResult &compatibility,
+                      MirBodyAnalysisManager &analyses) {
   LiteralIdentityFoldResult result{
       .report = {.name = "fold-literal-identities"}};
   // Identity, compute, and branch folds cascade: a folded
@@ -384,7 +389,7 @@ foldLiteralIdentities(MirProgram &program,
   // one verified transform report covers the whole cascade.
   for (std::size_t round = 0; round < 8; ++round) {
     ++result.report.iterations;
-    MirProgramEditor editor(program, result.report.name);
+    MirEditor editor(program, result.report.name);
     const auto bodyKeyOf = [](MirBodyAddress address) {
       return std::pair<std::size_t, HirClassInstanceId>(
           static_cast<std::size_t>(address.kind), address.owner);
@@ -504,7 +509,7 @@ foldLiteralIdentities(MirProgram &program,
         editor.pendingBranchFoldCount() == 0) {
       break;
     }
-    const MirEditResult edited = editor.apply();
+    const MirEditResult edited = editor.apply(analyses);
     result.report.changed |= edited.changed;
     result.report.appliedEdits += edited.appliedPatches;
     result.report.valueUsesRebuilt |= edited.valueUsesRebuilt;
@@ -515,6 +520,16 @@ foldLiteralIdentities(MirProgram &program,
     result.report.invalidation.reachability |= edited.invalidation.reachability;
     result.report.invalidation.dominance |= edited.invalidation.dominance;
     result.report.invalidation.safetyChecks |= edited.invalidation.safetyChecks;
+    result.report.invalidatedAnalyses.insert(
+        result.report.invalidatedAnalyses.end(),
+        edited.invalidatedAnalyses.begin(), edited.invalidatedAnalyses.end());
+    std::sort(result.report.invalidatedAnalyses.begin(),
+              result.report.invalidatedAnalyses.end());
+    result.report.invalidatedAnalyses.erase(
+        std::unique(result.report.invalidatedAnalyses.begin(),
+                    result.report.invalidatedAnalyses.end()),
+        result.report.invalidatedAnalyses.end());
+    result.analysesInvalidated |= edited.analysesInvalidated;
     result.transformations.insert(result.transformations.end(),
                                   edited.transformations.begin(),
                                   edited.transformations.end());
@@ -537,6 +552,15 @@ void mergeEditReport(OptimizationPassReport &report,
   report.invalidation.reachability |= edited.invalidation.reachability;
   report.invalidation.dominance |= edited.invalidation.dominance;
   report.invalidation.safetyChecks |= edited.invalidation.safetyChecks;
+  report.invalidatedAnalyses.insert(report.invalidatedAnalyses.end(),
+                                    edited.invalidatedAnalyses.begin(),
+                                    edited.invalidatedAnalyses.end());
+  std::sort(report.invalidatedAnalyses.begin(),
+            report.invalidatedAnalyses.end());
+  report.invalidatedAnalyses.erase(
+      std::unique(report.invalidatedAnalyses.begin(),
+                  report.invalidatedAnalyses.end()),
+      report.invalidatedAnalyses.end());
 }
 
 [[nodiscard]] std::vector<MirBodyAddress>
@@ -581,7 +605,7 @@ public:
     MirPassOutcome outcome;
     outcome.report.name = std::string(name());
     outcome.report.iterations = 1;
-    MirProgramEditor editor(context.program, outcome.report.name);
+    MirEditor editor(context.program, outcome.report.name);
     for (const MirBodyAddress address :
          enumerateMirBodyAddresses(context.program)) {
       const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
@@ -626,10 +650,11 @@ public:
       outcome.preserved = MirPreservedAnalyses::all();
       return outcome;
     }
-    const MirEditResult edited = editor.apply();
+    const MirEditResult edited = editor.apply(analyses);
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
+    outcome.analysesInvalidated = edited.analysesInvalidated;
     outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
                                        : MirPreservedAnalyses::all();
     return outcome;
@@ -663,12 +688,13 @@ public:
       ++outcome.report.analyzedBodies;
     }
     LiteralIdentityFoldResult folded =
-        foldLiteralIdentities(context.program, compatibility);
+        foldLiteralIdentities(context.program, compatibility, analyses);
     outcome.report = std::move(folded.report);
     outcome.report.analyzedBodies =
         enumerateMirBodyAddresses(context.program).size();
     outcome.transformations = std::move(folded.transformations);
     outcome.verification = std::move(folded.verification);
+    outcome.analysesInvalidated = folded.analysesInvalidated;
     outcome.preserved = outcome.report.changed ? MirPreservedAnalyses::none()
                                                : MirPreservedAnalyses::all();
     return outcome;
@@ -689,7 +715,7 @@ public:
     MirPassOutcome outcome;
     outcome.report.name = std::string(name());
     outcome.report.iterations = 1;
-    MirProgramEditor editor(context.program, outcome.report.name);
+    MirEditor editor(context.program, outcome.report.name);
     for (const MirBodyAddress address :
          enumerateMirBodyAddresses(context.program)) {
       const MirBody *body = findMirBody(context.program, address);
@@ -773,10 +799,11 @@ public:
       outcome.preserved = MirPreservedAnalyses::all();
       return outcome;
     }
-    const MirEditResult edited = editor.apply();
+    const MirEditResult edited = editor.apply(analyses);
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
+    outcome.analysesInvalidated = edited.analysesInvalidated;
     outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
                                        : MirPreservedAnalyses::all();
     return outcome;
@@ -815,7 +842,7 @@ public:
     MirPassOutcome outcome;
     outcome.report.name = passName;
     outcome.report.iterations = 1;
-    MirProgramEditor editor(context.program, passName);
+    MirEditor editor(context.program, passName);
     for (const MirBodyAddress address :
          enumerateMirBodyAddresses(context.program)) {
       const MirBody *body = findMirBody(context.program, address);
@@ -883,6 +910,7 @@ public:
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
+    outcome.analysesInvalidated = edited.analysesInvalidated;
     // A discharge attaches independently replayed proof metadata. It does not
     // change any CFG, value, place, effect, or abstract-state input.
     outcome.preserved = MirPreservedAnalyses::all();
@@ -905,7 +933,7 @@ public:
     MirPassOutcome outcome;
     outcome.report.name = std::string(name());
     outcome.report.iterations = 1;
-    MirProgramEditor editor(context.program, outcome.report.name);
+    MirEditor editor(context.program, outcome.report.name);
     for (const MirBodyAddress address :
          enumerateMirBodyAddresses(context.program)) {
       const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
@@ -948,10 +976,11 @@ public:
       outcome.preserved = MirPreservedAnalyses::all();
       return outcome;
     }
-    const MirEditResult edited = editor.apply();
+    const MirEditResult edited = editor.apply(analyses);
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
+    outcome.analysesInvalidated = edited.analysesInvalidated;
     outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
                                        : MirPreservedAnalyses::all();
     return outcome;
@@ -970,7 +999,7 @@ public:
     outcome.report.name = std::string(name());
     for (std::size_t round = 0; round < 8; ++round) {
       ++outcome.report.iterations;
-      MirProgramEditor editor(context.program, outcome.report.name);
+      MirEditor editor(context.program, outcome.report.name);
       for (const MirBodyAddress address :
            enumerateMirBodyAddresses(context.program)) {
         const MirBody *body = findMirBody(context.program, address);
@@ -1059,22 +1088,16 @@ public:
       if (editor.pendingDeadInstructionCount() == 0) {
         break;
       }
-      const MirEditResult edited = editor.apply();
+      const MirEditResult edited = editor.apply(analyses);
       mergeEditReport(outcome.report, edited);
       outcome.transformations.insert(outcome.transformations.end(),
                                      edited.transformations.begin(),
                                      edited.transformations.end());
       outcome.verification = edited.verification;
+      outcome.analysesInvalidated |= edited.analysesInvalidated;
       if (!edited.valid() || !edited.changed) {
         return outcome;
       }
-      for (const MirBodyAddress address :
-           changedBodies(edited.transformations)) {
-        appendInvalidated(
-            outcome.report,
-            analyses.invalidate(address, MirPreservedAnalyses::none()));
-      }
-      outcome.analysesInvalidated = true;
     }
     outcome.preserved = MirPreservedAnalyses::all();
     return outcome;

@@ -1,6 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -138,6 +140,40 @@ void expectHostedBodyValid(const lang::MirProgram &program,
     printVerification(verification);
     expect(false, message);
   }
+}
+
+void testVerifierCompositionFailsClosed() {
+  const lang::FrontendResult owned = analyzeOwned();
+  if (!owned.canGenerateCode()) {
+    printDiagnostics(owned);
+    expect(false, "verifier composition fixture should lower successfully");
+    return;
+  }
+  expect(lang::verifyMirProgram(owned.mir).valid(),
+         "the complete MIR verifier component set should admit valid MIR");
+
+  constexpr lang::MirVerificationComponent components[] = {
+      lang::MirVerificationComponent::BodyLocal,
+      lang::MirVerificationComponent::ProgramContracts,
+      lang::MirVerificationComponent::EffectSummaries,
+  };
+  for (const lang::MirVerificationComponent component : components) {
+    const lang::MirVerificationComponents incomplete =
+        lang::requiredMirVerificationComponents &
+        static_cast<lang::MirVerificationComponents>(
+            ~lang::mirVerificationComponent(component));
+    const lang::MirVerificationResult verification =
+        lang::verifyMirProgram(owned.mir, incomplete);
+    expect(!verification.valid() &&
+               hasError(verification, "component set is incomplete"),
+           "omitting any MIR verifier component should fail closed");
+  }
+
+  const lang::MirVerificationResult unknown = lang::verifyMirProgram(
+      owned.mir, static_cast<lang::MirVerificationComponents>(
+                     lang::requiredMirVerificationComponents | 0x80U));
+  expect(!unknown.valid() && hasError(unknown, "component set is incomplete"),
+         "an unknown MIR verifier component should fail closed");
 }
 
 std::size_t countOperation(const lang::MirHostedStartupPlan &plan,
@@ -691,6 +727,7 @@ void testFailureTargetAndOwnershipMutations() {
 } // namespace
 
 int main() {
+  testVerifierCompositionFailsClosed();
   testPresenceAndNoArgumentSchedules();
   testOwnedScheduleAndPrinter();
   testProvenanceEntityAndCfgMutations();

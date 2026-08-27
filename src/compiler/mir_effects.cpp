@@ -1,4 +1,5 @@
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <array>

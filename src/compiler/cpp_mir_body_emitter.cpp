@@ -1,6 +1,8 @@
 #include "cpp_mir_body_emitter.h"
 #include "cpp_mir_control_flow.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/loops.h"
 #include <algorithm>
 #include <array>
