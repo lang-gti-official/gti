@@ -1732,10 +1732,7 @@ successors(const MirTerminator &terminator) {
                                     0) -> std::optional<MirVerificationResult> {
       const MirCanonicalPlace place =
           canonicalPlace(body, placeId, bindingLoans, active);
-      const auto opaqueBorrowCarrierMutation = [&](const MirLoan &loan) {
-        if (!write) {
-          return false;
-        }
+      const auto opaqueBorrowCarrierAccess = [&](const MirLoan &loan) {
         const MirPlace *accessed = body.findPlace(placeId);
         const bool storedEntryCarrier =
             loan.kind == MirLoanKind::Stored && loan.entry &&
@@ -1749,7 +1746,7 @@ successors(const MirTerminator &terminator) {
             std::find(loan.carriers.begin(), loan.carriers.end(),
                       place.binding) != loan.carriers.end();
         const MirPlace *returnSource =
-            loan.kind == MirLoanKind::Return && loan.escapes
+            write && loan.kind == MirLoanKind::Return && loan.escapes
                 ? body.findPlace(loan.source)
                 : nullptr;
         const bool returnedCarrier =
@@ -1762,10 +1759,14 @@ successors(const MirTerminator &terminator) {
         // not the by-value carrier object itself.  The same is true after an
         // exact stored-value return transfer: the escaping loan protects the
         // caller-owned referent while the moved-from parameter shell still
-        // needs scope-end destruction. Mutating/moving the whole carrier is
-        // independent of that referent. A projection that still carries
-        // borrowed state receives no exception, so this cannot reseat or
-        // write through the stored reference.
+        // needs scope-end destruction. Accessing the whole carrier —
+        // reading it as a receiver, mutating it, or moving it — is
+        // independent of that referent, so the stored-entry exception
+        // covers both access modes; a read-receiver method on a by-value
+        // mut cursor parameter (`first != last`) is the canonical read
+        // case. A projection that still carries borrowed state receives no
+        // exception, so this cannot reseat, write through, or duplicate
+        // the stored reference.
         return returnedCarrier ||
                (canonicalStoredEntryCarrier && place.projections.empty()) ||
                (storedEntryCarrier &&
@@ -1808,7 +1809,7 @@ successors(const MirTerminator &terminator) {
         }
         if (write &&
             body.loans[place.throughLoan - 1].access != AccessMode::Mutable &&
-            !opaqueBorrowCarrierMutation(body.loans[place.throughLoan - 1])) {
+            !opaqueBorrowCarrierAccess(body.loans[place.throughLoan - 1])) {
           return failure(body, owner,
                          "read-only loan " + std::to_string(place.throughLoan) +
                              " is used for a write in " + context,
@@ -1822,7 +1823,7 @@ successors(const MirTerminator &terminator) {
             loan.id == place.throughLoan ||
             (place.throughLoan != 0 &&
              isLoanAncestor(body, loan.id, place.throughLoan)) ||
-            opaqueBorrowCarrierMutation(loan)) {
+            opaqueBorrowCarrierAccess(loan)) {
           continue;
         }
         const MirCanonicalPlace protectedPlace =

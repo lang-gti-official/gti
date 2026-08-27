@@ -11824,6 +11824,76 @@ int use() {
                  "does not satisfy generic constraint 'std::forward_iterator'"),
          "forward_iterator should reject a mutable owner-loan cursor at the "
          "constrained call");
+
+  const std::string mutCursorReadReceiverSource = R"(
+#include <std/iterator>
+#include <std/vector>
+
+bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(2));
+  auto last = values.end();
+  bool inside = probe(values.begin_mut(), last);
+  return inside ? 0 : 1;
+}
+)";
+  const lang::FrontendResult mutCursorReadReceiver = lang::Frontend().analyze(
+      "mut-cursor-read-receiver.gti", mutCursorReadReceiverSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!mutCursorReadReceiver.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         mutCursorReadReceiver.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(mutCursorReadReceiver.canGenerateCode() &&
+             lang::verifyMirProgram(mutCursorReadReceiver.mir).valid(),
+         "a read-receiver method on a by-value mut cursor parameter must "
+         "pass MIR verification: the entry loan protects the caller's "
+         "storage, not the carrier object itself");
+
+  const std::string mutCursorLoopSource = R"(
+#include <std/iterator>
+#include <std/vector>
+
+int32_t drain<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, int32_t> {
+  mut int32_t total = 0;
+  while (first != last) {
+    total = total + *first;
+    ++first;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({3, 4, 5});
+  auto last = values.end();
+  return drain(values.begin_mut(), last) == 12 ? 0 : 1;
+}
+)";
+  const lang::FrontendResult mutCursorLoop = lang::Frontend().analyze(
+      "mut-cursor-loop.gti", mutCursorLoopSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  if (!mutCursorLoop.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : mutCursorLoop.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(mutCursorLoop.canGenerateCode() &&
+             lang::verifyMirProgram(mutCursorLoop.mir).valid(),
+         "an iterator-pair loop whose condition read-borrows a by-value mut "
+         "cursor parameter must pass MIR verification across the loop "
+         "backedge");
 }
 
 void testGeneralOwnerDependentReturns() {

@@ -4932,6 +4932,82 @@ inlineNestedCallResult(const MirProgram &program,
   return nullptr;
 }
 
+// The copy analog of the sequenced moved argument: a Load-defined copy of a
+// class place whose single record is one Call operand in the same block
+// declares at its load — `auto v = <place>;` — and the consuming argument
+// spells std::move(v). The sequenced local keeps MIR's copy-before-call
+// order (an inline place read in the argument list would race sibling
+// arguments under C++'s unspecified evaluation order), and auto needs no
+// representation row beyond the copy-construction proof its admission
+// requires. Nothing between the load and the call may write any place, and
+// nothing may touch the copied source place.
+[[nodiscard]] const MirInstruction *
+sequencedCopiedArgument(const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      definition == nullptr || definition->kind != MirInstructionKind::Load ||
+      !definition->result || *definition->result != valueId ||
+      definition->operands.size() != 1 ||
+      definition->operands.front().kind != MirOperandKind::Copy ||
+      definition->operands.front().place == 0 ||
+      body.findPlace(definition->operands.front().place) == nullptr ||
+      !definition->localFailureSites.empty() ||
+      !definition->definedFailure.empty()) {
+    return nullptr;
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *consumer =
+      findInstruction(body, uses.front().instruction);
+  if (consumer == nullptr || consumer->kind != MirInstructionKind::Call) {
+    return nullptr;
+  }
+  const MirPlaceId copiedPlace = definition->operands.front().place;
+  for (const MirBlock &block : body.blocks) {
+    bool sawDefinition = false;
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.id == definition->id) {
+        sawDefinition = true;
+        continue;
+      }
+      if (!sawDefinition) {
+        continue;
+      }
+      if (instruction.id == consumer->id) {
+        return definition;
+      }
+      switch (instruction.kind) {
+      case MirInstructionKind::Move:
+      case MirInstructionKind::CallInput:
+      case MirInstructionKind::Compute:
+      case MirInstructionKind::Load:
+      case MirInstructionKind::Lifecycle:
+        break;
+      default:
+        return nullptr;
+      }
+      if (instruction.destination == copiedPlace ||
+          (instruction.receiver &&
+           instruction.receiver->place == copiedPlace) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == copiedPlace;
+                      })) {
+        return nullptr;
+      }
+    }
+    if (sawDefinition) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
 // The terminal consumer of a moved-value staging chain: each link is a
 // destination-less single-consumer CallInput, and the walk ends at the
 // first non-link instruction.
@@ -16164,6 +16240,12 @@ public:
           continue;
         }
         if (valueDefinition != nullptr &&
+            sequencedCopiedArgument(facts.body, value.id) == valueDefinition) {
+          // The sequenced copied argument declares at its load; a second
+          // pre-declared local would invent an extra copy.
+          continue;
+        }
+        if (valueDefinition != nullptr &&
             valueDefinition->kind == MirInstructionKind::CallInput) {
           const MovedChainTerminal terminal =
               movedChainTerminal(facts.body, value.id);
@@ -19869,6 +19951,23 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        sequencedCopiedArgument(facts.body, *instruction.result) ==
+            &instruction) {
+      // The sequenced copied argument declares here, keeping MIR's
+      // copy-before-call order; its consuming argument moves the local.
+      const MirPlace *source =
+          facts.body.findPlace(instruction.operands.front().place);
+      if (source == nullptr) {
+        throw std::logic_error(
+            "verified MIR copy load source place is unavailable");
+      }
+      writeIndent();
+      output << "auto __gti_mir_v_" << *instruction.result << " = ";
+      emitStoragePlaceValue(facts, *source);
+      output << ";\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Move && instruction.result) {
       if (const ClassMoveArrayAssignmentFusion fusion =
               classMoveArrayAssignmentFusion(facts.body, instruction)) {
@@ -20630,6 +20729,12 @@ private:
                                       bool transformedCallable) {
       if (operand.kind == MirOperandKind::Value &&
           sequencedMovedArgument(facts.body, operand.value) != nullptr) {
+        output << "std::move(__gti_mir_v_" << operand.value << ')';
+        return;
+      }
+      if (operand.kind == MirOperandKind::Value &&
+          sequencedCopiedArgument(facts.body, operand.value) != nullptr) {
+        // The load already made MIR's one copy; the argument consumes it.
         output << "std::move(__gti_mir_v_" << operand.value << ')';
         return;
       }
@@ -26847,6 +26952,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A sequenced moved argument declares at its move with auto and
           // needs no representation row.
           sequencedMovedArgument(body, value.id) != nullptr ||
+          // A sequenced copied argument declares at its load with auto; the
+          // copy-construction row proves the copy is spellable.
+          (sequencedCopiedArgument(body, value.id) != nullptr &&
+           copyLoadResult()) ||
           // A fresh closure literal owns the exact moved-capture chain at its
           // consuming callable boundary; neither link declares a local.
           fusedClosureForValue(program_, body, value.id) != nullptr ||
