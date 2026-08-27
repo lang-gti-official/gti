@@ -402,6 +402,7 @@ struct LoweredSymbol {
   bool internalLinkage = false;
   bool generated = false;
   bool compilerPrivate = false;
+  bool instanceDependentType = false;
 
   friend bool operator==(const LoweredSymbol &,
                          const LoweredSymbol &) = default;

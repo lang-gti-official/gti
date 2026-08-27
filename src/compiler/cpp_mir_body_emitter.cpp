@@ -1,5 +1,7 @@
 #include "cpp_mir_body_emitter.h"
 #include "cpp_mir_control_flow.h"
+#include "gti/mir_dominance.h"
+#include "gti/optimization/loops.h"
 #include <algorithm>
 #include <array>
 #include <iomanip>
@@ -5406,11 +5408,24 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   }
 }
 
+[[nodiscard]] bool frozenCaptureWriteProven(const MirDominanceInfo &dominance,
+                                            const MirLoopAnalysis &loops,
+                                            MirBlockId writerBlock,
+                                            MirBlockId closureBlock) {
+  if (!dominance.dominates(writerBlock, closureBlock) ||
+      loops.hasIrreducibleControlFlow) {
+    return false;
+  }
+  return std::none_of(
+      loops.loops.begin(), loops.loops.end(),
+      [&](const MirNaturalLoop &loop) { return loop.contains(writerBlock); });
+}
+
 // Forward half of one Closure's fused chain. Captured places must stay
-// frozen after the Closure: their only writes are entry-block Initializes
-// that precede it, nothing loans or drops them, and the entry block is
-// never re-entered, so a literal spelled at any later invocation captures
-// the same values the Closure saw. Move captures and copied class captures
+// frozen after the Closure: their only writes are single-shot dominating
+// Initializes, nothing loans or drops them, and a literal spelled at any
+// later invocation therefore captures the same values the Closure saw. Move
+// captures and copied class captures
 // collapse to exactly one direct same-block consumer because a duplicated or
 // delayed literal would transfer ownership twice or change class-temporary
 // lifetime relative to the MIR closure value.
@@ -5428,6 +5443,14 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       closure.operands.size() != lambda->captureTypes.size()) {
     return false;
   }
+  const std::optional<MirDominanceInfo> dominance =
+      closure.operands.empty() ? std::optional<MirDominanceInfo>{}
+                               : computeMirDominance(body);
+  if (!closure.operands.empty() && !dominance) {
+    return false;
+  }
+  const MirLoopAnalysis loops =
+      dominance ? analyzeMirLoops(body, *dominance) : MirLoopAnalysis{};
   bool requiresDirectUse = false;
   for (std::size_t index = 0; index < closure.operands.size(); ++index) {
     const MirOperand &operand = closure.operands[index];
@@ -5487,9 +5510,9 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
         const bool directOwnedCapture =
             mode == LambdaCaptureMode::Move || copiedClassCapture;
         const bool validInitializationBlock =
-            directOwnedCapture ? block.id == result->definitionBlock
-                               : block.id == body.entry &&
-                                     result->definitionBlock == body.entry;
+            (directOwnedCapture && block.id == result->definitionBlock) ||
+            (dominance && frozenCaptureWriteProven(*dominance, loops, block.id,
+                                                   result->definitionBlock));
         if (writer.kind != MirInstructionKind::Initialize ||
             !validInitializationBlock) {
           return false;
@@ -5510,19 +5533,12 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       }
     }
   }
-  if (!closure.operands.empty()) {
-    for (const MirBlock &block : body.blocks) {
-      const MirTerminator &terminator = block.terminator;
-      if (terminator.target == body.entry ||
-          terminator.elseTarget == body.entry) {
-        return false;
-      }
-      for (const MirSwitchTarget &target : terminator.switchTargets) {
-        if (target.target == body.entry) {
-          return false;
-        }
-      }
-    }
+  if (requiresDirectUse &&
+      std::any_of(loops.loops.begin(), loops.loops.end(),
+                  [&](const MirNaturalLoop &loop) {
+                    return loop.contains(result->definitionBlock);
+                  })) {
+    return false;
   }
   // Forward walk: every transitive consumer is an Initialize into a fresh
   // single-write lambda local, an invocation, or a passive comma discard.
@@ -15000,6 +15016,24 @@ ownerBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
   return nullptr;
 }
 
+// Whether this loan owns an actual pointer local in the C++ body. Several MIR
+// loan families are provenance-only because their runtime carrier is a class
+// value, a fused return expression, or a directly staged lifetime slot. A
+// place-less reference argument may dereference only a represented loan.
+[[nodiscard]] bool
+loanHasCppPointerCarrier(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, const MirLoan &loan) {
+  return loan.kind != MirLoanKind::CallArgument &&
+         loan.kind != MirLoanKind::Stored &&
+         ownerBorrowLoanProducer(body, loan) == nullptr &&
+         !returnLoanErasedByConstruct(body, loan) &&
+         !returnLoanErasedByClassSsaSlot(program, representations, body,
+                                         loan) &&
+         storedValueReturnLoanProducer(body, loan) == nullptr &&
+         elementBorrowLoanProducer(body, loan) == nullptr;
+}
+
 // A reference initializer owns two independent MIR facts: its loan is the
 // provenance checked by borrow flow, while its place is the exact runtime
 // address source. Keeping the latter in MIR avoids reconstructing a source
@@ -16174,37 +16208,8 @@ public:
              << "{};\n";
     }
     for (const MirLoan &loan : facts.body.loans) {
-      // A call-argument loan is representation-erased: the staged call input
-      // spells the verified lifetime slot directly and EndBorrow has no C++
-      // state to retire.
-      if (loan.kind == MirLoanKind::CallArgument) {
-        continue;
-      }
-      // A Stored loan binds its reference field in the member initializer
-      // list; no pointer local exists in the body.
-      if (loan.kind == MirLoanKind::Stored) {
-        continue;
-      }
-      // An owner borrow's loans publish as the fused accessor spelling at
-      // the consuming return; no pointer local exists.
-      if (ownerBorrowLoanProducer(facts.body, loan) != nullptr) {
-        continue;
-      }
-      // A Return loan erased into a fused construct return binds no
-      // pointer local either (ADR 018).
-      if (returnLoanErasedByConstruct(facts.body, loan)) {
-        continue;
-      }
-      if (returnLoanErasedByClassSsaSlot(program, representations, facts.body,
-                                         loan)) {
-        continue;
-      }
-      if (storedValueReturnLoanProducer(facts.body, loan) != nullptr) {
-        continue;
-      }
-      // A bounds-checked element borrow's return loan publishes as the
-      // fused array_at spelling at the consuming return.
-      if (elementBorrowLoanProducer(facts.body, loan) != nullptr) {
+      if (!loanHasCppPointerCarrier(program, representations, facts.body,
+                                    loan)) {
         continue;
       }
       const MirPlace *source = facts.body.findPlace(loan.source);
@@ -22932,6 +22937,12 @@ private:
       emitStoragePlaceValue(facts, *place);
       return;
     }
+    const MirLoan *loan = facts.body.findLoan(operand.loan);
+    if (loan == nullptr || !loanHasCppPointerCarrier(program, representations,
+                                                     facts.body, *loan)) {
+      throw std::logic_error(
+          "verified MIR loan argument has no C++ pointer carrier");
+    }
     output << "(*__gti_mir_loan_" << operand.loan << ')';
   }
 
@@ -25427,13 +25438,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const std::optional<SemanticType> referent =
           loanReferentType(program_, body, loan);
       const bool represented =
-          referent && std::any_of(
-                          representations_.types().begin(),
-                          representations_.types().end(),
-                          [&](const CppMirTypeRepresentation &row) {
-                            return row.type == *referent &&
-                                   !row.spelling.empty();
-                          });
+          referent && std::any_of(representations_.types().begin(),
+                                  representations_.types().end(),
+                                  [&](const CppMirTypeRepresentation &row) {
+                                    return row.type == *referent &&
+                                           !row.spelling.empty();
+                                  });
       if (!represented) {
         return false;
       }
@@ -25714,6 +25724,44 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     return std::holds_alternative<CharacterLiteral>(*literal) ||
            std::holds_alternative<bool>(*literal);
   };
+
+  const auto loanArgumentSupported = [&](const MirOperand &operand) {
+    if (operand.kind != MirOperandKind::Loan || operand.loan == 0) {
+      return false;
+    }
+    const MirLoan *loan = body.findLoan(operand.loan);
+    if (loan == nullptr) {
+      return false;
+    }
+    if (operand.place == 0) {
+      return loanHasCppPointerCarrier(program_, representations_, body, *loan);
+    }
+    const MirPlace *place = body.findPlace(operand.place);
+    return place != nullptr && operand.type.kind == SemanticType::Reference &&
+           operand.type.arguments.size() == 1 &&
+           place->type == operand.type.arguments.front();
+  };
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.callInputRole == MirCallInputRole::Argument &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Loan &&
+          !loanArgumentSupported(instruction.operands.front())) {
+        return false;
+      }
+      if (instruction.kind != MirInstructionKind::Call &&
+          instruction.kind != MirInstructionKind::Construct) {
+        continue;
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        if (operand.kind == MirOperandKind::Loan &&
+            !loanArgumentSupported(operand)) {
+          return false;
+        }
+      }
+    }
+  }
 
   for (const MirPlace &place : body.places) {
     if (address.kind == MirBodyKind::Module &&

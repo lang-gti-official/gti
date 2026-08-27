@@ -3104,39 +3104,22 @@ private:
       if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
         const SymbolId symbol = model.findResolvedSymbol(*assign);
-        const SymbolRecord *record = model.database().findSymbol(symbol);
         HirValue target;
         target.id = nextValueId++;
         target.kind = assign->path().segments.size() == 1
                           ? HirValueKind::Variable
                           : HirValueKind::QualifiedName;
         target.symbol = symbol;
-        // A reference binding names its referent. Semantic analysis records
-        // the referenced class type for a receiver expression, and MIR
-        // lowering derives a dereference projection from the binding type,
-        // so the manufactured receiver must carry the referenced type as
-        // well; keeping the raw reference type would record a place whose
-        // result type disagrees with its root and projection chain.
-        const bool referenceBinding =
-            record != nullptr && record->type.kind == SemanticType::Reference &&
-            record->type.arguments.size() == 1;
-        const SemanticType receiverType =
-            record == nullptr  ? resolved->dispatchOwner
-            : referenceBinding ? record->type.arguments.front()
-                               : record->type;
-        target.info =
-            record == nullptr
-                ? ExpressionInfo{.type = receiverType,
-                                 .category = ValueCategory::Place,
-                                 .access = AccessMode::Mutable,
-                                 .traits = semanticTraits(receiverType)}
-                : ExpressionInfo{
-                      .type = receiverType,
-                      .category = ValueCategory::Place,
-                      .access = record->mutableBinding ? AccessMode::Mutable
-                                                       : AccessMode::ReadOnly,
-                      .traits = referenceBinding ? semanticTraits(receiverType)
-                                                 : record->traits};
+        // Assignment receivers are synthetic: semantic analysis owns their
+        // exact referenced type, access, and nominal lifecycle/borrow traits.
+        // Reconstructing those facts from the declaration symbol creates a
+        // second, incomplete type-classification path in HIR.
+        target.info = resolved->receiverInfo;
+        if (target.info.type == SemanticType::Unknown ||
+            target.info.category != ValueCategory::Place) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
         if (const PlaceKey *place = model.findPlace(*assign)) {
           target.place = qualifyPlace(*place, body.placeDomain);
         }

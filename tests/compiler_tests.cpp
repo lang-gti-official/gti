@@ -11120,6 +11120,83 @@ int main() {
          "published provenance diverges from the transient chain");
 }
 
+void testReferenceArgumentRuntimePlaceCoherence() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "reference-argument-place-coherence.gti", R"(
+#include <std/vector>
+#include <std/iterator>
+
+bool has_any<Iterator, Sentinel>(Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});
+  auto first = values.begin();
+  auto other = values.begin();
+  auto last = values.end();
+  return has_any(first, last) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "same-owner iterator arguments should lower to verified exact "
+         "runtime places");
+  if (!valid.canGenerateCode()) {
+    return;
+  }
+
+  lang::MirProgram forged = valid.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  bool substituted = false;
+  for (lang::MirFunctionInstance &function : functions) {
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Argument ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+            instruction.operands.front().place == 0 || !instruction.ownership) {
+          continue;
+        }
+        lang::MirOperand &operand = instruction.operands.front();
+        const lang::MirPlace *original = function.body.findPlace(operand.place);
+        if (original == nullptr || !original->key) {
+          continue;
+        }
+        const auto replacement = std::find_if(
+            function.body.places.begin(), function.body.places.end(),
+            [&](const lang::MirPlace &place) {
+              return place.id != original->id && place.type == original->type &&
+                     place.key && *place.key != *original->key;
+            });
+        if (replacement == function.body.places.end()) {
+          continue;
+        }
+        operand.place = replacement->id;
+        substituted = true;
+        break;
+      }
+      if (substituted) {
+        break;
+      }
+    }
+    if (substituted) {
+      break;
+    }
+  }
+  const lang::MirVerificationResult verification =
+      lang::verifyMirProgram(forged);
+  expect(substituted && !verification.valid() &&
+             hasMirVerificationError(verification,
+                                     "exact runtime carrier for its loan"),
+         "MIR verification should reject substituting a distinct same-typed "
+         "iterator place that merely shares owner provenance");
+}
+
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
@@ -24200,6 +24277,144 @@ int32_t after() {
          "keyword");
 }
 
+void testSymbolicAutoLocalBinding() {
+  const std::string source = R"(
+#include <std/iterator>
+#include <std/vector>
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() {
+  mut std::vector<int64_t> wide = std::vector<int64_t>();
+  wide.push_back(int64_t(2));
+  wide.push_back(int64_t(9));
+  mut std::vector<int32_t> narrow = std::vector<int32_t>();
+  narrow.push_back(3);
+  narrow.push_back(8);
+  bool wide_result = first_less_than_next(wide.begin(), wide.end());
+  bool narrow_result = first_less_than_next(narrow.begin(), narrow.end());
+  return wide_result && narrow_result ? 0 : 1;
+}
+)";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "symbolic-auto-local.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected symbolic auto local diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "a constrained symbolic dereference should infer an exact auto-local "
+         "type independently in each concrete generic instance");
+
+  const lang::SymbolRecord *autoLocal = nullptr;
+  for (const lang::SymbolRecord &symbol :
+       valid.semantics.database().symbols()) {
+    if (symbol.kind == lang::SymbolKind::LocalVariable &&
+        symbol.name == "value") {
+      autoLocal = &symbol;
+      break;
+    }
+  }
+  expect(autoLocal != nullptr &&
+             autoLocal->type == lang::SemanticType::Unknown &&
+             autoLocal->instanceDependentType,
+         "the shared generic declaration symbol should remain explicitly "
+         "instance-dependent instead of taking one specialization's type");
+
+  bool foundInt32 = false;
+  bool foundInt64 = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "first_less_than_next") {
+      continue;
+    }
+    for (const lang::HirBinding &binding : instance.body.bindings) {
+      if (binding.variable == nullptr ||
+          binding.variable->name().lexeme != "value") {
+        continue;
+      }
+      foundInt32 = foundInt32 || binding.info.type == lang::SemanticType::Int32;
+      foundInt64 = foundInt64 || binding.info.type == lang::SemanticType::Int64;
+    }
+  }
+  expect(foundInt32 && foundInt64,
+         "concrete HIR instances should own their distinct inferred local "
+         "types regardless of specialization order");
+
+  const lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      valid.program, valid.semantics, valid.hir, valid.mir, valid.mir, {},
+      lang::TargetInfo::host());
+  const lang::LoweredSymbol *loweredAuto =
+      !lowered.program || autoLocal == nullptr
+          ? nullptr
+          : lowered.program->findSymbol(autoLocal->id);
+  expect(lowered.valid() && loweredAuto != nullptr &&
+             loweredAuto->type == lang::SemanticType::Unknown &&
+             loweredAuto->instanceDependentType,
+         "LoweredProgram should retain the dependent declaration marker while "
+         "concrete bodies retain exact types");
+
+  const lang::SourceUnitId unit = valid.sourceGraph.entryUnit();
+  const std::size_t autoKeyword = source.find("auto value");
+  const std::size_t valueName = source.find("value", autoKeyword);
+  const lang::LanguageQueries queries;
+  const std::optional<lang::HoverInfo> autoHover =
+      queries.hover(valid, unit, autoKeyword + 1);
+  const std::optional<lang::HoverInfo> valueHover =
+      queries.hover(valid, unit, valueName + 1);
+  expect(autoHover && autoHover->signature == "auto" &&
+             !autoHover->notes.empty() && valueHover &&
+             valueHover->signature == "auto value" &&
+             !valueHover->notes.empty(),
+         "tooling should describe a symbolic auto local as instance-dependent, "
+         "not as whichever specialization was analyzed first");
+
+  const lang::FrontendResult uninstantiated = lang::Frontend().analyze(
+      "uninstantiated-symbolic-auto-local.gti", R"(
+#include <std/iterator>
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::LoweredProgramBuild uninstantiatedLowered =
+      lang::LoweredProgramBuilder().build(
+          uninstantiated.program, uninstantiated.semantics, uninstantiated.hir,
+          uninstantiated.mir, uninstantiated.mir, {}, lang::TargetInfo::host());
+  expect(uninstantiated.canGenerateCode() && uninstantiatedLowered.valid(),
+         "an uninstantiated valid generic primary should not need a concrete "
+         "specialization to make its dependent local symbol valid");
+}
+
 void testConstructorLocalTypeGenerics() {
   const std::string source = R"(
 #include <std/string>
@@ -31491,8 +31706,8 @@ int main() {
   return bundle.held.value + bundle.checked - 13;
 }
 )";
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("default-field-constructor-rollback.gti", source);
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "default-field-constructor-rollback.gti", source);
   expect(frontend.canGenerateCode(),
          "a constructor with an owning default field should pass the "
          "frontend");
@@ -31506,8 +31721,7 @@ int main() {
        frontend.mir.constructorInstances()) {
     for (const lang::MirDropObligation &drop :
          constructor.body.dropObligations) {
-      if (drop.kind ==
-              lang::MirDropObligationKind::ConstructionRollback &&
+      if (drop.kind == lang::MirDropObligationKind::ConstructionRollback &&
           drop.initiallyActive) {
         bundleConstructor = &constructor;
         entryRollback = &drop;
@@ -31541,7 +31755,8 @@ int main() {
   std::size_t matchingInitializerRollbacks = 0;
   for (const lang::MirDropObligation &drop :
        owner->fieldInitializers.dropObligations) {
-    const lang::MirPlace *place = owner->fieldInitializers.findPlace(drop.place);
+    const lang::MirPlace *place =
+        owner->fieldInitializers.findPlace(drop.place);
     matchingInitializerRollbacks +=
         drop.kind == lang::MirDropObligationKind::ConstructionRollback &&
                 place != nullptr &&
@@ -31580,20 +31795,18 @@ int main() {
          "the default-field constructor rollback program should verify");
 
   lang::MirProgram forged = frontend.mir;
-  auto &constructors =
-      const_cast<std::vector<lang::MirConstructorInstance> &>(
-          forged.constructorInstances());
+  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      forged.constructorInstances());
   bool forgedField = false;
   for (lang::MirConstructorInstance &constructor : constructors) {
     for (const lang::MirDropObligation &drop :
          constructor.body.dropObligations) {
-      if (drop.kind !=
-              lang::MirDropObligationKind::ConstructionRollback ||
+      if (drop.kind != lang::MirDropObligationKind::ConstructionRollback ||
           !drop.initiallyActive) {
         continue;
       }
-      auto &places = const_cast<std::vector<lang::MirPlace> &>(
-          constructor.body.places);
+      auto &places =
+          const_cast<std::vector<lang::MirPlace> &>(constructor.body.places);
       places[drop.place - 1].projections.front().field = fieldSymbol + 1;
       forgedField = true;
     }
@@ -31602,8 +31815,8 @@ int main() {
          "the program verifier should reject an entry rollback that is not "
          "derived from its owner's exact field-initializer schedule");
 
-  const lang::FrontendResult overridden = lang::Frontend().analyze(
-      "overridden-default-field-constructor.gti", R"(
+  const lang::FrontendResult overridden =
+      lang::Frontend().analyze("overridden-default-field-constructor.gti", R"(
 class Resource {
 public:
   int32_t value;
@@ -31626,14 +31839,14 @@ int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }
          overridden.mir.constructorInstances()) {
       inheritedDefaultRollback =
           inheritedDefaultRollback ||
-          std::any_of(constructor.body.dropObligations.begin(),
-                      constructor.body.dropObligations.end(),
-                      [](const lang::MirDropObligation &drop) {
-                        return drop.kind ==
-                                   lang::MirDropObligationKind::
-                                       ConstructionRollback &&
-                               drop.initiallyActive;
-                      });
+          std::any_of(
+              constructor.body.dropObligations.begin(),
+              constructor.body.dropObligations.end(),
+              [](const lang::MirDropObligation &drop) {
+                return drop.kind ==
+                           lang::MirDropObligationKind::ConstructionRollback &&
+                       drop.initiallyActive;
+              });
     }
     expect(!inheritedDefaultRollback &&
                lang::verifyMirProgram(overridden.mir).valid(),
@@ -33114,6 +33327,7 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "forward-iterators") {
     testStoredCarrierReturnProvenance();
+    testReferenceArgumentRuntimePlaceCoherence();
     testForwardIteratorContractsAndBinarySearch();
     return failures == 0 ? 0 : 1;
   }
@@ -33164,6 +33378,7 @@ int main(int argc, char **argv) {
   testForwardIteratorContractsAndBinarySearch();
   testGeneralOwnerDependentReturns();
   testNestedMemberReferenceReturnForwarding();
+  testReferenceArgumentRuntimePlaceCoherence();
   testSwitchAndBreakLoanFlow();
   testSharedReadOnlyLoanAliases();
   testUniqueOwnershipAndAllocation();
@@ -33223,6 +33438,7 @@ int main(int argc, char **argv) {
   testConcurrentGlobalPolicy();
   testSourceDefinedConcepts();
   testStructuralRequiresAndAccumulate();
+  testSymbolicAutoLocalBinding();
   testConstructorLocalTypeGenerics();
   testValueGenerics();
   testContextualArrayArguments();

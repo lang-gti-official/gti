@@ -3,6 +3,8 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/mir_dominance.h"
+#include "gti/optimization/loops.h"
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
@@ -1852,16 +1854,14 @@ int32_t main() {
       ownerConstructor->body.dropObligations.begin(),
       ownerConstructor->body.dropObligations.end(),
       [](const lang::MirDropObligation &drop) {
-        return drop.kind ==
-                   lang::MirDropObligationKind::ConstructionRollback &&
+        return drop.kind == lang::MirDropObligationKind::ConstructionRollback &&
                drop.initiallyActive;
       });
   expect(defaultFieldRollbacks == 1,
          "the completed owning in-class initializer should enter Holder's "
          "constructor as one active rollback obligation");
-  const lang::CppMirBodyEmissionAnalysis constructorAnalysis =
-      emitter.analyze({.kind = lang::MirBodyKind::Constructor,
-                       .owner = ownerConstructor->id});
+  const lang::CppMirBodyEmissionAnalysis constructorAnalysis = emitter.analyze(
+      {.kind = lang::MirBodyKind::Constructor, .owner = ownerConstructor->id});
   expect(constructorAnalysis.ready() &&
              !hasIssue(constructorAnalysis,
                        lang::CppMirBodyEmissionIssueKind::
@@ -3782,6 +3782,214 @@ int main() {
                  std::string::npos,
          "production emission should publish both the materialized caller and "
          "its callable-template body from verified MIR");
+}
+
+void testInlineCapturingLiteralAsAlgorithmArgument() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
+#include <std/vector>
+#include <std/algorithm>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  values.push_back(8);
+  values.push_back(5);
+  int32_t limit = 4;
+  std::ptrdiff_t above = std::count_if(
+      values.begin(), values.end(),
+      [limit](int32_t& value) -> bool { return value > limit; });
+  return above == 2 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the inline capture-argument fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the inline capture fixture should retain its entry instance");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::MirInstruction *closure = nullptr;
+  lang::MirBlockId closureBlock = 0;
+  lang::MirBlockId writerBlock = 0;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Compute &&
+          instruction.operation == lang::MirOperation::Closure) {
+        closure = &instruction;
+        closureBlock = block.id;
+      }
+    }
+  }
+  if (closure != nullptr && closure->operands.size() == 1) {
+    for (const lang::MirBlock &block : entry->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.destination &&
+            *instruction.destination == closure->operands.front().place) {
+          writerBlock = block.id;
+        }
+      }
+    }
+  }
+  const std::optional<lang::MirDominanceInfo> dominance =
+      lang::computeMirDominance(entry->body);
+  expect(closure != nullptr && writerBlock != 0 &&
+             writerBlock != closureBlock && writerBlock != entry->body.entry &&
+             dominance && dominance->dominates(writerBlock, closureBlock),
+         "the capture initializer should be a distinct dominating, "
+         "non-entry block");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "a single-shot dominating capture initializer should admit fused "
+         "inline-literal emission");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("[limit = __gti_mir_p_") != std::string::npos &&
+             artifact.contents.find("__gti_mir_closure_factory_") ==
+                 std::string::npos,
+         "the algorithm call should spell the fused literal over its frozen "
+         "capture");
+}
+
+void testInlineCaptureControlFlowProofFailsClosed() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-inline-capture-cfg.gti", R"(
+#include <std/vector>
+#include <std/algorithm>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  int32_t limit = 2;
+  std::ptrdiff_t above = std::count_if(
+      values.begin(), values.end(),
+      [limit](int32_t& value) -> bool { return value > limit; });
+  return above == 1 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the inline capture CFG fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  if (entry == frontend.mir.functionInstances().end()) {
+    expect(false, "the CFG fixture should retain its entry instance");
+    return;
+  }
+
+  lang::MirBlockId closureBlock = 0;
+  lang::MirBlockId writerBlock = 0;
+  lang::MirPlaceId capturedPlace = 0;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Compute &&
+          instruction.operation == lang::MirOperation::Closure &&
+          instruction.operands.size() == 1) {
+        closureBlock = block.id;
+        capturedPlace = instruction.operands.front().place;
+      }
+    }
+  }
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.destination &&
+          *instruction.destination == capturedPlace) {
+        writerBlock = block.id;
+      }
+    }
+  }
+  expect(writerBlock != 0 && closureBlock != 0 && writerBlock != closureBlock,
+         "the CFG near misses require distinct writer and closure blocks");
+  if (writerBlock == 0 || closureBlock == 0 || writerBlock == closureBlock) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+
+  lang::MirProgram bypass = frontend.mir;
+  auto &bypassFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      bypass.functionInstances());
+  lang::MirBody &bypassBody = bypassFunctions.at(entry->id - 1).body;
+  lang::MirBlock *bypassEntry = bypassBody.findBlock(bypassBody.entry);
+  expect(bypassEntry != nullptr && bypassEntry->terminator.target != 0,
+         "the CFG fixture entry should expose one success edge");
+  if (bypassEntry != nullptr && bypassEntry->terminator.target != 0) {
+    bypassEntry->terminator.target = closureBlock;
+    const std::optional<lang::MirDominanceInfo> bypassDominance =
+        lang::computeMirDominance(bypassBody);
+    expect(bypassDominance &&
+               !bypassDominance->dominates(writerBlock, closureBlock) &&
+               !lang::CppMirBodyEmitter(bypass, map)
+                    .supportsFailureBodyText(address),
+           "an edge bypassing capture initialization must reject fused "
+           "closure emission");
+  }
+
+  lang::MirProgram repeated = frontend.mir;
+  auto &repeatedFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          repeated.functionInstances());
+  lang::MirBody &repeatedBody = repeatedFunctions.at(entry->id - 1).body;
+  lang::MirBlock *repeatedClosure = repeatedBody.findBlock(closureBlock);
+  expect(repeatedClosure != nullptr && repeatedClosure->terminator.target != 0,
+         "the closure block should expose its successful call edge");
+  if (repeatedClosure != nullptr && repeatedClosure->terminator.target != 0) {
+    const lang::MirBlockId latch =
+        static_cast<lang::MirBlockId>(repeatedBody.blocks.size() + 1);
+    repeatedClosure->terminator.target = latch;
+    repeatedBody.blocks.push_back(
+        {.id = latch,
+         .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                        .target = writerBlock},
+         .reachable = true});
+    const std::optional<lang::MirDominanceInfo> repeatedDominance =
+        lang::computeMirDominance(repeatedBody);
+    const lang::MirLoopAnalysis loops =
+        repeatedDominance
+            ? lang::analyzeMirLoops(repeatedBody, *repeatedDominance)
+            : lang::MirLoopAnalysis{};
+    const bool writerRepeats =
+        std::any_of(loops.loops.begin(), loops.loops.end(),
+                    [&](const lang::MirNaturalLoop &loop) {
+                      return loop.contains(writerBlock);
+                    });
+    expect(repeatedDominance && writerRepeats &&
+               !lang::CppMirBodyEmitter(repeated, map)
+                    .supportsFailureBodyText(address),
+           "capture initialization on a re-entered loop path must reject "
+           "fused closure emission");
+  }
 }
 
 // A generated default construction can publish without first becoming a
@@ -9763,6 +9971,10 @@ constexpr NamedTest kTests[] = {
      testClosureCaptureFreezeMaterializes},
     {"testLexicalCopyCaptureThroughCallableTemplate",
      testLexicalCopyCaptureThroughCallableTemplate},
+    {"testInlineCapturingLiteralAsAlgorithmArgument",
+     testInlineCapturingLiteralAsAlgorithmArgument},
+    {"testInlineCaptureControlFlowProofFailsClosed",
+     testInlineCaptureControlFlowProofFailsClosed},
     {"testDefaultConstructionPreparedParameterStaging",
      testDefaultConstructionPreparedParameterStaging},
     {"testGenericMemberFailureOverloadOnOrdinaryOwner",

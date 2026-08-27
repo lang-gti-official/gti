@@ -319,6 +319,14 @@ GTI-owned `BinaryFloat` bit pattern for constants. Mixed operations already
 carry the selected binary64 result type from semantics; HIR does not repeat
 promotion or consult host floating behavior.
 
+An overloaded assignment has a synthetic receiver value because its left
+operand is represented by the assignment path rather than a standalone AST
+expression. Semantic operator resolution therefore records the exact receiver
+`ExpressionInfo`, including the dereferenced type, access, and nominal traits.
+HIR copies that record and any resolved semantic place directly; it does not
+reconstruct receiver meaning from the declaration symbol or dispatch-owner
+spelling.
+
 For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
 parent identity, stable source place, access mode, and selected child endpoint
 set into each concrete body. It does not rediscover place conflicts, decide

@@ -73,7 +73,15 @@ accepted in this clause.
 
 The active requirements supply facts while the symbolic generic body is
 checked. At a concrete call, the requirements are substituted and checked
-again against the inferred or explicit types. A failed requirement removes the
+again against the inferred or explicit types. During the symbolic check, the
+value produced by a constrained dereference has no exact type unless a
+`std::dereferences_to` requirement names one. An `auto` local may still bind
+that value: each concrete generic instance owns the binding's exact inferred
+type, while the shared source declaration remains instance-dependent. This is
+valid even when the generic primary is never instantiated. Naming the element
+type (`T value` under `std::dereferences_to<Iterator, T>`) remains necessary
+when the type itself participates in a signature or constraint. A failed
+requirement removes the
 candidate from viability and produces a source-facing constraint diagnostic
 when no call is viable. Requirements do not:
 

@@ -812,9 +812,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const SymbolId symbol =
         assignment == nullptr ? 0 : semantics.findResolvedSymbol(*assignment);
     const SymbolRecord *record = semantics.database().findSymbol(symbol);
+    const ResolvedOperatorInfo *operation =
+        assignment == nullptr ? nullptr : semantics.findOperator(*assignment);
     const PlaceKey *semanticPlace =
         assignment == nullptr ? nullptr : semantics.findPlace(*assignment);
-    if (assignment == nullptr || record == nullptr ||
+    if (assignment == nullptr || record == nullptr || operation == nullptr ||
         semanticPlace == nullptr || !parent.functionTarget ||
         parent.receiver != value.id || parent.operands.empty() ||
         parent.operands.front() != value.id) {
@@ -825,14 +827,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     return value.kind == (assignment->path().segments.size() == 1
                               ? HirValueKind::Variable
                               : HirValueKind::QualifiedName) &&
-           value.info == ExpressionInfo{.type = record->type,
-                                        .category = ValueCategory::Place,
-                                        .access = record->mutableBinding
-                                                      ? AccessMode::Mutable
-                                                      : AccessMode::ReadOnly,
-                                        .traits = record->traits} &&
-           value.symbol == symbol && !value.literal &&
-           value.place == exactPlace &&
+           value.info == operation->receiverInfo && value.symbol == symbol &&
+           !value.literal && value.place == exactPlace &&
            value.fullExpression == parent.fullExpression;
   };
   for (const HirValue &value : program.module().values) {
