@@ -87,6 +87,11 @@ public:
     diagnostics.clear();
     catalog.clear();
     valueFlow.clear();
+    reportedCompilerPrivateAccess.clear();
+    defaultArgumentSyntax.clear();
+    defaultArgumentDependencies.clear();
+    reportedDefaultArgumentCycles.clear();
+    externCSymbols.clear();
     constexprDefinitionsAnalyzed.clear();
     constexprConstructorsAnalyzed.clear();
     requirementScopes.clear();
@@ -105,9 +110,9 @@ public:
     semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
     semanticModel.setAnalysisSeal(
-        program != nullptr ? makeSemanticAnalysisSeal(*program, target,
-                                                       sourceGraph)
-                           : SemanticAnalysisSeal{.target = target});
+        program != nullptr
+            ? makeSemanticAnalysisSeal(*program, target, sourceGraph)
+            : SemanticAnalysisSeal{.target = target});
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     measureTopLevelStatements = false;
     currentType = SemanticType::Unknown;
@@ -183,6 +188,7 @@ public:
     recordClassTypes();
     recordClassLifecycles();
     catalog.seal();
+    valueFlow.beginBody(catalog);
     if (workMetrics != nullptr) {
       workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
           std::chrono::duration_cast<std::chrono::microseconds>(
@@ -213,6 +219,7 @@ public:
     semanticModel.finalizeCallableArguments();
     finalizeProgramInitialization(program);
     semanticModel.finalizeOccurrences();
+    catalog.assertUnchangedSinceSeal();
     if (workMetrics != nullptr) {
       workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
           std::chrono::duration_cast<std::chrono::microseconds>(
@@ -287,9 +294,12 @@ public:
           savedLambdaId(visitor.nextLambdaId),
           savedSemanticLoanId(visitor.nextSemanticLoanId),
           savedPlaceSelectionId(visitor.nextPlaceSelectionId) {
+      visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel);
       visitor.diagnostics.clear();
     }
+
+    ~InstanceAnalysisScope() { visitor.catalog.assertUnchangedSinceSeal(); }
 
     // Takes the delta and diagnostics, restores the visitor, and re-points
     // the delta at the restored base model. Call exactly once.
@@ -734,7 +744,7 @@ public:
       return;
     }
 
-    ClassInfo &owner = classInfo(*currentClass);
+    const ClassInfo &owner = classInfo(*currentClass);
     const ConstructorInfo *constructorInfo =
         semanticModel.findConstructor(stmt);
     bool requirementsValid = true;
@@ -2860,11 +2870,6 @@ public:
                 nullptr, constant);
       }
     } else if (constant && currentClass) {
-      ClassInfo &owner = classInfo(*currentClass);
-      if (auto member = owner.members.find(stmt.name().lexeme);
-          member != owner.members.end()) {
-        member->second.symbol.constant = *constant;
-      }
       if (Symbol *symbolInScope = resolveMutable(stmt.name())) {
         symbolInScope->constant = *constant;
       }
@@ -3054,7 +3059,7 @@ public:
       }
       const ExpressionInfo receiverInfo =
           classifyExpression(*receiver, targetType);
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *mutationOperator, receiver, targetType, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -3079,7 +3084,7 @@ public:
         }
         const ExpressionInfo receiverInfo =
             classifyExpression(*receiver, targetType);
-        const std::optional<CallableDeclaration> selected = resolveOperator(
+        const std::optional<CallableCandidate> selected = resolveOperator(
             expr, OverloadedOperator::Assignment, receiver, targetType,
             expr.oper(), std::span<const SemanticType>(&valueType, 1),
             std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -3354,7 +3359,7 @@ public:
             std::span<const SemanticType>(&rightType, 1));
     if ((leftType.kind == SemanticType::Class || constrainedOperator) &&
         sourceOperator) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *sourceOperator, expr.left(), leftType, expr.oper(),
           std::span<const SemanticType>(&rightType, 1),
           std::span<const ExprPtr>(&expr.right(), 1));
@@ -3457,7 +3462,7 @@ public:
       analyzePayloadConstruction(expr, *enumerator);
       return;
     }
-    if (const std::optional<CallableDeclaration> intrinsic =
+    if (const std::optional<CallableCandidate> intrinsic =
             intrinsicCandidate(expr.callee())) {
       analyzeIntrinsicCall(expr, *intrinsic);
       return;
@@ -3576,7 +3581,7 @@ public:
       const std::optional<CallableBoundary> boundary =
           contract == nullptr ? std::nullopt
                               : std::optional{contract->boundary};
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Call, expr.callee(), calleeType,
           expr.paren(), argumentTypes, expr.arguments(), false, boundary);
       const bool valid =
@@ -3675,8 +3680,8 @@ public:
 
     if (hasPackExpansion(argumentTypes) &&
         std::none_of(callee->overloads.begin(), callee->overloads.end(),
-                     [](const CallableDeclaration &candidate) {
-                       return candidate.parameterPack;
+                     [](const CallableCandidate &candidate) {
+                       return candidate.record().parameterPack;
                      })) {
       report(expressionToken(expr.arguments().back()),
              "A parameter pack can only be forwarded to another variadic "
@@ -3687,14 +3692,14 @@ public:
     }
 
     if (callee->overloads.size() == 1) {
-      const CallableDeclaration &candidate = callee->overloads.front();
-      CallableDeclaration resolved = candidate;
+      const CallableCandidate &candidate = callee->overloads.front();
+      CallableCandidate resolved = candidate;
       bool valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                               argumentTypes, expr.arguments(),
                                               expr.paren());
       std::vector<SemanticType> resolvedTypeArguments;
       std::vector<CompileTimeValue> resolvedValueArguments;
-      CallableDeclaration trial;
+      CallableCandidate trial;
       ConstraintFailure constraintFailure;
       if (tryInstantiateFunction(candidate, explicitTypeArguments,
                                  argumentTypes, expr.arguments(), trial,
@@ -3709,7 +3714,7 @@ public:
       }
 
       const bool instantiatedPackForwardingShape =
-          candidate.parameterPack && !resolved.parameterPack &&
+          candidate.record().parameterPack && !resolved.parameterPack &&
           hasPackExpansion(argumentTypes) &&
           argumentTypes.size() == resolved.parameterTypes.size();
       if (resolved.parameterPack) {
@@ -3805,8 +3810,8 @@ public:
     }
 
     struct ViableOverload {
-      const CallableDeclaration *source = nullptr;
-      CallableDeclaration function;
+      const CallableCandidate *source = nullptr;
+      CallableCandidate function;
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
       std::vector<std::size_t> ephemeralBorrowArguments;
@@ -3815,13 +3820,13 @@ public:
     std::vector<ViableOverload> viable;
     std::vector<ConstraintFailure> constraintFailures;
     bool rejectedMutableReceiver = false;
-    std::optional<CallableDeclaration> rejectedMutableFunction;
+    std::optional<CallableCandidate> rejectedMutableFunction;
     bool rejectedCompilerPrivate = false;
-    for (const CallableDeclaration &candidate : callee->overloads) {
+    for (const CallableCandidate &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
       }
-      CallableDeclaration resolved;
+      CallableCandidate resolved;
       std::vector<SemanticType> resolvedTypeArguments;
       std::vector<CompileTimeValue> resolvedValueArguments;
       std::vector<std::size_t> resolvedEphemeralBorrowArguments;
@@ -3931,7 +3936,7 @@ public:
           currentType = SemanticType::Unknown;
           return;
         }
-        std::vector<const CallableDeclaration *> exactMatches;
+        std::vector<const CallableCandidate *> exactMatches;
         exactMatches.reserve(viable.size());
         for (const ViableOverload &match : viable) {
           exactMatches.emplace_back(&match.function);
@@ -4332,7 +4337,7 @@ public:
                       expr.dereference(), "Raw pointer dereference");
       }
     } else if (ownerType.kind == SemanticType::Class) {
-      const std::optional<CallableDeclaration> selected =
+      const std::optional<CallableCandidate> selected =
           resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
                           ownerType, expr.dereference(), {}, {}, false,
                           std::nullopt, std::nullopt, !simpleAssignment);
@@ -4386,7 +4391,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && mutableTarget) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), valueTarget, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -4551,7 +4556,7 @@ public:
           contextualInitializerType &&
           contextualInitializerType->kind == SemanticType::Reference &&
           contextualInitializerType->referenceAccess == AccessMode::Mutable;
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
           std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
@@ -4620,7 +4625,7 @@ public:
                       "Raw pointer indexing");
       }
     } else if (objectType.kind == SemanticType::Class) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
           std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
@@ -4736,7 +4741,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && mutableElement) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), elementType, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -5542,13 +5547,14 @@ public:
       return;
     }
 
-    const CallableDeclaration &candidate = callee->overloads.front();
+    const CallableCandidate &candidate = callee->overloads.front();
     const bool exactGenericShape =
-        candidate.genericParameters.size() == 1 &&
-        !candidate.genericParameters.front().pack &&
-        !candidate.genericParameters.front().value &&
-        !candidate.parameterPack && candidate.ownerClass == 0 &&
-        !candidate.staticMember && candidate.intrinsic == IntrinsicKind::None &&
+        candidate.record().genericParameters.size() == 1 &&
+        !candidate.record().genericParameters.front().pack &&
+        !candidate.record().genericParameters.front().value &&
+        !candidate.record().parameterPack && candidate.ownerClass == 0 &&
+        !candidate.staticMember &&
+        candidate.record().intrinsic == IntrinsicKind::None &&
         candidate.returnType == SemanticType::Void &&
         candidate.requirements.empty() &&
         candidate.parameterTypes.size() == argumentTypes.size();
@@ -5564,7 +5570,7 @@ public:
         elementParameter->arguments.front().kind ==
             SemanticType::TypeParameter &&
         elementParameter->arguments.front().genericParameterId ==
-            candidate.genericParameters.front().id;
+            candidate.record().genericParameters.front().id;
     if (!exactGenericShape || !exactElementShape) {
       report(call->paren(),
              "A pack-fold target must be one non-overloaded free generic "
@@ -5579,8 +5585,9 @@ public:
       valid = false;
     }
     if (valid &&
-        !satisfiesConstraint(packSymbol->type,
-                             candidate.genericParameters.front().constraints)) {
+        !satisfiesConstraint(
+            packSymbol->type,
+            candidate.record().genericParameters.front().constraints)) {
       report(expr.ellipsis(),
              "The source parameter pack does not prove the constraints "
              "required by the pack-fold target.",
@@ -5604,7 +5611,7 @@ public:
       for (const SemanticType &element : packSymbol->type.arguments) {
         std::vector<SemanticType> concreteArguments = argumentTypes;
         concreteArguments.back() = element;
-        CallableDeclaration resolved;
+        CallableCandidate resolved;
         std::vector<SemanticType> typeArguments;
         std::vector<CompileTimeValue> valueArguments;
         ConstraintFailure failure;
@@ -5992,7 +5999,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && resolvedMember.assignable && mutableReceiver) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), resolvedMember.type,
           expr.oper(), std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -6272,7 +6279,7 @@ public:
         (rightType.kind == SemanticType::Class ||
          (rightType.kind == SemanticType::TypeParameter &&
           hasSymbolicOperatorRequirement(*mutationOperator, rightType)))) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *mutationOperator, expr.right(), rightType, expr.oper());
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
@@ -6299,7 +6306,7 @@ public:
                  (rightType.kind == SemanticType::TypeParameter &&
                   hasSymbolicOperatorRequirement(
                       OverloadedOperator::Dereference, rightType))) {
-        const std::optional<CallableDeclaration> selected =
+        const std::optional<CallableCandidate> selected =
             resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
                             rightType, expr.oper());
         currentType = selected ? callExpressionType(selected->returnType)
@@ -6318,7 +6325,7 @@ public:
         (rightType.kind == SemanticType::Class ||
          (rightType.kind == SemanticType::TypeParameter &&
           hasSymbolicOperatorRequirement(*valueOperator, rightType)))) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           expr, *valueOperator, expr.right(), rightType, expr.oper());
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
@@ -6609,10 +6616,15 @@ private:
     ValueState state = ValueState::Available;
   };
 
+  // The catalog owns exactly one declaration record for each source callable.
+  // Registration completes these records before the catalog is sealed; body
+  // analysis publishes and queries them but never mutates them.
   struct CallableDeclaration {
     FunctionId id = 0;
     SourceUnitId sourceUnit = 0;
-    const FunctionDecl *declaration = nullptr;
+    const FunctionDecl *syntax = nullptr;
+    std::string qualifiedName;
+    std::vector<std::string> namespaceScope;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     std::size_t requiredParameterCount = 0;
@@ -6621,10 +6633,15 @@ private:
     std::vector<AppliedConceptRequirement> requirements;
     bool parameterPack = false;
     ClassId ownerClass = 0;
-    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
-    AccessModifier access = AccessModifier::Public;
+    bool entryPoint = false;
+    ProgramEntryKind entryKind = ProgramEntryKind::None;
+    FunctionId entryArgumentAppendFunction = 0;
     bool staticMember = false;
     bool internalLinkage = false;
+    bool constexprFunction = false;
+    LanguageLinkage linkage = LanguageLinkage::Gti;
+    std::string externalSymbol;
+    std::optional<std::size_t> cArrayCountParameter;
     bool virtualMethod = false;
     bool pureVirtual = false;
     bool overrideMethod = false;
@@ -6634,8 +6651,40 @@ private:
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
+    bool compilerPrivate = false;
+  };
+
+  // Resolution may copy this bounded view to substitute types and adjust the
+  // receiver/access/dispatch context. Declaration identity and source policy
+  // stay in the catalog-owned record referenced by `declarationRecord`.
+  struct CallableCandidate {
+    const CallableDeclaration *declarationRecord = nullptr;
+    FunctionId id = 0;
+    const FunctionDecl *declaration = nullptr;
+    SemanticType returnType = SemanticType::Unknown;
+    std::vector<SemanticType> parameterTypes;
+    std::size_t requiredParameterCount = 0;
+    std::vector<AppliedConceptRequirement> requirements;
+    bool parameterPack = false;
+    ClassId ownerClass = 0;
+    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+    AccessModifier access = AccessModifier::Public;
+    bool staticMember = false;
+    bool virtualMethod = false;
+    bool pureVirtual = false;
+    bool overrideMethod = false;
+    BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+    std::size_t returnBorrowParameter = 0;
+    AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
+
+    [[nodiscard]] const CallableDeclaration &record() const {
+      assert(declarationRecord != nullptr);
+      return *declarationRecord;
+    }
   };
 
   [[nodiscard]] static std::size_t
@@ -7117,7 +7166,7 @@ private:
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
-    std::vector<CallableDeclaration> overloads;
+    std::vector<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
@@ -7376,8 +7425,7 @@ private:
   }
 
   [[nodiscard]] SemanticType
-  constexprType(SemanticType type,
-                const ConstexprInterpreter &context) const {
+  constexprType(SemanticType type, const ConstexprInterpreter &context) const {
     for (const GenericSubstitution &substitution : context.substitutions) {
       type = substituteType(type, substitution);
     }
@@ -7685,8 +7733,7 @@ private:
   }
 
   [[nodiscard]] static const ConstexprLocalValue *
-  findConstexprLocal(const ConstexprInterpreter &context,
-                     SymbolId symbol) {
+  findConstexprLocal(const ConstexprInterpreter &context, SymbolId symbol) {
     for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
          ++scope) {
       if (const auto found = scope->find(symbol); found != scope->end()) {
@@ -7697,8 +7744,7 @@ private:
   }
 
   [[nodiscard]] static ConstexprLocalValue *
-  findMutableConstexprLocal(ConstexprInterpreter &context,
-                            SymbolId symbol) {
+  findMutableConstexprLocal(ConstexprInterpreter &context, SymbolId symbol) {
     for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
          ++scope) {
       if (const auto found = scope->find(symbol); found != scope->end()) {
@@ -10529,10 +10575,10 @@ private:
     return summary;
   }
 
-  void applyFunctionReturnBorrowSummary(CallableDeclaration &function) const {
+  void applyFunctionReturnBorrowSummary(CallableCandidate &function) const {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         function.returnType, function.parameterTypes, function.ownerClass,
-        function.staticMember, function.intrinsic);
+        function.staticMember, function.record().intrinsic);
     function.returnBorrowOrigin = summary.origin;
     function.returnBorrowParameter = summary.parameter;
     function.returnBorrowAccess = summary.access;
@@ -10782,15 +10828,15 @@ private:
     return IntrinsicKind::None;
   }
 
-  [[nodiscard]] std::optional<CallableDeclaration>
+  [[nodiscard]] std::optional<CallableCandidate>
   intrinsicCandidate(const ExprPtr &callee) const {
     const std::optional<Symbol> symbol = resolveExpressionSymbol(callee);
     if (!symbol || symbol->type != SemanticType::Function) {
       return std::nullopt;
     }
-    const CallableDeclaration *result = nullptr;
-    for (const CallableDeclaration &candidate : symbol->overloads) {
-      if (candidate.intrinsic == IntrinsicKind::None) {
+    const CallableCandidate *result = nullptr;
+    for (const CallableCandidate &candidate : symbol->overloads) {
+      if (candidate.record().intrinsic == IntrinsicKind::None) {
         continue;
       }
       if (result != nullptr) {
@@ -10799,7 +10845,7 @@ private:
       result = &candidate;
     }
     return result == nullptr ? std::nullopt
-                             : std::optional<CallableDeclaration>(*result);
+                             : std::optional<CallableCandidate>(*result);
   }
 
   [[nodiscard]] IntrinsicKind resolvedIntrinsicKind(const Call &call) const {
@@ -13120,14 +13166,14 @@ private:
     }
 
     const Symbol overloads = substituteSymbol(found->second.symbol, type);
-    std::vector<const CallableDeclaration *> viable;
-    for (const CallableDeclaration &candidate : overloads.overloads) {
+    std::vector<const CallableCandidate *> viable;
+    for (const CallableCandidate &candidate : overloads.overloads) {
       if (candidate.id == 0 || candidate.declaration == nullptr ||
           candidate.access != AccessModifier::Public ||
           candidate.compilerPrivate || candidate.pureVirtual ||
           candidate.returnType != resultType ||
           !candidate.parameterTypes.empty() ||
-          !candidate.genericParameters.empty() ||
+          !candidate.record().genericParameters.empty() ||
           !candidate.requirements.empty()) {
         continue;
       }
@@ -13149,17 +13195,17 @@ private:
       return -1;
     };
     int selectedRank = -1;
-    for (const CallableDeclaration *candidate : viable) {
+    for (const CallableCandidate *candidate : viable) {
       selectedRank =
           std::max(selectedRank, capabilityRank(candidate->receiverMutability));
     }
-    std::erase_if(viable, [&](const CallableDeclaration *candidate) {
+    std::erase_if(viable, [&](const CallableCandidate *candidate) {
       return capabilityRank(candidate->receiverMutability) != selectedRank;
     });
     if (viable.size() != 1) {
       return std::nullopt;
     }
-    const CallableDeclaration &selected = *viable.front();
+    const CallableCandidate &selected = *viable.front();
     return ResolvedThreadTaskEntry{.function = selected.id,
                                    .capability = callableInvocationCapability(
                                        selected.receiverMutability)};
@@ -13172,8 +13218,8 @@ private:
   }
 
   void analyzeThreadIntrinsicCall(const Call &expr,
-                                  const CallableDeclaration &declaration) {
-    const IntrinsicKind intrinsic = declaration.intrinsic;
+                                  const CallableCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.record().intrinsic;
     std::vector<SemanticType> explicitTypeArguments;
     explicitTypeArguments.reserve(expr.typeArguments().size());
     for (const TypeRef &argument : expr.typeArguments()) {
@@ -13342,8 +13388,8 @@ private:
   }
 
   void analyzeIntrinsicCall(const Call &expr,
-                            const CallableDeclaration &declaration) {
-    const IntrinsicKind intrinsic = declaration.intrinsic;
+                            const CallableCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.record().intrinsic;
     if (integerArithmeticIntrinsic(intrinsic)) {
       analyzeIntegerArithmeticIntrinsicCall(expr, declaration);
       bindIntrinsicCallDeclaration(expr, declaration);
@@ -13644,8 +13690,8 @@ private:
 
   void
   analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
-                                        const CallableDeclaration &declaration) {
-    const IntrinsicKind intrinsic = declaration.intrinsic;
+                                        const CallableCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.record().intrinsic;
     const std::optional<IntegerArithmeticIntrinsic> arithmetic =
         integerArithmeticIntrinsic(intrinsic);
     const bool checkedResult =
@@ -14992,15 +15038,17 @@ private:
   }
 
   [[nodiscard]] static const GenericParameterInfo *
-  packGenericParameter(const CallableDeclaration &function) {
+  packGenericParameter(const CallableCandidate &function) {
     const auto found = std::find_if(
-        function.genericParameters.begin(), function.genericParameters.end(),
+        function.record().genericParameters.begin(),
+        function.record().genericParameters.end(),
         [](const GenericParameterInfo &parameter) { return parameter.pack; });
-    return found == function.genericParameters.end() ? nullptr : &*found;
+    return found == function.record().genericParameters.end() ? nullptr
+                                                              : &*found;
   }
 
   [[nodiscard]] static std::size_t
-  fixedParameterCount(const CallableDeclaration &function) {
+  fixedParameterCount(const CallableCandidate &function) {
     return function.parameterPack && !function.parameterTypes.empty()
                ? function.parameterTypes.size() - 1
                : function.parameterTypes.size();
@@ -15054,7 +15102,7 @@ private:
   }
 
   [[nodiscard]] static bool
-  acceptsArgumentShape(const CallableDeclaration &function,
+  acceptsArgumentShape(const CallableCandidate &function,
                        const std::vector<SemanticType> &arguments) {
     if (!function.parameterPack) {
       return !hasPackExpansion(arguments) &&
@@ -15086,7 +15134,7 @@ private:
     const Symbol overloadSet = substituteSymbol(member->second.symbol, type);
     return std::any_of(
         overloadSet.overloads.begin(), overloadSet.overloads.end(),
-        [&](const CallableDeclaration &candidate) {
+        [&](const CallableCandidate &candidate) {
           return !candidate.staticMember &&
                  candidate.access == AccessModifier::Public &&
                  candidate.requirements.empty() &&
@@ -15385,11 +15433,11 @@ private:
   }
 
   bool applyVariadicFunctionTypeArguments(
-      CallableDeclaration &function,
+      CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren) {
-    CallableDeclaration resolved;
+    CallableCandidate resolved;
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     ConstraintFailure constraintFailure;
@@ -15407,8 +15455,8 @@ private:
     bool valid = true;
     const GenericParameterInfo *pack = packGenericParameter(function);
     const std::size_t fixedGenerics =
-        pack == nullptr ? function.genericParameters.size()
-                        : function.genericParameters.size() - 1;
+        pack == nullptr ? function.record().genericParameters.size()
+                        : function.record().genericParameters.size() - 1;
     if (pack == nullptr) {
       report(paren,
              "A parameter pack requires a matching final generic type pack.",
@@ -15439,8 +15487,9 @@ private:
       const std::size_t count =
           std::min(fixedGenerics, explicitTypeArguments.size());
       for (std::size_t index = 0; index < count; ++index) {
-        substitution.types.emplace(function.genericParameters[index].id,
-                                   explicitTypeArguments[index]);
+        substitution.types.emplace(
+            function.record().genericParameters[index].id,
+            explicitTypeArguments[index]);
       }
     } else {
       const std::size_t count =
@@ -15448,13 +15497,14 @@ private:
       for (std::size_t index = 0; index < count; ++index) {
         valid = inferTypeArguments(
                     function.parameterTypes[index], argumentTypes[index],
-                    function.genericParameters, substitution,
+                    function.record().genericParameters, substitution,
                     expressionToken(arguments[index]), &arguments[index]) &&
                 valid;
       }
     }
     for (std::size_t index = 0; index < fixedGenerics; ++index) {
-      const GenericParameterInfo &parameter = function.genericParameters[index];
+      const GenericParameterInfo &parameter =
+          function.record().genericParameters[index];
       if (!substitution.types.contains(parameter.id)) {
         report(paren,
                "Cannot infer generic type parameter '" + parameter.name.lexeme +
@@ -15591,7 +15641,7 @@ private:
   }
 
   bool applyFunctionTypeArguments(
-      CallableDeclaration &function,
+      CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren) {
@@ -15600,7 +15650,7 @@ private:
           function, explicitTypeArguments, argumentTypes, arguments, paren);
     }
     bool valid = true;
-    if (function.genericParameters.empty()) {
+    if (function.record().genericParameters.empty()) {
       if (!explicitTypeArguments.empty()) {
         report(paren, "Non-generic functions do not take generic arguments.");
         valid = false;
@@ -15611,7 +15661,7 @@ private:
     GenericSubstitution substitution;
     if (!explicitTypeArguments.empty()) {
       const std::size_t typeParameterCount =
-          genericTypeParameterCount(function.genericParameters);
+          genericTypeParameterCount(function.record().genericParameters);
       if (explicitTypeArguments.size() != typeParameterCount) {
         report(
             paren,
@@ -15619,7 +15669,8 @@ private:
         valid = false;
       }
       std::size_t typeIndex = 0;
-      for (const GenericParameterInfo &parameter : function.genericParameters) {
+      for (const GenericParameterInfo &parameter :
+           function.record().genericParameters) {
         if (parameter.value || typeIndex >= explicitTypeArguments.size()) {
           continue;
         }
@@ -15632,12 +15683,13 @@ private:
     for (std::size_t index = 0; index < count; ++index) {
       valid = inferTypeArguments(
                   function.parameterTypes[index], argumentTypes[index],
-                  function.genericParameters, substitution,
+                  function.record().genericParameters, substitution,
                   expressionToken(arguments[index]), &arguments[index]) &&
               valid;
     }
 
-    for (const GenericParameterInfo &parameter : function.genericParameters) {
+    for (const GenericParameterInfo &parameter :
+         function.record().genericParameters) {
       const bool resolved = parameter.value
                                 ? substitution.values.contains(parameter.id)
                                 : substitution.types.contains(parameter.id);
@@ -15654,8 +15706,9 @@ private:
     }
     std::vector<SemanticType> resolvedTypeArguments;
     resolvedTypeArguments.reserve(
-        genericTypeParameterCount(function.genericParameters));
-    for (const GenericParameterInfo &parameter : function.genericParameters) {
+        genericTypeParameterCount(function.record().genericParameters));
+    for (const GenericParameterInfo &parameter :
+         function.record().genericParameters) {
       if (parameter.value) {
         continue;
       }
@@ -15674,9 +15727,9 @@ private:
       valid = false;
     }
     if (resolvedTypeArguments.size() ==
-        genericTypeParameterCount(function.genericParameters)) {
+        genericTypeParameterCount(function.record().genericParameters)) {
       if (const std::optional<ConstraintFailure> failure =
-              firstConstraintFailure(function.genericParameters,
+              firstConstraintFailure(function.record().genericParameters,
                                      resolvedTypeArguments)) {
         reportConstraintFailure(paren, *failure);
         valid = false;
@@ -15692,7 +15745,7 @@ private:
       }
     }
     if (resolvedTypeArguments.size() ==
-        genericTypeParameterCount(function.genericParameters)) {
+        genericTypeParameterCount(function.record().genericParameters)) {
       if (const std::optional<ConstraintFailure> failure =
               firstRequirementFailure(function.requirements)) {
         reportConstraintFailure(paren, *failure);
@@ -15804,18 +15857,18 @@ private:
   }
 
   [[nodiscard]] bool
-  tryInstantiateFunction(const CallableDeclaration &candidate,
+  tryInstantiateFunction(const CallableCandidate &candidate,
                          const std::vector<SemanticType> &explicitTypeArguments,
                          const std::vector<SemanticType> &argumentTypes,
                          const ExprList &expressions,
-                         CallableDeclaration &resolved,
+                         CallableCandidate &resolved,
                          std::vector<SemanticType> &resolvedTypeArguments,
                          std::vector<CompileTimeValue> &resolvedValueArguments,
                          ConstraintFailure *constraintFailure = nullptr) {
     resolved = candidate;
     resolvedTypeArguments.clear();
     resolvedValueArguments.clear();
-    if (candidate.genericParameters.empty()) {
+    if (candidate.record().genericParameters.empty()) {
       if (!explicitTypeArguments.empty() ||
           !acceptsArgumentShape(candidate, argumentTypes)) {
         return false;
@@ -15833,9 +15886,10 @@ private:
     GenericSubstitution substitution;
     const GenericParameterInfo *pack = packGenericParameter(candidate);
     const std::size_t fixedGenerics =
-        pack == nullptr ? genericTypeParameterCount(candidate.genericParameters)
-                        : candidate.genericParameters.size() - 1;
-    if (candidate.parameterPack != (pack != nullptr) ||
+        pack == nullptr
+            ? genericTypeParameterCount(candidate.record().genericParameters)
+            : candidate.record().genericParameters.size() - 1;
+    if (candidate.record().parameterPack != (pack != nullptr) ||
         !acceptsArgumentShape(candidate, argumentTypes)) {
       return false;
     }
@@ -15848,7 +15902,7 @@ private:
       }
       std::size_t typeIndex = 0;
       for (const GenericParameterInfo &parameter :
-           candidate.genericParameters) {
+           candidate.record().genericParameters) {
         if (parameter.value || typeIndex >= explicitTypeArguments.size()) {
           continue;
         }
@@ -15863,12 +15917,13 @@ private:
           index < expressions.size() ? &expressions[index] : nullptr;
       if (!tryInferTypeArguments(
               candidate.parameterTypes[index], argumentTypes[index],
-              candidate.genericParameters, substitution, expression)) {
+              candidate.record().genericParameters, substitution, expression)) {
         return false;
       }
     }
 
-    for (const GenericParameterInfo &parameter : candidate.genericParameters) {
+    for (const GenericParameterInfo &parameter :
+         candidate.record().genericParameters) {
       if (parameter.pack) {
         continue;
       }
@@ -15931,7 +15986,7 @@ private:
       return false;
     }
     if (const std::optional<ConstraintFailure> failure = firstConstraintFailure(
-            candidate.genericParameters, resolvedTypeArguments)) {
+            candidate.record().genericParameters, resolvedTypeArguments)) {
       if (constraintFailure != nullptr) {
         *constraintFailure = *failure;
       }
@@ -15965,7 +16020,7 @@ private:
     // A concrete pack expansion replaces the symbolic final parameter with
     // zero or more ordinary parameters. Defaults and packs cannot coexist, so
     // every concrete parameter remains required after this substitution.
-    if (candidate.parameterPack) {
+    if (candidate.record().parameterPack) {
       resolved.requiredParameterCount = resolved.parameterTypes.size();
     }
     resolved.parameterPack = false;
@@ -16961,7 +17016,7 @@ private:
   }
 
   bool validateConfinedCallableArguments(
-      const CallableDeclaration &candidate, const CallableDeclaration &,
+      const CallableCandidate &candidate, const CallableCandidate &,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments) {
     bool valid = true;
@@ -17037,7 +17092,7 @@ private:
   }
 
   [[nodiscard]] static std::string
-  functionSignatureSpelling(const CallableDeclaration &function) {
+  functionSignatureSpelling(const CallableCandidate &function) {
     if (function.declaration == nullptr) {
       return "function";
     }
@@ -17191,7 +17246,7 @@ private:
   }
 
   [[nodiscard]] bool
-  validateSelectedFunction(const CallableDeclaration &function,
+  validateSelectedFunction(const CallableCandidate &function,
                            const ExprPtr &callee, const Token &paren,
                            std::span<const ExprPtr> arguments,
                            CallReceiverMode receiverMode) {
@@ -17320,7 +17375,7 @@ private:
     return true;
   }
 
-  [[nodiscard]] std::vector<CallableDeclaration>
+  [[nodiscard]] std::vector<CallableCandidate>
   structuralOperatorCandidates(const SemanticType &receiver,
                                OverloadedOperator kind) const {
     const ClassInfo *owner = classInfo(receiver);
@@ -17334,8 +17389,8 @@ private:
       return {};
     }
     const Symbol overloadSet = substituteSymbol(found->second.symbol, receiver);
-    std::vector<CallableDeclaration> result;
-    for (const CallableDeclaration &candidate : overloadSet.overloads) {
+    std::vector<CallableCandidate> result;
+    for (const CallableCandidate &candidate : overloadSet.overloads) {
       if (!candidate.staticMember &&
           candidate.access == AccessModifier::Public &&
           !candidate.compilerPrivate && candidate.requirements.empty()) {
@@ -17345,28 +17400,28 @@ private:
     return result;
   }
 
-  [[nodiscard]] std::optional<CallableDeclaration>
+  [[nodiscard]] std::optional<CallableCandidate>
   selectStructuralOperator(const SemanticType &receiver,
                            OverloadedOperator kind,
                            std::span<const SemanticType> parameterTypes,
                            bool mutableReceiver) const {
-    std::vector<CallableDeclaration> candidates =
+    std::vector<CallableCandidate> candidates =
         structuralOperatorCandidates(receiver, kind);
-    std::erase_if(candidates, [&](const CallableDeclaration &candidate) {
+    std::erase_if(candidates, [&](const CallableCandidate &candidate) {
       return !std::equal(candidate.parameterTypes.begin(),
                          candidate.parameterTypes.end(), parameterTypes.begin(),
                          parameterTypes.end());
     });
     if (!mutableReceiver) {
-      std::erase_if(candidates, [](const CallableDeclaration &candidate) {
+      std::erase_if(candidates, [](const CallableCandidate &candidate) {
         return candidate.receiverMutability == ReceiverMutability::Mutable;
       });
     } else if (std::any_of(candidates.begin(), candidates.end(),
-                           [](const CallableDeclaration &candidate) {
+                           [](const CallableCandidate &candidate) {
                              return candidate.receiverMutability ==
                                     ReceiverMutability::Mutable;
                            })) {
-      std::erase_if(candidates, [](const CallableDeclaration &candidate) {
+      std::erase_if(candidates, [](const CallableCandidate &candidate) {
         return candidate.receiverMutability == ReceiverMutability::ReadOnly;
       });
     }
@@ -17399,7 +17454,7 @@ private:
     };
     const auto hasDereference = [&](const SemanticType &iterator,
                                     const SemanticType *referent) {
-      const std::optional<CallableDeclaration> candidate =
+      const std::optional<CallableCandidate> candidate =
           selectedDereference(iterator);
       if (!candidate || candidate->returnType.kind != SemanticType::Reference ||
           candidate->returnType.arguments.size() != 1) {
@@ -17418,7 +17473,7 @@ private:
       if (!hasDereference(iterator, nullptr)) {
         return false;
       }
-      const std::optional<CallableDeclaration> increment =
+      const std::optional<CallableCandidate> increment =
           selectStructuralOperator(iterator, OverloadedOperator::PreIncrement,
                                    {}, true);
       return increment && increment->returnType == SemanticType::Void &&
@@ -17432,7 +17487,7 @@ private:
       const SemanticType &iterator = arguments[1];
       const SemanticType parameter =
           SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
-      const std::optional<CallableDeclaration> comparison =
+      const std::optional<CallableCandidate> comparison =
           selectStructuralOperator(iterator, OverloadedOperator::NotEqual,
                                    std::span<const SemanticType>(&parameter, 1),
                                    false);
@@ -17448,13 +17503,13 @@ private:
     return false;
   }
 
-  [[nodiscard]] std::vector<CallableDeclaration> symbolicOperatorRequirements(
+  [[nodiscard]] std::vector<CallableCandidate> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const {
-    std::vector<CallableDeclaration> result;
+    std::vector<CallableCandidate> result;
     for (const ExpandedStructuralRequirement &requirement :
          activeStructuralRequirements()) {
-      CallableDeclaration candidate;
+      CallableCandidate candidate;
       bool matches = false;
       switch (requirement.kind) {
       case StructuralConstraintKind::InputIterator:
@@ -17517,16 +17572,16 @@ private:
                      SemanticType::Unknown;
         });
     if (hasKnownDereference) {
-      std::erase_if(result, [](const CallableDeclaration &candidate) {
+      std::erase_if(result, [](const CallableCandidate &candidate) {
         return candidate.returnType.kind == SemanticType::Reference &&
                !candidate.returnType.arguments.empty() &&
                candidate.returnType.arguments.front() == SemanticType::Unknown;
       });
     }
-    std::vector<CallableDeclaration> unique;
-    for (CallableDeclaration &candidate : result) {
+    std::vector<CallableCandidate> unique;
+    for (CallableCandidate &candidate : result) {
       const bool duplicate = std::any_of(
-          unique.begin(), unique.end(), [&](const CallableDeclaration &existing) {
+          unique.begin(), unique.end(), [&](const CallableCandidate &existing) {
             return existing.returnType == candidate.returnType &&
                    existing.parameterTypes == candidate.parameterTypes &&
                    existing.receiverMutability == candidate.receiverMutability;
@@ -17545,7 +17600,7 @@ private:
                 .empty();
   }
 
-  [[nodiscard]] std::optional<CallableDeclaration> resolveSymbolicOperator(
+  [[nodiscard]] std::optional<CallableCandidate> resolveSymbolicOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
       std::span<const SemanticType> argumentTypes,
@@ -17553,11 +17608,11 @@ private:
       std::optional<CallableBoundary> boundary,
       const std::optional<OperatorReceiverState> &receiverState,
       bool projection) {
-    std::vector<CallableDeclaration> viable =
+    std::vector<CallableCandidate> viable =
         symbolicOperatorRequirements(kind, receiverType, argumentTypes);
     const bool mutableReceiver = receiverState ? receiverState->mutableReceiver
                                                : isMutableObject(receiver);
-    std::erase_if(viable, [&](const CallableDeclaration &candidate) {
+    std::erase_if(viable, [&](const CallableCandidate &candidate) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
         return true;
@@ -17585,7 +17640,7 @@ private:
       return std::nullopt;
     }
 
-    const CallableDeclaration &selected = viable.front();
+    const CallableCandidate &selected = viable.front();
     const AccessMode receiverAccess =
         receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
@@ -17653,7 +17708,7 @@ private:
         substituteSymbol(found->second.symbol, receiverType);
     return std::any_of(
         overloadSet.overloads.begin(), overloadSet.overloads.end(),
-        [&](const CallableDeclaration &candidate) {
+        [&](const CallableCandidate &candidate) {
           return candidate.parameterTypes.size() == 1 &&
                  candidate.parameterTypes.front() == argumentType;
         });
@@ -17678,7 +17733,7 @@ private:
     return callArgumentMatches(parameterType, argumentType, argument);
   }
 
-  [[nodiscard]] std::optional<CallableDeclaration> resolveOperator(
+  [[nodiscard]] std::optional<CallableCandidate> resolveOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
       std::span<const SemanticType> argumentTypes = {},
@@ -17728,16 +17783,16 @@ private:
     const bool consumingReceiver =
         kind == OverloadedOperator::Call && isExplicitMoveReceiver(receiver);
     bool rejectedMutableReceiver = false;
-    std::optional<CallableDeclaration> rejectedMutableFunction;
+    std::optional<CallableCandidate> rejectedMutableFunction;
     bool rejectedConsumingReceiver = false;
     bool rejectedCompilerPrivate = false;
     bool rejectedRequirements = false;
     struct ViableOperator {
-      CallableDeclaration function;
+      CallableCandidate function;
       CallReceiverMode receiverMode = CallReceiverMode::None;
     };
     std::vector<ViableOperator> viable;
-    for (const CallableDeclaration &candidate : overloadSet.overloads) {
+    for (const CallableCandidate &candidate : overloadSet.overloads) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
         continue;
@@ -17885,7 +17940,7 @@ private:
             "GTI operator calls do not perform implicit conversions, rank "
             "candidates, reverse operands, or use ADL; convert the operand "
             "explicitly when that conversion is intentional.");
-        for (const CallableDeclaration &candidate : overloadSet.overloads) {
+        for (const CallableCandidate &candidate : overloadSet.overloads) {
           if (candidate.declaration != nullptr &&
               (isCompilerTrustedRequester(token) ||
                !candidate.compilerPrivate)) {
@@ -17904,7 +17959,7 @@ private:
       return std::nullopt;
     }
 
-    const CallableDeclaration &selected = viable.front().function;
+    const CallableCandidate &selected = viable.front().function;
     const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
     if (consumingReceiver &&
         rejectConsumingActiveCleanup(token, receiverType, boundary)) {
@@ -18028,7 +18083,7 @@ private:
       return receiverType.arguments.front();
     }
     if (receiverType.kind == SemanticType::Class) {
-      const std::optional<CallableDeclaration> selected = resolveOperator(
+      const std::optional<CallableCandidate> selected = resolveOperator(
           site, OverloadedOperator::Arrow, receiver, receiverType, token, {},
           {}, false, std::nullopt, std::nullopt, projection);
       if (!selected || selected->returnType.kind != SemanticType::Reference ||
@@ -18045,7 +18100,7 @@ private:
   }
 
   void recordCallableForwardings(const Call &call,
-                                 const CallableDeclaration &target) {
+                                 const CallableCandidate &target) {
     if (instanceAnalysisActive || currentFunctionDeclaration == nullptr ||
         target.id == 0) {
       return;
@@ -18150,7 +18205,7 @@ private:
   }
 
   void bindIntrinsicCallDeclaration(const Call &call,
-                                    const CallableDeclaration &function) {
+                                    const CallableCandidate &function) {
     const ResolvedCallInfo *existing = semanticModel.findCall(call);
     if (existing == nullptr) {
       return;
@@ -18163,7 +18218,7 @@ private:
   }
 
   void recordDefaultArgumentEffects(const Call &call,
-                                    const CallableDeclaration &function) {
+                                    const CallableCandidate &function) {
     if (function.declaration == nullptr ||
         call.arguments().size() >= function.parameterTypes.size()) {
       return;
@@ -18171,13 +18226,13 @@ private:
     const SourceSpan callSite = tokenSpan(call.paren());
     for (std::size_t index = call.arguments().size();
          index < function.parameterTypes.size(); ++index) {
-      if (index >= function.defaultArgumentEffectOwners.size() ||
-          function.defaultArgumentEffectOwners[index] == 0) {
+      if (index >= function.record().defaultArgumentEffectOwners.size() ||
+          function.record().defaultArgumentEffectOwners[index] == 0) {
         continue;
       }
       addProgramEffectEdge(
           {.kind = ProgramEffectOwnerKind::FunctionDefaultArgument,
-           .id = function.defaultArgumentEffectOwners[index]},
+           .id = function.record().defaultArgumentEffectOwners[index]},
           callSite);
     }
   }
@@ -18215,7 +18270,7 @@ private:
   }
 
   void
-  recordResolvedCall(const Call &call, const CallableDeclaration &function,
+  recordResolvedCall(const Call &call, const CallableCandidate &function,
                      std::vector<SemanticType> typeArguments,
                      std::vector<CompileTimeValue> valueArguments,
                      std::vector<std::size_t> ephemeralBorrowArguments,
@@ -18250,7 +18305,7 @@ private:
     const FunctionReturnBorrowSummary concreteBorrow =
         functionReturnBorrowSummary(
             function.returnType, function.parameterTypes, function.ownerClass,
-            function.staticMember, function.intrinsic,
+            function.staticMember, function.record().intrinsic,
             declarationInfo == nullptr
                 ? std::nullopt
                 : exactMovedReturnParameter(*declarationInfo));
@@ -18320,7 +18375,7 @@ private:
   void reportOverloadResolutionFailure(
       const Call &call, const Symbol &overloadSet,
       const std::vector<SemanticType> &argumentTypes,
-      const std::vector<const CallableDeclaration *> &exactMatches) {
+      const std::vector<const CallableCandidate *> &exactMatches) {
     const std::string name = callableSpelling(call.callee());
     Diagnostic diagnostic;
     if (exactMatches.empty()) {
@@ -18338,7 +18393,7 @@ private:
       diagnostic.hints.emplace_back(
           "Function calls do not perform implicit conversions; convert an "
           "argument explicitly with syntax such as 'uint64_t(value)'.");
-      for (const CallableDeclaration &candidate : overloadSet.overloads) {
+      for (const CallableCandidate &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr &&
             (isCompilerTrustedRequester(call.paren()) ||
              !candidate.compilerPrivate)) {
@@ -18353,7 +18408,7 @@ private:
                          "Call to '" + name + "' is ambiguous; " +
                              std::to_string(exactMatches.size()) +
                              " overloads exactly match.");
-      for (const CallableDeclaration *candidate : exactMatches) {
+      for (const CallableCandidate *candidate : exactMatches) {
         if (candidate != nullptr && candidate->declaration != nullptr) {
           diagnostic.related.push_back(
               {tokenSpan(candidate->declaration->name()),
@@ -18452,13 +18507,13 @@ private:
   }
 
   [[nodiscard]] static bool
-  nativeFunctionCandidateIsEligible(const CallableDeclaration &candidate) {
+  nativeFunctionCandidateIsEligible(const CallableCandidate &candidate) {
     if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-        candidate.id == 0 || !candidate.genericParameters.empty() ||
-        candidate.parameterPack || !candidate.requirements.empty() ||
+        candidate.id == 0 || !candidate.record().genericParameters.empty() ||
+        candidate.record().parameterPack || !candidate.requirements.empty() ||
         candidate.virtualMethod || candidate.pureVirtual ||
         candidate.overrideMethod ||
-        candidate.intrinsic != IntrinsicKind::None) {
+        candidate.record().intrinsic != IntrinsicKind::None) {
       return false;
     }
     const FunctionDecl &declaration = *candidate.declaration;
@@ -18467,7 +18522,7 @@ private:
   }
 
   [[nodiscard]] bool
-  nativeFunctionCandidateMatches(const CallableDeclaration &candidate,
+  nativeFunctionCandidateMatches(const CallableCandidate &candidate,
                                  const SemanticType &expectedType) const {
     if (!nativeFunctionCandidateIsEligible(candidate) ||
         !expectedType.hasNativeFunctionShape()) {
@@ -18490,11 +18545,11 @@ private:
                       candidate.parameterTypes.end(), parameterTypes.begin());
   }
 
-  [[nodiscard]] std::vector<const CallableDeclaration *>
+  [[nodiscard]] std::vector<const CallableCandidate *>
   matchingNativeFunctionCandidates(const Symbol &symbol,
                                    const SemanticType &expectedType) const {
-    std::vector<const CallableDeclaration *> matches;
-    for (const CallableDeclaration &candidate : symbol.overloads) {
+    std::vector<const CallableCandidate *> matches;
+    for (const CallableCandidate &candidate : symbol.overloads) {
       if (nativeFunctionCandidateMatches(candidate, expectedType)) {
         matches.push_back(&candidate);
       }
@@ -18518,7 +18573,7 @@ private:
       return SemanticType::Unknown;
     }
 
-    const std::vector<const CallableDeclaration *> matches =
+    const std::vector<const CallableCandidate *> matches =
         matchingNativeFunctionCandidates(symbol, expectedType);
     if (matches.size() != 1) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -18535,7 +18590,7 @@ private:
           "Callback targets must be non-generic namespace-scope GTI "
           "functions with bodies and an exact parameter and return type "
           "match.");
-      for (const CallableDeclaration &candidate : symbol.overloads) {
+      for (const CallableCandidate &candidate : symbol.overloads) {
         if (candidate.declaration != nullptr) {
           diagnostic.related.push_back(
               {tokenSpan(candidate.declaration->name()),
@@ -18546,7 +18601,7 @@ private:
       return SemanticType::Unknown;
     }
 
-    const CallableDeclaration &selected = *matches.front();
+    const CallableCandidate &selected = *matches.front();
     semanticModel.recordNativeFunctionConversion(
         expression,
         NativeFunctionConversionInfo{.function = selected.id,
@@ -18766,7 +18821,7 @@ private:
   };
 
   [[nodiscard]] bool
-  ephemeralBorrowResultSupported(const CallableDeclaration &function) const {
+  ephemeralBorrowResultSupported(const CallableCandidate &function) const {
     if (function.returnBorrowOrigin != BorrowOriginKind::None ||
         typeTraits(function.returnType).containsBorrowedState) {
       return false;
@@ -18784,13 +18839,13 @@ private:
   }
 
   [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(const CallableDeclaration &function) const {
+  ephemeralBorrowTargetSupported(const CallableCandidate &function) const {
     if (function.id == 0 || function.declaration == nullptr ||
         function.declaration->body() == nullptr ||
         function.declaration->runtimeBinding() ||
         function.declaration->hasCLinkage() ||
         function.declaration->operatorName() ||
-        function.intrinsic != IntrinsicKind::None ||
+        function.record().intrinsic != IntrinsicKind::None ||
         !ephemeralBorrowResultSupported(function)) {
       return false;
     }
@@ -18804,7 +18859,7 @@ private:
   }
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
-      const CallableDeclaration &function, const SemanticType &parameter,
+      const CallableCandidate &function, const SemanticType &parameter,
       const SemanticType &argument, const ExprPtr &expression) const {
     if (parameter.kind != SemanticType::Reference ||
         parameter.referenceAccess != AccessMode::ReadOnly ||
@@ -18820,7 +18875,7 @@ private:
   }
 
   [[nodiscard]] CallArgumentMatchKind
-  functionCallArgumentMatch(const CallableDeclaration &function,
+  functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const SemanticType &argument,
                             const ExprPtr &expression, bool deferred) const {
     if (index >= function.parameterTypes.size()) {
@@ -18843,7 +18898,7 @@ private:
                                   const SemanticType &argument,
                                   const ExprPtr &expression,
                                   std::string_view callable,
-                                  const CallableDeclaration *function = nullptr) {
+                                  const CallableCandidate *function = nullptr) {
     const std::string argumentLabel =
         callable == "Function" ? "Argument "
                                : std::string(callable) + " argument ";
@@ -20064,6 +20119,20 @@ private:
     return parameters.size() - genericTypeParameterCount(parameters);
   }
 
+  [[nodiscard]] const ConstantValue *constantFor(const Symbol &symbol) const {
+    if (symbol.variableDeclaration != nullptr) {
+      const BindingInfo *binding =
+          semanticModel.findBinding(*symbol.variableDeclaration);
+      if (binding == nullptr && instanceBaseModel != nullptr) {
+        binding = instanceBaseModel->findBinding(*symbol.variableDeclaration);
+      }
+      if (binding != nullptr && binding->constant) {
+        return &*binding->constant;
+      }
+    }
+    return symbol.constant ? &*symbol.constant : nullptr;
+  }
+
   [[nodiscard]] std::optional<CompileTimeValue>
   genericValueArgument(const TypeRef &argument) const {
     if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
@@ -20084,9 +20153,11 @@ private:
         return parameter;
       }
       const Symbol *symbol = resolve(token);
-      if (symbol != nullptr && symbol->constant) {
+      const ConstantValue *constant =
+          symbol == nullptr ? nullptr : constantFor(*symbol);
+      if (constant != nullptr) {
         if (const std::optional<std::uint64_t> value =
-                constantUnsignedMagnitude(*symbol->constant)) {
+                constantUnsignedMagnitude(*constant)) {
           return CompileTimeValue::uint64(*value);
         }
       }
@@ -20103,9 +20174,11 @@ private:
       }
       if (expression.token.kind == TokenKind::IDENTIFIER) {
         const Symbol *symbol = resolve(expression.token);
-        if (symbol != nullptr && symbol->constant) {
+        const ConstantValue *constant =
+            symbol == nullptr ? nullptr : constantFor(*symbol);
+        if (constant != nullptr) {
           if (const std::optional<std::uint64_t> value =
-                  constantUnsignedMagnitude(*symbol->constant)) {
+                  constantUnsignedMagnitude(*constant)) {
             return {.value = *value};
           }
         }
@@ -20203,7 +20276,7 @@ private:
         return;
       }
       if (const Symbol *symbol = resolve(location);
-          symbol != nullptr && symbol->constant) {
+          symbol != nullptr && constantFor(*symbol) != nullptr) {
         report(location,
                "Fixed array extents require a non-negative integer "
                "constexpr value.",
@@ -22201,7 +22274,7 @@ private:
     Symbol result = symbol;
     const GenericSubstitution substitution = classSubstitution(objectType);
     result.type = substituteType(result.type, substitution);
-    for (CallableDeclaration &overload : result.overloads) {
+    for (CallableCandidate &overload : result.overloads) {
       overload.returnType = substituteType(overload.returnType, substitution);
       for (SemanticType &parameter : overload.parameterTypes) {
         parameter = substituteType(parameter, substitution);
@@ -22226,7 +22299,7 @@ private:
       result.compilerPrivate =
           !result.overloads.empty() &&
           std::all_of(result.overloads.begin(), result.overloads.end(),
-                      [](const CallableDeclaration &overload) {
+                      [](const CallableCandidate &overload) {
                         return overload.compilerPrivate;
                       });
     } else {
@@ -22240,15 +22313,14 @@ private:
                         const std::vector<std::string> &scope) {
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(function);
-    const FunctionInfo *registered = semanticModel.findFunction(function);
+    CallableDeclaration *registered = catalog.mutableCallable(function);
     beginTypeParameterScope(genericParameters);
-    CallableDeclaration candidate{
-        .sourceUnit = currentSourceUnit,
+    CallableCandidate candidate{
+        .declarationRecord = registered,
         .declaration = &function,
         .returnType =
             typeOf(function.returnType(), function.returnMutability(), scope),
         .requiredParameterCount = requiredParameterCount(function.parameters()),
-        .genericParameters = genericParameters,
         .requirements = resolveRequirements(
             function.requiresClause() ? &*function.requiresClause() : nullptr,
             scope),
@@ -22257,11 +22329,7 @@ private:
         .receiverMutability = function.receiverMutability()};
     if (registered != nullptr) {
       candidate.id = registered->id;
-      candidate.defaultArgumentEffectOwners =
-          registered->defaultArgumentEffectOwners;
       candidate.staticMember = registered->staticMember;
-      candidate.internalLinkage = registered->internalLinkage;
-      candidate.intrinsic = registered->intrinsic;
       candidate.compilerPrivate = registered->compilerPrivate;
     }
     candidate.parameterTypes.reserve(function.parameters().size());
@@ -22277,6 +22345,16 @@ private:
                       return semanticModel.isCompilerPrivateType(type);
                     });
     applyFunctionReturnBorrowSummary(candidate);
+    if (registered != nullptr) {
+      registered->returnType = candidate.returnType;
+      registered->parameterTypes = candidate.parameterTypes;
+      registered->requirements = candidate.requirements;
+      registered->compilerPrivate = candidate.compilerPrivate;
+      registered->returnBorrowOrigin = candidate.returnBorrowOrigin;
+      registered->returnBorrowParameter = candidate.returnBorrowParameter;
+      registered->returnBorrowAccess = candidate.returnBorrowAccess;
+      registered->returnBorrowPlace = candidate.returnBorrowPlace;
+    }
     const bool compilerPrivate = candidate.compilerPrivate;
     Symbol symbol{
         .type = SemanticType::Function,
@@ -23273,6 +23351,33 @@ private:
                           });
   }
 
+  [[nodiscard]] std::unordered_map<std::string, Symbol> &
+  activeNamespaceSymbols() {
+    return catalog.sealed ? valueFlow.namespaceSymbols
+                          : catalog.namespaceSymbols;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, Symbol> &
+  activeNamespaceSymbols() const {
+    return catalog.sealed ? valueFlow.namespaceSymbols
+                          : catalog.namespaceSymbols;
+  }
+
+  [[nodiscard]] auto &activeInternalNamespaceSymbols() {
+    return catalog.sealed ? valueFlow.internalNamespaceSymbols
+                          : catalog.internalNamespaceSymbols;
+  }
+
+  [[nodiscard]] auto &activeVisibleNamespaceSymbols() {
+    return catalog.sealed ? valueFlow.visibleNamespaceSymbols
+                          : catalog.visibleNamespaceSymbols;
+  }
+
+  [[nodiscard]] const auto &activeVisibleNamespaceSymbols() const {
+    return catalog.sealed ? valueFlow.visibleNamespaceSymbols
+                          : catalog.visibleNamespaceSymbols;
+  }
+
   void publishNamespaceSymbol(const std::string &name, const Symbol &symbol) {
     if (symbol.compilerPrivate && !isCompilerTrustedUnit(symbol.sourceUnit) &&
         symbol.type != SemanticType::Function) {
@@ -23280,7 +23385,8 @@ private:
     }
     if (symbol.internalLinkage && sourceGraph != nullptr &&
         symbol.sourceUnit != 0) {
-      visibleNamespaceSymbols[symbol.sourceUnit].insert_or_assign(name, symbol);
+      activeVisibleNamespaceSymbols()[symbol.sourceUnit].insert_or_assign(
+          name, symbol);
       return;
     }
     forEachSourceConsumer(
@@ -23289,7 +23395,7 @@ private:
           if (!isCompilerTrustedUnit(consumer) &&
               published.type == SemanticType::Function) {
             std::erase_if(published.overloads,
-                          [](const CallableDeclaration &overload) {
+                          [](const CallableCandidate &overload) {
                             return overload.compilerPrivate;
                           });
             if (published.overloads.empty()) {
@@ -23297,7 +23403,7 @@ private:
             }
             published.compilerPrivate = false;
           }
-          auto &symbols = visibleNamespaceSymbols[consumer];
+          auto &symbols = activeVisibleNamespaceSymbols()[consumer];
           const auto existing = symbols.find(name);
           if (existing == symbols.end()) {
             symbols.emplace(name, std::move(published));
@@ -23314,7 +23420,7 @@ private:
               !existing->second.overloads.empty() &&
               std::all_of(existing->second.overloads.begin(),
                           existing->second.overloads.end(),
-                          [](const CallableDeclaration &overload) {
+                          [](const CallableCandidate &overload) {
                             return overload.compilerPrivate;
                           });
         });
@@ -23345,10 +23451,11 @@ private:
   [[nodiscard]] const std::unordered_map<std::string, Symbol> &
   currentNamespaceSymbols() const {
     if (sourceGraph == nullptr || currentSourceUnit == 0) {
-      return namespaceSymbols;
+      return activeNamespaceSymbols();
     }
-    const auto found = visibleNamespaceSymbols.find(currentSourceUnit);
-    if (found != visibleNamespaceSymbols.end()) {
+    const auto &visible = activeVisibleNamespaceSymbols();
+    const auto found = visible.find(currentSourceUnit);
+    if (found != visible.end()) {
       return found->second;
     }
     static const std::unordered_map<std::string, Symbol> empty;
@@ -23358,10 +23465,11 @@ private:
   [[nodiscard]] std::unordered_map<std::string, Symbol> *
   currentNamespaceSymbolsMutable() {
     if (sourceGraph == nullptr || currentSourceUnit == 0) {
-      return &namespaceSymbols;
+      return &activeNamespaceSymbols();
     }
-    const auto found = visibleNamespaceSymbols.find(currentSourceUnit);
-    return found == visibleNamespaceSymbols.end() ? nullptr : &found->second;
+    auto &visible = activeVisibleNamespaceSymbols();
+    const auto found = visible.find(currentSourceUnit);
+    return found == visible.end() ? nullptr : &found->second;
   }
 
   [[nodiscard]] const std::unordered_map<std::string, ClassId> &
@@ -25211,36 +25319,36 @@ private:
         std::vector<GenericParameterInfo> genericParameters =
             makeGenericParameters(function->genericParameters(),
                                   function->name(), scope);
-        functionGenericParameters.emplace(function,
-                                          std::move(genericParameters));
+        functionGenericParameters.emplace(function, genericParameters);
         const IntrinsicKind intrinsic = trustedIntrinsicKind(
             currentSourceUnit, scope, function->name().lexeme);
-        semanticModel.record(
-            *function,
-            FunctionInfo{
-                .id = nextFunctionId++,
-                .sourceUnit = currentSourceUnit,
-                .declaration = function,
-                .qualifiedName = qualifiedName(scope, function->name().lexeme),
-                .requiredParameterCount =
-                    requiredParameterCount(function->parameters()),
-                .defaultArgumentEffectOwners =
-                    allocateDefaultArgumentEffectOwners(function->parameters()),
-                .entryPoint = !classMember && scope.empty() &&
-                              function->name().lexeme == "main" &&
-                              (sourceGraph == nullptr ||
-                               currentSourceUnit == sourceGraph->entryUnit()),
-                .staticMember = classMember && function->isStatic(),
-                .internalLinkage = !classMember && function->isStatic(),
-                .constexprFunction = function->isConstexpr(),
-                .linkage = function->linkage(),
-                .externalSymbol = function->hasCLinkage()
-                                      ? function->name().lexeme
-                                      : std::string{},
-                .cArrayCountParameter = nativeCArrayCountParameter(*function),
-                .intrinsic = intrinsic,
-                .compilerPrivate =
-                    compilerPrivateDeclaration(currentSourceUnit, scope)});
+        (void)catalog.registerCallable(CallableDeclaration{
+            .id = nextFunctionId++,
+            .sourceUnit = currentSourceUnit,
+            .syntax = function,
+            .qualifiedName = qualifiedName(scope, function->name().lexeme),
+            .namespaceScope = scope,
+            .requiredParameterCount =
+                requiredParameterCount(function->parameters()),
+            .defaultArgumentEffectOwners =
+                allocateDefaultArgumentEffectOwners(function->parameters()),
+            .genericParameters = std::move(genericParameters),
+            .parameterPack = !function->parameters().empty() &&
+                             function->parameters().back().pack.has_value(),
+            .entryPoint = !classMember && scope.empty() &&
+                          function->name().lexeme == "main" &&
+                          (sourceGraph == nullptr ||
+                           currentSourceUnit == sourceGraph->entryUnit()),
+            .staticMember = classMember && function->isStatic(),
+            .internalLinkage = !classMember && function->isStatic(),
+            .constexprFunction = function->isConstexpr(),
+            .linkage = function->linkage(),
+            .externalSymbol = function->hasCLinkage() ? function->name().lexeme
+                                                      : std::string{},
+            .cArrayCountParameter = nativeCArrayCountParameter(*function),
+            .intrinsic = intrinsic,
+            .compilerPrivate =
+                compilerPrivateDeclaration(currentSourceUnit, scope)});
       } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
         const auto registered = classDeclIds.find(classDecl);
@@ -25294,8 +25402,8 @@ private:
         currentSourceUnit = sourceUnitFor(function->name());
         Symbol symbol = functionSymbol(*function, scope);
         if (!symbol.overloads.empty()) {
-          recordFunctionSignature(*function, symbol.overloads.front(), scope,
-                                  0);
+          publishCallableDeclaration(*function, symbol.overloads.front(), scope,
+                                     0);
         }
         declareNamespaceSymbol(scope, function->name(), std::move(symbol));
       } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
@@ -25450,9 +25558,16 @@ private:
     }
   }
 
-  void refreshFunctionPolymorphism(const CallableDeclaration &candidate) {
+  void refreshFunctionPolymorphism(const CallableCandidate &candidate) {
     if (candidate.declaration == nullptr) {
       return;
+    }
+    if (CallableDeclaration *declaration =
+            catalog.mutableCallable(*candidate.declaration)) {
+      declaration->virtualMethod = candidate.virtualMethod;
+      declaration->pureVirtual = candidate.pureVirtual;
+      declaration->overrideMethod = candidate.overrideMethod;
+      declaration->virtualRoots = candidate.virtualRoots;
     }
     const FunctionInfo *existing =
         semanticModel.findFunction(*candidate.declaration);
@@ -25472,7 +25587,7 @@ private:
       symbol.compilerPrivate =
           !symbol.overloads.empty() &&
           std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
-                      [](const CallableDeclaration &overload) {
+                      [](const CallableCandidate &overload) {
                         return overload.compilerPrivate;
                       });
     }
@@ -25499,10 +25614,10 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
-    for (CallableDeclaration &candidate : incoming.symbol.overloads) {
+    for (CallableCandidate &candidate : incoming.symbol.overloads) {
       const bool duplicateIdentity = std::any_of(
           existing.symbol.overloads.begin(), existing.symbol.overloads.end(),
-          [&](const CallableDeclaration &previous) {
+          [&](const CallableCandidate &previous) {
             return previous.id != 0 && previous.id == candidate.id;
           });
       if (!duplicateIdentity) {
@@ -25516,7 +25631,7 @@ private:
                            MemberInfo local) {
     const auto found = owner.members.find(name);
     if (found == owner.members.end()) {
-      for (const CallableDeclaration &candidate : local.symbol.overloads) {
+      for (const CallableCandidate &candidate : local.symbol.overloads) {
         if (candidate.overrideMethod) {
           report(candidate.declaration->overrideKeyword().value(),
                  "Method marked 'override' has no inherited virtual method "
@@ -25543,7 +25658,7 @@ private:
       return;
     }
 
-    for (CallableDeclaration &candidate : local.symbol.overloads) {
+    for (CallableCandidate &candidate : local.symbol.overloads) {
       std::vector<std::size_t> matches;
       for (std::size_t index = 0; index < inherited.symbol.overloads.size();
            ++index) {
@@ -25568,7 +25683,7 @@ private:
       bool validOverride = true;
       std::vector<FunctionId> roots;
       for (std::size_t index : matches) {
-        const CallableDeclaration &base = inherited.symbol.overloads[index];
+        const CallableCandidate &base = inherited.symbol.overloads[index];
         if (!base.virtualMethod || base.staticMember) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2042", DiagnosticPhase::Semantics,
@@ -25617,7 +25732,7 @@ private:
       }
 
       std::erase_if(inherited.symbol.overloads,
-                    [&](const CallableDeclaration &base) {
+                    [&](const CallableCandidate &base) {
                       return sameFunctionSignature(base, candidate);
                     });
       inherited.symbol.overloads.emplace_back(std::move(candidate));
@@ -25662,7 +25777,7 @@ private:
       if (member.symbol.type != SemanticType::Function) {
         continue;
       }
-      for (const CallableDeclaration &candidate : member.symbol.overloads) {
+      for (const CallableCandidate &candidate : member.symbol.overloads) {
         owner.polymorphic = owner.polymorphic || candidate.virtualMethod;
         owner.abstract = owner.abstract || candidate.pureVirtual;
       }
@@ -25670,8 +25785,8 @@ private:
            ++left) {
         for (std::size_t right = left + 1;
              right < member.symbol.overloads.size(); ++right) {
-          const CallableDeclaration &first = member.symbol.overloads[left];
-          const CallableDeclaration &second = member.symbol.overloads[right];
+          const CallableCandidate &first = member.symbol.overloads[left];
+          const CallableCandidate &second = member.symbol.overloads[right];
           if (!sameFunctionSignature(first, second)) {
             continue;
           }
@@ -26390,7 +26505,7 @@ private:
       if (member.symbol.type != SemanticType::Function) {
         continue;
       }
-      for (const CallableDeclaration &function : member.symbol.overloads) {
+      for (const CallableCandidate &function : member.symbol.overloads) {
         if (function.declaration != nullptr) {
           reportCAbiRecord(function.declaration->name(),
                            "C ABI record '" + owner.name.lexeme +
@@ -27103,12 +27218,12 @@ private:
   }
 
   using BorrowSummaryCandidateIndex =
-      std::unordered_map<FunctionId, std::vector<CallableDeclaration *>>;
+      std::unordered_map<FunctionId, std::vector<CallableCandidate *>>;
 
   void
   indexFunctionCandidateBorrowSummaries(Symbol &symbol,
                                         BorrowSummaryCandidateIndex &index) {
-    for (CallableDeclaration &candidate : symbol.overloads) {
+    for (CallableCandidate &candidate : symbol.overloads) {
       index[candidate.id].emplace_back(&candidate);
       if (workMetrics != nullptr) {
         ++workMetrics->semanticBorrowSummaryCandidateInspections;
@@ -27119,15 +27234,15 @@ private:
   [[nodiscard]] BorrowSummaryCandidateIndex
   functionCandidateBorrowSummaryIndex() {
     BorrowSummaryCandidateIndex index;
-    for (auto &[_, symbol] : namespaceSymbols) {
+    for (auto &[_, symbol] : activeNamespaceSymbols()) {
       indexFunctionCandidateBorrowSummaries(symbol, index);
     }
-    for (auto &[_, symbols] : visibleNamespaceSymbols) {
+    for (auto &[_, symbols] : activeVisibleNamespaceSymbols()) {
       for (auto &[__, symbol] : symbols) {
         indexFunctionCandidateBorrowSummaries(symbol, index);
       }
     }
-    for (auto &[_, symbols] : internalNamespaceSymbols) {
+    for (auto &[_, symbols] : activeInternalNamespaceSymbols()) {
       for (auto &[__, symbol] : symbols) {
         indexFunctionCandidateBorrowSummaries(symbol, index);
       }
@@ -27143,11 +27258,20 @@ private:
   void publishFunctionBorrowSummary(
       const FunctionInfo &function,
       const BorrowSummaryCandidateIndex &candidateIndex) {
+    if (function.declaration != nullptr) {
+      if (CallableDeclaration *declaration =
+              catalog.mutableCallable(*function.declaration)) {
+        declaration->returnBorrowOrigin = function.returnBorrowOrigin;
+        declaration->returnBorrowParameter = function.returnBorrowParameter;
+        declaration->returnBorrowAccess = function.returnBorrowAccess;
+        declaration->returnBorrowPlace = function.returnBorrowPlace;
+      }
+    }
     const auto found = candidateIndex.find(function.id);
     if (found == candidateIndex.end()) {
       return;
     }
-    for (CallableDeclaration *candidate : found->second) {
+    for (CallableCandidate *candidate : found->second) {
       if (workMetrics != nullptr) {
         ++workMetrics->semanticBorrowSummaryCandidateInspections;
       }
@@ -27264,11 +27388,12 @@ private:
     if (call == nullptr) {
       return {};
     }
-    const std::optional<CallableDeclaration> intrinsic =
+    const std::optional<CallableCandidate> intrinsic =
         intrinsicCandidate(call->callee());
     if (!intrinsic || call->arguments().size() != 1 ||
-        (intrinsic->intrinsic != IntrinsicKind::PrefixStorageTextView &&
-         intrinsic->intrinsic != IntrinsicKind::Move)) {
+        (intrinsic->record().intrinsic !=
+             IntrinsicKind::PrefixStorageTextView &&
+         intrinsic->record().intrinsic != IntrinsicKind::Move)) {
       return {};
     }
     return predeclaredStringViewBorrowSource(call->arguments().front(),
@@ -27969,7 +28094,7 @@ private:
                  "GTI-S2039");
         }
       }
-      for (CallableDeclaration &overload : symbol.overloads) {
+      for (CallableCandidate &overload : symbol.overloads) {
         overload.ownerClass = owner.id;
         overload.dispatchOwner = openClassType(owner.id);
         overload.compilerPrivate =
@@ -27998,8 +28123,8 @@ private:
         applyFunctionReturnBorrowSummary(overload);
       }
       if (function != nullptr && !symbol.overloads.empty()) {
-        recordFunctionSignature(*function, symbol.overloads.front(),
-                                owner.namespaceScope, owner.id);
+        publishCallableDeclaration(*function, symbol.overloads.front(),
+                                   owner.namespaceScope, owner.id);
       }
       const auto existing = owner.members.find(name->lexeme);
       if (existing != owner.members.end()) {
@@ -28027,12 +28152,48 @@ private:
     }
   }
 
-  void recordFunctionSignature(const FunctionDecl &function,
-                               const CallableDeclaration &candidate,
-                               const std::vector<std::string> &namespaceScope,
-                               ClassId ownerClass) {
-    const FunctionInfo *registered = semanticModel.findFunction(function);
-    if (registered == nullptr) {
+  [[nodiscard]] static FunctionInfo
+  projectCallableDeclaration(const CallableDeclaration &declaration) {
+    return FunctionInfo{
+        .id = declaration.id,
+        .sourceUnit = declaration.sourceUnit,
+        .declaration = declaration.syntax,
+        .qualifiedName = declaration.qualifiedName,
+        .namespaceScope = declaration.namespaceScope,
+        .returnType = declaration.returnType,
+        .parameterTypes = declaration.parameterTypes,
+        .requiredParameterCount = declaration.requiredParameterCount,
+        .defaultArgumentEffectOwners = declaration.defaultArgumentEffectOwners,
+        .genericParameters = declaration.genericParameters,
+        .requirements = declaration.requirements,
+        .parameterPack = declaration.parameterPack,
+        .ownerClass = declaration.ownerClass,
+        .entryPoint = declaration.entryPoint,
+        .entryKind = declaration.entryKind,
+        .entryArgumentAppendFunction = declaration.entryArgumentAppendFunction,
+        .staticMember = declaration.staticMember,
+        .internalLinkage = declaration.internalLinkage,
+        .constexprFunction = declaration.constexprFunction,
+        .linkage = declaration.linkage,
+        .externalSymbol = declaration.externalSymbol,
+        .cArrayCountParameter = declaration.cArrayCountParameter,
+        .virtualMethod = declaration.virtualMethod,
+        .pureVirtual = declaration.pureVirtual,
+        .overrideMethod = declaration.overrideMethod,
+        .intrinsic = declaration.intrinsic,
+        .returnBorrowOrigin = declaration.returnBorrowOrigin,
+        .returnBorrowParameter = declaration.returnBorrowParameter,
+        .returnBorrowAccess = declaration.returnBorrowAccess,
+        .returnBorrowPlace = declaration.returnBorrowPlace,
+        .virtualRoots = declaration.virtualRoots,
+        .compilerPrivate = declaration.compilerPrivate};
+  }
+
+  void publishCallableDeclaration(
+      const FunctionDecl &function, const CallableCandidate &candidate,
+      const std::vector<std::string> &namespaceScope, ClassId ownerClass) {
+    CallableDeclaration *declaration = catalog.mutableCallable(function);
+    if (declaration == nullptr) {
       return;
     }
     std::vector<std::string> qualifiedScope = namespaceScope;
@@ -28042,54 +28203,35 @@ private:
     const FunctionReturnBorrowSummary concreteBorrow =
         functionReturnBorrowSummary(
             candidate.returnType, candidate.parameterTypes, ownerClass,
-            registered->staticMember, registered->intrinsic);
+            candidate.staticMember, candidate.record().intrinsic);
     const bool candidateOwnsBorrow =
         candidate.returnBorrowOrigin != BorrowOriginKind::None;
-    semanticModel.record(
-        function,
-        FunctionInfo{.id = registered->id,
-                     .sourceUnit = registered->sourceUnit,
-                     .declaration = &function,
-                     .qualifiedName =
-                         qualifiedName(qualifiedScope, function.name().lexeme),
-                     .namespaceScope = namespaceScope,
-                     .returnType = candidate.returnType,
-                     .parameterTypes = candidate.parameterTypes,
-                     .requiredParameterCount = candidate.requiredParameterCount,
-                     .defaultArgumentEffectOwners =
-                         candidate.defaultArgumentEffectOwners,
-                     .genericParameters = candidate.genericParameters,
-                     .requirements = candidate.requirements,
-                     .parameterPack = candidate.parameterPack,
-                     .ownerClass = ownerClass,
-                     .entryPoint = registered->entryPoint,
-                     .entryKind = registered->entryKind,
-                     .entryArgumentAppendFunction =
-                         registered->entryArgumentAppendFunction,
-                     .staticMember = registered->staticMember,
-                     .internalLinkage = registered->internalLinkage,
-                     .constexprFunction = registered->constexprFunction,
-                     .linkage = registered->linkage,
-                     .externalSymbol = registered->externalSymbol,
-                     .cArrayCountParameter = registered->cArrayCountParameter,
-                     .virtualMethod = candidate.virtualMethod,
-                     .pureVirtual = candidate.pureVirtual,
-                     .overrideMethod = candidate.overrideMethod,
-                     .intrinsic = registered->intrinsic,
-                     .returnBorrowOrigin = candidateOwnsBorrow
-                                               ? candidate.returnBorrowOrigin
-                                               : concreteBorrow.origin,
-                     .returnBorrowParameter =
-                         candidateOwnsBorrow ? candidate.returnBorrowParameter
-                                             : concreteBorrow.parameter,
-                     .returnBorrowAccess = candidateOwnsBorrow
-                                               ? candidate.returnBorrowAccess
-                                               : concreteBorrow.access,
-                     .returnBorrowPlace = candidateOwnsBorrow
-                                              ? candidate.returnBorrowPlace
-                                              : concreteBorrow.place,
-                     .virtualRoots = candidate.virtualRoots,
-                     .compilerPrivate = candidate.compilerPrivate});
+    declaration->qualifiedName =
+        qualifiedName(qualifiedScope, function.name().lexeme);
+    declaration->namespaceScope = namespaceScope;
+    declaration->returnType = candidate.returnType;
+    declaration->parameterTypes = candidate.parameterTypes;
+    declaration->requirements = candidate.requirements;
+    declaration->ownerClass = ownerClass;
+    declaration->staticMember = candidate.staticMember;
+    declaration->virtualMethod = candidate.virtualMethod;
+    declaration->pureVirtual = candidate.pureVirtual;
+    declaration->overrideMethod = candidate.overrideMethod;
+    declaration->returnBorrowOrigin = candidateOwnsBorrow
+                                          ? candidate.returnBorrowOrigin
+                                          : concreteBorrow.origin;
+    declaration->returnBorrowParameter = candidateOwnsBorrow
+                                             ? candidate.returnBorrowParameter
+                                             : concreteBorrow.parameter;
+    declaration->returnBorrowAccess = candidateOwnsBorrow
+                                          ? candidate.returnBorrowAccess
+                                          : concreteBorrow.access;
+    declaration->returnBorrowPlace = candidateOwnsBorrow
+                                         ? candidate.returnBorrowPlace
+                                         : concreteBorrow.place;
+    declaration->virtualRoots = candidate.virtualRoots;
+    declaration->compilerPrivate = candidate.compilerPrivate;
+    semanticModel.record(function, projectCallableDeclaration(*declaration));
   }
 
   [[nodiscard]] const ClassInfo *
@@ -30283,8 +30425,8 @@ private:
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
-        if (symbol->constant) {
-          semanticModel.recordConstant(expr, *symbol->constant);
+        if (const ConstantValue *constant = constantFor(*symbol)) {
+          semanticModel.recordConstant(expr, *constant);
         }
       } else if (const std::optional<CompileTimeValue> value =
                      resolveValueParameter(variable.name());
@@ -30320,8 +30462,8 @@ private:
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
-        if (symbol->constant) {
-          semanticModel.recordConstant(expr, *symbol->constant);
+        if (const ConstantValue *constant = constantFor(*symbol)) {
+          semanticModel.recordConstant(expr, *constant);
         }
       }
       if (const ResolvedEnumeratorInfo *enumerator =
@@ -30532,7 +30674,7 @@ private:
     const auto overload =
         std::find_if(member->second.symbol.overloads.begin(),
                      member->second.symbol.overloads.end(),
-                     [function](const CallableDeclaration &candidate) {
+                     [function](const CallableCandidate &candidate) {
                        return candidate.declaration == function->declaration;
                      });
     return overload == member->second.symbol.overloads.end()
@@ -31080,30 +31222,31 @@ private:
   }
 
   [[nodiscard]] static bool
-  sameFunctionSignature(const CallableDeclaration &left,
-                        const CallableDeclaration &right) {
+  sameFunctionSignature(const CallableCandidate &left,
+                        const CallableCandidate &right) {
     const bool receiverQualified =
         left.ownerClass != 0 && right.ownerClass != 0;
     if ((receiverQualified &&
          left.receiverMutability != right.receiverMutability) ||
         left.parameterPack != right.parameterPack ||
-        left.genericParameters.size() != right.genericParameters.size() ||
+        left.record().genericParameters.size() !=
+            right.record().genericParameters.size() ||
         left.parameterTypes.size() != right.parameterTypes.size()) {
       return false;
     }
-    for (std::size_t index = 0; index < left.genericParameters.size();
+    for (std::size_t index = 0; index < left.record().genericParameters.size();
          ++index) {
-      if (left.genericParameters[index].pack !=
-              right.genericParameters[index].pack ||
-          left.genericParameters[index].value !=
-              right.genericParameters[index].value) {
+      if (left.record().genericParameters[index].pack !=
+              right.record().genericParameters[index].pack ||
+          left.record().genericParameters[index].value !=
+              right.record().genericParameters[index].value) {
         return false;
       }
     }
     for (std::size_t index = 0; index < left.parameterTypes.size(); ++index) {
-      if (!sameSignatureType(left.parameterTypes[index], left.genericParameters,
-                             right.parameterTypes[index],
-                             right.genericParameters)) {
+      if (!sameSignatureType(
+              left.parameterTypes[index], left.record().genericParameters,
+              right.parameterTypes[index], right.record().genericParameters)) {
         return false;
       }
     }
@@ -31156,7 +31299,7 @@ private:
       return true;
     }
 
-    CallableDeclaration candidate = std::move(incoming.overloads.front());
+    CallableCandidate candidate = std::move(incoming.overloads.front());
     const FunctionInfo *candidateInfo =
         candidate.declaration == nullptr
             ? nullptr
@@ -31172,7 +31315,7 @@ private:
       return true;
     }
 
-    for (const CallableDeclaration &previous : existing.overloads) {
+    for (const CallableCandidate &previous : existing.overloads) {
       const bool previousC = previous.declaration != nullptr &&
                              previous.declaration->hasCLinkage();
       const bool candidateC = candidate.declaration != nullptr &&
@@ -31281,7 +31424,7 @@ private:
         compilerPrivateDeclaration(symbol.sourceUnit, scope);
     symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
                              semanticModel.isCompilerPrivateType(symbol.type);
-    for (CallableDeclaration &overload : symbol.overloads) {
+    for (CallableCandidate &overload : symbol.overloads) {
       overload.compilerPrivate =
           overload.compilerPrivate || symbol.compilerPrivate ||
           semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -31296,7 +31439,7 @@ private:
           scopePrivate ||
           (!symbol.overloads.empty() &&
            std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
-                       [](const CallableDeclaration &overload) {
+                       [](const CallableCandidate &overload) {
                          return overload.compilerPrivate;
                        }));
     }
@@ -31320,7 +31463,8 @@ private:
     }
 
     if (sourceLocal) {
-      auto &unitSymbols = internalNamespaceSymbols[currentSourceUnit];
+      auto &internal = activeInternalNamespaceSymbols();
+      auto &unitSymbols = internal[currentSourceUnit];
       const auto existing = unitSymbols.find(qualified);
       if (existing != unitSymbols.end()) {
         const Symbol published = symbol;
@@ -31336,8 +31480,9 @@ private:
         diagnostics.emplace_back(std::move(diagnostic));
         return false;
       }
-      if (const auto external = namespaceSymbols.find(qualified);
-          external != namespaceSymbols.end() &&
+      const auto &namespaceIndex = activeNamespaceSymbols();
+      if (const auto external = namespaceIndex.find(qualified);
+          external != namespaceIndex.end() &&
           sourceVisible(declarationSourceUnit(external->second))) {
         report(name,
                "Static declaration of '" + name.lexeme +
@@ -31350,9 +31495,9 @@ private:
       return true;
     }
 
-    if (const auto unit = internalNamespaceSymbols.find(currentSourceUnit);
-        unit != internalNamespaceSymbols.end() &&
-        unit->second.contains(qualified)) {
+    auto &internal = activeInternalNamespaceSymbols();
+    if (const auto unit = internal.find(currentSourceUnit);
+        unit != internal.end() && unit->second.contains(qualified)) {
       report(name,
              "Declaration of '" + name.lexeme +
                  "' conflicts with a static declaration in this source "
@@ -31361,8 +31506,9 @@ private:
       return false;
     }
 
-    const auto existing = namespaceSymbols.find(qualified);
-    if (existing != namespaceSymbols.end()) {
+    auto &namespaceIndex = activeNamespaceSymbols();
+    const auto existing = namespaceIndex.find(qualified);
+    if (existing != namespaceIndex.end()) {
       const Symbol published = symbol;
       if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
         publishNamespaceSymbol(qualified, published);
@@ -31377,7 +31523,7 @@ private:
       return false;
     }
     publishNamespaceSymbol(qualified, symbol);
-    namespaceSymbols.emplace(qualified, std::move(symbol));
+    namespaceIndex.emplace(qualified, std::move(symbol));
     return true;
   }
 
@@ -31449,7 +31595,7 @@ private:
       return;
     }
     if (symbol.type == SemanticType::Function) {
-      for (const CallableDeclaration &overload : symbol.overloads) {
+      for (const CallableCandidate &overload : symbol.overloads) {
         if (!isCompilerTrustedUnit(currentSourceUnit) &&
             (overload.compilerPrivate ||
              semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -31480,7 +31626,8 @@ private:
              .parameterTypes = overload.parameterTypes,
              .requirements = overload.requirements,
              .substitutedCallable = substitutedCallable,
-             .staticMember = overload.staticMember || overload.internalLinkage,
+             .staticMember =
+                 overload.staticMember || overload.record().internalLinkage,
              // An overload set shares one scope Symbol; each overload's own
              // SymbolRecord — the identity carrying its retained `///`
              // documentation — resolves through its declaration name.
@@ -31963,9 +32110,10 @@ private:
 
   [[nodiscard]] const Symbol *resolveGlobally(const Token &name) const {
     for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
-      const auto found = namespaceSymbols.find(
+      const auto &namespaceIndex = activeNamespaceSymbols();
+      const auto found = namespaceIndex.find(
           qualifiedName(currentNamespace, depth - 1, name.lexeme));
-      if (found != namespaceSymbols.end()) {
+      if (found != namespaceIndex.end()) {
         return &found->second;
       }
     }
@@ -31994,9 +32142,10 @@ private:
       const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
       return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
+    const auto &namespaceIndex = activeNamespaceSymbols();
     const auto symbol =
-        namespaceSymbols.find(*resolvedNamespace + "::" + path.last().lexeme);
-    if (symbol != namespaceSymbols.end()) {
+        namespaceIndex.find(*resolvedNamespace + "::" + path.last().lexeme);
+    if (symbol != namespaceIndex.end()) {
       return &symbol->second;
     }
     const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
@@ -32005,7 +32154,7 @@ private:
 
   [[nodiscard]] SourceUnitId declarationSourceUnit(const Symbol &symbol) const {
     if (!symbol.overloads.empty()) {
-      return symbol.overloads.front().sourceUnit;
+      return symbol.overloads.front().record().sourceUnit;
     }
     return symbol.sourceUnit;
   }
@@ -32902,7 +33051,7 @@ private:
   }
 
   [[nodiscard]] bool
-  freshTemporaryMethodSupported(const CallableDeclaration &function) const {
+  freshTemporaryMethodSupported(const CallableCandidate &function) const {
     return function.ownerClass != 0 && !function.staticMember &&
            !function.virtualMethod && function.declaration != nullptr &&
            function.returnType.kind != SemanticType::Reference &&
@@ -32911,7 +33060,7 @@ private:
   }
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
-      const ExprPtr &receiver, const CallableDeclaration &function,
+      const ExprPtr &receiver, const CallableCandidate &function,
       bool allowFreshTemporary, bool consumingReceiver = false) const {
     if (function.staticMember) {
       return CallReceiverMode::None;
@@ -32946,7 +33095,7 @@ private:
 
   [[nodiscard]] CallReceiverMode
   callReceiverMode(const ExprPtr &callee,
-                   const CallableDeclaration &function) const {
+                   const CallableCandidate &function) const {
     if (function.ownerClass == 0 || function.staticMember) {
       return CallReceiverMode::None;
     }
@@ -32972,7 +33121,7 @@ private:
 
   void reportMutableReceiverFailure(const ExprPtr &receiver,
                                     const Token &location,
-                                    const CallableDeclaration &function,
+                                    const CallableCandidate &function,
                                     std::string_view operation) {
     const FreshTemporaryValueAssessment assessment =
         freshTemporaryValue(receiver);
@@ -33079,8 +33228,9 @@ private:
       return std::nullopt;
     }
     const Symbol member = substituteSymbol(found->second.symbol, arguments);
-    for (const CallableDeclaration &candidate : member.overloads) {
-      if (!candidate.staticMember && candidate.genericParameters.empty() &&
+    for (const CallableCandidate &candidate : member.overloads) {
+      if (!candidate.staticMember &&
+          candidate.record().genericParameters.empty() &&
           candidate.returnType == SemanticType::Void &&
           candidate.parameterTypes.size() == 1 &&
           candidate.parameterTypes.front() == arguments.arguments.front() &&
@@ -33864,7 +34014,7 @@ private:
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message) {
     if (type.kind == SemanticType::Class && expression) {
-      const std::optional<CallableDeclaration> selected =
+      const std::optional<CallableCandidate> selected =
           resolveOperator(*expression, OverloadedOperator::ContextualBool,
                           expression, type, token, {}, {}, true);
       (void)selected;
@@ -34874,7 +35024,6 @@ private:
     std::unordered_set<std::string> namespaces;
     std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
     std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
-    std::unordered_set<std::string> reportedCompilerPrivateAccess;
     SymbolId compilerPrivateNamespaceSymbol = 0;
     std::unordered_map<std::string, TypeAliasId> typeAliasIds;
     std::vector<RegisteredTypeAlias> typeAliases;
@@ -34893,8 +35042,7 @@ private:
     std::unordered_map<SourceUnitId,
                        std::unordered_map<std::string, TypeAliasId>>
         visibleTypeAliasIds;
-    std::unordered_map<SourceUnitId,
-                       std::unordered_map<std::string, ConceptId>>
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
         visibleConceptIds;
     std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
         visibleNamespaceSymbols;
@@ -34906,15 +35054,12 @@ private:
     std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
     std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
         functionGenericParameters;
+    std::unordered_map<const FunctionDecl *, CallableDeclaration *>
+        callableDeclarationsBySyntax;
+    std::vector<std::unique_ptr<CallableDeclaration>> callableDeclarations;
     std::unordered_map<const ConstructorDecl *,
                        std::vector<GenericParameterInfo>>
         constructorGenericParameters;
-    std::unordered_map<const Expr *, const ParameterDefault *>
-        defaultArgumentSyntax;
-    std::unordered_map<const Expr *, std::vector<const Expr *>>
-        defaultArgumentDependencies;
-    std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
-    std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_map<std::string, const VariableDecl *>
         rootNativeStorageSymbols;
     std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
@@ -34933,9 +35078,87 @@ private:
     std::size_t nextDefaultArgumentEffectOwner = 1;
     FunctionId nextFunctionId = 1;
     bool sealed = false;
+    std::vector<std::size_t> sealedShape;
 
     void clear() { *this = SemanticCatalog{}; }
-    void seal() { sealed = true; }
+    void seal() {
+      assert(!sealed);
+      sealedShape = shape();
+      sealed = true;
+    }
+
+    void assertUnchangedSinceSeal() const {
+      assert(sealed);
+      assert(shape() == sealedShape);
+    }
+
+    [[nodiscard]] CallableDeclaration &
+    registerCallable(CallableDeclaration declaration) {
+      assert(!sealed);
+      auto owned =
+          std::make_unique<CallableDeclaration>(std::move(declaration));
+      CallableDeclaration &result = *owned;
+      callableDeclarationsBySyntax.insert_or_assign(result.syntax, &result);
+      callableDeclarations.emplace_back(std::move(owned));
+      return result;
+    }
+
+    [[nodiscard]] CallableDeclaration *
+    mutableCallable(const FunctionDecl &syntax) {
+      assert(!sealed);
+      const auto found = callableDeclarationsBySyntax.find(&syntax);
+      return found == callableDeclarationsBySyntax.end() ? nullptr
+                                                         : found->second;
+    }
+
+    [[nodiscard]] const CallableDeclaration *
+    callable(const FunctionDecl &syntax) const {
+      const auto found = callableDeclarationsBySyntax.find(&syntax);
+      return found == callableDeclarationsBySyntax.end() ? nullptr
+                                                         : found->second;
+    }
+
+  private:
+    [[nodiscard]] std::vector<std::size_t> shape() const {
+      return {namespaces.size(),
+              namespaceToolingSymbols.size(),
+              namespaceAliases.size(),
+              compilerPrivateNamespaceSymbol,
+              typeAliasIds.size(),
+              typeAliases.size(),
+              conceptIds.size(),
+              concepts.size(),
+              namespaceSymbols.size(),
+              internalNamespaceSymbols.size(),
+              classIds.size(),
+              enumIds.size(),
+              visibleNamespaces.size(),
+              visibleNamespaceAliases.size(),
+              visibleTypeAliasIds.size(),
+              visibleConceptIds.size(),
+              visibleNamespaceSymbols.size(),
+              visibleClassIds.size(),
+              visibleEnumIds.size(),
+              classDeclIds.size(),
+              conceptDeclIds.size(),
+              functionGenericParameters.size(),
+              callableDeclarationsBySyntax.size(),
+              callableDeclarations.size(),
+              constructorGenericParameters.size(),
+              rootNativeStorageSymbols.size(),
+              globalBorrowStorage.size(),
+              genericConstraints.size(),
+              classes.size(),
+              exactClassSpecializations.size(),
+              enums.size(),
+              predeclaredVariables.size(),
+              mutableFieldGroupOrigins.size(),
+              recursiveLayoutFields.size(),
+              nextGenericParameterId,
+              nextConstructorId,
+              nextDefaultArgumentEffectOwner,
+              nextFunctionId};
+    }
   };
 
   // Initialization/move state lives in lexical scopes; loop/switch snapshots
@@ -34943,10 +35166,24 @@ private:
   struct ValueFlowState {
     ScopeStack scopes;
     std::vector<ValueControlFlowContext> controlFlow;
+    std::unordered_map<std::string, Symbol> namespaceSymbols;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+        internalNamespaceSymbols;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+        visibleNamespaceSymbols;
 
     void clear() {
       scopes.clear();
       controlFlow.clear();
+      namespaceSymbols.clear();
+      internalNamespaceSymbols.clear();
+      visibleNamespaceSymbols.clear();
+    }
+
+    void beginBody(const SemanticCatalog &catalog) {
+      namespaceSymbols = catalog.namespaceSymbols;
+      internalNamespaceSymbols = catalog.internalNamespaceSymbols;
+      visibleNamespaceSymbols = catalog.visibleNamespaceSymbols;
     }
   };
 
@@ -34964,6 +35201,13 @@ private:
     SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
     SemanticCatalog catalog;
     ValueFlowState valueFlow;
+    std::unordered_set<std::string> reportedCompilerPrivateAccess;
+    std::unordered_map<const Expr *, const ParameterDefault *>
+        defaultArgumentSyntax;
+    std::unordered_map<const Expr *, std::vector<const Expr *>>
+        defaultArgumentDependencies;
+    std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
+    std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     std::vector<std::unordered_map<std::string, SemanticType>>
@@ -35004,8 +35248,7 @@ private:
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<SemanticType> contextualNativeOutPointerType;
-    ReceiverMutability currentReceiverMutability =
-        ReceiverMutability::ReadOnly;
+    ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
     std::size_t functionDepth = 0;
@@ -35032,27 +35275,27 @@ private:
   SemanticCatalog &catalog = requestSession.catalog;
   ValueFlowState &valueFlow = requestSession.valueFlow;
   ScopeStack &scopes = requestSession.valueFlow.scopes;
-  std::unordered_set<std::string> &namespaces = requestSession.catalog.namespaces;
+  std::unordered_set<std::string> &namespaces =
+      requestSession.catalog.namespaces;
   std::unordered_map<std::string, SymbolId> &namespaceToolingSymbols =
       requestSession.catalog.namespaceToolingSymbols;
   std::unordered_map<std::string, NamespaceAliasInfo> &namespaceAliases =
       requestSession.catalog.namespaceAliases;
   std::unordered_set<std::string> &reportedCompilerPrivateAccess =
-      requestSession.catalog.reportedCompilerPrivateAccess;
+      requestSession.reportedCompilerPrivateAccess;
   SymbolId &compilerPrivateNamespaceSymbol =
       requestSession.catalog.compilerPrivateNamespaceSymbol;
   std::unordered_map<std::string, TypeAliasId> &typeAliasIds =
       requestSession.catalog.typeAliasIds;
-  std::vector<RegisteredTypeAlias> &typeAliases = requestSession.catalog.typeAliases;
+  std::vector<RegisteredTypeAlias> &typeAliases =
+      requestSession.catalog.typeAliases;
   std::unordered_map<std::string, ConceptId> &conceptIds =
       requestSession.catalog.conceptIds;
   std::vector<RegisteredConcept> &concepts = requestSession.catalog.concepts;
-  std::unordered_map<std::string, Symbol> &namespaceSymbols =
-      requestSession.catalog.namespaceSymbols;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      &internalNamespaceSymbols = requestSession.catalog.internalNamespaceSymbols;
-  std::unordered_map<std::string, ClassId> &classIds = requestSession.catalog.classIds;
-  std::unordered_map<std::string, EnumId> &enumIds = requestSession.catalog.enumIds;
+  std::unordered_map<std::string, ClassId> &classIds =
+      requestSession.catalog.classIds;
+  std::unordered_map<std::string, EnumId> &enumIds =
+      requestSession.catalog.enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
       &visibleNamespaces = requestSession.catalog.visibleNamespaces;
   std::unordered_map<SourceUnitId,
@@ -35062,8 +35305,6 @@ private:
       &visibleTypeAliasIds = requestSession.catalog.visibleTypeAliasIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
       &visibleConceptIds = requestSession.catalog.visibleConceptIds;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      &visibleNamespaceSymbols = requestSession.catalog.visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
       &visibleClassIds = requestSession.catalog.visibleClassIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
@@ -35073,9 +35314,9 @@ private:
   std::unordered_map<const ConceptDecl *, ConceptId> &conceptDeclIds =
       requestSession.catalog.conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
-      &functionGenericParameters = requestSession.catalog.functionGenericParameters;
-  std::unordered_map<const ConstructorDecl *,
-                     std::vector<GenericParameterInfo>>
+      &functionGenericParameters =
+          requestSession.catalog.functionGenericParameters;
+  std::unordered_map<const ConstructorDecl *, std::vector<GenericParameterInfo>>
       &constructorGenericParameters =
           requestSession.catalog.constructorGenericParameters;
   std::unordered_set<const FunctionDecl *> &constexprDefinitionsAnalyzed =
@@ -35083,15 +35324,16 @@ private:
   std::unordered_set<const ConstructorDecl *> &constexprConstructorsAnalyzed =
       requestSession.constexprConstructorsAnalyzed;
   std::unordered_map<const Expr *, const ParameterDefault *>
-      &defaultArgumentSyntax = requestSession.catalog.defaultArgumentSyntax;
+      &defaultArgumentSyntax = requestSession.defaultArgumentSyntax;
   std::unordered_map<const Expr *, std::vector<const Expr *>>
-      &defaultArgumentDependencies = requestSession.catalog.defaultArgumentDependencies;
+      &defaultArgumentDependencies = requestSession.defaultArgumentDependencies;
   std::unordered_set<const Expr *> &reportedDefaultArgumentCycles =
-      requestSession.catalog.reportedDefaultArgumentCycles;
+      requestSession.reportedDefaultArgumentCycles;
   std::unordered_map<std::string, const FunctionDecl *> &externCSymbols =
-      requestSession.catalog.externCSymbols;
+      requestSession.externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
-      &rootNativeStorageSymbols = requestSession.catalog.rootNativeStorageSymbols;
+      &rootNativeStorageSymbols =
+          requestSession.catalog.rootNativeStorageSymbols;
   std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
       &globalBorrowStorage = requestSession.catalog.globalBorrowStorage;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
@@ -35117,7 +35359,8 @@ private:
   std::unordered_set<const VariableDecl *> &predeclaredVariables =
       requestSession.catalog.predeclaredVariables;
   std::unordered_map<const VariableDecl *, const Token *>
-      &mutableFieldGroupOrigins = requestSession.catalog.mutableFieldGroupOrigins;
+      &mutableFieldGroupOrigins =
+          requestSession.catalog.mutableFieldGroupOrigins;
   std::unordered_set<const VariableDecl *> &recursiveLayoutFields =
       requestSession.catalog.recursiveLayoutFields;
   std::unordered_set<const VariableDecl *> &structuredBindingElements =
@@ -35144,7 +35387,8 @@ private:
       requestSession.staticAssertGenericDependency;
   bool &allowPayloadEnumeratorReference =
       requestSession.allowPayloadEnumeratorReference;
-  bool &currentStaticMemberFunction = requestSession.currentStaticMemberFunction;
+  bool &currentStaticMemberFunction =
+      requestSession.currentStaticMemberFunction;
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
@@ -35182,8 +35426,8 @@ private:
   ProgramEffectOwner &currentProgramEffectOwner =
       requestSession.currentProgramEffectOwner;
   std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
-                     ProgramEffectOwnerHash>
-      &programEffects = requestSession.programEffects;
+                     ProgramEffectOwnerHash> &programEffects =
+      requestSession.programEffects;
   std::size_t &programStoragePlaceUseDepth =
       requestSession.programStoragePlaceUseDepth;
   GenericParameterId &nextGenericParameterId =
