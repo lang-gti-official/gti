@@ -363,8 +363,8 @@ The structural sequence is:
 
 | Order | ID | State | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | `R-STRUCT-00` | **ready after in-flight reconciliation** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit, one broad validation result, artifact/MIR/diagnostic oracles, and controlled compile measurements are recorded. |
-| 2 | `R-STRUCT-01` | **blocked** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | Reuse regressions pass and every former aggregate assertion remains covered by focused plus aggregate gates. |
+| 1 | `R-STRUCT-00` | **complete** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit `4d4c8ae2`, the integration broad validation, controlled build measurements, and the complete artifact/MIR/diagnostic oracles are recorded in [`compiler-structural-baseline.json`](compiler-structural-baseline.json). |
+| 2 | `R-STRUCT-01` | **ready** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | Reuse regressions pass and every former aggregate assertion remains covered by focused plus aggregate gates. |
 | 3 | `R-STRUCT-02` | **blocked** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source-graph parity holds, HIR uses a narrow instance provider, and semantic/include/rebuild boundaries pass. |
 | 4 | `R-STRUCT-03` | **blocked** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, and hosted startup. | MIR printers, verifier mutations, census, optimizer replay, and endpoint behavior are unchanged. |
 | 5 | `R-STRUCT-04` | **blocked** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |

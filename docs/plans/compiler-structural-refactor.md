@@ -1,9 +1,9 @@
 # Compiler Structural Refactor
 
-> **Plan status:** Accepted next-phase compiler gate. Existing work already in
-> flight when this plan was adopted may finish and be reconciled. After that
-> checkpoint, no new compiler feature campaign begins until the exit gate in
-> this plan passes.
+> **Plan status:** Active structural gate. In-flight work was reconciled at
+> `4d4c8ae242fe08511db8de41fcafe117dde06dba`; **R-STRUCT-00** is complete and
+> **R-STRUCT-01** is the active implementation slice. No new compiler feature
+> campaign begins until the exit gate in this plan passes.
 >
 > This is an internal architecture plan. It does not define GTI language
 > semantics and does not make generated C++ text a public compatibility
@@ -63,6 +63,15 @@ plan was written.
 The initial audit used `origin/main` at `8b15ffeb` on 2026-08-27. Re-run the
 inventory at the reconciled baseline because active work may move the exact
 line numbers.
+
+The reconciled baseline is `4d4c8ae242fe08511db8de41fcafe117dde06dba`
+(`VERSION` 0.321.0). Its controlled machine, toolchain, build-edge, binary,
+fan-out, trace, diagnostic, census, six-configuration corpus, and raw-artifact
+record is
+[`compiler-structural-baseline.json`](compiler-structural-baseline.json).
+That record supersedes the approximate audit sizes below for before/after
+comparison; the table remains as the rationale captured when the plan was
+accepted.
 
 | Surface | Size at audit | Mixed responsibilities that justify action |
 | --- | ---: | --- |
@@ -166,9 +175,11 @@ work.
    optimizer report/replay output, and C++20/C++23 O0/O1/O3 corpus behavior as
    equivalence oracles.
 
-**Exit evidence:** a committed baseline record names the machine/toolchain,
-configuration, concurrency, commit, commands, and raw artifact locations. No
-refactor result is compared across unlike concurrency or competing worktrees.
+**Exit evidence:** complete. The committed
+[`compiler-structural-baseline.json`](compiler-structural-baseline.json) names
+the machine/toolchain, configuration, concurrency, commit, commands, and raw
+artifact locations. No refactor result is compared across unlike concurrency
+or competing worktrees.
 
 ## R-STRUCT-01: Test Ownership And Analysis Sessions
 
