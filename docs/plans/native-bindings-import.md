@@ -91,7 +91,17 @@ function-pointer `typedef`s, and function prototypes (named or unnamed
 parameters, `void` lists, `...` recorded as variadic, parameter array decay
 with `const` preserved, and multi-level pointers with `const` qualifiers
 read faithfully; `restrict` never reaches the model because it does not
-change the caller's contract).
+change the caller's contract). An inline function-pointer type (a parameter,
+field, or result declared `ret (*)(params)` without a typedef) models
+faithfully as a pointer to a function shape — binding policy for it lives in
+the planner, not here — while a prototype-less `ret (*)()` pointer stays
+unsupported because its parameters are unspecified. Object-like macros whose
+bodies are bounded integer constant expressions (int64 arithmetic over
+literals, references to earlier imported macros, parentheses, unary `+ - ~`,
+and `| ^ & << >> + - * / %`) import as constant declarations; function-like
+macros and empty guards stay silent, and a non-evaluable object-like macro
+is noted, never approximated. C redefinition keeps the first position with
+the latest value.
 `<stdint.h>`/`<stddef.h>` names resolve through a target-macro prelude, so
 their widths are Clang facts for the selected data model. The reader receives
 a `CTargetProfile` and selects one canonical 64-bit parse target per data
@@ -145,6 +155,20 @@ methods, overloads) lands without touching the reader. Two passes:
    the frontend rejects. Fields otherwise cover the frontend's full admitted
    set, including callback aliases and fixed arrays with multiple extents or
    record, pointer, callback, and scalar elements.
+   Read-only string arrays (`const char* const*`) share the `c_string*`
+   spelling with `const char**` out parameters. An inline function-pointer
+   use binds through a *synthesized named callback alias* — the language's
+   own admitted form — deduplicated by shape, named deterministically from
+   the first committing declaration (`<owner>_<member>_fn`, ordinals on
+   collision, header names pre-reserved), emitted before its first use, and
+   rolled back when its only use skips. Imported macros plan as
+   `constexpr int32_t`/`int64_t` constants by value range. Three shapes real
+   system headers exposed are handled structurally: a use of a *skipped*
+   typedef spells the canonical type (the alias name never reaches the
+   file), C prototype-scoped forward references of one tag collapse to one
+   handle, and a record whose name GTI cannot spell (an interior `__`)
+   poisons every use rather than emitting a declaration the frontend
+   rejects.
    Everything else — variadics, plain `char`/`bool`, other multi-level
    pointers, native variables, reserved or GTI-invalid identifiers — becomes a
    `SkippedItem{origin, name, reason}`.
@@ -223,9 +247,16 @@ admits exactly `libclang` beside ADR 006's LLVM support libraries.
 
 ```sh
 gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] \
-  [--target <triple>] [--clang <path>] \
+  [--target <triple>] [--clang <path>] [--sysroot <path>] \
   [-I <directory>]... [-D <macro[=value]>]... [-U <macro>]...
 ```
+
+`--sysroot` forwards `-isysroot` to the preprocessing step so system
+includes resolve against an explicit platform SDK when the Clang binary's
+own discovery cannot (a bare Command Line Tools clang without `SDKROOT`
+resolves nothing). The preprocessing step passes `-dD` so user-header macro
+definitions survive into the reader; system-header macros stay out with
+their suppressed content.
 
 Exit status follows the existing CLI conventions. Native preprocessing
 diagnostics retain Clang's source locations; bootstrap reader/planner notes are
@@ -275,9 +306,10 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    from Clang, collect the complete transitive dependency set, retain only
    declarations selected by the requested import policy, and use original
    source locations for every planner diagnostic.
-6. **C-06: constants and C metadata.** Import bounded object-like integer
-   macros as `constexpr`; preserve calling convention and ABI attributes as
-   model facts; reject unsupported ABI-affecting attributes explicitly.
+6. **C-06: constants and C metadata (macro slice complete).** Bounded
+   object-like integer macros import as `constexpr` constants. Remaining:
+   preserve calling convention and ABI attributes as model facts; reject
+   unsupported ABI-affecting attributes explicitly.
 7. **BUILD-01: manifest and cache integration.** Add a `gti.toml` import table;
    make the driver own discovery and immutable requests; cache generated
    source by the complete key in the scalability contract.
