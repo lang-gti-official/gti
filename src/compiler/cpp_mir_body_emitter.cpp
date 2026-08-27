@@ -2272,6 +2272,18 @@ classFreshAssignmentFusion(const MirProgram &program, const MirBody &body,
       destination == nullptr
           ? std::nullopt
           : checkedArrayElementDestination(body, *destination);
+  // A mutable borrow's referent is the third destination: an overloaded
+  // subscript yields `mut T&`, so the publication writes through the loan.
+  // The referent's storage and cleanup belong to whatever the loan points
+  // into, so MIR records no obligation of its own here — exactly as it
+  // records none for a checked element.
+  const MirLoan *destinationLoan =
+      destination != nullptr && destination->root == MirPlaceRootKind::Loan
+          ? body.findLoan(destination->loan)
+          : nullptr;
+  const bool loanDestination = destinationLoan != nullptr &&
+                               destination->projections.empty() &&
+                               destinationLoan->access == AccessMode::Mutable;
   if (assignment == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
       assignment->kind != MirInstructionKind::Assign ||
@@ -2285,11 +2297,13 @@ classFreshAssignmentFusion(const MirProgram &program, const MirBody &body,
       assignmentResult->info.type != value->info.type ||
       destination->type != value->info.type || !destination->traits.movable ||
       !destination->traits.moveAssignable ||
-      (!bareDestination && !checkedDestination) ||
-      // A bare binding assignment cannot fail; only the checked array write
-      // carries a bounds failure site for its enclosing invoke edge.
-      (bareDestination && (!assignment->localFailureSites.empty() ||
-                           !assignment->definedFailure.empty())) ||
+      (!bareDestination && !checkedDestination && !loanDestination) ||
+      // Neither a bare binding assignment nor a write through an already
+      // produced loan can fail; only the checked array write carries a
+      // bounds failure site for its enclosing invoke edge.
+      ((bareDestination || loanDestination) &&
+       (!assignment->localFailureSites.empty() ||
+        !assignment->definedFailure.empty())) ||
       (checkedDestination &&
        !checkedArrayAssignmentFailure(program, *assignment)) ||
       !assignment->lifecycle.empty() || assignment->fullExpressionEnd != 0 ||
