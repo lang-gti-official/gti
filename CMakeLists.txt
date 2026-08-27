@@ -1386,6 +1386,15 @@ if(BUILD_TESTING)
     set_tests_properties(fixed_array_class_lifecycle_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME fixed_array_oob_write_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixed_array_oob_write_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(fixed_array_oob_write_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
       NAME issue_143_polymorphic_class_array_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/issue_143_polymorphic_class_array_runtime_test.py"
@@ -1751,6 +1760,7 @@ if(BUILD_TESTING)
         inline_lambda_argument_runtime
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
+        fixed_array_oob_write_runtime
         issue_123_cleanup_temporary_argument_runtime
         issue_126_array_element_assignment_runtime
         issue_127_constructor_temporary_field_runtime

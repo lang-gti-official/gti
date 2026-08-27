@@ -8379,7 +8379,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v50 ") &&
+  expect(mirDump.starts_with("mir-v51 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -27288,6 +27288,109 @@ int main() {
          "formatter should keep array constructor initializers compact");
 }
 
+// A dynamic fixed-array element write keeps its index_out_of_bounds failure
+// site, and MIR must pair that site with an Invoke terminator so the checked
+// write helper's status feeds the failure successor exactly like the read
+// form. Losing the edge silently no-ops the out-of-bounds write.
+void testFixedArrayDynamicWriteFailureEdge() {
+  const std::string source = R"(
+int main() {
+  mut int32_t cells[4] = {};
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(9)) {
+    index++;
+  }
+  cells[index] = 7;
+  return int(cells[uint64_t(0)]);
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("dynamic-array-write.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the dynamic array-write fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *mainMir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainMir = frontend.mir.findFunctionInstance(instance.id);
+      break;
+    }
+  }
+  const lang::MirBlock *writeBlock = nullptr;
+  const lang::MirInstruction *write = nullptr;
+  if (mainMir != nullptr) {
+    for (const lang::MirBlock &block : mainMir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Assign &&
+            instruction.operation == lang::MirOperation::Assign &&
+            instruction.destination && !instruction.localFailureSites.empty()) {
+          writeBlock = &block;
+          write = &instruction;
+        }
+      }
+    }
+  }
+  const bool boundsOutcome =
+      write != nullptr &&
+      std::any_of(
+          write->localFailureSites.begin(), write->localFailureSites.end(),
+          [&](lang::FailureSiteId id) {
+            const lang::FailureSiteDescriptor *site =
+                frontend.mir.failureMetadata().findSite(id);
+            return site != nullptr &&
+                   std::any_of(
+                       site->outcomes.begin(), site->outcomes.end(),
+                       [&](const lang::DefinedFailureOutcome &outcome) {
+                         return outcome.code ==
+                                lang::DefinedFailureCode::IndexOutOfBounds;
+                       });
+          });
+  expect(
+      write != nullptr && boundsOutcome &&
+          lang::requiresMirFailureControlFlow(
+              *write, lang::MirFailureControlFlowPosition::FullExpressionRoot),
+      "a dynamic fixed-array element write should stay eligible for MIR "
+      "failure control flow");
+  expect(writeBlock != nullptr && write != nullptr &&
+             !writeBlock->instructions.empty() &&
+             writeBlock->instructions.back().id == write->id &&
+             writeBlock->terminator.kind == lang::MirTerminatorKind::Invoke &&
+             writeBlock->terminator.invokeInstruction == write->id &&
+             writeBlock->terminator.elseTarget != 0 &&
+             mainMir->body.blocks[writeBlock->terminator.elseTarget - 1]
+                     .failureParameter == writeBlock->terminator.failureRecord,
+         "the dynamic array write must terminate its block with an Invoke "
+         "whose failure successor consumes the checked write status");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::size_t status = artifact.contents.find(
+      " = ::gti_internal::backend::mir_checked_array_write_v1(");
+  const std::size_t variable =
+      status == std::string::npos
+          ? std::string::npos
+          : artifact.contents.rfind("__gti_mir_failure_status_", status);
+  const std::string consumer =
+      variable == std::string::npos
+          ? std::string()
+          : "if (" + artifact.contents.substr(variable, status - variable) +
+                ".code == GTI_FAILURE_CODE_NONE_V1)";
+  expect(status != std::string::npos && variable != std::string::npos &&
+             !consumer.empty() &&
+             artifact.contents.find(consumer, status) != std::string::npos,
+         "the emitted checked array write must branch on its failure status "
+         "instead of discarding it");
+}
+
 void testLocalTypeInference() {
   const std::string source = R"(
 class Box {
@@ -29912,7 +30015,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v50 ") &&
+             mirDump.starts_with("mir-v51 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -35304,6 +35407,7 @@ int main(int argc, char **argv) {
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
+  testFixedArrayDynamicWriteFailureEdge();
   testLocalTypeInference();
   testStructuredBindings();
   testLambdas();

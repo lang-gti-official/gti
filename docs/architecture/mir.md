@@ -83,9 +83,20 @@ rejects represented synchronization in the single-threaded profile. Thus an
 unused `<std/thread>` import remains valid without granting a backend or
 transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v49`/`mir-body-v45`.
-Program v49 and body v45 add the explicit early-exit full-expression marker
-role used by expected propagation. Each propagation failure edge retains a
+The deterministic serialization is currently `mir-v51`/`mir-body-v45`.
+Program v51 extends the version-28 benign-event rule to the trivial-commit
+assignment: a `Reinitialize` that leaves an always-available, trivially
+destroyed destination available on a reachable edge is equally
+state-preserving, because the checked write helper leaves the destination
+untouched when it fails. A dynamic fixed-array element write therefore keeps
+the `Invoke` edge that publishes its `index_out_of_bounds` status; before
+v51 the eligibility predicate rejected the write's `Reinitialize` event, the
+edge was never routed, and the emitted checked write discarded its failure
+status — an out-of-bounds write silently no-opped while the matching read
+raised. Program v50 adds the bounded two-phase mutable loan for plain
+source-defined subscript and dereference stores described below. Program v49
+and body v45 add the explicit early-exit full-expression
+marker role used by expected propagation. Each propagation failure edge retains a
 path-exclusive boundary alongside the one ordinary continuation boundary, so
 verification can prove exact temporary and lexical cleanup without reopening
 HIR. Program v48 and body v44 serialize the exact designated stored-reference
@@ -234,7 +245,12 @@ destroyed and which runs no lifecycle event: a failure writes nothing and
 leaves no state to unwind, so its edge needs only the ordinary temporary and
 scope cleanup. This covers the narrowing compound forms that keep a closed
 instruction. An assignment that replaces an owning value still requires the
-destination's own unwinding rule. Version 35 records the exact binding place
+destination's own unwinding rule. Version 50 completes that admission for the
+element write: a `Reinitialize` ownership event on a trivial-commit
+assignment that leaves an available destination available on a reachable edge
+is state-preserving in the same sense, so a dynamic fixed-array element write
+routes the `Invoke` edge that consumes its checked helper's
+`index_out_of_bounds` status. Version 35 records the exact binding place
 for a failure-capable lexical result used as a direct initializer. Its
 `Invoke` success successor must contain the unique matching `Initialize`,
 which arms the binding only after the call succeeds; the failure successor
