@@ -3,8 +3,11 @@
 #include <clang-c/Index.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -92,6 +95,214 @@ constexpr const char *kBuiltinsText = "typedef __INT8_TYPE__ int8_t;\n"
          text.substr(text.size() - suffix.size()) == suffix;
 }
 
+// Evaluates an object-like macro body as a bounded C integer constant
+// expression: int64 arithmetic over integer literals, references to
+// previously imported macro constants, parentheses, unary + - ~, and the
+// binary operators | ^ & << >> + - * / % at C precedence. Anything else —
+// strings, floats, casts, ternaries, unknown names, values outside int64 —
+// makes the macro non-importable rather than approximated.
+class MacroExpressionEvaluator {
+public:
+  MacroExpressionEvaluator(const std::vector<std::string> &tokens,
+                           const std::map<std::string, std::int64_t> &known)
+      : tokens_(tokens), known_(known) {}
+
+  [[nodiscard]] std::optional<std::int64_t> evaluate() {
+    const std::optional<std::int64_t> value = parseBitOr();
+    return value.has_value() && position_ == tokens_.size() ? value
+                                                            : std::nullopt;
+  }
+
+private:
+  const std::vector<std::string> &tokens_;
+  const std::map<std::string, std::int64_t> &known_;
+  std::size_t position_ = 0;
+
+  [[nodiscard]] bool accept(std::string_view token) {
+    if (position_ < tokens_.size() && tokens_[position_] == token) {
+      ++position_;
+      return true;
+    }
+    return false;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseBitOr() {
+    std::optional<std::int64_t> left = parseBitXor();
+    while (left.has_value() && accept("|")) {
+      const std::optional<std::int64_t> right = parseBitXor();
+      left = right.has_value() ? std::optional(*left | *right) : std::nullopt;
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseBitXor() {
+    std::optional<std::int64_t> left = parseBitAnd();
+    while (left.has_value() && accept("^")) {
+      const std::optional<std::int64_t> right = parseBitAnd();
+      left = right.has_value() ? std::optional(*left ^ *right) : std::nullopt;
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseBitAnd() {
+    std::optional<std::int64_t> left = parseShift();
+    while (left.has_value() && accept("&")) {
+      const std::optional<std::int64_t> right = parseShift();
+      left = right.has_value() ? std::optional(*left & *right) : std::nullopt;
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseShift() {
+    std::optional<std::int64_t> left = parseAdditive();
+    while (left.has_value()) {
+      const bool shiftLeft = position_ < tokens_.size() && accept("<<");
+      const bool shiftRight = !shiftLeft && accept(">>");
+      if (!shiftLeft && !shiftRight) {
+        break;
+      }
+      const std::optional<std::int64_t> right = parseAdditive();
+      if (!right.has_value() || *right < 0 || *right > 62) {
+        return std::nullopt;
+      }
+      if (shiftLeft) {
+        // Shifting into or past the sign bit leaves the int64 contract.
+        const std::int64_t limit = std::int64_t{1} << (62 - *right);
+        if (*left < 0 || *left > limit) {
+          return std::nullopt;
+        }
+        left = *left << *right;
+      } else {
+        left = *left >> *right;
+      }
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseAdditive() {
+    std::optional<std::int64_t> left = parseMultiplicative();
+    while (left.has_value()) {
+      const bool add = accept("+");
+      const bool subtract = !add && accept("-");
+      if (!add && !subtract) {
+        break;
+      }
+      const std::optional<std::int64_t> right = parseMultiplicative();
+      if (!right.has_value()) {
+        return std::nullopt;
+      }
+      std::int64_t result = 0;
+      if (add ? __builtin_add_overflow(*left, *right, &result)
+              : __builtin_sub_overflow(*left, *right, &result)) {
+        return std::nullopt;
+      }
+      left = result;
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseMultiplicative() {
+    std::optional<std::int64_t> left = parseUnary();
+    while (left.has_value()) {
+      const bool multiply = accept("*");
+      const bool divide = !multiply && accept("/");
+      const bool remainder = !multiply && !divide && accept("%");
+      if (!multiply && !divide && !remainder) {
+        break;
+      }
+      const std::optional<std::int64_t> right = parseUnary();
+      if (!right.has_value() || (!multiply && *right == 0)) {
+        return std::nullopt;
+      }
+      if (multiply) {
+        std::int64_t result = 0;
+        if (__builtin_mul_overflow(*left, *right, &result)) {
+          return std::nullopt;
+        }
+        left = result;
+      } else if (*left == std::numeric_limits<std::int64_t>::min() &&
+                 *right == -1) {
+        return std::nullopt;
+      } else {
+        left = divide ? *left / *right : *left % *right;
+      }
+    }
+    return left;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parseUnary() {
+    if (accept("+")) {
+      return parseUnary();
+    }
+    if (accept("-")) {
+      const std::optional<std::int64_t> value = parseUnary();
+      return value.has_value() &&
+                     *value != std::numeric_limits<std::int64_t>::min()
+                 ? std::optional(-*value)
+                 : std::nullopt;
+    }
+    if (accept("~")) {
+      const std::optional<std::int64_t> value = parseUnary();
+      return value.has_value() ? std::optional(~*value) : std::nullopt;
+    }
+    return parsePrimary();
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
+  [[nodiscard]] std::optional<std::int64_t> parsePrimary() {
+    if (accept("(")) {
+      const std::optional<std::int64_t> value = parseBitOr();
+      return value.has_value() && accept(")") ? value : std::nullopt;
+    }
+    if (position_ >= tokens_.size()) {
+      return std::nullopt;
+    }
+    const std::string &token = tokens_[position_];
+    if (const auto known = known_.find(token); known != known_.end()) {
+      ++position_;
+      return known->second;
+    }
+    return parseIntegerLiteral();
+  }
+
+  [[nodiscard]] std::optional<std::int64_t> parseIntegerLiteral() {
+    const std::string &token = tokens_[position_];
+    if (token.empty() ||
+        std::isdigit(static_cast<unsigned char>(token.front())) == 0) {
+      return std::nullopt;
+    }
+    std::size_t digits = 0;
+    unsigned long long value = 0;
+    try {
+      value = std::stoull(token, &digits, 0);
+    } catch (...) {
+      return std::nullopt;
+    }
+    // Only integer suffixes may follow the digits; anything else (a float's
+    // '.' or exponent, a malformed literal) refuses the macro.
+    for (std::size_t index = digits; index < token.size(); ++index) {
+      const char suffix = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(token[index])));
+      if (suffix != 'u' && suffix != 'l') {
+        return std::nullopt;
+      }
+    }
+    if (value > static_cast<unsigned long long>(
+                    std::numeric_limits<std::int64_t>::max())) {
+      return std::nullopt;
+    }
+    ++position_;
+    return static_cast<std::int64_t>(value);
+  }
+};
+
 class ModelBuilder {
 public:
   ModelBuilder(CXTranslationUnit unit, ReadResult &result)
@@ -150,6 +361,10 @@ private:
   // and typedef-adopted anonymous definitions) resolve to the named
   // declaration instead of producing an alias declaration.
   std::map<std::string, NativeDeclarationId> transparentTypedefs_;
+  // Imported macro-constant values by name, for later bodies that reference
+  // them, and their declarations for redefinition updates.
+  std::map<std::string, std::int64_t> macroValues_;
+  std::map<std::string, NativeDeclarationId> macroDeclarations_;
   // Main-file lines carrying a native C error. Clang recovers from errors by
   // inventing types without always marking the declaration invalid, so any
   // declaration whose extent overlaps an error is refused wholesale —
@@ -314,12 +529,19 @@ private:
     case CXType_Pointer: {
       const CXType pointee = clang_getPointeeType(type);
       const CXType pointeeCanonical = clang_getCanonicalType(pointee);
-      if (pointeeCanonical.kind == CXType_FunctionProto ||
-          pointeeCanonical.kind == CXType_FunctionNoProto) {
-        return makeUnsupported(
-            owned(clang_getTypeSpelling(type)),
-            "an unnamed function pointer type is outside the bounded "
-            "surface; name it with a typedef");
+      if (pointeeCanonical.kind == CXType_FunctionNoProto) {
+        return makeUnsupported(owned(clang_getTypeSpelling(type)),
+                               "a function pointer without a prototype leaves "
+                               "its parameters unspecified; declare them");
+      }
+      if (pointeeCanonical.kind == CXType_FunctionProto) {
+        // The shape is a native fact the planner's callback policy consumes;
+        // whether an inline function pointer is bindable is not decided here.
+        NativeType node;
+        node.kind = NativeTypeKind::Pointer;
+        node.constPointee = clang_isConstQualifiedType(pointee) != 0;
+        node.pointee = mapFunctionType(pointee);
+        return result_.model.addType(std::move(node));
       }
       NativeType node;
       node.kind = NativeTypeKind::Pointer;
@@ -443,7 +665,8 @@ private:
     return mapType(type);
   }
 
-  [[nodiscard]] NativeTypeId mapFunctionType(CXType function) {
+  [[nodiscard]] NativeTypeId
+  mapFunctionType(CXType function) { // NOLINT(misc-no-recursion)
     CXType shape = function;
     if (clang_getNumArgTypes(shape) < 0) {
       shape = clang_getCanonicalType(function);
@@ -497,7 +720,7 @@ private:
     }
     if (kind == CXCursor_MacroDefinition) {
       if (inMainFile(cursor)) {
-        warn(originOf(cursor), "macro definitions are not imported");
+        handleMacro(cursor);
       }
       return;
     }
@@ -732,6 +955,69 @@ private:
         result_.model.addDeclaration(std::move(alias));
     result_.model.order.push_back(id);
     declarationsByUsr_.emplace(usr, id);
+  }
+
+  // Imports `#define NAME <integer constant expression>` as a constant
+  // declaration (the C-06 macro slice). Function-like macros are code, an
+  // empty body is an include guard, and neither is a constant, so both stay
+  // silent; an object-like macro with a body that does not evaluate gets a
+  // note so nothing plausible disappears without a trace. C redefinition
+  // keeps the first declaration position with the latest value.
+  void handleMacro(CXCursor cursor) {
+    if (clang_Cursor_isMacroFunctionLike(cursor) != 0) {
+      return;
+    }
+    const std::string name = owned(clang_getCursorSpelling(cursor));
+    const std::vector<std::string> body = macroBodyTokens(cursor, name);
+    if (body.empty()) {
+      return;
+    }
+    const std::optional<std::int64_t> value =
+        MacroExpressionEvaluator(body, macroValues_).evaluate();
+    if (!value.has_value()) {
+      warn(originOf(cursor),
+           "macro '" + name +
+               "' is not a bounded integer constant expression and was not "
+               "imported");
+      return;
+    }
+    macroValues_[name] = *value;
+    if (const auto existing = macroDeclarations_.find(name);
+        existing != macroDeclarations_.end()) {
+      if (NativeDeclaration *declaration =
+              result_.model.findDeclaration(existing->second)) {
+        declaration->constantValue = *value;
+      }
+      return;
+    }
+    NativeDeclaration declaration;
+    declaration.kind = NativeDeclarationKind::Constant;
+    declaration.name = name;
+    declaration.scope = rootScope_;
+    declaration.origin = originOf(cursor);
+    declaration.constantValue = *value;
+    const NativeDeclarationId id =
+        result_.model.addDeclaration(std::move(declaration));
+    result_.model.order.push_back(id);
+    macroDeclarations_.emplace(name, id);
+  }
+
+  // The macro definition's tokens after the name: `#define NAME body...`.
+  [[nodiscard]] std::vector<std::string>
+  macroBodyTokens(CXCursor cursor, const std::string &name) {
+    CXToken *tokens = nullptr;
+    unsigned count = 0;
+    clang_tokenize(unit_, clang_getCursorExtent(cursor), &tokens, &count);
+    std::vector<std::string> spellings;
+    for (unsigned index = 0; index < count; ++index) {
+      spellings.push_back(owned(clang_getTokenSpelling(unit_, tokens[index])));
+    }
+    clang_disposeTokens(unit_, tokens, count);
+    if (spellings.empty() || spellings.front() != name) {
+      return {};
+    }
+    spellings.erase(spellings.begin());
+    return spellings;
   }
 
   void handleFunction(CXCursor cursor) {

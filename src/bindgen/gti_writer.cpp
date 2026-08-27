@@ -48,7 +48,18 @@ void writeItem(const BindingItem &item, std::string_view indent,
     out << indent << "using " << item.name << " = " << item.aliasSpelling
         << ";\n\n";
     return;
+  case BindingItemKind::Constant:
+    // The negative wrapping matches the enum emission: a conversion keeps
+    // the constant's type explicit instead of relying on literal typing.
+    out << indent << "constexpr " << item.aliasSpelling << ' ' << item.name
+        << " = " << (item.constantValue < 0 ? item.aliasSpelling + "(" : "")
+        << item.constantValue << (item.constantValue < 0 ? ")" : "") << ";\n\n";
+    return;
   case BindingItemKind::Callback: {
+    if (item.synthesized) {
+      out << indent
+          << "// Synthesized name for an inline function-pointer shape.\n";
+    }
     out << indent << "using " << item.name << " = (";
     for (std::size_t index = 0; index < item.parameters.size(); ++index) {
       out << (index != 0 ? ", " : "") << item.parameters[index].spelling;
