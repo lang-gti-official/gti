@@ -486,6 +486,18 @@ does not recognize the owning wrapper or container name; projected
 destinations, conditional lifecycle events, incomplete borrow endings, or
 additional consumers fail closed.
 
+Move-assignment between two existing mutable class bindings has its own exact
+representation. MIR stages the moved value in a value-rooted obligation, so
+the backend constructs that staging slot from the source binding, move-assigns
+the destination binding from the slot, and then drops only the moved-from
+staging shell. The route requires an adjacent `Move`/`Assign`/`Drop` triple in
+one block, a `Move` lifecycle event transferring the source binding obligation
+into the staging drop, an unconditional `Replace` from that drop into the
+destination binding's own obligation, and a single unconditional `Drop` of the
+slot. Aliased source and destination bindings, projected or non-binding places,
+failure sites on either instruction, extra uses, and any additional lifecycle
+event on the staging obligation fail closed.
+
 ### Declarations And ABI
 
 `CppEmitter` walks `LoweredDeclaration` rows to assemble namespaces, aliases,

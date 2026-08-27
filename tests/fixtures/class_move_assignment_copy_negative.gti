@@ -1,0 +1,10 @@
+#include <std/string>
+
+// A move-only owner cannot be copy-assigned into an existing binding; the
+// semantic diagnostic must fire without reaching the backend.
+int main() {
+  mut std::string target = std::string("first");
+  mut std::string replacement = std::string("second");
+  target = replacement;
+  return int(target.size());
+}
