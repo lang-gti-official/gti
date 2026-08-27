@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import type {
   CompilerDocumentationDeclaration,
+  CompilerDocumentationKind,
   ReferenceExample,
   ReferencePageMetadata,
   ReferencePageRecord,
@@ -17,6 +18,16 @@ import type {
 
 const routeSegment = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const diagnosticCode = /^GTI-[A-Z][0-9]{4}$/;
+const referenceVersion =
+  /^(?:(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)|gti-(?:0|[1-9][0-9]*))$/;
+const memberDocumentationKinds: ReadonlySet<CompilerDocumentationKind> =
+  new Set([
+    "constructor",
+    "destructor",
+    "method",
+    "operator",
+    "field",
+  ]);
 
 const ReferencePageMetadataSchema = z
   .object({
@@ -31,10 +42,19 @@ const ReferencePageMetadataSchema = z
       "member",
       "concept",
       "diagnostic",
+      "tooling",
+      "command",
     ]),
     api: z.array(z.string().trim().min(1)).default([]),
     examples: z.array(z.string().regex(routeSegment)).default([]),
-    since: z.string().trim().min(1).optional(),
+    since: z
+      .string()
+      .trim()
+      .regex(referenceVersion, {
+        message:
+          "Expected a semantic version such as '0.300.1' or an edition such as 'gti-20'.",
+      })
+      .optional(),
   })
   .strict()
   .superRefine((metadata, context) => {
@@ -418,6 +438,11 @@ export function compileContentGraph({
     }
     const metadata: ReferencePageMetadata = metadataResult.data;
     const apiDeclarations: CompilerDocumentationDeclaration[] = [];
+    if (metadata.kind === "member" && metadata.api.length !== 1) {
+      issues.push(
+        `${sourceLabel}.api: a member page must bind exactly one compiler API group.`,
+      );
+    }
     if (metadata.api.length > 0 && apiGroups === undefined) {
       issues.push(
         `${sourceLabel}.api: an API index is required to validate compiler bindings.`,
@@ -433,6 +458,16 @@ export function compileContentGraph({
           apiDeclarations.push(...declarations);
         }
       }
+    }
+    if (
+      metadata.kind === "member" &&
+      apiDeclarations.some(
+        (declaration) => !memberDocumentationKinds.has(declaration.kind),
+      )
+    ) {
+      issues.push(
+        `${sourceLabel}.api: a member page may bind only constructors, destructors, methods, operators, or fields.`,
+      );
     }
 
     const declaredExamples = new Set(metadata.examples);
@@ -464,6 +499,54 @@ export function compileContentGraph({
   );
   for (const duplicate of duplicateRoutes) {
     issues.push(`${duplicate.sourcePath}: duplicate route '${duplicate.route}'.`);
+  }
+  const pagesByRoute = new Map(pages.map((page) => [page.route, page]));
+  const memberRoutesByApiGroup = new Map<string, ReferencePageRecord>();
+  for (const page of pages) {
+    if (page.metadata.kind !== "member" || page.metadata.api.length !== 1) {
+      continue;
+    }
+    const binding = page.metadata.api[0];
+    const previous = memberRoutesByApiGroup.get(binding);
+    if (previous !== undefined) {
+      issues.push(
+        `${page.sourcePath}.api: compiler group '${binding}' already has member route '${previous.route}'.`,
+      );
+    } else {
+      memberRoutesByApiGroup.set(binding, page);
+    }
+    const parentRoute = page.route.split("/").slice(0, -1).join("/");
+    const parent = pagesByRoute.get(parentRoute);
+    if (parent?.metadata.kind !== "type") {
+      issues.push(
+        `${page.sourcePath}: member pages must be immediate children of an authored type page.`,
+      );
+    } else if (!parent.metadata.api.includes(binding)) {
+      issues.push(
+        `${page.sourcePath}.api: parent type page '${parent.route}' does not present compiler group '${binding}'.`,
+      );
+    }
+  }
+  for (const page of pages) {
+    if (page.metadata.kind !== "type") {
+      continue;
+    }
+    for (const binding of page.metadata.api) {
+      const declarations = page.apiDeclarations.filter(
+        (declaration) => declaration.groupKey === binding,
+      );
+      if (
+        declarations.length > 0 &&
+        declarations.every((declaration) =>
+          memberDocumentationKinds.has(declaration.kind),
+        ) &&
+        !memberRoutesByApiGroup.has(binding)
+      ) {
+        issues.push(
+          `${page.sourcePath}.api: member compiler group '${binding}' requires a dedicated child member page.`,
+        );
+      }
+    }
   }
   if (issues.length > 0) {
     throw new ContentContractError(issues.sort());

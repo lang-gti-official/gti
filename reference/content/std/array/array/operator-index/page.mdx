@@ -1,0 +1,14 @@
+---
+title: std::array::operator[]
+description: Returns a checked element borrow using subscript syntax.
+kind: member
+since: 0.27.0
+api:
+  - std/array|operator|std::array::operator[]
+examples:
+  - subscript-elements
+---
+
+GTI's initial safe container surface does not give subscript syntax unchecked
+semantics. `values[index]` is checked like `values.at(index)` and preserves the
+receiver's mutability.

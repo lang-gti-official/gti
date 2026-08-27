@@ -1,0 +1,11 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(4);
+  values.push_back(7);
+
+  std::println(values.size());
+  std::println(values.back());
+  return 0;
+}

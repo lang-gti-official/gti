@@ -1,0 +1,6 @@
+{
+  "title": "Inspect reserved storage",
+  "description": "Shows that reserving capacity does not construct additional elements.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

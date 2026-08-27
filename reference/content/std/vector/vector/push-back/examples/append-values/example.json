@@ -1,0 +1,6 @@
+{
+  "title": "Append values in order",
+  "description": "Adds two elements to an empty vector and reads the resulting sequence.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

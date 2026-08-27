@@ -1,0 +1,14 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+
+  if (values.empty()) {
+    std::println("empty");
+  }
+  values.push_back(5);
+  if (!values.empty()) {
+    std::println("not empty");
+  }
+  return 0;
+}

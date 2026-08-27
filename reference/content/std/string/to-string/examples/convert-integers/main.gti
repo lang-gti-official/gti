@@ -1,0 +1,7 @@
+#include <std/string>
+
+int main() {
+  std::println(std::to_string(int32_t(-42)));
+  std::println(std::to_string(uint64_t(9000)));
+  return 0;
+}

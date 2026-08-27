@@ -1,0 +1,14 @@
+---
+title: std::to_string
+description: Converts any fixed-width integral value to a newly owned base-10 string.
+kind: function
+since: 0.139.0
+api:
+  - std/string|function|std::to_string
+examples:
+  - convert-integers
+---
+
+The result is a fresh `std::string`. Signed minima, zero, and the full unsigned
+range are handled without native stream formatting. Floating-point conversion
+is not part of this overload.

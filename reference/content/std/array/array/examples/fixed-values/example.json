@@ -1,0 +1,6 @@
+{
+  "title": "Own and update fixed values",
+  "description": "Constructs a three-element array, updates it through checked access, and prints the result.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

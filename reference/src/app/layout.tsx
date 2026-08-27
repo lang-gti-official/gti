@@ -25,6 +25,10 @@ const navigationEntries: ReferenceNavigationEntry[] = referencePages.map(
   }),
 );
 
+const sidebarEntries = navigationEntries.filter(
+  (entry) => entry.kind !== "member" && entry.kind !== "command",
+);
+
 function NavigationSection({
   title,
   entries,
@@ -50,11 +54,18 @@ function NavigationSection({
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  const languageEntries = navigationEntries.filter(
-    (entry) => entry.route !== "std" && !entry.route.startsWith("std/"),
+  const languageEntries = sidebarEntries.filter(
+    (entry) =>
+      entry.route !== "std" &&
+      !entry.route.startsWith("std/") &&
+      entry.route !== "tooling" &&
+      !entry.route.startsWith("tooling/"),
   );
-  const libraryEntries = navigationEntries.filter((entry) =>
+  const libraryEntries = sidebarEntries.filter((entry) =>
     entry.route === "std" || entry.route.startsWith("std/"),
+  );
+  const toolingEntries = sidebarEntries.filter((entry) =>
+    entry.route === "tooling" || entry.route.startsWith("tooling/"),
   );
   return (
     <html lang="en">
@@ -68,6 +79,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <nav className="primary-navigation" aria-label="Primary">
               <Link href="/language/">Language</Link>
               <Link href="/std/">Standard library</Link>
+              <Link href="/tooling/">Tooling</Link>
             </nav>
             <ReferenceSearch entries={navigationEntries} />
           </div>
@@ -80,6 +92,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               title="Standard library"
               entries={libraryEntries}
             />
+            <NavigationSection title="Tooling" entries={toolingEntries} />
           </aside>
           <main>{children}</main>
         </div>

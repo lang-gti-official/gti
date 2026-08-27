@@ -1,0 +1,6 @@
+{
+  "title": "Modify every element",
+  "description": "A mutable range loop selects begin_mut and updates each element in place.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

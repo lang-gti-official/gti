@@ -3,6 +3,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,29 +27,178 @@ test("a page owns its dedicated examples and compiler bindings", () => {
     contentRoot: "content",
     apiIndexPath: "api-index.json",
   });
-  assert.equal(pages.length, 1);
-  assert.equal(pages[0].route, "std/vector/vector");
-  assert.deepEqual(pages[0].metadata.api, [
+  assert.equal(pages.length, 2);
+  const typePage = pages.find((page) => page.route === "std/vector/vector");
+  assert.ok(typePage);
+  assert.deepEqual(typePage.metadata.api, [
     "std/vector|class|std::vector",
+    "std/vector|method|std::vector::size",
   ]);
-  assert.equal(pages[0].apiDeclarations.length, 1);
+  assert.equal(typePage.metadata.since, "0.80.0");
+  assert.equal(typePage.apiDeclarations.length, 2);
   assert.equal(
-    pages[0].apiDeclarations[0].signature,
+    typePage.apiDeclarations[0].signature,
     "class std::vector<std::movable T>",
   );
-  assert.equal(pages[0].examples.length, 1);
-  assert.equal(pages[0].examples[0].id, "construction-and-iteration");
+  assert.equal(typePage.examples.length, 1);
+  assert.equal(typePage.examples[0].id, "construction-and-iteration");
   assert.equal(
-    pages[0].examples[0].sourcePath,
+    typePage.examples[0].sourcePath,
     "content/std/vector/vector/examples/construction-and-iteration/main.gti",
   );
-  assert.match(pages[0].examples[0].sourceText, /std::vector<int32_t>/);
+  assert.match(typePage.examples[0].sourceText, /std::vector<int32_t>/);
   assert.equal(
-    pages[0].examples[0].mode === "run"
-      ? pages[0].examples[0].expectedStdout
+    typePage.examples[0].mode === "run"
+      ? typePage.examples[0].expectedStdout
       : undefined,
     "2\n",
   );
+  const memberPage = pages.find(
+    (page) => page.route === "std/vector/vector/size",
+  );
+  assert.ok(memberPage);
+  assert.deepEqual(memberPage.metadata.api, [
+    "std/vector|method|std::vector::size",
+  ]);
+  assert.equal(memberPage.metadata.since, "gti-20");
+  assert.equal(memberPage.apiDeclarations.length, 1);
+  assert.equal(memberPage.apiDeclarations[0].name, "size");
+});
+
+test("a type member binding requires one canonical child page", () => {
+  const temporary = mkdtempSync(
+    path.join(os.tmpdir(), "gti-reference-contract-"),
+  );
+  try {
+    cpSync(validProject, temporary, { recursive: true });
+    rmSync(
+      path.join(temporary, "content/std/vector/vector/size"),
+      { recursive: true },
+    );
+    assert.throws(
+      () =>
+        compileContentGraph({
+          projectRoot: temporary,
+          contentRoot: "content",
+          apiIndexPath: "api-index.json",
+        }),
+      (error: unknown) =>
+        error instanceof ContentContractError &&
+        error.message.includes("requires a dedicated child member page"),
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a member page must bind one member declaration group", () => {
+  const temporary = mkdtempSync(
+    path.join(os.tmpdir(), "gti-reference-contract-"),
+  );
+  try {
+    cpSync(validProject, temporary, { recursive: true });
+    writeFileSync(
+      path.join(temporary, "content/std/vector/vector/size/page.mdx"),
+      `---
+title: std::vector::size
+description: Invalid member binding.
+kind: member
+api:
+  - std/vector|class|std::vector
+examples: []
+---
+`,
+    );
+    assert.throws(
+      () =>
+        compileContentGraph({
+          projectRoot: temporary,
+          contentRoot: "content",
+          apiIndexPath: "api-index.json",
+        }),
+      (error: unknown) =>
+        error instanceof ContentContractError &&
+        error.message.includes("may bind only constructors"),
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("since accepts release versions and editions but rejects free-form labels", () => {
+  const temporary = mkdtempSync(
+    path.join(os.tmpdir(), "gti-reference-contract-"),
+  );
+  try {
+    cpSync(validProject, temporary, { recursive: true });
+    const page = path.join(
+      temporary,
+      "content/std/vector/vector/size/page.mdx",
+    );
+    writeFileSync(
+      page,
+      readFileSync(page, "utf8").replace("since: gti-20", "since: someday"),
+    );
+    assert.throws(
+      () =>
+        compileContentGraph({
+          projectRoot: temporary,
+          contentRoot: "content",
+          apiIndexPath: "api-index.json",
+        }),
+      (error: unknown) =>
+        error instanceof ContentContractError &&
+        error.message.includes("Expected a semantic version"),
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("tooling and command pages remain valid without compiler API bindings", () => {
+  const temporary = mkdtempSync(
+    path.join(os.tmpdir(), "gti-reference-contract-"),
+  );
+  try {
+    mkdirSync(path.join(temporary, "content/tooling/build"), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(temporary, "content/tooling/page.mdx"),
+      `---
+title: Tooling
+description: Tooling overview.
+kind: tooling
+api: []
+examples: []
+---
+`,
+    );
+    writeFileSync(
+      path.join(temporary, "content/tooling/build/page.mdx"),
+      `---
+title: Build
+description: Build command.
+kind: command
+api: []
+examples: []
+---
+`,
+    );
+    const pages = compileContentGraph({
+      projectRoot: temporary,
+      contentRoot: "content",
+    });
+    assert.deepEqual(
+      pages.map((page) => [page.route, page.metadata.kind]),
+      [
+        ["tooling", "tooling"],
+        ["tooling/build", "command"],
+      ],
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test("API-bound pages fail closed without a compiler index", () => {

@@ -1,0 +1,15 @@
+---
+title: std::array::array
+description: Default-initializes every element or copies an exact fixed-array value into the owner.
+kind: member
+since: 0.27.0
+api:
+  - std/array|constructor|std::array::array
+examples:
+  - construct-fixed-array
+---
+
+The default constructor value-initializes all `N` elements. The value
+constructor requires an exact `T[N]` argument. Current contextual braces let
+the compiler infer that fixed-array argument from its element count; they do
+not introduce C++ `std::initializer_list` selection rules.
