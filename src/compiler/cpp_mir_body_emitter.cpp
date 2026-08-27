@@ -5211,161 +5211,6 @@ copyStageForTemporary(const MirBody &body, const MirPlace &place) {
   return definition;
 }
 
-// Two places name the same storage record when their roots coincide;
-// projections narrow within that record and never change the identity.
-[[nodiscard]] bool sharesPlaceRoot(const MirPlace &left,
-                                   const MirPlace &right) {
-  return left.root == right.root && left.binding == right.binding &&
-         left.symbol == right.symbol && left.capture == right.capture &&
-         left.temporary == right.temporary && left.value == right.value &&
-         left.loan == right.loan;
-}
-
-// The unstaged sibling of the by-value copy stage: a bare Load copies a
-// binding-rooted class place into one SSA value whose only use is one
-// exact by-value argument of one call. HIR plans no CallInput stage for
-// this argument when the copied class carries borrowed state, so the
-// copy arrives as this direct Load. The value never materializes a
-// local — the consuming call spells the source place and C++
-// copy-constructs the parameter at the call boundary, preserving the
-// copy's owner dependency exactly like a fresh prvalue argument.
-// Deferring the copy from the Load to the call is exact only while the
-// binding provably still holds the loaded value, so admission requires
-// the Load and the call to share a block with nothing between them able
-// to write the binding, and no exclusive loan aliasing it in the body.
-[[nodiscard]] const MirInstruction *copyLoadCallArgument(const MirBody &body,
-                                                         MirValueId id) {
-  const MirValue *value = body.findValue(id);
-  const MirInstruction *definition =
-      value == nullptr ? nullptr : findInstruction(body, value->definition);
-  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
-      definition == nullptr || definition->kind != MirInstructionKind::Load ||
-      !definition->result || *definition->result != id ||
-      definition->receiver || definition->destination ||
-      definition->operands.size() != 1 ||
-      definition->operands.front().kind != MirOperandKind::Copy ||
-      definition->operands.front().place == 0 ||
-      !definition->localFailureSites.empty() ||
-      !definition->definedFailure.empty()) {
-    return nullptr;
-  }
-  const MirPlace *source = body.findPlace(definition->operands.front().place);
-  if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
-      source->type != value->info.type) {
-    return nullptr;
-  }
-  const std::vector<MirValueUse> uses = body.usesOf(id);
-  if (uses.size() != 1 ||
-      uses.front().kind != MirValueUseKind::InstructionOperand) {
-    return nullptr;
-  }
-  const MirInstruction *user = findInstruction(body, uses.front().instruction);
-  if (user == nullptr || user->kind != MirInstructionKind::Call ||
-      user->parameterTypes.size() != user->operands.size()) {
-    return nullptr;
-  }
-  std::size_t matching = user->operands.size();
-  for (std::size_t index = 0; index < user->operands.size(); ++index) {
-    const MirOperand &operand = user->operands[index];
-    if (operand.kind != MirOperandKind::Value || operand.value != id) {
-      continue;
-    }
-    if (matching != user->operands.size() || operand.type != value->info.type ||
-        user->parameterTypes[index] != value->info.type) {
-      return nullptr;
-    }
-    matching = index;
-  }
-  if (matching == user->operands.size()) {
-    return nullptr;
-  }
-  // Semantic storage keyed to the value would need the ordinary
-  // place/drop protocol instead of the inline argument spelling.
-  if (std::any_of(body.places.begin(), body.places.end(),
-                  [&](const MirPlace &place) {
-                    return place.root == MirPlaceRootKind::Value &&
-                           place.value == id;
-                  }) ||
-      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
-                  [&](const MirDropObligation &drop) {
-                    return drop.generatedValue == id;
-                  })) {
-    return nullptr;
-  }
-  // An exclusive loan could rewrite the source binding through an alias
-  // this block never names; only read aliases are compatible.
-  for (const MirLoan &loan : body.loans) {
-    if (loan.access != AccessMode::Mutable) {
-      continue;
-    }
-    const MirPlace *loanSource = body.findPlace(loan.source);
-    if (loanSource == nullptr || sharesPlaceRoot(*loanSource, *source)) {
-      return nullptr;
-    }
-  }
-  const MirBlock *block = nullptr;
-  for (const MirBlock &candidate : body.blocks) {
-    const bool holdsLoad = std::any_of(
-        candidate.instructions.begin(), candidate.instructions.end(),
-        [&](const MirInstruction &instruction) {
-          return instruction.id == definition->id;
-        });
-    if (holdsLoad) {
-      block = &candidate;
-      break;
-    }
-  }
-  if (block == nullptr) {
-    return nullptr;
-  }
-  std::optional<std::size_t> loadIndex;
-  std::optional<std::size_t> callIndex;
-  for (std::size_t index = 0; index < block->instructions.size(); ++index) {
-    if (block->instructions[index].id == definition->id) {
-      loadIndex = index;
-    }
-    if (block->instructions[index].id == user->id) {
-      callIndex = index;
-    }
-  }
-  if (!loadIndex || !callIndex || *callIndex <= *loadIndex) {
-    return nullptr;
-  }
-  const auto writesSourceRoot = [&](const MirOperand &operand) {
-    if (operand.kind != MirOperandKind::BorrowWrite &&
-        operand.kind != MirOperandKind::Move) {
-      return false;
-    }
-    const MirPlace *place =
-        operand.place == 0 ? nullptr : body.findPlace(operand.place);
-    return place == nullptr || sharesPlaceRoot(*place, *source);
-  };
-  const auto placeSharesSourceRoot = [&](MirPlaceId placeId) {
-    const MirPlace *place = placeId == 0 ? nullptr : body.findPlace(placeId);
-    return place == nullptr || sharesPlaceRoot(*place, *source);
-  };
-  for (std::size_t index = *loadIndex + 1; index < *callIndex; ++index) {
-    const MirInstruction &between = block->instructions[index];
-    if (between.tombstone) {
-      continue;
-    }
-    // A callable boundary may reach the binding through captured state.
-    if (between.lambdaTarget || between.callableInvocation ||
-        !between.callableArguments.empty() || between.bodyTarget) {
-      return nullptr;
-    }
-    if ((between.destination && placeSharesSourceRoot(*between.destination)) ||
-        (between.successResultDestination &&
-         placeSharesSourceRoot(*between.successResultDestination)) ||
-        (between.receiver && writesSourceRoot(*between.receiver)) ||
-        std::any_of(between.operands.begin(), between.operands.end(),
-                    writesSourceRoot)) {
-      return nullptr;
-    }
-  }
-  return definition;
-}
-
 [[nodiscard]] const MirInstruction *closureChainDefinition(const MirBody &body,
                                                            MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -16337,18 +16182,6 @@ public:
           // form publishes at the Load into its uninitialized out storage.
           continue;
         }
-        if (copyLoadCallArgument(facts.body, value.id) != nullptr) {
-          const CppMirTypeRepresentation *row =
-              representationTypeRow(representations, value.info.type);
-          if (row == nullptr || !row->copyConstructible) {
-            throw std::logic_error(
-                "verified MIR by-value argument copy lost its "
-                "copy-construction row");
-          }
-          // The consuming call spells the source place; C++ constructs
-          // the parameter's copy at the call boundary.
-          continue;
-        }
         if (failureForm && returnDefaultConstructionDefinition(
                                facts.body, value.id) != nullptr) {
           // The definition publishes directly into the transformed
@@ -20145,15 +19978,6 @@ private:
         return;
       }
     }
-    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
-        copyLoadCallArgument(facts.body, *instruction.result) == &instruction) {
-      // The by-value argument copy spells its source place at the
-      // consuming call; C++ performs the copy at the call boundary.
-      writeIndent();
-      output << "// load " << *instruction.result
-             << " stages a by-value argument copy\n";
-      return;
-    }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
         !nonRootRecordUses(facts.body, *instruction.result).empty()) {
       const MirInstruction *user = findInstruction(
@@ -20810,19 +20634,6 @@ private:
           if (source.moved) {
             output << ')';
           }
-          return;
-        }
-        if (const MirInstruction *load =
-                copyLoadCallArgument(facts.body, operand.value)) {
-          // The unstaged by-value copy spells its source place; C++
-          // copy-constructs the parameter at the call boundary.
-          const MirPlace *place =
-              facts.body.findPlace(load->operands.front().place);
-          if (place == nullptr) {
-            throw std::logic_error(
-                "verified MIR call lost its by-value copy source place");
-          }
-          emitStoragePlaceValue(facts, *place);
           return;
         }
       }
@@ -26904,11 +26715,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             returnCallDefinition(body, value.id) == definition)) ||
           (definition != nullptr && copyLoadResult() &&
            classCopyAssignmentFusion(program_, body, *definition)) ||
-          // A bare Load copy feeding one exact by-value argument spells
-          // its source place at the consuming call and never declares a
-          // local; C++ copy-constructs the parameter at the boundary.
-          (definition != nullptr && copyLoadResult() &&
-           copyLoadCallArgument(body, value.id) == definition) ||
           (definition != nullptr &&
            classFreshArrayAssignmentFusion(program_, body, *definition)) ||
           (definition != nullptr &&
