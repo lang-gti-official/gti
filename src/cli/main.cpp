@@ -1,6 +1,7 @@
 #include "gti/bindgen/bindgen.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/artifact.h"
+#include "gti/driver/bindgen_import.h"
 #include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
@@ -1887,6 +1888,50 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   return firstFailure;
 }
 
+// Generates manifest-declared bindgen imports into the plan's synthetic
+// package source roots before source loading. Notes (native preprocessor
+// output, importer skip reports) print on failure or under --verbose; the
+// generated file itself carries the full skip report.
+int generateProjectBindgenImports(const lang::driver::ProjectBuildPlan &plan,
+                                  const lang::SourceManager &sources,
+                                  bool verbose, std::ostream &statusStream) {
+  if (plan.bindgenImports().empty()) {
+    return exitCode(ExitStatus::Success);
+  }
+  const lang::driver::BindgenImportGenerationResult generation =
+      lang::driver::generateBindgenImports(
+          plan, lang::driver::discoverBindgenClang(), version);
+  for (const lang::driver::BindgenImportOutcome &outcome :
+       generation.outcomes) {
+    if (verbose || !outcome.succeeded()) {
+      for (const std::string &note : outcome.notes) {
+        std::cerr << note << '\n';
+      }
+    }
+    switch (outcome.status) {
+    case lang::driver::BindgenImportStatus::Generated:
+      statusStream << "Generated bindings " << outcome.alias << " ("
+                   << outcome.importedCount << " imported, "
+                   << outcome.skippedCount << " skipped) -> "
+                   << outcome.output.string() << '\n';
+      break;
+    case lang::driver::BindgenImportStatus::Reused:
+      if (verbose) {
+        statusStream << "Reused bindings " << outcome.alias << " -> "
+                     << outcome.output.string() << '\n';
+      }
+      break;
+    case lang::driver::BindgenImportStatus::PreprocessingFailure:
+    case lang::driver::BindgenImportStatus::GenerationFailure:
+    case lang::driver::BindgenImportStatus::PublicationFailure:
+      break;
+    }
+    reportDiagnostics(outcome.diagnostics, sources);
+  }
+  return generation.succeeded() ? exitCode(ExitStatus::Success)
+                                : exitCode(ExitStatus::Compilation);
+}
+
 int runProject(const ProjectOptions &options, const char *driver) {
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
@@ -1922,6 +1967,15 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
   if (options.verbose) {
     reportProjectPlan(plan, options.command);
+  }
+  {
+    std::ostream &bindgenStream =
+        options.command == ProjectCommand::Run ? std::cerr : std::cout;
+    const int bindgenStatus = generateProjectBindgenImports(
+        plan, resolution.sources, options.verbose, bindgenStream);
+    if (bindgenStatus != exitCode(ExitStatus::Success)) {
+      return bindgenStatus;
+    }
   }
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
@@ -2029,6 +2083,14 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     return exitCode(ExitStatus::Compilation);
   }
 
+  {
+    const int bindgenStatus = generateProjectBindgenImports(
+        resolution.plans.front(), resolution.sources, options.verbose,
+        std::cout);
+    if (bindgenStatus != exitCode(ExitStatus::Success)) {
+      return bindgenStatus;
+    }
+  }
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
   std::size_t passed = 0;

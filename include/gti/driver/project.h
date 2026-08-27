@@ -49,6 +49,23 @@ private:
   RuntimeProfile selectedRuntimeProfile;
 };
 
+// One resolved bindgen import carried by a build plan: every value the
+// generation step needs, fixed before frontend entry. `outputDirectory` is
+// the synthetic package source root whose `bindings.gti` the plan's source
+// graph resolves through the alias.
+struct BindgenImportPlan {
+  std::string packageName;
+  std::string alias;
+  std::filesystem::path header;
+  std::string declaredHeader;
+  std::string namespaceName;
+  std::vector<std::filesystem::path> includeDirectories;
+  std::vector<std::string> macroArguments;
+  std::filesystem::path outputDirectory;
+  std::filesystem::path manifestPath;
+  SourceSpan declaration;
+};
+
 class ProjectBuildPlan final {
 public:
   ProjectBuildPlan(std::filesystem::path manifestPath,
@@ -62,7 +79,8 @@ public:
                    bool keepCpp, NativeInputs nativeInputs,
                    std::vector<PackageSourceRoot> packageSourceRoots,
                    ConfigurationFlags configurationFlags,
-                   std::string projectModelIdentity);
+                   std::string projectModelIdentity,
+                   std::vector<BindgenImportPlan> bindgenImports = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -83,6 +101,7 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
+  [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
 
 private:
   std::filesystem::path projectManifestPath;
@@ -104,6 +123,7 @@ private:
   std::vector<PackageSourceRoot> resolvedPackageSources;
   ConfigurationFlags resolvedConfigurationFlags;
   std::string resolvedProjectModelIdentity;
+  std::vector<BindgenImportPlan> resolvedBindgenImports;
 };
 
 class ProjectMetadata final {
