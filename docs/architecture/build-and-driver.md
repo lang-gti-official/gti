@@ -262,6 +262,46 @@ the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
 
+### Bindgen Imports
+
+A package may declare `[bindgen.<alias>]` tables:
+
+```toml
+[bindgen.counter]
+header = "native/counter.h"       # required, package-contained
+namespace = "counter_ffi"         # optional GTI namespace
+include-dirs = ["native/include"] # optional, package-contained
+defines = ["COUNTER_STEP=2"]      # -D for the import's preprocessing only
+undefines = ["COUNTER_TRACE"]     # -U likewise
+```
+
+During `gti build`, `check`, `run`, and `test`, the driver generates GTI
+declarations from the header with the same pipeline as `gti bindgen`
+(Clang preprocessing with kept system includes and retained user macros,
+then the in-process importer) into
+`build/gti/bindgen/<package>/<alias>/bindings.gti`, published atomically
+through a staged sibling. The declaring package's sources reach them as
+`#include <alias/bindings>`: the generated directory is a synthetic package
+source root joined to the declaring package by an ordinary alias edge, so
+resolution, visibility, and cache identity follow the existing package
+mechanism and the alias shares the dependency-alias namespace (a collision
+is a manifest diagnostic). Every package in the resolved graph generates its
+own imports; aliases do not leak to dependents.
+
+Generation is deterministic and keyed: a `bindings.key` sidecar hashes the
+preprocessed translation unit (which captures every transitive header
+fact), the ordered options, the resolved target triple, and the GTI release
+identity, so an unchanged import is reused without re-running the importer
+while any header, option, target, or toolchain change regenerates. The
+generated unit then participates in the whole-program cache as ordinary
+loaded source, and the declared import joins the project model identity.
+Import `defines` scope to the import's preprocessing only; native
+compilation of declared C/C++ sources keeps its own `c-compile-args`
+authority. Clang selection follows `GTI_CLANG`, then `clang` — bindgen
+requires Clang specifically. Editor analysis of a package include whose
+bindings have never been generated reports an unresolved include until the
+first project build or check.
+
 Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. `CompilationRequest` carries the normalized initial
 configuration flag set alongside target and source-graph inputs. A manifest
