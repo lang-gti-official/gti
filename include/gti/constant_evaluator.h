@@ -4,11 +4,16 @@
 #include "gti/token.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace lang {
+
+struct SemanticType;
 
 struct ConstantInteger {
   bool negative = false;
@@ -35,9 +40,72 @@ struct ConstantCheckedIntegerResult {
                          const ConstantCheckedIntegerResult &) = default;
 };
 
+// Scoped enumerators retain their nominal owner.  The underlying integer is
+// still available for backend materialization, but two unrelated enum types
+// never become the same constant merely because their discriminants match.
+struct ConstantEnum {
+  std::size_t enumId = 0;
+  ConstantInteger value;
+
+  friend bool operator==(const ConstantEnum &, const ConstantEnum &) = default;
+};
+
+struct ConstantAggregate;
+
+// Recursive constants use an immutable shared node so ConstantValue remains a
+// regular, inexpensive value throughout semantics and the IR snapshots.
+struct ConstantAggregateValue {
+  std::shared_ptr<const ConstantAggregate> value;
+
+  friend bool operator==(const ConstantAggregateValue &left,
+                         const ConstantAggregateValue &right);
+};
+
 using ConstantValue =
     std::variant<ConstantInteger, BinaryFloat, CharacterLiteral, std::string,
-                 bool, NullConstant, ConstantCheckedIntegerResult>;
+                 bool, NullConstant, ConstantCheckedIntegerResult, ConstantEnum,
+                 ConstantAggregateValue>;
+
+enum class ConstantAggregateKind {
+  Array,
+  Object,
+};
+
+struct ConstantAggregateField {
+  std::size_t symbol = 0;
+  ConstantValue value;
+
+  friend bool operator==(const ConstantAggregateField &,
+                         const ConstantAggregateField &) = default;
+};
+
+struct ConstantAggregate {
+  ConstantAggregateKind kind = ConstantAggregateKind::Array;
+  // Zero for arrays; the exact semantic ClassId for structural objects.
+  std::size_t identity = 0;
+  // Retains the complete concrete type, including generic and value
+  // arguments. The declaration identity alone is not sufficient for generic
+  // aggregates.
+  std::shared_ptr<const SemanticType> exactType;
+  std::vector<ConstantValue> elements;
+  std::vector<ConstantAggregateField> fields;
+
+  friend bool operator==(const ConstantAggregate &, const ConstantAggregate &);
+};
+
+inline bool operator==(const ConstantAggregateValue &left,
+                       const ConstantAggregateValue &right) {
+  if (left.value == right.value) {
+    return true;
+  }
+  return left.value != nullptr && right.value != nullptr &&
+         *left.value == *right.value;
+}
+
+[[nodiscard]] inline ConstantAggregateValue
+makeConstantAggregate(ConstantAggregate value) {
+  return {std::make_shared<const ConstantAggregate>(std::move(value))};
+}
 
 enum class ConstantEvaluationFailure {
   None,

@@ -392,7 +392,8 @@ access-specifier       = ( "public" | "private" ) ":" ;
    origins remain unsupported. *)
 
 constructor-declaration
-                       = IDENTIFIER [ generic-parameter-clause ] parameter-clause
+                       = [ "constexpr" ] IDENTIFIER
+                         [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block
                        | IDENTIFIER "(" ")" default-member-specifier
@@ -670,18 +671,21 @@ static-variable-declaration
 (* `constexpr` bindings are immutable and initialized; class and struct fields
    must also be static. The compiler-owned evaluator supports fixed-width
    integers, IEEE-754 binary32 float, IEEE-754 binary64 double, bool, char,
-   string_view, nullptr_t, scalar expressions, checked integer operations,
-   binary32/binary64 arithmetic and
-   comparisons, and explicit numeric conversions. Bounded constexpr free
-   functions and static methods add scalar locals, mutation, structured control
-   flow, recursion, and calls to available constexpr definitions. Evaluation
-   has one 4096-step budget and a 64-call-depth limit.
+   string_view, nullptr_t, exact scoped enums, concrete fixed arrays,
+   structural class/struct values, checked integer operations,
+   binary32/binary64 arithmetic and comparisons, read-only aggregate
+   observation, and explicit numeric conversions. Bounded constexpr free
+   functions, methods, and ordinary constructors admit concrete non-pack
+   generic instances, automatic supported values, structured control flow,
+   recursion, and calls to available constexpr definitions. Evaluation has one
+   4096-step budget and a 64-call-depth limit.
 
    `if constexpr` requires a computed bool and analyzes and lowers only its
-   selected branch. Generic or instance-function execution, class values,
-   allocation, references, arrays, and runtime, intrinsic, or C calls remain
-   outside the evaluator. Native C++ constant evaluation is never the GTI
-   semantic authority. *)
+   selected branch. Generic packs, operator or polymorphic calls, mutable
+   receivers, references, allocation, payload enums, unions, inherited or
+   cleanup-owning aggregates, and runtime, intrinsic, or C calls remain outside
+   the evaluator. Native C++ constant evaluation is never the GTI semantic
+   authority. *)
 
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;

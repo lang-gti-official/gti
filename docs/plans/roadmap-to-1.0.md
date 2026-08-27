@@ -163,7 +163,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants including passive native records, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar and structural-aggregate constexpr bindings/functions/constructors, target-owned `sizeof(type)`/`alignof(type)` constants including passive native records, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target/configuration conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -616,18 +616,19 @@ or a second template metaprogramming language merely to describe them.
 
 ### Bounded compile-time programming
 
-- Scalar bindings, `static constexpr` class fields, non-generic free functions
-  and static methods, structured control flow, recursion, and frontend-selected
-  `if constexpr` are implemented through one checked, resource-bounded GTI
-  evaluator. Typed results remain semantic/HIR facts and supply concrete array
-  extents and value-generic arguments.
-- Extend constexpr execution to concrete generic instances and aggregate
-  values only through that same evaluator; do not delegate selection to native
-  C++ constant evaluation.
+- Scalar bindings, `static constexpr` class fields, concrete non-pack generic
+  free functions and methods, exact scoped enums, fixed arrays, structural
+  class/struct values, ordinary constexpr constructors, structured control
+  flow, recursion, and frontend-selected `if constexpr` are implemented through
+  one checked, resource-bounded GTI evaluator. Typed results retain canonical
+  declaration/type/value identity and supply concrete array extents and
+  value-generic arguments.
+- Backend materialization consumes the exact frontend-proven value; it does not
+  delegate selection or evaluation to native C++ constant evaluation.
 - Restrict constant evaluation to deterministic, side-effect-free operations
   with explicit resource limits and useful stack diagnostics.
-- Extend enum values, value arguments, array extents, and library constants
-  through the same evaluator.
+- Exact scoped-enum values, value arguments, array extents, and the initial
+  `std::array<T, N>`/`std::gcd<T>` library clients use the same evaluator.
 - Keep default generic arguments client-gated under `L-CONST-01` until canonical
   type/value identity is stable and a concrete library client justifies them.
   Do not widen exact specialization into partial or constraint-selected
@@ -654,7 +655,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 | `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain later breadth under `R-BORROWED-MERGES` in the restriction ledger |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
-| `constexpr` and `if constexpr` | scalar bindings, non-generic free/static functions, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; generic and aggregate evaluation remain staged, and native C++ evaluation is never the language authority |
+| `constexpr` and `if constexpr` | scalar and structural-aggregate bindings, concrete non-pack generic functions/methods, ordinary constructors, exact scoped enums/fixed arrays, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; references, allocation, aggregate mutation, packs, operators, polymorphism, and payload/union/cleanup-owning values remain staged, and native C++ evaluation is never the language authority |
 | `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
 | documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion |
 

@@ -32,7 +32,8 @@ namespace {
 [[nodiscard]] bool
 materializableProgramConstant(const std::optional<ConstantValue> &constant) {
   return constant &&
-         !std::holds_alternative<ConstantCheckedIntegerResult>(*constant);
+         !std::holds_alternative<ConstantCheckedIntegerResult>(*constant) &&
+         !std::holds_alternative<ConstantAggregateValue>(*constant);
 }
 
 } // namespace

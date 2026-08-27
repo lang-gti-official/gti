@@ -2428,6 +2428,151 @@ def test_defaulted_lifecycle_tooling(executable, root):
         session.close()
 
 
+def test_constexpr_aggregate_tooling(executable, root):
+    source = (
+        "struct Point {\n"
+        "  int32_t coordinate;\n"
+        "  constexpr Point(int32_t initial) : coordinate(initial) {}\n"
+        "  constexpr int32_t value() { return this.coordinate; }\n"
+        "};\n"
+        "constexpr Point origin = Point(7);\n"
+        "static_assert(origin.value() == 7);\n"
+        "int main() { return origin.value() - 7; }\n"
+    )
+    path = root / "constexpr-aggregate-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"][
+            "semanticTokensProvider"
+        ]["legend"]["tokenTypes"]
+        method_token = token_types.index("method")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        constructor = source.index("Point", source.index("constexpr Point("))
+        construction = source.index("Point(7)")
+        method = source.index("value()", source.index("constexpr int32_t"))
+
+        def request(request_id, method_name, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method_name,
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        declared_hover = request(2, "textDocument/hover", constructor + 1)
+        assert "constexpr Point(int32_t initial)" in declared_hover["contents"][
+            "value"
+        ], declared_hover
+        selected_hover = request(3, "textDocument/hover", construction + 1)
+        assert "constexpr Point(int32_t initial)" in selected_hover["contents"][
+            "value"
+        ], selected_hover
+        method_hover = request(4, "textDocument/hover", method + 1)
+        assert "constexpr int32_t Point::value()" in method_hover["contents"][
+            "value"
+        ], method_hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 5)[
+                "result"
+            ]["data"]
+        )
+        for offset in (constructor, construction):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])][
+                "type"
+            ] == method_token
+
+        invalid = source.replace("constexpr Point(", "Point(", 1)
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2057"
+            and "not an available constexpr constructor" in item["message"]
+        )
+        assert diagnostic["data"]["phase"] == "semantics"
+        assert diagnostic["data"]["hints"]
+        assert diagnostic["relatedInformation"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and not message["params"]["diagnostics"]
+        )
+    finally:
+        session.close()
+
+
 def test_semantic_definition(executable, root):
     dependency_source = (
         "namespace math {\n"
@@ -7814,8 +7959,19 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit(
+            "usage: lsp_smoke_test.py /path/to/gti_lsp "
+            "[constexpr-aggregate]"
+        )
+
+    if len(sys.argv) == 3:
+        if sys.argv[2] != "constexpr-aggregate":
+            raise SystemExit(f"unknown focused LSP test: {sys.argv[2]}")
+        with tempfile.TemporaryDirectory(prefix="gti-lsp-constexpr-") as directory:
+            test_constexpr_aggregate_tooling(sys.argv[1], pathlib.Path(directory))
+        print("GTI constexpr aggregate LSP test passed")
+        return
 
     expected_version = (
         pathlib.Path(__file__).resolve().parent.parent / "VERSION"
@@ -7856,6 +8012,7 @@ def main():
     test_constructor_local_generic_tooling(sys.argv[1], root)
     test_copy_constructible_carrier_provenance_tooling(sys.argv[1], root)
     test_defaulted_lifecycle_tooling(sys.argv[1], root)
+    test_constexpr_aggregate_tooling(sys.argv[1], root)
     test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_exact_qualified_specialization_tooling(sys.argv[1], root)

@@ -1,0 +1,69 @@
+#include <std/array>
+#include <std/numeric>
+
+enum class mode : uint8_t {
+  fast = 3,
+  safe = 4,
+};
+
+struct point {
+  int32_t x;
+  int32_t y;
+
+  constexpr point(int32_t initial_x, int32_t initial_y)
+      : x(initial_x), y(initial_y) {}
+
+  constexpr int32_t sum() {
+    return this.x + this.y;
+  }
+};
+
+struct constant_box<T> {
+  T value;
+
+  constexpr constant_box(T initial) : value(initial) {}
+
+  constexpr T get() {
+    return this.value;
+  }
+};
+
+constexpr int32_t raw_values[3] = {2, 4, 6};
+constexpr std::array<int32_t, 3> values =
+    std::array<int32_t, 3>({2, 4, 6});
+constexpr std::array<std::array<int32_t, 3>, 2> matrix =
+    std::array<std::array<int32_t, 3>, 2>({values, values});
+constexpr point origin = point(7, 5);
+constexpr constant_box<int32_t> signed_box = constant_box<int32_t>(7);
+constexpr constant_box<uint64_t> wide_box =
+    constant_box<uint64_t>(uint64_t(9));
+constexpr mode selected_mode = mode::fast;
+constexpr int32_t divisor = std::gcd<int32_t>(48, 18);
+
+static_assert(raw_values[1] == 4);
+static_assert(values.size() == 3);
+static_assert(!values.empty());
+static_assert(matrix.size() == 2);
+static_assert(origin.sum() == 12);
+static_assert(signed_box.get() == 7);
+static_assert(wide_box.get() == uint64_t(9));
+static_assert(selected_mode == mode::fast);
+static_assert(divisor == 6);
+
+int main() {
+  constexpr point local_point = point(3, 4);
+  mut std::array<int32_t, 3> runtime_values =
+      std::array<int32_t, 3>({2, 4, 6});
+  if (runtime_values.size() != values.size()) {
+    return 1;
+  }
+  if (std::gcd<int32_t>(48, 18) != divisor) {
+    return 2;
+  }
+  return local_point.sum() == 7 && matrix.size() == 2 &&
+                 origin.sum() == 12 && signed_box.get() == 7 &&
+                 wide_box.get() == uint64_t(9) &&
+                 selected_mode == mode::fast
+             ? 0
+             : 3;
+}

@@ -17,6 +17,9 @@ programConstantLiteral(const ConstantValue &constant) {
   if (const auto *integer = std::get_if<ConstantInteger>(&constant)) {
     return Literal{integer->magnitude};
   }
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&constant)) {
+    return Literal{enumerator->value.magnitude};
+  }
   if (const auto *floating = std::get_if<BinaryFloat>(&constant)) {
     return Literal{*floating};
   }
@@ -2338,10 +2341,15 @@ private:
     materializedInfo.category = ValueCategory::Value;
     materializedInfo.access = AccessMode::ReadOnly;
     const auto *integer = std::get_if<ConstantInteger>(&*value.constant);
+    const auto *enumerator = std::get_if<ConstantEnum>(&*value.constant);
     const bool enumeration = value.info.type.kind == SemanticType::Enum;
     const bool negativeInteger = integer != nullptr && integer->negative;
     if (enumeration) {
-      if (integer == nullptr || value.info.type.enumId == 0) {
+      const ConstantInteger *enumValue =
+          enumerator == nullptr ? integer : &enumerator->value;
+      if (enumValue == nullptr || value.info.type.enumId == 0 ||
+          (enumerator != nullptr &&
+           enumerator->enumId != value.info.type.enumId)) {
         valid = false;
         return;
       }
@@ -2354,8 +2362,8 @@ private:
            .operation = MirOperation::EnumConstant,
            .programConstantSubstitution = true,
            .enumOwner = value.info.type.enumId,
-           .enumValue = EnumConstant{.negative = integer->negative,
-                                     .magnitude = integer->magnitude},
+           .enumValue = EnumConstant{.negative = enumValue->negative,
+                                     .magnitude = enumValue->magnitude},
            .info = materializedInfo});
       emittedValues.insert(value.id);
       return;

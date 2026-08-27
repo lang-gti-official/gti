@@ -720,6 +720,7 @@ private:
                                                           ->kind}
                     : std::nullopt,
             .hasRequiresClause = declaration->requiresClause().has_value(),
+            .constexprConstructor = info->constexprConstructor,
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration = stmtAs<DestructorDecl>(&statement)) {

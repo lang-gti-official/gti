@@ -428,6 +428,9 @@ programConstantLiteral(const ConstantValue &constant) {
   if (const auto *integer = std::get_if<ConstantInteger>(&constant)) {
     return Literal{integer->magnitude};
   }
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&constant)) {
+    return Literal{enumerator->value.magnitude};
+  }
   if (const auto *floating = std::get_if<BinaryFloat>(&constant)) {
     return Literal{*floating};
   }
@@ -446,8 +449,10 @@ programConstantLiteral(const ConstantValue &constant) {
   return std::nullopt;
 }
 
-[[nodiscard]] bool programConstantMatchesType(const ConstantValue &constant,
-                                              const SemanticType &type) {
+[[nodiscard]] bool
+programConstantMatchesType(const ConstantValue &constant,
+                           const SemanticType &type,
+                           const MirProgram *program = nullptr) {
   if (const auto *integer = std::get_if<ConstantInteger>(&constant)) {
     if (type.kind == SemanticType::Enum) {
       return type.enumId != 0;
@@ -470,6 +475,55 @@ programConstantLiteral(const ConstantValue &constant) {
   }
   if (std::holds_alternative<NullConstant>(constant)) {
     return type == SemanticType::NullPtr;
+  }
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&constant)) {
+    return type.kind == SemanticType::Enum && type.enumId != 0 &&
+           type.enumId == enumerator->enumId;
+  }
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&constant)) {
+    if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
+        *aggregate->value->exactType != type) {
+      return false;
+    }
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+        type.arrayLengthParameterId == 0 &&
+        aggregate->value->kind == ConstantAggregateKind::Array &&
+        aggregate->value->elements.size() == type.arrayLength) {
+      return std::all_of(aggregate->value->elements.begin(),
+                         aggregate->value->elements.end(),
+                         [&](const ConstantValue &element) {
+                           return programConstantMatchesType(
+                               element, type.arguments.front(), program);
+                         });
+    }
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        aggregate->value->kind != ConstantAggregateKind::Object ||
+        aggregate->value->identity != type.classId) {
+      return false;
+    }
+    if (program == nullptr) {
+      return true;
+    }
+    const auto instance = std::find_if(
+        program->classInstances().begin(), program->classInstances().end(),
+        [&](const MirClassInstance &candidate) {
+          return candidate.declaration == type.classId &&
+                 candidate.type == type;
+        });
+    if (instance == program->classInstances().end() ||
+        instance->declaredFields.size() != aggregate->value->fields.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < instance->declaredFields.size();
+         ++index) {
+      const MirClassFieldInfo &expected = instance->declaredFields[index];
+      const ConstantAggregateField &field = aggregate->value->fields[index];
+      if (field.symbol != expected.symbol ||
+          !programConstantMatchesType(field.value, expected.type, program)) {
+        return false;
+      }
+    }
+    return true;
   }
   return false;
 }
@@ -7875,17 +7929,22 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             *instruction.result);
         const ConstantValue &constant = *expected->second;
         const auto *integer = std::get_if<ConstantInteger>(&constant);
+        const auto *enumerator = std::get_if<ConstantEnum>(&constant);
         const std::optional<Literal> literal = programConstantLiteral(constant);
         bool exact = false;
         if (instruction.info.type.kind == SemanticType::Enum) {
-          exact = integer != nullptr &&
+          const ConstantInteger *enumValue =
+              enumerator == nullptr ? integer : &enumerator->value;
+          exact = enumValue != nullptr &&
+                  (enumerator == nullptr ||
+                   enumerator->enumId == instruction.info.type.enumId) &&
                   instruction.operation == MirOperation::EnumConstant &&
                   instruction.operands.empty() && !instruction.literal &&
                   instruction.enumOwner == instruction.info.type.enumId &&
                   instruction.enumValue ==
                       std::optional<EnumConstant>{
-                          EnumConstant{.negative = integer->negative,
-                                       .magnitude = integer->magnitude}};
+                          EnumConstant{.negative = enumValue->negative,
+                                       .magnitude = enumValue->magnitude}};
         } else if (integer != nullptr && integer->negative) {
           const MirValueId magnitudeValue =
               instruction.operands.size() == 1 &&
@@ -13751,11 +13810,11 @@ verifyMirProgramInitialization(const MirProgram &program) {
           step.dataInitialization ==
               MirProgramDataInitializationKind::ImplicitZero &&
           !step.dataConstant;
-      const bool constant =
-          step.dataInitialization ==
-              MirProgramDataInitializationKind::Constant &&
-          step.dataConstant && storage != nullptr &&
-          programConstantMatchesType(*step.dataConstant, storage->type);
+      const bool constant = step.dataInitialization ==
+                                MirProgramDataInitializationKind::Constant &&
+                            step.dataConstant && storage != nullptr &&
+                            programConstantMatchesType(*step.dataConstant,
+                                                       storage->type, &program);
       if ((!implicitZero && !constant) || step.statement != 0 ||
           step.initializer != 0 || step.fullExpression != 0 ||
           !commonInitialize || *initialize != canonicalInitialize ||

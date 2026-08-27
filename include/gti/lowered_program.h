@@ -292,6 +292,7 @@ struct LoweredConstructorDeclaration {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::optional<SpecialMemberSpecifierKind> specifier;
   bool hasRequiresClause = false;
+  bool constexprConstructor = false;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredConstructorDeclaration &,

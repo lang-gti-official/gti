@@ -552,6 +552,25 @@ requireCapture(
 );
 requireCapture(defaultedDestructorRow, "default", "keyword.modifier");
 
+const constexprConstructorRow = fixtureLines.findIndex((line) =>
+  line.includes("constexpr ConstexprPointHighlight("),
+);
+requireCapture(
+  constexprConstructorRow,
+  "constexpr",
+  "keyword.modifier",
+);
+requireCapture(
+  constexprConstructorRow,
+  "ConstexprPointHighlight",
+  "constructor",
+);
+requireCapture(
+  constexprConstructorRow,
+  "initial",
+  "variable.parameter",
+);
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

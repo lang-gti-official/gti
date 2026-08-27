@@ -888,7 +888,8 @@ private:
     return parameters;
   }
 
-  StmtPtr constructorDeclaration(Token name) {
+  StmtPtr constructorDeclaration(Token name,
+                                 std::optional<Token> constexprKeyword = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -955,7 +956,8 @@ private:
       consume(TokenKind::SEMICOLON,
               "Expect ';' after special constructor declaration.");
       return std::make_shared<ConstructorDecl>(
-          std::move(name), std::move(genericParameters), std::move(parameters),
+          std::move(constexprKeyword), std::move(name),
+          std::move(genericParameters), std::move(parameters),
           std::move(requiresClause), std::move(initializers),
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
@@ -966,7 +968,8 @@ private:
     consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_shared<ConstructorDecl>(
-        std::move(name), std::move(genericParameters), std::move(parameters),
+        std::move(constexprKeyword), std::move(name),
+        std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
         std::move(body));
   }
@@ -1466,6 +1469,10 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
+      }
+      if (check(TokenKind::CONSTEXPR) && isConstructorStart(1)) {
+        Token constexprKeyword = advance();
+        return constructorDeclaration(advance(), std::move(constexprKeyword));
       }
       if (isConstructorStart()) {
         return constructorDeclaration(advance());
@@ -2647,18 +2654,18 @@ private:
     return offset;
   }
 
-  [[nodiscard]] bool isConstructorStart() const {
-    if (!currentClassName || !check(TokenKind::IDENTIFIER) ||
-        peek().lexeme != currentClassName->lexeme) {
+  [[nodiscard]] bool isConstructorStart(std::size_t start = 0) const {
+    if (!currentClassName || peekAt(start).kind != TokenKind::IDENTIFIER ||
+        peekAt(start).lexeme != currentClassName->lexeme) {
       return false;
     }
-    if (peekAt(1).kind == TokenKind::LEFT_PAREN) {
+    if (peekAt(start + 1).kind == TokenKind::LEFT_PAREN) {
       return true;
     }
-    if (peekAt(1).kind != TokenKind::LESS) {
+    if (peekAt(start + 1).kind != TokenKind::LESS) {
       return false;
     }
-    std::size_t offset = 2;
+    std::size_t offset = start + 2;
     std::size_t depth = 1;
     while (peekAt(offset).kind != TokenKind::END_OF_FILE) {
       if (peekAt(offset).kind == TokenKind::LESS) {

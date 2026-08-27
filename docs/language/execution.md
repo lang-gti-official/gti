@@ -491,6 +491,17 @@ the order and lifetime boundaries in Section 4.2. Static and virtual dispatch
 remain decisions of the frontend and HIR/MIR; the chosen backend cannot repeat
 overload resolution or change the call sequence.
 
+For a supported `constexpr` structural value, the frontend executes the same
+ordered constructor initializers and source body that an ordinary runtime call
+uses. Every field is initialized before the body, and read-only constexpr
+methods observe that completed value. Concrete generic substitutions and
+scoped-enum identities are fixed by semantics before evaluation. A successful
+compile-time result may be materialized directly from its exact fields, but a
+backend must not re-run the constructor, invoke host C++ constant evaluation,
+or alter checked arithmetic to discover the value. A runtime invocation of the
+same constructor or method continues through ordinary HIR/MIR execution, which
+provides the required constexpr/runtime parity.
+
 A declared cleanup body is non-throwing and cannot be called directly. Its
 generated active state ensures that cleanup obligations execute exactly once
 across movement.

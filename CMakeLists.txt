@@ -1156,6 +1156,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/47-binary64.gti"
     )
     add_test(
+      NAME constexpr_aggregate_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_aggregate_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/constexpr_aggregate_positive.gti"
+    )
+    add_test(
       NAME sum_types_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/sum_types_runtime_test.py"

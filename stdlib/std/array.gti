@@ -5,15 +5,15 @@ class array<T, uint64_t N> {
   mut T values[N];
 
 public:
-  array() : values({}) {}
+  constexpr array() : values({}) {}
 
-  array(T initial[N]) : values(initial) {}
+  constexpr array(T initial[N]) : values(initial) {}
 
-  size_t size() {
+  constexpr size_t size() {
     return N;
   }
 
-  bool empty() {
+  constexpr bool empty() {
     return N == 0;
   }
 

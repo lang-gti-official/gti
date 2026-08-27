@@ -310,6 +310,41 @@ private:
             } else {
               output << '-';
             }
+          } else if constexpr (std::is_same_v<Value, ConstantEnum>) {
+            output << "enum:" << constantValue.enumId << ':'
+                   << constantValue.value.negative << ':'
+                   << constantValue.value.magnitude;
+          } else if constexpr (std::is_same_v<Value, ConstantAggregateValue>) {
+            if (constantValue.value == nullptr) {
+              output << "aggregate:null";
+              return;
+            }
+            output << "aggregate:"
+                   << static_cast<unsigned int>(constantValue.value->kind)
+                   << ':' << constantValue.value->identity << ':';
+            if (constantValue.value->exactType) {
+              type(*constantValue.value->exactType);
+            } else {
+              output << "type:null";
+            }
+            output << ":[";
+            for (std::size_t index = 0;
+                 index < constantValue.value->elements.size(); ++index) {
+              if (index != 0) {
+                output << ',';
+              }
+              constant(constantValue.value->elements[index]);
+            }
+            output << "]:{";
+            for (std::size_t index = 0;
+                 index < constantValue.value->fields.size(); ++index) {
+              if (index != 0) {
+                output << ',';
+              }
+              output << constantValue.value->fields[index].symbol << '=';
+              constant(constantValue.value->fields[index].value);
+            }
+            output << '}';
           } else {
             literal(Literal{constantValue});
           }
