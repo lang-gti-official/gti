@@ -1456,11 +1456,20 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
         if (instruction.kind == MirInstructionKind::Initialize) {
           const MirPlace *destinationPlace =
               body.findPlace(*instruction.destination);
+          // Lexical-drop bindings always spell their scope end as a Drop, so
+          // an Initialize must only ever see storage the flow model already
+          // proved uninitialized. Trivially dropped bindings deliberately
+          // leave scope without any MIR instruction: a block-scoped local
+          // that was moved (or conditionally moved) still carries Moved
+          // state across a loop back edge even though its lifetime ended at
+          // the closing brace. Their re-initialization at the declaration is
+          // the implicit scope end, so it may begin from any prior state.
           if (tracksOwnershipRoot(trackedRoots, *destination) &&
               destinationPlace != nullptr &&
               destinationPlace->root == MirPlaceRootKind::Binding &&
               destinationPlace->projections.empty() &&
               !destinationPlace->initiallyAvailable &&
+              destinationPlace->traits.drop == DropKind::Lexical &&
               !ownershipStateAt(state, *destination)
                    .definitely(OwnershipState::Uninitialized)) {
             return failure(body, owner,
@@ -1738,10 +1747,7 @@ successors(const MirTerminator &terminator) {
                                     0) -> std::optional<MirVerificationResult> {
       const MirCanonicalPlace place =
           canonicalPlace(body, placeId, bindingLoans, active);
-      const auto opaqueBorrowCarrierMutation = [&](const MirLoan &loan) {
-        if (!write) {
-          return false;
-        }
+      const auto opaqueBorrowCarrierAccess = [&](const MirLoan &loan) {
         const MirPlace *accessed = body.findPlace(placeId);
         const bool storedEntryCarrier =
             loan.kind == MirLoanKind::Stored && loan.entry &&
@@ -1755,7 +1761,7 @@ successors(const MirTerminator &terminator) {
             std::find(loan.carriers.begin(), loan.carriers.end(),
                       place.binding) != loan.carriers.end();
         const MirPlace *returnSource =
-            loan.kind == MirLoanKind::Return && loan.escapes
+            write && loan.kind == MirLoanKind::Return && loan.escapes
                 ? body.findPlace(loan.source)
                 : nullptr;
         const bool returnedCarrier =
@@ -1768,10 +1774,14 @@ successors(const MirTerminator &terminator) {
         // not the by-value carrier object itself.  The same is true after an
         // exact stored-value return transfer: the escaping loan protects the
         // caller-owned referent while the moved-from parameter shell still
-        // needs scope-end destruction. Mutating/moving the whole carrier is
-        // independent of that referent. A projection that still carries
-        // borrowed state receives no exception, so this cannot reseat or
-        // write through the stored reference.
+        // needs scope-end destruction. Accessing the whole carrier —
+        // reading it as a receiver, mutating it, or moving it — is
+        // independent of that referent, so the stored-entry exception
+        // covers both access modes; a read-receiver method on a by-value
+        // mut cursor parameter (`first != last`) is the canonical read
+        // case. A projection that still carries borrowed state receives no
+        // exception, so this cannot reseat, write through, or duplicate
+        // the stored reference.
         return returnedCarrier ||
                (canonicalStoredEntryCarrier && place.projections.empty()) ||
                (storedEntryCarrier &&
@@ -1814,7 +1824,7 @@ successors(const MirTerminator &terminator) {
         }
         if (write &&
             body.loans[place.throughLoan - 1].access != AccessMode::Mutable &&
-            !opaqueBorrowCarrierMutation(body.loans[place.throughLoan - 1])) {
+            !opaqueBorrowCarrierAccess(body.loans[place.throughLoan - 1])) {
           return failure(body, owner,
                          "read-only loan " + std::to_string(place.throughLoan) +
                              " is used for a write in " + context,
@@ -1828,7 +1838,7 @@ successors(const MirTerminator &terminator) {
             loan.id == place.throughLoan ||
             (place.throughLoan != 0 &&
              isLoanAncestor(body, loan.id, place.throughLoan)) ||
-            opaqueBorrowCarrierMutation(loan)) {
+            opaqueBorrowCarrierAccess(loan)) {
           continue;
         }
         const MirCanonicalPlace protectedPlace =
@@ -4069,6 +4079,20 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();
+  // A checked element write reinitializing an always-available trivially
+  // destroyed place is equally state-preserving: the write helper leaves the
+  // destination untouched when it fails, and the ownership state does not
+  // transition (Available before and after), so the failure edge has nothing
+  // to restore. Without this admission a dynamic fixed-array element write
+  // keeps its failure sites but never receives the Invoke edge that consumes
+  // the checked helper's status, silently dropping the defined
+  // index_out_of_bounds failure that the matching read raises.
+  const bool statePreservingReinitialize =
+      trivialCommitDestination && instruction.ownership &&
+      instruction.ownership->kind == OwnershipEventKind::Reinitialize &&
+      instruction.ownership->before == OwnershipStateSet::Available &&
+      instruction.ownership->after == OwnershipStateSet::Available &&
+      instruction.ownership->reachable;
   const bool borrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
@@ -4095,7 +4119,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       (instruction.destination && !trivialCommitDestination) ||
       (instruction.loan && !borrowedCallResult &&
        !transferredBorrowedCallResult) ||
-      !statePreservingOwnership ||
+      (!statePreservingOwnership && !statePreservingReinitialize) ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }
@@ -7258,8 +7282,62 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        // A reference parameter's entry loan is seeded at the body entry and
+        // has no producing instruction, so it cannot become the escaping
+        // Return loan by reclassification: nothing would ever name the address
+        // it publishes. A body that returns its read-only reference parameter
+        // forwards that entry loan's caller-owned dependency into a fresh
+        // parentless Return loan and retires the entry loan at this exact
+        // instruction boundary, exactly as the by-value carrier and
+        // nested-call transfers above do.
+        const bool parameterEntryReturnTransfer = [&] {
+          if (produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              source.type != instruction.info.type) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr || retained->kind != MirLoanKind::Parameter ||
+              !retained->entry || retained->escapes || retained->parent != 0 ||
+              retained->producedBy != 0 || retained->carriers.empty() ||
+              retained->source != produced.source ||
+              (retained->access != produced.access &&
+               retained->access != AccessMode::Mutable)) {
+            return false;
+          }
+          // The entry loan names the parameter's own pointer carrier, so the
+          // published referent is exactly that carrier's referent type.
+          const MirPlace *carrier = body.findPlace(retained->source);
+          if (carrier == nullptr ||
+              carrier->root != MirPlaceRootKind::Binding ||
+              !carrier->projections.empty() ||
+              carrier->type.kind != SemanticType::Reference ||
+              carrier->type.arguments.size() != 1 ||
+              carrier->type.arguments.front() != instruction.info.type ||
+              std::find(retained->carriers.begin(), retained->carriers.end(),
+                        carrier->binding) == retained->carriers.end()) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
-             !storedCarrierReturnTransfer && !callResultReturnTransfer) ||
+             !storedCarrierReturnTransfer && !callResultReturnTransfer &&
+             !parameterEntryReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,

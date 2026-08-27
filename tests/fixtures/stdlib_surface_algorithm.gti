@@ -113,5 +113,37 @@ int main() {
   if (algorithm_sum != 15) {
     return 7;
   }
+
+  mut std::vector<int32_t> source = std::vector<int32_t>({5, 1, 4, 2});
+  mut std::vector<int32_t> destination =
+      std::vector<int32_t>(std::size_t(4));
+  std::copy(source.begin(), source.end(), destination.begin_mut());
+  if (destination[std::size_t(0)] != 5 || destination[std::size_t(3)] != 2) {
+    return 8;
+  }
+
+  int32_t nine = 9;
+  std::fill(destination, nine);
+  if (destination[std::size_t(0)] != 9 || destination[std::size_t(3)] != 9) {
+    return 9;
+  }
+
+  mut std::vector<int32_t> doubled = std::vector<int32_t>(std::size_t(4));
+  std::transform(source, doubled,
+                 [](int32_t& value) -> int32_t { return value * 2; });
+  if (doubled[std::size_t(0)] != 10 || doubled[std::size_t(2)] != 8) {
+    return 10;
+  }
+
+  std::sort(source);
+  if (source[std::size_t(0)] != 1 || source[std::size_t(1)] != 2 ||
+      source[std::size_t(2)] != 4 || source[std::size_t(3)] != 5) {
+    return 11;
+  }
+
+  std::reverse(source);
+  if (source[std::size_t(0)] != 5 || source[std::size_t(3)] != 1) {
+    return 12;
+  }
   return 0;
 }

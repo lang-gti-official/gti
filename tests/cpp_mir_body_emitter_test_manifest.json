@@ -126,6 +126,10 @@
       "suite": "text"
     },
     {
+      "name": "testMixedCaptureDeducedCallableTemplateEmission",
+      "suite": "text"
+    },
+    {
       "name": "testForwardedConcretePackLayout",
       "suite": "text"
     },

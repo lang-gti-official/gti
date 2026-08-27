@@ -2618,7 +2618,29 @@ public:
       }
     }
 
+    // A variant alternative embeds its class payloads by value, so an enum
+    // with class payload fields must follow every class definition. Field
+    // embedding of such enums inside classes is semantically rejected until
+    // layout scheduling interleaves enums with the class dependency walk.
+    std::vector<const LoweredDeclaration *> classPayloadEnumerations;
     for (const LoweredDeclaration *enumeration : enumerations) {
+      const auto *declaration =
+          std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
+      const bool classPayload =
+          declaration != nullptr && declaration->payload &&
+          std::any_of(
+              declaration->enumerators.begin(), declaration->enumerators.end(),
+              [](const LoweredEnumerator &enumerator) {
+                return std::any_of(enumerator.payloadTypes.begin(),
+                                   enumerator.payloadTypes.end(),
+                                   [](const SemanticType &type) {
+                                     return type.kind == SemanticType::Class;
+                                   });
+              });
+      if (classPayload) {
+        classPayloadEnumerations.push_back(enumeration);
+        continue;
+      }
       emitLoweredScheduledTypeDefinition(*enumeration);
     }
 
@@ -2698,6 +2720,10 @@ public:
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
       emitClass(emitClass, index);
+    }
+
+    for (const LoweredDeclaration *enumeration : classPayloadEnumerations) {
+      emitLoweredScheduledTypeDefinition(*enumeration);
     }
   }
 
@@ -2798,11 +2824,18 @@ public:
     const std::string_view familyLabel =
         failure ? "deduced-callable-failure-v1" : "deduced-callable-v1";
     struct BodyVariant {
+      // One canonical template body per parameter-cleanup shape: the bit at
+      // each declared parameter index records whether that instance binding
+      // carries a lexical drop obligation. Instances whose concrete callable
+      // environments need different cleanup (a scalar-capturing lambda beside
+      // a class-capturing one) form separate variants that the
+      // instantiation-time destructibility dispatch below reunites under the
+      // single emitted template.
+      std::vector<bool> cleanupShape;
       std::vector<std::string> banners;
       std::string canonical;
     };
-    BodyVariant trivialTask;
-    BodyVariant lexicalTask;
+    std::vector<BodyVariant> variants;
     const bool threadTaskTemplate =
         loweredFunctionNeedsThreadTaskTemplate(instances);
     std::optional<std::size_t> taskParameterIndex;
@@ -2898,7 +2931,6 @@ public:
       }
       std::string body = emission.text;
       body.erase(lineStart, markerAt - lineStart + marker.size());
-      BodyVariant *variant = &trivialTask;
       if (threadTaskTemplate) {
         const std::optional<std::size_t> parameter =
             threadTaskParameter(*instance);
@@ -2908,9 +2940,24 @@ public:
               "lowered thread-task template lost its exact task parameter");
         }
         taskParameterIndex = parameter;
-        if (parameterHasLexicalDrop(*instance, *parameter)) {
-          variant = &lexicalTask;
+      }
+      // The overlay admission above already proved the instance parameter
+      // list matches the declaration parameter list exactly, so the shape
+      // indexes the declared parameters directly.
+      std::vector<bool> cleanupShape(function.parameters.size(), false);
+      for (std::size_t index = 0; index < cleanupShape.size(); ++index) {
+        cleanupShape[index] = parameterHasLexicalDrop(*instance, index);
+      }
+      BodyVariant *variant = nullptr;
+      for (BodyVariant &row : variants) {
+        if (row.cleanupShape == cleanupShape) {
+          variant = &row;
+          break;
         }
+      }
+      if (variant == nullptr) {
+        variants.push_back({.cleanupShape = std::move(cleanupShape)});
+        variant = &variants.back();
       }
       variant->banners.push_back(emission.text.substr(
           lineStart, markerAt - lineStart + marker.size()));
@@ -2922,7 +2969,7 @@ public:
             "representation");
       }
     }
-    if (trivialTask.canonical.empty() && lexicalTask.canonical.empty()) {
+    if (variants.empty()) {
       return {};
     }
     const auto assemble = [](const BodyVariant &variant) {
@@ -2941,23 +2988,47 @@ public:
       assembled += variant.canonical.substr(brace + 2);
       return assembled;
     };
-    if (trivialTask.canonical.empty()) {
-      return assemble(lexicalTask);
+    std::sort(variants.begin(), variants.end(),
+              [](const BodyVariant &left, const BodyVariant &right) {
+                return left.cleanupShape < right.cleanupShape;
+              });
+    if (variants.size() == 1) {
+      return assemble(variants.front());
     }
-    if (lexicalTask.canonical.empty()) {
-      return assemble(trivialTask);
+    // Distinct cleanup shapes cannot share one body text. Reunite them under
+    // the single emitted template through an instantiation-time dispatch:
+    // every parameter whose drop presence varies across instances must be
+    // declared directly as a template type parameter (or be the exact
+    // thread-task parameter), so std::is_trivially_destructible_v over its
+    // declared spelling reproduces exactly the MIR drop decision each covered
+    // instance was built from.
+    std::vector<std::size_t> varying;
+    std::vector<std::string> varyingSpellings(function.parameters.size());
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      const bool first = variants.front().cleanupShape[index];
+      const bool varies = std::any_of(variants.begin(), variants.end(),
+                                      [&](const BodyVariant &row) {
+                                        return row.cleanupShape[index] != first;
+                                      });
+      if (!varies) {
+        continue;
+      }
+      const SemanticType &declared = function.parameters[index].type;
+      const bool threadTask = threadTaskTemplate && taskParameterIndex &&
+                              *taskParameterIndex == index;
+      const std::string spelling =
+          cppSemanticTypeSpelling(loweredProgram, standard, declared);
+      if ((declared.kind != SemanticType::TypeParameter && !threadTask) ||
+          spelling.empty()) {
+        throw std::logic_error(
+            "lowered callable template has incompatible cleanup variants");
+      }
+      varying.push_back(index);
+      varyingSpellings[index] = spelling;
     }
-    if (!threadTaskTemplate || !taskParameterIndex ||
-        *taskParameterIndex >= function.parameters.size()) {
+    if (varying.empty()) {
       throw std::logic_error(
           "lowered callable template has incompatible cleanup variants");
-    }
-    const std::string taskType =
-        cppSemanticTypeSpelling(loweredProgram, standard,
-                                function.parameters[*taskParameterIndex].type);
-    if (taskType.empty()) {
-      throw std::logic_error(
-          "lowered thread-task template has no dependent task spelling");
     }
     const std::string returnType =
         failure ? "bool"
@@ -2978,11 +3049,31 @@ public:
       text += branchIndent + "}\n";
       return text;
     };
+    const auto condition = [&](const BodyVariant &variant) {
+      std::string text = "if constexpr (";
+      for (std::size_t position = 0; position < varying.size(); ++position) {
+        if (position != 0) {
+          text += " && ";
+        }
+        const std::size_t index = varying[position];
+        if (variant.cleanupShape[index]) {
+          text += "!";
+        }
+        text +=
+            "std::is_trivially_destructible_v<" + varyingSpellings[index] + ">";
+      }
+      text += ")";
+      return text;
+    };
     std::string assembled = "{\n";
-    assembled += branch("if constexpr (std::is_trivially_destructible_v<" +
-                            taskType + ">)",
-                        trivialTask);
-    assembled += branch("else", lexicalTask);
+    for (std::size_t index = 0; index < variants.size(); ++index) {
+      const bool last = index + 1 == variants.size();
+      const std::string label = last ? std::string("else")
+                                : index == 0
+                                    ? condition(variants[index])
+                                    : "else " + condition(variants[index]);
+      assembled += branch(label, variants[index]);
+    }
     assembled += std::string(indentation * 2, ' ') + "}\n";
     return assembled;
   }
@@ -4808,6 +4899,9 @@ public:
         ownedBindings = cppMirOwnedParameterFieldBindings(mir, constructor);
     const std::optional<std::vector<CppMirCopyParameterFieldBinding>>
         copiedBindings = cppMirCopyParameterFieldBindings(mir, constructor);
+    const std::vector<CppMirConstructedFieldInitializerBinding>
+        constructedBindings =
+            cppMirConstructedFieldInitializerBindings(mir, constructor);
     const bool bodyStagedOwnedParameters =
         failureForm && owner != nullptr &&
         cppMirFailureConstructorEmptyStateEligible(mir, owner->id) &&
@@ -4817,7 +4911,7 @@ public:
         (!ownedBindings && !bodyStagedOwnedParameters)) {
       return;
     }
-    enum class BindingKind { Base, Field, EmptyField };
+    enum class BindingKind { Base, Field, EmptyField, ConstructedField };
     struct InitializerBinding {
       BindingKind kind = BindingKind::Field;
       std::size_t initializer = 0;
@@ -4847,6 +4941,14 @@ public:
       initializers.push_back({.initializer = binding.initializer,
                               .field = binding.field,
                               .parameter = binding.parameter});
+    }
+    for (const CppMirConstructedFieldInitializerBinding &binding :
+         constructedBindings) {
+      initializers.push_back({.kind = BindingKind::ConstructedField,
+                              .initializer = binding.initializer,
+                              .field = binding.field,
+                              .fieldType = binding.fieldType,
+                              .baseParameters = binding.parameters});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -4931,6 +5033,23 @@ public:
       if (fieldName.empty()) {
         throw std::logic_error(
             "verified MIR field initializer lost its field name");
+      }
+      if (initializer.kind == BindingKind::ConstructedField) {
+        // C++17 guaranteed elision constructs the field directly from this
+        // prvalue: one construction, no intermediate object, and no invented
+        // copy or move. The proof already fixed declaration order.
+        output << fieldName << '(';
+        emitSemanticType(initializer.fieldType);
+        output << '(';
+        for (std::size_t argument = 0;
+             argument < initializer.baseParameters.size(); ++argument) {
+          if (argument != 0) {
+            output << ", ";
+          }
+          output << "__gti_mir_arg_" << initializer.baseParameters[argument];
+        }
+        output << "))";
+        continue;
       }
       if (initializer.kind == BindingKind::EmptyField) {
         output << fieldName;

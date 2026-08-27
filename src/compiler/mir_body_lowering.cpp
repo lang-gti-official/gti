@@ -2534,6 +2534,84 @@ private:
     }
   }
 
+  // The not-yet-emitted borrow-forming access call (for example a mutable
+  // `operator[]` returning a checked element reference) that roots a
+  // projected store target's place chain. A plain field store through such a
+  // call defers the call, and the exclusive receiver-tied loan it begins,
+  // to the commit, so the walk crosses only evaluation-free projections
+  // (groupings and ordinary member accesses) on the way to the root.
+  [[nodiscard]] const HirValue *
+  pendingProjectedBorrowStoreRoot(HirValueId id) const {
+    const HirValue *value = findValue(id);
+    if (value == nullptr || emittedValues.contains(id)) {
+      return nullptr;
+    }
+    if (isCallLike(*value)) {
+      return value->functionTarget &&
+                     value->borrowOrigin != BorrowOriginKind::None
+                 ? value
+                 : nullptr;
+    }
+    switch (value->kind) {
+    case HirValueKind::Grouping:
+      return value->operands.empty()
+                 ? nullptr
+                 : pendingProjectedBorrowStoreRoot(value->operands.front());
+    case HirValueKind::MemberAccess:
+      return value->operands.empty() ||
+                     value->unsafeOperation == UnsafeOperationKind::RawMember
+                 ? nullptr
+                 : pendingProjectedBorrowStoreRoot(value->operands.front());
+    default:
+      return nullptr;
+    }
+  }
+
+  // Target-first operand evaluation for a deferred borrow-forming access
+  // call: the receiver place and the argument values are formed now, before
+  // the store's right operand, while the checked call itself, and the
+  // exclusive loan it begins, waits for the commit. Each branch performs
+  // exactly the emission side of the operand handling emitCall() will repeat,
+  // so the later call finds every operand already materialized.
+  void emitDeferredBorrowRootOperands(const HirValue &call) {
+    if (call.callPlan) {
+      if (call.callPlan->receiver) {
+        const HirCallReceiver &receiver = *call.callPlan->receiver;
+        if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
+            receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
+          (void)valueOperand(receiver.value);
+        } else {
+          emitPlaceDependencies(receiver.value);
+        }
+      }
+      for (const HirCallArgument &argument : call.callPlan->arguments) {
+        switch (argument.kind) {
+        case HirCallInputKind::ReadBorrow:
+        case HirCallInputKind::MutableBorrow:
+        case HirCallInputKind::CopyValue:
+          emitPlaceDependencies(argument.value);
+          break;
+        default:
+          (void)valueOperand(argument.value);
+          break;
+        }
+      }
+      return;
+    }
+    if (const std::optional<HirValueId> receiver = receiverValue(call)) {
+      emitPlaceDependencies(*receiver);
+    }
+    const std::vector<HirValueId> arguments = callArgumentValues(call);
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      if (index < call.parameterTypes.size() &&
+          call.parameterTypes[index].kind == SemanticType::Reference) {
+        emitPlaceDependencies(arguments[index]);
+      } else {
+        (void)valueOperand(arguments[index]);
+      }
+    }
+  }
+
   [[nodiscard]] MirLoanId loanForValue(HirValueId id) const {
     if (const auto direct = valueLoans.find(id); direct != valueLoans.end()) {
       return direct->second;
@@ -3048,11 +3126,21 @@ private:
       composed.access = place->access;
       composed.traits = place->traits;
       composed.sourceValue = place->sourceValue;
-      composed.projections.insert(
-          composed.projections.end(),
-          place->projections.begin() +
-              static_cast<std::ptrdiff_t>(projectionOffset),
-          place->projections.end());
+      const auto remaining = place->projections.begin() +
+                             static_cast<std::ptrdiff_t>(projectionOffset);
+      if (base->type.kind == SemanticType::Reference &&
+          remaining->kind != MirProjectionKind::Dereference) {
+        // The loan is anchored at a reference carrier place (for example a
+        // reference parameter's entry loan), not at a body-local referent
+        // place, so re-rooting does not absorb the indirection. Spell the
+        // dereference explicitly: composing a field or index projection
+        // directly onto the reference-typed carrier would produce a place no
+        // later stage can key to one exact concrete class instance.
+        composed.projections.push_back(
+            {.kind = MirProjectionKind::Dereference});
+      }
+      composed.projections.insert(composed.projections.end(), remaining,
+                                  place->projections.end());
       return appendPlace(std::move(composed));
     };
     return resolve(resolve, placeId, 0);
@@ -4108,11 +4196,39 @@ private:
     }
   }
 
+  // A reborrow is only as good as the loan it hangs from, so a parent must
+  // outlive its child on every edge — the MIR verifier rejects ending a
+  // suspended parent. Releasing loans by expression extent alone does not see
+  // that: a transient link is uncarried and unescaping, yet a binding may
+  // retain a reborrow of it. Collect every ancestor of a loan that outlives
+  // the current full expression so the release keeps them, and let the
+  // owning scope end the whole chain child-first.
+  [[nodiscard]] std::unordered_set<MirLoanId>
+  retainedReborrowAncestors() const {
+    std::unordered_set<MirLoanId> ancestors;
+    for (const Scope &scope : scopes) {
+      for (const MirLoanId live : scope.loans) {
+        const MirLoan *record = output.findLoan(live);
+        if (record == nullptr ||
+            (record->carriers.empty() && !record->escapes)) {
+          continue;
+        }
+        MirLoanId parent = record->parent;
+        while (parent != 0 && ancestors.insert(parent).second) {
+          const MirLoan *ancestor = output.findLoan(parent);
+          parent = ancestor == nullptr ? 0 : ancestor->parent;
+        }
+      }
+    }
+    return ancestors;
+  }
+
   void endFullExpressionLoans(const std::vector<Scope> &baseline) {
     if (baseline.size() != scopes.size()) {
       valid = false;
       return;
     }
+    const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
@@ -4123,7 +4239,8 @@ private:
       }
       for (std::size_t index = after.size(); index > before.size(); --index) {
         const MirLoan &loan = output.loans[after[index - 1] - 1];
-        if (loan.carriers.empty() && !loan.escapes) {
+        if (loan.carriers.empty() && !loan.escapes &&
+            !retained.contains(loan.id)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
         }
@@ -4135,7 +4252,8 @@ private:
                                    const MirLoan &candidate =
                                        output.loans[loan - 1];
                                    return candidate.carriers.empty() &&
-                                          !candidate.escapes;
+                                          !candidate.escapes &&
+                                          !retained.contains(loan);
                                  }),
                   after.end());
       after.erase(std::remove_if(after.begin(), after.end(),
@@ -4151,6 +4269,7 @@ private:
       valid = false;
       return;
     }
+    const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
@@ -4159,7 +4278,7 @@ private:
             std::find(before.begin(), before.end(), *candidate) == before.end();
         const MirLoan *loan = output.findLoan(*candidate);
         if (added && loan != nullptr && loan->carriers.empty() &&
-            !loan->escapes) {
+            !loan->escapes && !retained.contains(*candidate)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
           candidate = after.erase(candidate);
@@ -4188,6 +4307,45 @@ private:
           return std::find(scope.loans.begin(), scope.loans.end(), loan) !=
                  scope.loans.end();
         });
+  }
+
+  // A retained binding may name a call result the expression reached through
+  // more than one link: in `carrier.right.reach().write()` the receiver of
+  // `write()` is itself a borrowed call result, so lowering builds a chain of
+  // call-result reborrows before the binding retains the outermost one.
+  //
+  // Report whether every link from `outermost` up to — but excluding —
+  // `ancestor` is such a reborrow, built by this expression for `valueId`
+  // alone: a call result that carries nothing, does not escape, is still
+  // active, and is at least as permissive as `access`. When it is, the
+  // outermost link designates exactly what the retained binding names, and
+  // the chain already bottoms out at `ancestor`, so retaining it preserves
+  // that loan's suspension and reactivation.
+  [[nodiscard]] bool retainableCallResultChain(MirLoanId outermost,
+                                               MirLoanId ancestor,
+                                               HirValueId valueId,
+                                               AccessMode access) const {
+    if (outermost == 0 || outermost == ancestor ||
+        output.findLoan(ancestor) == nullptr) {
+      return false;
+    }
+    std::unordered_set<MirLoanId> visited;
+    MirLoanId link = outermost;
+    while (link != ancestor) {
+      const MirLoan *candidate = output.findLoan(link);
+      if (candidate == nullptr || !visited.insert(link).second ||
+          candidate->kind != MirLoanKind::CallResult ||
+          !candidate->carriers.empty() || candidate->escapes ||
+          !loanIsActive(scopes, link) ||
+          (access != AccessMode::ReadOnly &&
+           candidate->access != AccessMode::Mutable) ||
+          (link == outermost ? candidate->producedBy != valueId
+                             : candidate->producedBy == 0)) {
+        return false;
+      }
+      link = candidate->parent;
+    }
+    return true;
   }
 
   static void removeLoanFromState(
@@ -4257,6 +4415,38 @@ private:
           descendsFromSelected(loan.id) &&
           std::find(result.begin(), result.end(), loan.id) == result.end()) {
         result.push_back(loan.id);
+      }
+    }
+    // A retained call-result reborrow outlives the transient links it was
+    // built from — the outer call of `f(receiver.borrow())` designates what
+    // the inner call returned — so those links stay live past their full
+    // expression to keep every parent outliving its child. They carry
+    // nothing themselves, so they end exactly when the last loan that
+    // reborrows them does. Fold them into the same release; the child-first
+    // order below still ends each parent after its children.
+    for (std::size_t index = 0; index < result.size(); ++index) {
+      MirLoanId ancestor = output.loans[result[index] - 1].parent;
+      while (ancestor != 0 && ancestor <= output.loans.size() &&
+             std::find(result.begin(), result.end(), ancestor) ==
+                 result.end()) {
+        const MirLoan &candidate = output.loans[ancestor - 1];
+        if (!candidate.carriers.empty() || candidate.escapes ||
+            !loanIsActive(activeScopes, ancestor)) {
+          break;
+        }
+        const bool reborrowedElsewhere =
+            std::any_of(output.loans.begin(), output.loans.end(),
+                        [&](const MirLoan &other) {
+                          return other.parent == ancestor &&
+                                 loanIsActive(activeScopes, other.id) &&
+                                 std::find(result.begin(), result.end(),
+                                           other.id) == result.end();
+                        });
+        if (reborrowedElsewhere) {
+          break;
+        }
+        result.push_back(ancestor);
+        ancestor = candidate.parent;
       }
     }
     std::stable_sort(result.begin(), result.end(),
@@ -4989,6 +5179,32 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
+          // A plain field store whose base place is an element reached
+          // through a checked borrow-forming access call (for example
+          // `points[i].x = ...` over an overloaded subscript) follows the
+          // commit-time loan contract of the element store itself: the
+          // call's receiver place and argument values are formed
+          // target-first, the right operand then completes and its transient
+          // element loans end, and only the checked access call that begins
+          // the exclusive element loan, plus the field projection and the
+          // committed write, remain for the commit. Without this deferral
+          // the destination call's exclusive loan is active while the right
+          // operand reads the same container, and loan verification rejects
+          // a program semantic analysis accepted. A compound store instead
+          // reads the stabilized prior value through the once-formed target
+          // before its right operand, so it keeps the formed-target-first
+          // schedule.
+          const bool plainStore =
+              !value->operation ||
+              assignmentOperation(*value->operation) == MirOperation::Assign;
+          const HirValue *deferredRoot =
+              plainStore && value->operands.size() >= 2
+                  ? pendingProjectedBorrowStoreRoot(value->operands.front())
+                  : nullptr;
+          if (deferredRoot != nullptr) {
+            emitDeferredBorrowRootOperands(*deferredRoot);
+            (void)valueOperand(value->operands.back());
+          }
           emitPlaceDependencies(value->operands.front());
         }
       } else if (value->kind == HirValueKind::IndexSet &&
@@ -5266,6 +5482,39 @@ private:
 
       MirLoanId parent = 0;
       if (desired->parent != 0) {
+        if (const auto retainedParent = semanticLoans.find(desired->parent);
+            !exactRangeElement && retainedParent != semanticLoans.end() &&
+            retainableCallResultChain(existing, retainedParent->second, valueId,
+                                      desired->access)) {
+          // The call-result chain this expression built for this very value
+          // already bottoms out at exactly the loan the retained semantic
+          // loan names as its parent, so its outermost link is the exact
+          // runtime referent — the same reason a parentless call-result chain
+          // retains its own below. A reference carrier is what gives a
+          // retained loan a semantic parent at all, so this is the route
+          // every multi-link chain reached through a reference parameter or a
+          // local reference binding takes.
+          //
+          // Retain that identity rather than ending the chain and recreating
+          // a Local loan from the semantic place. That place states the
+          // returned referent's type over a projection chain that stops at
+          // the loan's coarser overlap identity — the parent plus the
+          // receiver subobject, never the address the outer call returned. No
+          // later stage can key it, and the backend cannot publish the
+          // returned address from it. Deciding before `placeForLoan` also
+          // keeps that place out of the body: materializing it and leaving it
+          // unused would still fail the emitter's place-coherence scan, which
+          // reads every place a body records.
+          //
+          // The links this reborrows stay live. A parent must outlive its
+          // child reborrow on every edge, which the full-expression release
+          // preserves for a retained chain, and the owning scope ends the
+          // whole chain child-first.
+          recordLoanIdentity(existing, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = existing,
+                  .type = value->info.type};
+        }
         // Mutable range elements have a concrete indexed/dereference place
         // even though their semantic overlap identity is deliberately rooted
         // at the protected owner. Use that concrete place for transient-chain
@@ -5356,6 +5605,25 @@ private:
           }
           if (!compatible || transient != 0 || transientChain.empty()) {
             valid = false;
+          } else if (desired->access == AccessMode::ReadOnly ||
+                     sourceLoan.access == AccessMode::Mutable) {
+            // The chain is a call-result reborrow chain the expression built
+            // for this very value — a borrowed call result passed as the
+            // argument (or receiver) of the call whose result is retained.
+            // Its outermost link is the exact runtime referent for the same
+            // reason the root case above is, so retain that identity rather
+            // than ending the chain and recreating a Local loan from the
+            // origin place: the recreated loan cannot name the address the
+            // outer call returned, and its source place would record the
+            // returned referent's type over a projection chain deriving the
+            // origin's. The links it reborrows stay live; a parent must
+            // outlive its child reborrow on every edge, which
+            // `retainedReborrowAncestors` keeps true when the full
+            // expression ends.
+            recordLoanIdentity(existing, *desired, binding);
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
           } else {
             for (const MirLoanId ended : transientChain) {
               (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
@@ -6654,14 +6922,28 @@ private:
           valid = false;
           continue;
         }
-        (void)appendInstruction({.kind = MirInstructionKind::Initialize,
-                                 .hirStatement = statement.id,
-                                 .destination = destination,
-                                 .operands = {valueOperand(payload.value)},
-                                 .info = {.type = binding->info.type,
-                                          .category = ValueCategory::Place,
-                                          .access = binding->info.access,
-                                          .traits = binding->info.traits}});
+        MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                  .hirStatement = statement.id,
+                                  .destination = destination,
+                                  .operands = {valueOperand(payload.value)},
+                                  .info = {.type = binding->info.type,
+                                           .category = ValueCategory::Place,
+                                           .access = binding->info.access,
+                                           .traits = binding->info.traits}};
+        // A copied class payload binding owns its copy: arm the binding's
+        // obligation at this Initialize so the arm-exit Drop ends an
+        // active lifetime, exactly like an ordinary local initialization.
+        if (binding->info.type.kind != SemanticType::Reference &&
+            binding->info.traits.drop == DropKind::Lexical) {
+          const MirDropObligationId obligation =
+              dropObligationForBinding(payload.binding);
+          if (obligation != 0) {
+            appendLifecycle(initialize,
+                            {.kind = MirLifecycleEventKind::Initialize,
+                             .target = obligation});
+          }
+        }
+        (void)appendInstruction(std::move(initialize));
         registerDrop(payload.binding, destination);
       }
       lowerStatements(statement.switchArms[armIndex].statements);
@@ -6692,6 +6974,7 @@ private:
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
+          MirLoanId referenceParameterEntry = 0;
           if (function != nullptr &&
               function->returnBorrowOrigin == BorrowOriginKind::Argument &&
               function->returnBorrowParameter <
@@ -6701,13 +6984,18 @@ private:
                 function->parameterBindings[function->returnBorrowParameter];
             const MirLoan &candidate = output.loans[borrow.loan - 1];
             const MirPlace *source = output.findPlace(candidate.source);
-            if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
-                candidate.designatedField != 0 && source != nullptr &&
+            const bool carriedByParameter =
+                source != nullptr &&
                 source->root == MirPlaceRootKind::Binding &&
                 source->binding == parameter && source->projections.empty() &&
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
-                          parameter) != candidate.carriers.end()) {
+                          parameter) != candidate.carriers.end();
+            if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
+                candidate.designatedField != 0 && carriedByParameter) {
               storedCarrierEntry = borrow.loan;
+            } else if (candidate.kind == MirLoanKind::Parameter &&
+                       candidate.entry && carriedByParameter) {
+              referenceParameterEntry = borrow.loan;
             }
           }
           if (storedCarrierEntry != 0) {
@@ -6747,6 +7035,44 @@ private:
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,
+                        .loan = published,
+                        .type = value->info.type};
+            }
+          } else if (referenceParameterEntry != 0) {
+            const HirValue *value = findValue(*statement.value);
+            if (value == nullptr || output.returnType.arguments.size() != 1 ||
+                value->info.type != output.returnType.arguments.front()) {
+              valid = false;
+            } else {
+              // A read-only reference parameter's entry loan is seeded at the
+              // body entry and has no producing instruction, so its runtime
+              // address lives only in the parameter's pointer carrier. The
+              // fallback below reclassifies the returned loan in place, which
+              // would leave this loan a Return loan for the whole body with
+              // nothing that ever names the address it publishes. Publish a
+              // fresh Return loan from the entry loan's source and retire the
+              // entry loan at the same instruction boundary, exactly as the
+              // by-value carrier and nested-call cases above do.
+              const MirLoan retainedLoan =
+                  output.loans[referenceParameterEntry - 1];
+              const MirLoanId published =
+                  createLoan(MirLoanKind::Return, retainedLoan.source,
+                             retainedLoan.access, *statement.value);
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = MirOperandKind::Loan,
+                                 .loan = referenceParameterEntry,
+                                 .type = value->info.type}},
+                   .loan = published,
+                   .info = value->info});
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = *statement.value,
+                                       .loan = referenceParameterEntry});
+              removeLoanFromState(referenceParameterEntry, scopes,
+                                  bindingLoans);
+              output.loans[published - 1].escapes = true;
+              borrow = {.kind = MirOperandKind::Loan,
                         .loan = published,
                         .type = value->info.type};
             }

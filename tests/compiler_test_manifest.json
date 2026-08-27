@@ -62,6 +62,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testMovedLoopLocalRedeclarations",
+      "suite": "declarations"
+    },
+    {
       "name": "testInferredVoidGenericArguments",
       "suite": "declarations"
     },
@@ -126,6 +130,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testDomainValueOperatorCapabilities",
+      "suite": "declarations"
+    },
+    {
       "name": "testSymbolicAutoLocalBinding",
       "suite": "declarations"
     },
@@ -151,6 +159,14 @@
     },
     {
       "name": "testFixedArrays",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFixedArrayDynamicWriteFailureEdge",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFixedArrayChainedDynamicIndex",
       "suite": "declarations"
     },
     {
@@ -206,6 +222,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testDisjointFieldReceiverBorrowsThroughReferenceParameters",
+      "suite": "ownership"
+    },
+    {
       "name": "testNonNullReferences",
       "suite": "ownership"
     },
@@ -226,6 +246,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testArgumentTiedReferenceReturns",
+      "suite": "ownership"
+    },
+    {
       "name": "testStoredReferenceGroundwork",
       "suite": "ownership"
     },
@@ -242,7 +266,15 @@
       "suite": "ownership"
     },
     {
+      "name": "testCallSiblingArgumentBorrowConflicts",
+      "suite": "ownership"
+    },
+    {
       "name": "testForwardIteratorContractsAndBinarySearch",
+      "suite": "ownership"
+    },
+    {
+      "name": "testWritableAndMovementIteratorCapabilities",
       "suite": "ownership"
     },
     {
@@ -355,6 +387,14 @@
     },
     {
       "name": "testTemporaryArgumentBorrows",
+      "suite": "ownership"
+    },
+    {
+      "name": "testRetainedBorrowedCallResults",
+      "suite": "ownership"
+    },
+    {
+      "name": "testNestedBorrowChainLoanOrdering",
       "suite": "ownership"
     },
     {

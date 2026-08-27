@@ -2918,6 +2918,58 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return referent == nullptr ||
            candidate->returnType.arguments.front() == *referent;
   };
+  const auto mutableReference = [](const CallableCandidate &candidate,
+                                   const SemanticType *referent) {
+    if (candidate.receiverMutability != ReceiverMutability::Mutable ||
+        candidate.returnType.kind != SemanticType::Reference ||
+        candidate.returnType.referenceAccess != AccessMode::Mutable ||
+        candidate.returnType.arguments.size() != 1) {
+      return false;
+    }
+    return referent == nullptr ||
+           candidate.returnType.arguments.front() == *referent;
+  };
+  const auto hasMutableDereference = [&](const SemanticType &iterator,
+                                         const SemanticType *referent) {
+    const std::optional<CallableCandidate> candidate = selectStructuralOperator(
+        iterator, OverloadedOperator::Dereference, {}, true);
+    return candidate && mutableReference(*candidate, referent);
+  };
+  const auto hasVoidMutation = [&](const SemanticType &iterator,
+                                   OverloadedOperator mutation,
+                                   std::span<const SemanticType> parameters) {
+    const std::optional<CallableCandidate> candidate =
+        selectStructuralOperator(iterator, mutation, parameters, true);
+    return candidate && candidate->returnType == SemanticType::Void &&
+           candidate->receiverMutability == ReceiverMutability::Mutable;
+  };
+
+  // A domain value operator is an exact read-only member returning an owned
+  // value of the same domain type. The result may not be a reference: a
+  // borrowed result would tie the produced value to a receiver whose
+  // lifetime the requirement cannot name.
+  const auto ownedDomainResult = [](const CallableCandidate &candidate,
+                                    const SemanticType &domain) {
+    return candidate.returnType == domain &&
+           candidate.receiverMutability == ReceiverMutability::ReadOnly &&
+           candidate.returnBorrowOrigin == BorrowOriginKind::None;
+  };
+  const auto hasBinaryDomainOperator = [&](const SemanticType &domain,
+                                           OverloadedOperator oper,
+                                           const SemanticType &operand) {
+    const SemanticType parameter =
+        SemanticType::referenceTo(operand, AccessMode::ReadOnly);
+    const std::optional<CallableCandidate> byReference =
+        selectStructuralOperator(
+            domain, oper, std::span<const SemanticType>(&parameter, 1), false);
+    if (byReference && ownedDomainResult(*byReference, domain)) {
+      return true;
+    }
+    // A scalar operand is ordinarily taken by value.
+    const std::optional<CallableCandidate> byValue = selectStructuralOperator(
+        domain, oper, std::span<const SemanticType>(&operand, 1), false);
+    return byValue && ownedDomainResult(*byValue, domain);
+  };
 
   switch (kind) {
   case StructuralConstraintKind::InputIterator: {
@@ -2950,6 +3002,82 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   }
   case StructuralConstraintKind::DereferencesTo:
     return arguments.size() == 2 && hasDereference(arguments[0], &arguments[1]);
+  case StructuralConstraintKind::WritableIterator:
+    return arguments.size() == 1 &&
+           hasMutableDereference(arguments.front(), nullptr) &&
+           hasVoidMutation(arguments.front(), OverloadedOperator::PreIncrement,
+                           {});
+  case StructuralConstraintKind::WritesTo:
+    return arguments.size() == 2 &&
+           hasMutableDereference(arguments[0], &arguments[1]);
+  case StructuralConstraintKind::BidirectionalIterator:
+    return arguments.size() == 1 &&
+           hasVoidMutation(arguments.front(), OverloadedOperator::PreDecrement,
+                           {});
+  case StructuralConstraintKind::RandomAccessIterator: {
+    if (arguments.size() != 1) {
+      return false;
+    }
+    const SemanticType distance = SemanticType::Int64;
+    return hasVoidMutation(arguments.front(), OverloadedOperator::AddAssign,
+                           std::span<const SemanticType>(&distance, 1)) &&
+           hasVoidMutation(arguments.front(),
+                           OverloadedOperator::SubtractAssign,
+                           std::span<const SemanticType>(&distance, 1));
+  }
+  case StructuralConstraintKind::SubscriptsToMut: {
+    if (arguments.size() != 2) {
+      return false;
+    }
+    const SemanticType index = SemanticType::Int64;
+    const std::optional<CallableCandidate> subscript = selectStructuralOperator(
+        arguments[0], OverloadedOperator::Subscript,
+        std::span<const SemanticType>(&index, 1), true);
+    return subscript && mutableReference(*subscript, &arguments[1]);
+  }
+  case StructuralConstraintKind::SizedSentinelFor: {
+    if (arguments.size() != 2) {
+      return false;
+    }
+    const SemanticType &sentinel = arguments[0];
+    const SemanticType &iterator = arguments[1];
+    const SemanticType parameter =
+        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
+    const std::optional<CallableCandidate> difference =
+        selectStructuralOperator(iterator, OverloadedOperator::Minus,
+                                 std::span<const SemanticType>(&parameter, 1),
+                                 false);
+    return difference && difference->returnType == SemanticType::Int64 &&
+           difference->receiverMutability == ReceiverMutability::ReadOnly;
+  }
+  // The domain family is deliberately member-only, matching the language's
+  // member-only user-operator rule. A built-in numeric keeps its own
+  // checked arithmetic and its `std::numeric` contract: admitting one here
+  // would resolve its operators as symbolic member calls and drop the
+  // canonical local failure outcomes that checked integer arithmetic must
+  // retain.
+  case StructuralConstraintKind::Adds:
+    return arguments.size() == 1 &&
+           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Plus,
+                                   arguments[0]);
+  case StructuralConstraintKind::Subtracts:
+    return arguments.size() == 1 &&
+           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Minus,
+                                   arguments[0]);
+  case StructuralConstraintKind::Negates: {
+    if (arguments.size() != 1) {
+      return false;
+    }
+    // Unary minus is the nullary-parameter member form; the binary
+    // difference operator shares the spelling and is excluded by arity.
+    const std::optional<CallableCandidate> negate = selectStructuralOperator(
+        arguments[0], OverloadedOperator::Minus, {}, false);
+    return negate && ownedDomainResult(*negate, arguments[0]);
+  }
+  case StructuralConstraintKind::ScalesBy:
+    return arguments.size() == 2 &&
+           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Multiply,
+                                   arguments[1]);
   case StructuralConstraintKind::None:
     return true;
   }
@@ -3008,6 +3136,127 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         matches = true;
       }
       break;
+    case StructuralConstraintKind::WritableIterator:
+      if (requirement.arguments.size() == 1 &&
+          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+        if (kind == OverloadedOperator::PreIncrement) {
+          candidate.returnType = SemanticType::Void;
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          matches = true;
+        } else if (kind == OverloadedOperator::Dereference) {
+          candidate.returnType = SemanticType::referenceTo(
+              SemanticType::Unknown, AccessMode::Mutable);
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+          candidate.returnBorrowAccess = AccessMode::Mutable;
+          matches = true;
+        }
+      }
+      break;
+    case StructuralConstraintKind::WritesTo:
+      if (kind == OverloadedOperator::Dereference &&
+          requirement.arguments.size() == 2 &&
+          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+        candidate.returnType = SemanticType::referenceTo(
+            requirement.arguments[1], AccessMode::Mutable);
+        candidate.receiverMutability = ReceiverMutability::Mutable;
+        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+        candidate.returnBorrowAccess = AccessMode::Mutable;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::BidirectionalIterator:
+      if (kind == OverloadedOperator::PreDecrement &&
+          requirement.arguments.size() == 1 &&
+          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+        candidate.returnType = SemanticType::Void;
+        candidate.receiverMutability = ReceiverMutability::Mutable;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::RandomAccessIterator:
+      if ((kind == OverloadedOperator::AddAssign ||
+           kind == OverloadedOperator::SubtractAssign) &&
+          requirement.arguments.size() == 1 &&
+          requirement.arguments[0] == receiverType &&
+          argumentTypes.size() == 1 &&
+          argumentTypes[0] == SemanticType::Int64) {
+        candidate.returnType = SemanticType::Void;
+        candidate.parameterTypes = {SemanticType::Int64};
+        candidate.receiverMutability = ReceiverMutability::Mutable;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::SubscriptsToMut:
+      if (kind == OverloadedOperator::Subscript &&
+          requirement.arguments.size() == 2 &&
+          requirement.arguments[0] == receiverType &&
+          argumentTypes.size() == 1 &&
+          argumentTypes[0] == SemanticType::Int64) {
+        candidate.returnType = SemanticType::referenceTo(
+            requirement.arguments[1], AccessMode::Mutable);
+        candidate.parameterTypes = {SemanticType::Int64};
+        candidate.receiverMutability = ReceiverMutability::Mutable;
+        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+        candidate.returnBorrowAccess = AccessMode::Mutable;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::SizedSentinelFor:
+      if (kind == OverloadedOperator::Minus &&
+          requirement.arguments.size() == 2 &&
+          requirement.arguments[1] == receiverType &&
+          argumentTypes.size() == 1 &&
+          argumentTypes[0] == requirement.arguments[0]) {
+        candidate.returnType = SemanticType::Int64;
+        candidate.parameterTypes = {SemanticType::referenceTo(
+            requirement.arguments[0], AccessMode::ReadOnly)};
+        candidate.receiverMutability = ReceiverMutability::ReadOnly;
+        matches = true;
+      }
+      break;
+
+    // A domain operator produces an owned value of the receiver's own type.
+    // The operand is named by reference so the concrete member may take it
+    // either way; exact argument matching selects the real declaration in
+    // the instance reanalysis.
+    case StructuralConstraintKind::Adds:
+    case StructuralConstraintKind::Subtracts:
+      if (requirement.arguments.size() == 1 &&
+          requirement.arguments[0] == receiverType &&
+          argumentTypes.size() == 1 &&
+          argumentTypes[0] == requirement.arguments[0] &&
+          kind == (requirement.kind == StructuralConstraintKind::Adds
+                       ? OverloadedOperator::Plus
+                       : OverloadedOperator::Minus)) {
+        candidate.returnType = requirement.arguments[0];
+        candidate.parameterTypes = {SemanticType::referenceTo(
+            requirement.arguments[0], AccessMode::ReadOnly)};
+        candidate.receiverMutability = ReceiverMutability::ReadOnly;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::Negates:
+      if (kind == OverloadedOperator::Minus &&
+          requirement.arguments.size() == 1 &&
+          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+        candidate.returnType = requirement.arguments[0];
+        candidate.receiverMutability = ReceiverMutability::ReadOnly;
+        matches = true;
+      }
+      break;
+    case StructuralConstraintKind::ScalesBy:
+      if (kind == OverloadedOperator::Multiply &&
+          requirement.arguments.size() == 2 &&
+          requirement.arguments[0] == receiverType &&
+          argumentTypes.size() == 1 &&
+          argumentTypes[0] == requirement.arguments[1]) {
+        candidate.returnType = requirement.arguments[0];
+        candidate.parameterTypes = {requirement.arguments[1]};
+        candidate.receiverMutability = ReceiverMutability::ReadOnly;
+        matches = true;
+      }
+      break;
     case StructuralConstraintKind::None:
       break;
     }
@@ -3017,19 +3266,37 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     }
   }
 
-  const bool hasKnownDereference =
-      kind == OverloadedOperator::Dereference &&
-      std::any_of(result.begin(), result.end(), [](const auto &candidate) {
-        return candidate.returnType.kind == SemanticType::Reference &&
-               !candidate.returnType.arguments.empty() &&
-               candidate.returnType.arguments.front() != SemanticType::Unknown;
-      });
-  if (hasKnownDereference) {
-    std::erase_if(result, [](const CallableCandidate &candidate) {
-      return candidate.returnType.kind == SemanticType::Reference &&
-             !candidate.returnType.arguments.empty() &&
-             candidate.returnType.arguments.front() == SemanticType::Unknown;
-    });
+  // An exact-referent dereference or subscript relation (dereferences_to,
+  // writes_to, subscripts_to_mut) refines the unknown-referent form from
+  // the unary capability with the same receiver mutability; the refined
+  // candidate replaces only its own mutability's unknown form so a
+  // read-only refinement never erases a mutable capability or vice versa.
+  const auto knownReference = [](const CallableCandidate &candidate) {
+    return candidate.returnType.kind == SemanticType::Reference &&
+           !candidate.returnType.arguments.empty() &&
+           candidate.returnType.arguments.front() != SemanticType::Unknown;
+  };
+  const auto unknownReference = [](const CallableCandidate &candidate) {
+    return candidate.returnType.kind == SemanticType::Reference &&
+           !candidate.returnType.arguments.empty() &&
+           candidate.returnType.arguments.front() == SemanticType::Unknown;
+  };
+  if (kind == OverloadedOperator::Dereference ||
+      kind == OverloadedOperator::Subscript) {
+    for (const ReceiverMutability mutability :
+         {ReceiverMutability::ReadOnly, ReceiverMutability::Mutable}) {
+      const bool hasKnown =
+          std::any_of(result.begin(), result.end(), [&](const auto &candidate) {
+            return candidate.receiverMutability == mutability &&
+                   knownReference(candidate);
+          });
+      if (hasKnown) {
+        std::erase_if(result, [&](const CallableCandidate &candidate) {
+          return candidate.receiverMutability == mutability &&
+                 unknownReference(candidate);
+        });
+      }
+    }
   }
   std::vector<CallableCandidate> unique;
   for (CallableCandidate &candidate : result) {
@@ -3080,6 +3347,17 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
     return candidate.receiverMutability == ReceiverMutability::Mutable &&
            !mutableReceiver;
   });
+  // Mirror the concrete structural selection: a mutable receiver prefers
+  // the mutable-receiver form when the requirements prove both.
+  if (mutableReceiver && std::any_of(viable.begin(), viable.end(),
+                                     [](const CallableCandidate &candidate) {
+                                       return candidate.receiverMutability ==
+                                              ReceiverMutability::Mutable;
+                                     })) {
+    std::erase_if(viable, [](const CallableCandidate &candidate) {
+      return candidate.receiverMutability == ReceiverMutability::ReadOnly;
+    });
+  }
   if (viable.size() != 1) {
     report(token,
            viable.empty()

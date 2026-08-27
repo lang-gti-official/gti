@@ -146,7 +146,11 @@ loop optimizer, or call transform.
 The admitted operations are deliberately narrow:
 
 - fixed-array scalar reads and writes whose complete index interval is within
-  the known extent;
+  the known extent. A multidimensional access folds every dimension into one
+  element place carrying one bounds site, so the proof must hold for the whole
+  chain: each nonterminal index is checked against its own sibling array
+  place's extent, and an unresolved or unproven dimension anywhere leaves the
+  site checked;
 - private prefix-storage reads whose storage origin and scalar index origin
   exactly match an earlier successful logical-size check derived from that
   same storage's length, with no intervening storage mutation, index write,

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lang::driver {
@@ -61,6 +62,11 @@ struct BindgenImportPlan {
   std::string namespaceName;
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> macroArguments;
+  // Opt-in import policy (C-07), sorted by the manifest loader.
+  std::vector<std::string> allowPatterns;
+  std::vector<std::string> denyPatterns;
+  std::vector<std::pair<std::string, std::string>> renames;
+  std::vector<std::pair<std::string, std::string>> arrayReturns;
   std::filesystem::path outputDirectory;
   std::filesystem::path manifestPath;
   SourceSpan declaration;

@@ -33,6 +33,12 @@ namespace {
 constexpr const char *kInputPath = "/gti-bindgen/input.h";
 constexpr const char *kBuiltinsPath = "/gti-bindgen/builtins.h";
 
+// Clang's "<built-in>" / "<command line>" pseudo-file regions hold the
+// predefined macro set `-dD` dumps. They are not consumed files, so they
+// never join the source table; this sentinel keeps their definitions out of
+// the import policy instead of letting them pose as root-header content.
+constexpr NativeSourceId kPseudoFileId = 0xffffffffU;
+
 // <stdint.h>/<stddef.h> names resolve without their headers, exactly as the
 // bounded reader resolved them through CTargetProfile. Clang's target macros
 // keep every width a Clang fact for the selected data model; references to
@@ -68,15 +74,105 @@ constexpr const char *kBuiltinsText = "typedef __INT8_TYPE__ int8_t;\n"
   return result;
 }
 
-[[nodiscard]] SourceOrigin originOf(CXSourceLocation location) {
+// Spelling coordinates address the reader's own translation unit; the
+// native-error line index and cursor extents share this coordinate space.
+// User-facing origins use the presumed (line-marker) location instead — see
+// ModelBuilder::origin.
+[[nodiscard]] std::uint32_t spellingLine(CXSourceLocation location) {
   unsigned line = 0;
-  unsigned column = 0;
-  clang_getSpellingLocation(location, nullptr, &line, &column, nullptr);
-  return {line, column};
+  clang_getSpellingLocation(location, nullptr, &line, nullptr, nullptr);
+  return line;
 }
 
-[[nodiscard]] SourceOrigin originOf(CXCursor cursor) {
-  return originOf(clang_getCursorLocation(cursor));
+// GNU line markers (`# <line> "<file>" [flags...]`) in preprocessed input
+// carry the include graph (C-05): the first marker names the root header,
+// every other path is a consumed file, and flag `3` marks a system-header
+// region. Raw header text has no markers and scans to an empty result.
+struct LineMarkerScan {
+  std::string mainFile;
+  std::vector<NativeSourceFile> sources;
+  std::map<std::string, NativeSourceId> idsByPath;
+};
+
+[[nodiscard]] LineMarkerScan scanLineMarkers(std::string_view text) {
+  LineMarkerScan scan;
+  std::size_t position = 0;
+  while (position < text.size()) {
+    std::size_t lineEnd = text.find('\n', position);
+    if (lineEnd == std::string_view::npos) {
+      lineEnd = text.size();
+    }
+    const std::string_view line = text.substr(position, lineEnd - position);
+    position = lineEnd + 1;
+    if (line.size() < 2 || line[0] != '#' || line[1] != ' ') {
+      continue;
+    }
+    std::size_t cursor = 2;
+    while (cursor < line.size() &&
+           std::isdigit(static_cast<unsigned char>(line[cursor])) != 0) {
+      ++cursor;
+    }
+    if (cursor == 2) {
+      continue;
+    }
+    while (cursor < line.size() && line[cursor] == ' ') {
+      ++cursor;
+    }
+    if (cursor >= line.size() || line[cursor] != '"') {
+      continue;
+    }
+    ++cursor;
+    std::string path;
+    bool closed = false;
+    while (cursor < line.size()) {
+      const char character = line[cursor++];
+      if (character == '\\' && cursor < line.size()) {
+        path.push_back(line[cursor++]);
+        continue;
+      }
+      if (character == '"') {
+        closed = true;
+        break;
+      }
+      path.push_back(character);
+    }
+    if (!closed || path.empty() || path.front() == '<') {
+      continue; // Built-in pseudo-files ("<built-in>") are not consumed files.
+    }
+    const std::string_view flags = line.substr(cursor);
+    if (scan.mainFile.empty()) {
+      scan.mainFile = path;
+      continue;
+    }
+    if (path == scan.mainFile) {
+      continue;
+    }
+    NativeSourceId id = 0;
+    if (const auto known = scan.idsByPath.find(path);
+        known != scan.idsByPath.end()) {
+      id = known->second;
+    } else {
+      scan.sources.push_back({path, false});
+      id = static_cast<NativeSourceId>(scan.sources.size());
+      scan.idsByPath.emplace(path, id);
+    }
+    // Flag 3 marks the system-header state; once system, always system.
+    std::size_t flagStart = 0;
+    while (flagStart < flags.size()) {
+      while (flagStart < flags.size() && flags[flagStart] == ' ') {
+        ++flagStart;
+      }
+      std::size_t flagEnd = flagStart;
+      while (flagEnd < flags.size() && flags[flagEnd] != ' ') {
+        ++flagEnd;
+      }
+      if (flags.substr(flagStart, flagEnd - flagStart) == "3") {
+        scan.sources[id - 1].system = true;
+      }
+      flagStart = flagEnd;
+    }
+  }
+  return scan;
 }
 
 [[nodiscard]] bool inMainFile(CXCursor cursor) {
@@ -88,6 +184,41 @@ constexpr const char *kBuiltinsText = "typedef __INT8_TYPE__ int8_t;\n"
   clang_getSpellingLocation(clang_getCursorLocation(cursor), &file, nullptr,
                             nullptr, nullptr);
   return file != nullptr && owned(clang_getFileName(file)) == kBuiltinsPath;
+}
+
+// Names a non-C calling convention for the model's C-06 fact; the default
+// C convention is the empty string.
+[[nodiscard]] std::string callingConventionName(CXCallingConv convention) {
+  switch (convention) {
+  case CXCallingConv_C:
+    return {};
+  case CXCallingConv_X86StdCall:
+    return "stdcall";
+  case CXCallingConv_X86FastCall:
+    return "fastcall";
+  case CXCallingConv_X86ThisCall:
+    return "thiscall";
+  case CXCallingConv_X86Pascal:
+    return "pascal";
+  case CXCallingConv_X86VectorCall:
+    return "vectorcall";
+  case CXCallingConv_X86RegCall:
+    return "regcall";
+  case CXCallingConv_X86_64Win64:
+    return "win64";
+  case CXCallingConv_X86_64SysV:
+    return "sysv";
+  case CXCallingConv_AAPCS:
+    return "aapcs";
+  case CXCallingConv_AAPCS_VFP:
+    return "aapcs-vfp";
+  case CXCallingConv_AArch64VectorCall:
+    return "aarch64-vectorcall";
+  case CXCallingConv_Swift:
+    return "swift";
+  default:
+    return "calling convention " + std::to_string(static_cast<int>(convention));
+  }
 }
 
 [[nodiscard]] bool endsWith(std::string_view text, std::string_view suffix) {
@@ -303,12 +434,125 @@ private:
   }
 };
 
+// A macro body of one or more adjacent string literals is C's own
+// concatenation. Only backslash-free content imports: an escape GTI's lexer
+// spells differently would silently change the constant, so such a body is
+// left unimported instead of approximated.
+[[nodiscard]] std::optional<std::string>
+evaluateStringMacro(const std::vector<std::string> &tokens) {
+  std::string text;
+  for (const std::string &token : tokens) {
+    if (token.size() < 2 || token.front() != '"' || token.back() != '"') {
+      return std::nullopt;
+    }
+    const std::string_view content(token.data() + 1, token.size() - 2);
+    if (content.find('\\') != std::string_view::npos) {
+      return std::nullopt;
+    }
+    text.append(content);
+  }
+  return text.empty() && tokens.empty() ? std::nullopt
+                                        : std::optional<std::string>(text);
+}
+
+// A bounded floating macro body: optional parentheses and unary sign around
+// one floating-point literal. Arithmetic over floating literals is
+// deliberately out of scope — the integer evaluator's exactness argument
+// does not carry to binary floating point, and real headers spell constants
+// like `#define M_PI 3.14159...` directly.
+[[nodiscard]] std::optional<double>
+evaluateFloatingMacro(const std::vector<std::string> &tokens) {
+  std::size_t first = 0;
+  std::size_t last = tokens.size();
+  while (first + 1 < last && tokens[first] == "(" && tokens[last - 1] == ")") {
+    ++first;
+    --last;
+  }
+  bool negative = false;
+  while (first < last && (tokens[first] == "-" || tokens[first] == "+")) {
+    negative = negative != (tokens[first] == "-");
+    ++first;
+  }
+  if (first + 1 != last) {
+    return std::nullopt;
+  }
+  const std::string &token = tokens[first];
+  // Only a genuine floating spelling qualifies; an integer body belongs to
+  // the integer evaluator, which is exact.
+  if (token.find('.') == std::string::npos &&
+      token.find('e') == std::string::npos &&
+      token.find('E') == std::string::npos) {
+    return std::nullopt;
+  }
+  if (token.starts_with("0x") || token.starts_with("0X")) {
+    return std::nullopt;
+  }
+  std::size_t consumed = 0;
+  double value = 0.0;
+  try {
+    value = std::stod(token, &consumed);
+  } catch (...) {
+    return std::nullopt;
+  }
+  for (std::size_t index = consumed; index < token.size(); ++index) {
+    const char suffix = static_cast<char>(
+        std::tolower(static_cast<unsigned char>(token[index])));
+    if (suffix != 'f' && suffix != 'l') {
+      return std::nullopt;
+    }
+  }
+  return negative ? -value : value;
+}
+
 class ModelBuilder {
 public:
-  ModelBuilder(CXTranslationUnit unit, ReadResult &result)
-      : unit_(unit), result_(result) {
+  ModelBuilder(CXTranslationUnit unit, ReadResult &result,
+               std::string mainFileName,
+               std::map<std::string, NativeSourceId> sourceIdsByPath)
+      : unit_(unit), result_(result), mainFileName_(std::move(mainFileName)),
+        sourceIdsByPath_(std::move(sourceIdsByPath)) {
     rootScope_ = result_.model.addScope(
         {NativeScopeKind::TranslationUnit, std::string(), 0});
+  }
+
+  // The original (presumed) location: line markers in preprocessed input
+  // map back to the file that spelled the declaration. File id 0 is the
+  // root header.
+  [[nodiscard]] SourceOrigin origin(CXSourceLocation location) const {
+    CXString presumedFile;
+    unsigned line = 0;
+    unsigned column = 0;
+    clang_getPresumedLocation(location, &presumedFile, &line, &column);
+    SourceOrigin result{line, column, 0};
+    const std::string name = owned(presumedFile);
+    // Pseudo-files ("<built-in>") hold the predefined macro set, and an
+    // empty presumed file marks a compiler-implicit declaration such as
+    // __va_list_tag; neither is root-header content.
+    if (name.empty() || name.front() == '<') {
+      result.file = kPseudoFileId;
+      return result;
+    }
+    if (!name.empty() && name != mainFileName_ && name != kInputPath) {
+      if (const auto known = sourceIdsByPath_.find(name);
+          known != sourceIdsByPath_.end()) {
+        result.file = known->second;
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] SourceOrigin origin(CXCursor cursor) const {
+    return origin(clang_getCursorLocation(cursor));
+  }
+
+  // The default import policy (C-05): declarations from the root header and
+  // user includes emit; system-header declarations are modeled only.
+  [[nodiscard]] bool inPolicy(const SourceOrigin &at) const {
+    if (at.file == kPseudoFileId) {
+      return false;
+    }
+    const NativeSourceFile *source = result_.model.findSource(at.file);
+    return source == nullptr || !source->system;
   }
 
   // Translates Clang's diagnostics into reader diagnostics. Unresolved
@@ -321,16 +565,19 @@ public:
       const CXDiagnosticSeverity severity =
           clang_getDiagnosticSeverity(diagnostic);
       if (severity >= CXDiagnostic_Error) {
-        const SourceOrigin origin =
-            originOf(clang_getDiagnosticLocation(diagnostic));
+        const CXSourceLocation location =
+            clang_getDiagnosticLocation(diagnostic);
+        const SourceOrigin display = origin(location);
         const std::string text = owned(clang_getDiagnosticSpelling(diagnostic));
         if (endsWith(text, "file not found")) {
-          warn(origin,
+          warn(display,
                "#include is not resolved; declarations from the included "
                "header are unavailable to this import");
         } else {
-          warn(origin, "native C error: " + text);
-          nativeErrorLines_.push_back(origin.line);
+          if (inPolicy(display)) {
+            warn(display, "native C error: " + text);
+          }
+          nativeErrorLines_.push_back(spellingLine(location));
         }
       }
       clang_disposeDiagnostic(diagnostic);
@@ -352,6 +599,8 @@ public:
 private:
   CXTranslationUnit unit_;
   ReadResult &result_;
+  std::string mainFileName_;
+  std::map<std::string, NativeSourceId> sourceIdsByPath_;
   NativeScopeId rootScope_ = 0;
   bool failed_ = false;
   // USR-keyed identity: Clang cursors never become model identity, and these
@@ -373,8 +622,8 @@ private:
 
   [[nodiscard]] bool hasNativeErrorWithin(CXCursor cursor) const {
     const CXSourceRange extent = clang_getCursorExtent(cursor);
-    const std::uint32_t first = originOf(clang_getRangeStart(extent)).line;
-    const std::uint32_t last = originOf(clang_getRangeEnd(extent)).line;
+    const std::uint32_t first = spellingLine(clang_getRangeStart(extent));
+    const std::uint32_t last = spellingLine(clang_getRangeEnd(extent));
     const auto begin = std::lower_bound(nativeErrorLines_.begin(),
                                         nativeErrorLines_.end(), first);
     return begin != nativeErrorLines_.end() && *begin <= last;
@@ -430,9 +679,9 @@ private:
     if (usr.empty()) {
       // Some anonymous declarations carry no USR; a location key keeps two
       // distinct anonymous definitions from colliding.
-      const SourceOrigin origin = originOf(cursor);
-      usr = "gti-anonymous:" + std::to_string(origin.line) + ':' +
-            std::to_string(origin.column);
+      const SourceOrigin at = origin(cursor);
+      usr = "gti-anonymous:" + std::to_string(at.file) + ':' +
+            std::to_string(at.line) + ':' + std::to_string(at.column);
     }
     return usr;
   }
@@ -700,7 +949,8 @@ private:
                       ? std::string()
                       : owned(clang_getCursorSpelling(canonical));
     record.scope = rootScope_;
-    record.origin = originOf(canonical);
+    record.origin = origin(canonical);
+    record.inPolicy = inPolicy(record.origin);
     record.recordIsUnion = clang_getCursorKind(canonical) == CXCursor_UnionDecl;
     const NativeDeclarationId id =
         result_.model.addDeclaration(std::move(record));
@@ -745,13 +995,15 @@ private:
       handleFunction(cursor);
       return;
     case CXCursor_VarDecl:
-      warn(originOf(cursor),
-           "native variable '" + owned(clang_getCursorSpelling(cursor)) +
-               "' is not part of the GTI C ABI and was skipped");
+      if (const SourceOrigin at = origin(cursor); inPolicy(at)) {
+        warn(at, "native variable '" + owned(clang_getCursorSpelling(cursor)) +
+                     "' is not part of the GTI C ABI and was skipped");
+      }
       return;
     default:
-      warn(originOf(cursor),
-           "declaration is outside the bounded surface and was skipped");
+      if (const SourceOrigin at = origin(cursor); inPolicy(at)) {
+        warn(at, "declaration is outside the bounded surface and was skipped");
+      }
       return;
     }
   }
@@ -775,21 +1027,27 @@ private:
     if (hasNativeErrorWithin(cursor)) {
       fail("the record definition has native C errors");
     }
+    NativeRecordLayout layout;
+    bool otherAttribute = false;
+    long long naturalAlignment = 1;
     for (const CXCursor child : childrenOf(cursor)) {
       const CXCursorKind childKind = clang_getCursorKind(child);
       if (clang_isAttribute(childKind) != 0) {
-        // Packed/aligned attributes change the layout Clang computed; the
-        // GTI [[c_abi]] surface has no spelling for them, so the record can
-        // only survive as an opaque handle.
-        fail("the record layout uses an attribute outside the bounded "
-             "surface");
+        // Layout attributes change what Clang computed; the GTI [[c_abi]]
+        // surface has no spelling for them, so the record survives only as
+        // an opaque handle — but which attribute it was is a model fact.
+        if (childKind == CXCursor_PackedAttr) {
+          layout.packed = true;
+        } else {
+          otherAttribute = true;
+        }
         continue;
       }
       if (childKind != CXCursor_FieldDecl) {
         continue; // Nested tag definitions surface through the field using
                   // them.
       }
-      const SourceOrigin fieldOrigin = originOf(child);
+      const SourceOrigin fieldOrigin = origin(child);
       const std::string name = owned(clang_getCursorSpelling(child));
       if (clang_isInvalidDeclaration(child) != 0) {
         fail("field '" + name + "' has native C errors");
@@ -815,13 +1073,33 @@ private:
              "' uses an attribute outside the bounded surface");
         continue;
       }
-      const NativeTypeId type = mapType(clang_getCursorType(child));
+      const CXType fieldType = clang_getCursorType(child);
+      naturalAlignment =
+          std::max(naturalAlignment, clang_Type_getAlignOf(fieldType));
+      const NativeTypeId type = mapType(fieldType);
       fields.push_back({name, type, fieldOrigin});
+    }
+    // An explicit over-alignment is Clang's computed record alignment
+    // exceeding the natural one its fields require.
+    const long long recordAlignment =
+        clang_Type_getAlignOf(clang_getCursorType(cursor));
+    if (recordAlignment > naturalAlignment && naturalAlignment > 0) {
+      layout.alignment = static_cast<std::uint32_t>(recordAlignment);
+    }
+    if (layout.packed) {
+      fail("the record is packed, which the GTI [[c_abi]] layout cannot "
+           "express");
+    } else if (layout.alignment != 0) {
+      fail("the record requires " + std::to_string(layout.alignment) +
+           "-byte alignment, which the GTI [[c_abi]] layout cannot express");
+    } else if (otherAttribute) {
+      fail("the record layout uses an attribute outside the bounded surface");
     }
     // Re-find after mapping: type mapping may have grown the declaration
     // arena and moved the record.
     NativeDeclaration *record = result_.model.findDeclaration(id);
     record->complete = true;
+    record->layout = layout;
     if (failureReason.empty()) {
       record->fields = std::move(fields);
     } else {
@@ -841,8 +1119,10 @@ private:
       return;
     }
     if (hasNativeErrorWithin(cursor)) {
-      warn(originOf(cursor), "enum '" + owned(clang_getCursorSpelling(cursor)) +
-                                 "' has native C errors and was skipped");
+      if (const SourceOrigin at = origin(cursor); inPolicy(at)) {
+        warn(at, "enum '" + owned(clang_getCursorSpelling(cursor)) +
+                     "' has native C errors and was skipped");
+      }
       return;
     }
     NativeDeclaration declaration;
@@ -853,7 +1133,8 @@ private:
                            ? std::string()
                            : owned(clang_getCursorSpelling(cursor));
     declaration.scope = rootScope_;
-    declaration.origin = originOf(cursor);
+    declaration.origin = origin(cursor);
+    declaration.inPolicy = inPolicy(declaration.origin);
     for (const CXCursor child : childrenOf(cursor)) {
       if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl) {
         continue;
@@ -875,11 +1156,12 @@ private:
         transparentTypedefs_.find(usr) != transparentTypedefs_.end()) {
       return; // A C11 typedef redeclaration restates one declaration.
     }
-    const SourceOrigin origin = originOf(cursor);
+    const SourceOrigin at = origin(cursor);
     if (clang_isInvalidDeclaration(cursor) != 0 ||
         hasNativeErrorWithin(cursor)) {
-      warn(origin,
-           "typedef '" + name + "' has native C errors and was skipped");
+      if (inPolicy(at)) {
+        warn(at, "typedef '" + name + "' has native C errors and was skipped");
+      }
       return;
     }
     const CXType underlying = clang_getTypedefDeclUnderlyingType(cursor);
@@ -908,7 +1190,7 @@ private:
         return;
       }
       if (named != nullptr) {
-        addTypedefDeclaration(name, makeReference(targetId), origin, usr);
+        addTypedefDeclaration(name, makeReference(targetId), at, usr);
         return;
       }
     }
@@ -926,7 +1208,7 @@ private:
         const CXType shape = sugared.kind == CXType_Pointer
                                  ? clang_getPointeeType(sugared)
                                  : pointeeCanonical;
-        addTypedefDeclaration(name, mapFunctionType(shape), origin, usr);
+        addTypedefDeclaration(name, mapFunctionType(shape), at, usr);
         return;
       }
     }
@@ -937,19 +1219,20 @@ private:
           makeUnsupported(owned(clang_getTypeSpelling(underlying)),
                           "a function typedef without a pointer declarator "
                           "is outside the bounded surface"),
-          origin, usr);
+          at, usr);
       return;
     }
-    addTypedefDeclaration(name, mapType(underlying), origin, usr);
+    addTypedefDeclaration(name, mapType(underlying), at, usr);
   }
 
   void addTypedefDeclaration(const std::string &name, NativeTypeId aliased,
-                             SourceOrigin origin, const std::string &usr) {
+                             SourceOrigin originAt, const std::string &usr) {
     NativeDeclaration alias;
     alias.kind = NativeDeclarationKind::Typedef;
     alias.name = name;
     alias.scope = rootScope_;
-    alias.origin = origin;
+    alias.origin = originAt;
+    alias.inPolicy = inPolicy(originAt);
     alias.aliased = aliased;
     const NativeDeclarationId id =
         result_.model.addDeclaration(std::move(alias));
@@ -972,32 +1255,53 @@ private:
     if (body.empty()) {
       return;
     }
-    const std::optional<std::int64_t> value =
+    const SourceOrigin at = origin(cursor);
+    NativeDeclaration evaluated;
+    const std::optional<std::int64_t> integer =
         MacroExpressionEvaluator(body, macroValues_).evaluate();
-    if (!value.has_value()) {
-      warn(originOf(cursor),
-           "macro '" + name +
-               "' is not a bounded integer constant expression and was not "
-               "imported");
+    if (integer.has_value()) {
+      evaluated.constantKind = NativeConstantKind::Integer;
+      evaluated.constantValue = *integer;
+      // Only an integer value can participate in a later macro body.
+      macroValues_[name] = *integer;
+    } else if (const std::optional<double> floating =
+                   evaluateFloatingMacro(body)) {
+      evaluated.constantKind = NativeConstantKind::Floating;
+      evaluated.constantFloating = *floating;
+    } else if (const std::optional<std::string> text =
+                   evaluateStringMacro(body)) {
+      evaluated.constantKind = NativeConstantKind::String;
+      evaluated.constantText = *text;
+    } else {
+      if (inPolicy(at)) {
+        warn(at, "macro '" + name +
+                     "' is not a bounded constant expression and was not "
+                     "imported");
+      }
       return;
     }
-    macroValues_[name] = *value;
     if (const auto existing = macroDeclarations_.find(name);
         existing != macroDeclarations_.end()) {
       if (NativeDeclaration *declaration =
               result_.model.findDeclaration(existing->second)) {
-        declaration->constantValue = *value;
+        declaration->constantKind = evaluated.constantKind;
+        declaration->constantValue = evaluated.constantValue;
+        declaration->constantFloating = evaluated.constantFloating;
+        declaration->constantText = evaluated.constantText;
       }
       return;
     }
-    NativeDeclaration declaration;
-    declaration.kind = NativeDeclarationKind::Constant;
-    declaration.name = name;
-    declaration.scope = rootScope_;
-    declaration.origin = originOf(cursor);
-    declaration.constantValue = *value;
+    if (!inPolicy(at)) {
+      // A system macro's value resolves user references; the constant
+      // itself is not part of the import.
+      return;
+    }
+    evaluated.kind = NativeDeclarationKind::Constant;
+    evaluated.name = name;
+    evaluated.scope = rootScope_;
+    evaluated.origin = at;
     const NativeDeclarationId id =
-        result_.model.addDeclaration(std::move(declaration));
+        result_.model.addDeclaration(std::move(evaluated));
     result_.model.order.push_back(id);
     macroDeclarations_.emplace(name, id);
   }
@@ -1022,7 +1326,8 @@ private:
 
   void handleFunction(CXCursor cursor) {
     const std::string name = owned(clang_getCursorSpelling(cursor));
-    const SourceOrigin origin = originOf(cursor);
+    const SourceOrigin at = origin(cursor);
+    const bool report = inPolicy(at);
     const std::string usr = usrOf(cursor);
     if (declarationsByUsr_.find(usr) != declarationsByUsr_.end()) {
       return; // C redeclarations restate one function.
@@ -1037,53 +1342,52 @@ private:
     if (invalid) {
       // The native C error diagnostic collected from Clang names the cause;
       // importing Clang's recovery type would bind the wrong ABI.
-      warn(origin,
-           "declaration '" + name + "' has native C errors and was skipped");
+      if (report) {
+        warn(at,
+             "declaration '" + name + "' has native C errors and was skipped");
+      }
       return;
     }
     if (clang_Cursor_getStorageClass(cursor) == CX_SC_Static) {
-      warn(origin, "'static' declaration is not part of the linkable C ABI "
-                   "surface and was skipped");
+      if (report) {
+        warn(at, "'static' declaration is not part of the linkable C ABI "
+                 "surface and was skipped");
+      }
       return;
     }
     if (clang_Cursor_isFunctionInlined(cursor) != 0) {
-      warn(origin, "'inline' declaration is not part of the linkable C ABI "
-                   "surface and was skipped");
+      if (report) {
+        warn(at, "'inline' declaration is not part of the linkable C ABI "
+                 "surface and was skipped");
+      }
       return;
     }
     if (clang_isCursorDefinition(cursor) != 0) {
-      warn(origin, "function definition '" + name +
-                       "' is not importable and was skipped");
-      return;
-    }
-    // An assembler label renames the link symbol; importing the C name
-    // would bind a different function. C-06 may carry such facts as model
-    // data; today they are outside the bounded surface.
-    bool hasAsmLabel = false;
-    for (const CXCursor child : childrenOf(cursor)) {
-      hasAsmLabel =
-          hasAsmLabel || clang_getCursorKind(child) == CXCursor_AsmLabelAttr;
-    }
-    if (hasAsmLabel) {
-      warn(origin, "function '" + name +
-                       "' carries an assembler label that renames its link "
-                       "symbol and was skipped");
+      if (report) {
+        warn(at, "function definition '" + name +
+                     "' is not importable and was skipped");
+      }
       return;
     }
     const CXType cursorType = clang_getCursorType(cursor);
-    if (clang_getFunctionTypeCallingConv(cursorType) != CXCallingConv_C) {
-      warn(origin, "function '" + name +
-                       "' uses a non-C calling convention outside the "
-                       "bounded surface and was skipped");
-      return;
-    }
     const NativeTypeId type = mapFunctionType(cursorType);
     NativeDeclaration declaration;
     declaration.kind = NativeDeclarationKind::Function;
     declaration.name = name;
     declaration.scope = rootScope_;
-    declaration.origin = origin;
+    declaration.origin = at;
+    declaration.inPolicy = report;
     declaration.type = type;
+    // ABI facts the planner's policy owns (C-06): an assembler label renames
+    // the link symbol, and a non-C calling convention changes how a call
+    // must be lowered. Both are recorded faithfully, never silently dropped.
+    for (const CXCursor child : childrenOf(cursor)) {
+      if (clang_getCursorKind(child) == CXCursor_AsmLabelAttr) {
+        declaration.asmLabel = owned(clang_getCursorSpelling(child));
+      }
+    }
+    declaration.callingConvention =
+        callingConventionName(clang_getFunctionTypeCallingConv(cursorType));
     const NativeType *shape = result_.model.findType(type);
     for (int index = 0; index < argumentCount; ++index) {
       const CXCursor argument =
@@ -1113,8 +1417,11 @@ private:
       if (declaration != nullptr &&
           declaration->kind == NativeDeclarationKind::Record &&
           declaration->name.empty()) {
-        warn(declaration->origin, "an anonymous record declaration is outside "
-                                  "the bounded surface and was skipped");
+        if (declaration->inPolicy) {
+          warn(declaration->origin,
+               "an anonymous record declaration is outside the bounded "
+               "surface and was skipped");
+        }
         continue;
       }
       kept.push_back(id);
@@ -1174,7 +1481,12 @@ ReadResult ClangCReader::read(std::string_view headerText) {
     return result;
   }
   {
-    ModelBuilder builder(unit, result);
+    LineMarkerScan scan = scanLineMarkers(headerText);
+    result.model.sources = std::move(scan.sources);
+    ModelBuilder builder(unit, result,
+                         scan.mainFile.empty() ? std::string(kInputPath)
+                                               : std::move(scan.mainFile),
+                         std::move(scan.idsByPath));
     builder.collectNativeDiagnostics();
     builder.run();
     if (builder.failed()) {

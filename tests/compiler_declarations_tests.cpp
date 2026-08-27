@@ -242,6 +242,162 @@ int main() {
          "storage without a nested dependency representation");
 }
 
+void testMovedLoopLocalRedeclarations() {
+  const lang::FrontendResult trivialLocals =
+      lang::Frontend().analyze("moved-loop-local-trivial.gti", R"(
+int32_t sink(int32_t value) { return value; }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 2) {
+    int32_t element = index + 1;
+    total = total + std::move(element);
+    index++;
+  }
+
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    int32_t local = iteration + 1;
+    total = total + std::move(local);
+  }
+
+  mut int32_t values[4] = {0, 0, 0, 0};
+  mut int32_t position = 0;
+  while (position < 4) {
+    int32_t element = position * 10;
+    values[position] = std::move(element);
+    position++;
+  }
+
+  mut int32_t guard = 0;
+  while (guard < 4) {
+    int32_t element = guard + 1;
+    if (guard % 2 == 0) {
+      total = total + sink(std::move(element));
+    }
+    guard++;
+  }
+  return total + values[3];
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(trivialLocals.canGenerateCode() && trivialLocals.mirValid &&
+             trivialLocals.mir.valid(),
+         "a moved trivially dropped loop-local must leave its storage "
+         "re-initializable across while, for, indexed, and conditional "
+         "backedge forms");
+
+  const lang::FrontendResult genericLocals =
+      lang::Frontend().analyze("moved-loop-local-generic.gti", R"(
+T accumulate<std::numeric T>(T seed, T limit) {
+  mut T total = seed;
+  mut T step = seed;
+  while (step < limit) {
+    T element = step + T(1);
+    total = total + std::move(element);
+    step = step + T(1);
+  }
+  return total;
+}
+
+int main() {
+  int32_t narrow = accumulate<int32_t>(0, 2);
+  int64_t wide = accumulate<int64_t>(int64_t(0), int64_t(2));
+  return narrow + int32_t(wide);
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(genericLocals.canGenerateCode() && genericLocals.mirValid &&
+             genericLocals.mir.valid(),
+         "every generic instance must rearm a moved trivially dropped "
+         "loop-local for the next iteration");
+
+  const lang::FrontendResult lexicalLocals =
+      lang::Frontend().analyze("moved-loop-local-lexical.gti", R"(
+class Tracker {
+  int32_t value;
+
+public:
+  Tracker(int32_t initial) : value(initial) {}
+  Tracker(Tracker&& other) = default;
+  ~Tracker() {}
+
+  int32_t read() { return this.value; }
+};
+
+int32_t consume(Tracker taken) { return taken.read(); }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 4) {
+    mut Tracker element{index + 1};
+    if (index % 2 == 0) {
+      total = total + consume(std::move(element));
+    }
+    index++;
+  }
+  return total;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(lexicalLocals.canGenerateCode() && lexicalLocals.mirValid &&
+             lexicalLocals.mir.valid(),
+         "a conditionally moved lexically dropped loop-local should verify "
+         "through its scope-end drop across the loop backedge");
+
+  const lang::HirFunctionInstance *lexicalMain = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       lexicalLocals.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "main") {
+      lexicalMain = &function;
+      break;
+    }
+  }
+  lang::MirProgram hiddenScopeEnd = lexicalLocals.mir;
+  std::size_t hiddenDrops = 0;
+  if (lexicalMain != nullptr) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        hiddenScopeEnd.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != lexicalMain->id) {
+        continue;
+      }
+      for (lang::MirBlock &block : function.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              !instruction.destination) {
+            continue;
+          }
+          const lang::MirPlace *place =
+              function.body.findPlace(*instruction.destination);
+          if (place == nullptr ||
+              place->root != lang::MirPlaceRootKind::Binding ||
+              !place->projections.empty() ||
+              place->traits.drop != lang::DropKind::Lexical || !place->key) {
+            continue;
+          }
+          instruction.ownership =
+              lang::OwnershipEvent{.kind = lang::OwnershipEventKind::Read,
+                                   .place = *place->key,
+                                   .reachable = false};
+          ++hiddenDrops;
+        }
+      }
+    }
+  }
+  const lang::MirVerificationResult hiddenScopeEndResult =
+      lang::verifyMirProgram(hiddenScopeEnd);
+  expect(hiddenDrops != 0 && !hiddenScopeEndResult.valid() &&
+             hasMirVerificationError(
+                 hiddenScopeEndResult,
+                 "initialization targets a place whose lifetime is already "
+                 "active"),
+         "a lexically dropped loop-local whose scope-end drop is hidden from "
+         "the ownership flow model must still fail re-initialization");
+}
+
 void testInferredVoidGenericArguments() {
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("inferred-void-generic.gti", R"(
@@ -3707,6 +3863,131 @@ concept signed_value<T> = std::signed_numeric<T>;
          "conjunction spacing");
 }
 
+void testDomainValueOperatorCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "domain-operator-capabilities.gti", R"(
+#include <std/numeric>
+
+class vec3 {
+public:
+  vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+  float x;
+  float y;
+  float z;
+  vec3 operator+(vec3& other) {
+    return vec3(this.x + other.x, this.y + other.y, this.z + other.z);
+  }
+  vec3 operator-(vec3& other) {
+    return vec3(this.x - other.x, this.y - other.y, this.z - other.z);
+  }
+  vec3 operator-() { return vec3(-this.x, -this.y, -this.z); }
+  vec3 operator*(float scale) {
+    return vec3(this.x * scale, this.y * scale, this.z * scale);
+  }
+};
+
+int main() {
+  vec3 from = vec3(0.0, 0.0, 0.0);
+  vec3 to = vec3(10.0, 20.0, 30.0);
+  vec3 middle = std::lerp(from, to, 0.5);
+  vec3 opposite = std::negated(to);
+  float scalar = std::lerp(0.0, 8.0, 0.25);
+  return (middle.x == 5.0 && middle.y == 10.0 && middle.z == 15.0 &&
+          opposite.x == -10.0 && scalar == 2.0)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected domain-operator diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "a user domain type should satisfy std::vector_space and drive the "
+         "generic std::lerp while built-in float uses its exact overload");
+
+  const auto rejects = [&](std::string_view name, const std::string &source,
+                           std::string_view conceptName,
+                           std::string_view hintFragment,
+                           std::string_view message) {
+    const lang::FrontendResult result = lang::Frontend().analyze(
+        std::string(name), source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnostic(result.diagnostics,
+                             std::string("do not satisfy concept '") +
+                                 std::string(conceptName) + "'") &&
+               hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
+           std::string(message));
+  };
+
+  rejects("domain-operator-missing-add.gti", R"(
+class half {
+public:
+  half(float v) : v(v) {}
+  float v;
+};
+T twice<T>(T& a) requires std::addable<T> { return a + a; }
+int main() { half h = half(1.0); half r = twice(h); return 0; }
+)",
+          "std::addable", "T operator+(T&)",
+          "a domain type without operator+ should fail std::addable with the "
+          "member-form hint");
+
+  rejects("domain-operator-missing-negate.gti", R"(
+class half {
+public:
+  half(float v) : v(v) {}
+  float v;
+  half operator+(half& o) { return half(this.v + o.v); }
+};
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { half h = half(1.0); half r = opposite(h); return 0; }
+)",
+          "std::negatable", "unary",
+          "a domain type without unary operator- should fail std::negatable");
+
+  rejects("domain-operator-builtin-excluded.gti", R"(
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { int32_t v = 3; int32_t r = opposite(v); return 0; }
+)",
+          "std::negatable", "unary",
+          "the domain family is member-only: a built-in numeric keeps its own "
+          "checked arithmetic and does not satisfy it");
+
+  rejects("domain-operator-mismatched-scalar.gti", R"(
+class vec2 {
+public:
+  vec2(float x, float y) : x(x), y(y) {}
+  float x;
+  float y;
+  vec2 operator*(float s) { return vec2(this.x * s, this.y * s); }
+};
+T scale<T, S>(T& v, S s) requires std::scalable_by<T, S> { return v * s; }
+int main() { vec2 v = vec2(1.0, 2.0); vec2 r = scale(v, 2); return 0; }
+)",
+          "std::scalable_by", "operator*(Scalar)",
+          "scaling by a type the domain does not accept should fail "
+          "std::scalable_by rather than converting the scalar");
+
+  rejects("domain-operator-borrowed-result.gti", R"(
+class holder {
+public:
+  holder(float v) : v(v) {}
+  mut float v;
+  holder& operator+(holder& other) { return other; }
+};
+T twice<T>(T& a) requires std::addable<T> { return a + a; }
+int main() { holder h = holder(1.0); holder r = twice(h); return 0; }
+)",
+          "std::addable", "owned value",
+          "a borrowed operator result should fail std::addable: the capability "
+          "requires an owned domain value");
+}
+
 void testStructuralRequiresAndAccumulate() {
   const std::string source = R"(
 #include <std/iterator>
@@ -6066,6 +6347,197 @@ int main() {
          "formatter should keep array constructor initializers compact");
 }
 
+// A dynamic fixed-array element write keeps its index_out_of_bounds failure
+// site, and MIR must pair that site with an Invoke terminator so the checked
+// write helper's status feeds the failure successor exactly like the read
+// form. Losing the edge silently no-ops the out-of-bounds write.
+void testFixedArrayDynamicWriteFailureEdge() {
+  const std::string source = R"(
+int main() {
+  mut int32_t cells[4] = {};
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(9)) {
+    index++;
+  }
+  cells[index] = 7;
+  return int(cells[uint64_t(0)]);
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("dynamic-array-write.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the dynamic array-write fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *mainMir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainMir = frontend.mir.findFunctionInstance(instance.id);
+      break;
+    }
+  }
+  const lang::MirBlock *writeBlock = nullptr;
+  const lang::MirInstruction *write = nullptr;
+  if (mainMir != nullptr) {
+    for (const lang::MirBlock &block : mainMir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Assign &&
+            instruction.operation == lang::MirOperation::Assign &&
+            instruction.destination && !instruction.localFailureSites.empty()) {
+          writeBlock = &block;
+          write = &instruction;
+        }
+      }
+    }
+  }
+  const bool boundsOutcome =
+      write != nullptr &&
+      std::any_of(
+          write->localFailureSites.begin(), write->localFailureSites.end(),
+          [&](lang::FailureSiteId id) {
+            const lang::FailureSiteDescriptor *site =
+                frontend.mir.failureMetadata().findSite(id);
+            return site != nullptr &&
+                   std::any_of(
+                       site->outcomes.begin(), site->outcomes.end(),
+                       [&](const lang::DefinedFailureOutcome &outcome) {
+                         return outcome.code ==
+                                lang::DefinedFailureCode::IndexOutOfBounds;
+                       });
+          });
+  expect(
+      write != nullptr && boundsOutcome &&
+          lang::requiresMirFailureControlFlow(
+              *write, lang::MirFailureControlFlowPosition::FullExpressionRoot),
+      "a dynamic fixed-array element write should stay eligible for MIR "
+      "failure control flow");
+  expect(writeBlock != nullptr && write != nullptr &&
+             !writeBlock->instructions.empty() &&
+             writeBlock->instructions.back().id == write->id &&
+             writeBlock->terminator.kind == lang::MirTerminatorKind::Invoke &&
+             writeBlock->terminator.invokeInstruction == write->id &&
+             writeBlock->terminator.elseTarget != 0 &&
+             mainMir->body.blocks[writeBlock->terminator.elseTarget - 1]
+                     .failureParameter == writeBlock->terminator.failureRecord,
+         "the dynamic array write must terminate its block with an Invoke "
+         "whose failure successor consumes the checked write status");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::size_t status = artifact.contents.find(
+      " = ::gti_internal::backend::mir_checked_array_write_v1(");
+  const std::size_t variable =
+      status == std::string::npos
+          ? std::string::npos
+          : artifact.contents.rfind("__gti_mir_failure_status_", status);
+  const std::string consumer =
+      variable == std::string::npos
+          ? std::string()
+          : "if (" + artifact.contents.substr(variable, status - variable) +
+                ".code == GTI_FAILURE_CODE_NONE_V1)";
+  expect(status != std::string::npos && variable != std::string::npos &&
+             !consumer.empty() &&
+             artifact.contents.find(consumer, status) != std::string::npos,
+         "the emitted checked array write must branch on its failure status "
+         "instead of discarding it");
+}
+
+// A chained fixed-array element access with a dynamic nonterminal index is one
+// checked access with one bounds site. The emitter used to admit a nonterminal
+// index only when it was a compile-time in-bounds constant and declined the
+// body otherwise, so `matrix[row][column]` with a runtime row raised GTI-B0001
+// on the read form as well as the write form. The chained text now owns a
+// bound per dimension: the failure form guards each dynamic nonterminal index
+// before the terminal checked helper runs.
+void testFixedArrayChainedDynamicIndex() {
+  const std::string source = R"(
+int main() {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(9)) {
+    row = row + uint64_t(1);
+  }
+  uint64_t column = uint64_t(1);
+  matrix[row][column] = 7;
+  return int(matrix[row][column]);
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("chained-array-index.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the chained array-index fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  // The emitter reports a declined body by throwing, which is what raises
+  // GTI-B0001 through the driver. Catching it keeps the regression a readable
+  // failure instead of an abort.
+  lang::BackendArtifact artifact;
+  std::string declined;
+  try {
+    artifact =
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  } catch (const std::exception &error) {
+    declined = error.what();
+  }
+  expect(declined.empty(),
+         "a chained dynamic element access should stay inside the complete "
+         "C++ text vocabulary");
+
+  const std::size_t entry =
+      artifact.contents.rfind("bool __gti_entry__gti_mir_failure(");
+  const std::string body = entry == std::string::npos
+                               ? std::string()
+                               : artifact.contents.substr(entry);
+  const auto occurrences = [&](const std::string &needle) {
+    std::size_t count = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++count;
+    }
+    return count;
+  };
+  const std::string guard =
+      " = ::gti_internal::backend::mir_checked_array_bound_v1(";
+  const std::string read =
+      " = ::gti_internal::backend::mir_checked_array_read_v1(";
+  const std::string write =
+      " = ::gti_internal::backend::mir_checked_array_write_v1(";
+  // One guard for the dynamic row of the read and one for the write, each
+  // paired with the terminal helper that carries the column.
+  expect(!body.empty() && occurrences(guard) == 2 && occurrences(read) == 1 &&
+             occurrences(write) == 1,
+         "each chained dynamic access should guard its nonterminal dimension "
+         "alongside the terminal checked helper");
+
+  const std::size_t guardAt = body.find(guard);
+  const std::size_t statusAt =
+      guardAt == std::string::npos
+          ? std::string::npos
+          : body.rfind("__gti_mir_failure_status_", guardAt);
+  const std::string status = statusAt == std::string::npos
+                                 ? std::string()
+                                 : body.substr(statusAt, guardAt - statusAt);
+  const std::size_t writeAt = body.find(write);
+  expect(!status.empty() && writeAt != std::string::npos && guardAt < writeAt &&
+             body.find("if (" + status + ".code == GTI_FAILURE_CODE_NONE_V1) {",
+                       guardAt) < writeAt,
+         "the guard should open the success branch the terminal checked "
+         "helper runs inside");
+}
+
 void testLocalTypeInference() {
   const std::string source = R"(
 class Box {
@@ -7698,6 +8170,7 @@ int main() {
 
 constexpr NamedTest kTests[] = {
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},
+    {"testMovedLoopLocalRedeclarations", testMovedLoopLocalRedeclarations},
     {"testInferredVoidGenericArguments", testInferredVoidGenericArguments},
     {"testTrustedIntrinsicDeclarations", testTrustedIntrinsicDeclarations},
     {"testThisReceiverKeyword", testThisReceiverKeyword},
@@ -7718,6 +8191,8 @@ constexpr NamedTest kTests[] = {
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
     {"testStructuralRequiresAndAccumulate",
      testStructuralRequiresAndAccumulate},
+    {"testDomainValueOperatorCapabilities",
+     testDomainValueOperatorCapabilities},
     {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
     {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
     {"testValueGenerics", testValueGenerics},
@@ -7726,6 +8201,9 @@ constexpr NamedTest kTests[] = {
     {"testExactFunctionOverloadsAndConversions",
      testExactFunctionOverloadsAndConversions},
     {"testFixedArrays", testFixedArrays},
+    {"testFixedArrayDynamicWriteFailureEdge",
+     testFixedArrayDynamicWriteFailureEdge},
+    {"testFixedArrayChainedDynamicIndex", testFixedArrayChainedDynamicIndex},
     {"testLocalTypeInference", testLocalTypeInference},
     {"testStructuredBindings", testStructuredBindings},
     {"testTypeAliases", testTypeAliases},

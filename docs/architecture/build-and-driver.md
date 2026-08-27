@@ -298,12 +298,27 @@ namespace = "counter_ffi"         # optional GTI namespace
 include-dirs = ["native/include"] # optional, package-contained
 defines = ["COUNTER_STEP=2"]      # -D for the import's preprocessing only
 undefines = ["COUNTER_TRACE"]     # -U likewise
+
+# Opt-in import policy (C-07); every entry joins the model identity.
+allow = ["counter_*"]                 # import only matching declarations
+deny = ["counter_internal_*"]         # never import matching declarations
+rename = { counter__impl = "CounterImpl" }   # types and constants only
+array-returns = [{ function = "counter_all", count = "count" }]
 ```
+
+`allow`/`deny` patterns are an exact name or one trailing `*`. An excluded
+declaration still resolves uses exactly like a system-provenance one.
+`rename` gives a type or constant whose C spelling GTI cannot use a usable
+name; functions are refused because a function's GTI name is its link
+symbol. `array-returns` declares the pointer-plus-count contract a C header
+cannot state, emitting `[[c_array(count)]]` after the planner validates the
+language's rule. A configured entry that matches nothing is reported.
 
 During `gti build`, `check`, `run`, and `test`, the driver generates GTI
 declarations from the header with the same pipeline as `gti bindgen`
-(Clang preprocessing with kept system includes and retained user macros,
-then the in-process importer) into
+(one Clang preprocessing pass resolving the full include graph with line
+markers preserved, then the in-process importer applying provenance-based
+import policy) into
 `build/gti/bindgen/<package>/<alias>/bindings.gti`, published atomically
 through a staged sibling. The declaring package's sources reach them as
 `#include <alias/bindings>`: the generated directory is a synthetic package

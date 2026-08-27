@@ -1320,6 +1320,14 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   case SemanticType::Enum:
     return type.enumId != owner && type.enumId != 0 &&
            type.enumId <= enums.size() && !enums[type.enumId - 1].payload;
+  case SemanticType::Class:
+    // The cleanup-free class-payload family: an ordinary concrete class
+    // value may live inside an alternative. Active-cleanup and
+    // borrowed-state payloads are rejected at construction, where class
+    // traits are complete; the enum's own traits fold the payload's
+    // copy/move/ownership facts, so a move-only payload makes the enum
+    // value move-only.
+    return type.classId != 0;
   default:
     return false;
   }
@@ -1382,6 +1390,9 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                      "' is outside the passive payload family.",
                  "GTI-S2067");
         }
+        // Class payloads with active cleanup or borrowed state are rejected
+        // at construction, where class traits are complete; enum payload
+        // resolution runs before member metadata exists.
         payloadTypes.push_back(type);
       }
       if (found != info.enumerators.end()) {

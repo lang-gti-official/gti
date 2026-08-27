@@ -94,9 +94,20 @@ rejects represented synchronization in the single-threaded profile. Thus an
 unused `<std/thread>` import remains valid without granting a backend or
 transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v49`/`mir-body-v45`.
-Program v49 and body v45 add the explicit early-exit full-expression marker
-role used by expected propagation. Each propagation failure edge retains a
+The deterministic serialization is currently `mir-v51`/`mir-body-v45`.
+Program v51 extends the version-28 benign-event rule to the trivial-commit
+assignment: a `Reinitialize` that leaves an always-available, trivially
+destroyed destination available on a reachable edge is equally
+state-preserving, because the checked write helper leaves the destination
+untouched when it fails. A dynamic fixed-array element write therefore keeps
+the `Invoke` edge that publishes its `index_out_of_bounds` status; before
+v51 the eligibility predicate rejected the write's `Reinitialize` event, the
+edge was never routed, and the emitted checked write discarded its failure
+status — an out-of-bounds write silently no-opped while the matching read
+raised. Program v50 adds the bounded two-phase mutable loan for plain
+source-defined subscript and dereference stores described below. Program v49
+and body v45 add the explicit early-exit full-expression
+marker role used by expected propagation. Each propagation failure edge retains a
 path-exclusive boundary alongside the one ordinary continuation boundary, so
 verification can prove exact temporary and lexical cleanup without reopening
 HIR. Program v48 and body v44 serialize the exact designated stored-reference
@@ -245,7 +256,12 @@ destroyed and which runs no lifecycle event: a failure writes nothing and
 leaves no state to unwind, so its edge needs only the ordinary temporary and
 scope cleanup. This covers the narrowing compound forms that keep a closed
 instruction. An assignment that replaces an owning value still requires the
-destination's own unwinding rule. Version 35 records the exact binding place
+destination's own unwinding rule. Version 50 completes that admission for the
+element write: a `Reinitialize` ownership event on a trivial-commit
+assignment that leaves an available destination available on a reachable edge
+is state-preserving in the same sense, so a dynamic fixed-array element write
+routes the `Invoke` edge that consumes its checked helper's
+`index_out_of_bounds` status. Version 35 records the exact binding place
 for a failure-capable lexical result used as a direct initializer. Its
 `Invoke` success successor must contain the unique matching `Initialize`,
 which arms the binding only after the call succeeds; the failure successor
@@ -311,6 +327,18 @@ exclusive loan because body-local MIR cannot prove that an intervening call
 does not mutate the same global. The C++ representation consumes the verified
 schedule and erases activation as a no-op; it does not reconstruct evaluation
 order or loan state from source syntax.
+
+Because the entry loan is self-sourced at the carrier binding — MIR cannot
+name the caller's owner storage — its canonical protected place collides with
+the carrier object itself. Verification therefore exempts whole-carrier
+accesses from that collision in both access modes: reading the carrier as a
+receiver (`first != last` on a by-value mut cursor parameter), mutating it,
+and moving it are all independent of the protected referent, exactly as they
+are for a local carrier whose loan protects the distinct owner binding. A
+projection that still carries borrowed state receives no exemption, so a read
+or write of the stored reference field outside the loan, and any reseat of
+it, still conflict. Accesses through the stored reference resolve through the
+loan itself and follow the ordinary reborrow rules.
 
 The C++ representation snapshot keeps `copyConstructible` distinct from
 `copyable`. The former permits initialization of a fresh lifetime slot from a
@@ -721,7 +749,13 @@ computed an ordinary index. Its verifier runs a sparse
 available/moved/uninitialized state-set fixed point over reachable CFG edges.
 Local binding storage begins uninitialized, parameters begin available,
 initialization activates a local lifetime, and drop returns the root to
-uninitialized for roots that participate in an explicit move. The sparse
+uninitialized for roots that participate in an explicit move. Because a
+lexically dropped binding spells every scope end as a drop, its
+re-initialization requires definitely uninitialized storage; a trivially
+dropped binding leaves scope without any MIR instruction, so a moved or
+conditionally moved loop-local may still carry moved state across the back
+edge and its re-initialization at the declaration is accepted from any prior
+state as the implicit scope end. The sparse
 fixed point does not impose lifecycle state on unrelated legacy MIR places.
 Moves require an exact available key, element assignment restores that key,
 ancestor uses observe moved descendants, and different constant elements are
@@ -904,6 +938,71 @@ overlapping use of a suspended parent, a read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
 projections; it does not claim indexed, raw, or opaque provenance.
+
+When lowering re-roots a projected place at a loan whose source is a
+reference carrier itself — a reference parameter's entry loan rather than a
+body-local referent place — the composed loan-source place spells the carrier
+dereference explicitly before its remaining field or index projections.
+Disjoint sibling-field receiver borrows reached through one mutable reference
+parameter therefore each name their exact `[dereference, field…]` place, which
+keeps them field-disjoint for verification and lets the backend key every
+field projection to one concrete class instance.
+
+A reference binding that retains a borrowed call result keeps that call
+result's own loan and adds itself as a carrier, whether the loan is a root or
+already hangs from the parent its retained semantic loan names. Lowering does
+not end the call result and recreate a child loan from the receiver or
+argument origin. Such a recreated loan cannot name the returned address for
+backend publication, and its source place would record the returned referent's
+type over a projection chain that derives the receiver subobject's — a place
+no later stage can key coherently. A derived call-result chain whose links do
+not already end at the retained loan's semantic parent still normalizes
+through that parent, so parent suspension and reactivation are preserved.
+
+When the call's own argument or
+receiver was already a borrowed call result, the retained loan is the outermost
+link of a call-result reborrow chain: lowering keeps that link rather than
+ending the chain and recreating a loan from the receiver or argument origin,
+because the recreated loan cannot name the returned address and its source
+place would record the returned referent's type over a projection chain that
+derives the origin's. The links the retained loan reborrows carry nothing
+themselves, but a parent must outlive its child on every edge, so they stay
+live past the full expression that produced them and end together with the last
+loan that reborrows them, child-first. Loan release by expression extent alone
+would end such a link while the retained child is still active, which
+verification rejects.
+
+A reference binding that retains a call-result reborrow chain keeps that
+chain's outermost link and adds itself as a carrier, including when the chain
+already bottoms out at the loan the retained semantic loan names as its parent.
+That is the shape a reference carrier produces: a reference parameter's entry
+loan, or a local reference binding's loan, is what gives a retained loan a
+semantic parent at all. Lowering does not end such a chain and recreate a child
+loan from the semantic place, and it decides before materializing that place.
+The place records the returned referent's type over a projection chain that
+stops at the parent loan plus the receiver subobject, so it can name neither
+the returned address for backend publication nor one coherent referent for any
+later stage — and a body that records it fails the emitter's place-coherence
+scan even when nothing uses it. The links the retained loan reborrows stay
+live for its extent, keeping every parent outliving its child on each edge, and
+the owning scope ends the whole chain child-first.
+
+Returning a read-only reference parameter directly uses the same transfer as
+the by-value carrier and summarized call-result returns above. The parameter's
+seeded `Parameter` entry loan is the body's whole-extent capability and has no
+producing instruction, so it cannot become the escaping `Return` loan by
+reclassification: nothing in the body would ever name the address the return
+publishes, and a backend can only default-initialize that pointer. Lowering
+publishes a fresh parentless escaping `Return` loan from the entry loan's own
+source through one `Borrow` whose single `Loan` operand names the entry loan,
+and retires the entry loan at that same instruction boundary. Local read-only
+aliases of the formal still share the one entry loan and extend its carrier
+set; only the escaping dependency is published separately. The verifier admits
+exactly this forward — a `Parameter` entry loan carried by its own
+projection-free reference-typed formal place, matching source place, non-
+widened access, and an immediately following `EndBorrow` of the forwarded loan
+— and continues to reject every other parentless `Borrow` from a `Loan`
+operand. No body may record a loan that is at once `entry` and `Return`.
 
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access

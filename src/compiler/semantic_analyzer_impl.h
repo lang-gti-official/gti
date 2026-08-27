@@ -1255,6 +1255,10 @@ private:
   void appendTransientMutationPlaces(const ExprPtr &expression,
                                      std::vector<SemanticLoanPlace> &places);
 
+  void appendTransientReadPlaces(
+      const ExprPtr &expression, std::vector<SemanticLoanPlace> &places,
+      std::vector<TransientBorrowProduction> &productions);
+
   [[nodiscard]] bool reportCommaTransientConflict(const ExprPtr &expression,
                                                   const Token &location);
 

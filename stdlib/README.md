@@ -310,7 +310,7 @@ them repeatedly, and reject consuming once-callables.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, `for_each`, and forward-iterator `binary_search`; remaining copy, transform, reverse, and sort declarations |
+| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, `for_each`, forward-iterator `binary_search`, writable-output `copy`, and the whole-container `fill`, `transform`, `reverse`, and `sort` forms over `std::vector<T>`; comparator `sort` and iterator-pair in-place forms remain |
 | `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
 | `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
 | `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
