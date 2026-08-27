@@ -28,6 +28,12 @@ namespace gti_internal {
   @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
   @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
   @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
+  @compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
+  @compiler_constraint("writes_to") concept writes_to_capability<I, T>;
+  @compiler_constraint("bidirectional_iterator") concept bidirectional_iterator_capability<I>;
+  @compiler_constraint("random_access_iterator") concept random_access_iterator_capability<I>;
+  @compiler_constraint("subscripts_to_mut") concept subscripts_to_mut_capability<I, T>;
+  @compiler_constraint("sized_sentinel_for") concept sized_sentinel_for_capability<S, I>;
 
   gti_internal::unique_owner<T> allocate_unique_owner<T, Args...>(Args... args);
   T & unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
