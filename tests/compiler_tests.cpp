@@ -25156,7 +25156,8 @@ int main() {
                hasDiagnostic(result.diagnostics,
                              std::string("do not satisfy concept '") +
                                  std::string(conceptName) + "'") &&
-               hasDiagnostic(result.diagnostics, std::string(hintFragment)),
+               hasDiagnosticHint(result.diagnostics,
+                                 std::string(hintFragment)),
            std::string(message));
   };
 

@@ -3184,27 +3184,20 @@ public:
           receiver =
               std::make_unique<QualifiedName>(NamePath(expr.path().segments));
         }
+        const ExpressionInfo receiverInfo =
+            classifyExpression(*receiver, targetType);
         const std::optional<FunctionCandidate> selected = resolveOperator(
             expr, *mutationOperator, receiver, targetType, expr.oper(),
             std::span<const SemanticType>(&valueType, 1),
-            std::span<const ExprPtr>(&expr.value(), 1));
+            std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+            OperatorReceiverState{
+                .place = targetPlace,
+                .mutableReceiver = receiverInfo.access == AccessMode::Mutable,
+                .info = receiverInfo});
         currentType = selected ? callExpressionType(selected->returnType)
                                : SemanticType::Unknown;
         return;
       }
-      const ExpressionInfo receiverInfo =
-          classifyExpression(*receiver, targetType);
-      const std::optional<FunctionCandidate> selected = resolveOperator(
-          expr, *mutationOperator, receiver, targetType, expr.oper(),
-          std::span<const SemanticType>(&valueType, 1),
-          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
-          OperatorReceiverState{.place = targetPlace,
-                                .mutableReceiver =
-                                    receiverInfo.access == AccessMode::Mutable,
-                                .info = receiverInfo});
-      currentType = selected ? callExpressionType(selected->returnType)
-                             : SemanticType::Unknown;
-      return;
     }
     if (simpleAssignment && targetType.kind == SemanticType::Class) {
       valueType = analyze(expr.value());
