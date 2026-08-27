@@ -351,6 +351,19 @@ surfaces may be represented as C++ templates and concrete specializations;
 specialization eligibility comes from concrete-instance items, and executable
 specialization text still comes from MIR.
 
+Closure-typed (unnameable) instances of one generic declaration emit through
+a single deduced-callable template whose body text is canonical per
+parameter-cleanup shape: the shape records which declared parameters carry a
+lexical drop obligation in that instance's verified MIR. Instances sharing a
+shape must prove byte-identical overlaid body text. When concrete callable
+environments produce different shapes — a scalar-capturing lambda beside a
+class-capturing one — the one emitted template reunites the canonical variant
+bodies behind an instantiation-time `std::is_trivially_destructible_v`
+dispatch over each varying parameter, which must be declared directly as a
+template type parameter (or be the exact thread-task parameter). Any variance
+the dispatch cannot express fails closed rather than merging inconsistent
+bodies.
+
 Lowered declarations retain an explicit default-constructor or destructor
 specifier for source/coherence and tooling inventory. Because that policy has
 no source body, the emitter does not publish a separate member definition; it

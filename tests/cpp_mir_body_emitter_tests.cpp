@@ -4407,6 +4407,88 @@ int main() {
          "the call sites");
 }
 
+// A deduced-callable template covering instances with different cleanup
+// shapes: a scalar-capturing lambda needs no parameter drop while a
+// class-capturing lambda does, so the two instance bodies cannot share one
+// text. The single emitted template must reunite both variants through an
+// instantiation-time destructibility dispatch instead of failing closed.
+// (Regression: the combination ICEd with "lowered callable instances do not
+// share one source template representation" while each family alone passed.)
+void testMixedCaptureDeducedCallableTemplateEmission() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-mixed-capture-template.gti", R"(
+#include <std/memory>
+
+mut int cleanup_count = 0;
+
+class payload {
+public:
+  payload() {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+  ~payload() { cleanup_count++; }
+
+  int tag() { return 1; }
+};
+
+void apply<Operation>(Operation operation) {
+  operation(1);
+}
+
+int main() {
+  int offset = 1;
+  auto scalar = [offset](int value) -> void {
+    if (value == offset) {
+      return;
+    }
+  };
+  payload owned = payload();
+  auto classy = [kept = std::move(owned)](int value) -> void {
+    if (value == kept.tag()) {
+      return;
+    }
+  };
+  apply(std::move(scalar));
+  apply(std::move(classy));
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the mixed-capture template fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const auto count = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
+               "*__gti_mir_failure_record) {") == 1,
+         "exactly one template definition should carry both cleanup-shape "
+         "variants");
+  expect(count("deduced-callable-failure-v1 function-instance") == 2,
+         "the dispatching template body should carry one banner per covered "
+         "instance");
+  expect(count("if constexpr (std::is_trivially_destructible_v<Operation>)") >=
+             1,
+         "the template body should dispatch the cleanup-shape variants on "
+         "the callable parameter's destructibility");
+  expect(text.find("::gti_internal::backend::mir_lifetime_slot<Operation>") !=
+             std::string::npos,
+         "the non-trivial cleanup variant should keep its lifetime-slot "
+         "parameter storage");
+}
+
 // The reference-return failure ABI (ADR 018 §5): a may-raise body whose
 // return is a loan publishes its pointer through a `T **` out-parameter,
 // the Return-with-loan spells the publication, and the whole artifact —
@@ -10085,6 +10167,8 @@ constexpr NamedTest kTests[] = {
      testInvokePublishesScalarEdgeArguments},
     {"testDeducedCallableTemplateEmission",
      testDeducedCallableTemplateEmission},
+    {"testMixedCaptureDeducedCallableTemplateEmission",
+     testMixedCaptureDeducedCallableTemplateEmission},
     {"testReferenceReturnFailureAbi", testReferenceReturnFailureAbi},
     {"testGenericOwnerReferenceReturnFailureAbi",
      testGenericOwnerReferenceReturnFailureAbi},
