@@ -1,6 +1,6 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-04 implemented (bounded C17 declaration import,
+Status: C-01 through C-04 and BUILD-01 implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
 translation-unit inputs, exact opaque-handle out parameters sufficient for an
 end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
@@ -310,9 +310,15 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    object-like integer macros import as `constexpr` constants. Remaining:
    preserve calling convention and ABI attributes as model facts; reject
    unsupported ABI-affecting attributes explicitly.
-7. **BUILD-01: manifest and cache integration.** Add a `gti.toml` import table;
-   make the driver own discovery and immutable requests; cache generated
-   source by the complete key in the scalability contract.
+7. **BUILD-01: manifest and cache integration (implemented).**
+   `[bindgen.<alias>]` manifest tables resolve into immutable
+   `BindgenImportPlan` values on every project build plan; the driver owns
+   generation into a synthetic package source root
+   (`#include <alias/bindings>`), atomic publication, and a reuse key over
+   the preprocessed translation unit, ordered options, target triple, and
+   tool identity. See the Bindgen Imports section of
+   [`build-and-driver.md`](../architecture/build-and-driver.md). Remaining
+   from the original milestone: surfacing imports through `gti metadata`.
 8. **CPP-01: C++ interop policy.** Decide the GTI surface for namespaces,
    overloads, methods, constructors, layouts, templates, ownership, and
    exceptions before importing any C++ declaration.

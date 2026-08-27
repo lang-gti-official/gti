@@ -82,6 +82,27 @@ struct ProjectWorkspaceManifest {
   SourceSpan declaration;
 };
 
+// One `[bindgen.<alias>]` import: the driver generates GTI declarations from
+// the named C header during project builds and exposes them to this
+// package's sources as `#include <alias/bindings>`. The alias occupies the
+// same per-package namespace as dependency aliases.
+struct ProjectBindgenImport {
+  std::string alias;
+  // Resolved absolute header path, contained in the package directory.
+  std::filesystem::path header;
+  // The package-relative spelling as declared, for relocation-stable model
+  // identity.
+  std::string declaredHeader;
+  // Optional GTI namespace wrapped around the generated source names.
+  std::string namespaceName;
+  std::vector<std::filesystem::path> includeDirectories;
+  // Validated `-D<name>[=<value>]` / `-U<name>` preprocessor arguments in
+  // declaration order.
+  std::vector<std::string> macroArguments;
+  SourceSpan declaration;
+  SourceSpan headerDeclaration;
+};
+
 enum class ProjectTargetKind {
   Executable,
   Test,
@@ -120,7 +141,8 @@ public:
       std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
       std::vector<ProjectDependency> dependencies = {},
       std::optional<ProjectWorkspaceManifest> workspace = std::nullopt,
-      ProjectBuildSettings build = {});
+      ProjectBuildSettings build = {},
+      std::vector<ProjectBindgenImport> bindgenImports = {});
 
   [[nodiscard]] const std::filesystem::path &path() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -131,6 +153,7 @@ public:
   [[nodiscard]] const std::optional<ProjectWorkspaceManifest> &
   workspace() const;
   [[nodiscard]] const ProjectBuildSettings &build() const;
+  [[nodiscard]] const std::vector<ProjectBindgenImport> &bindgen() const;
   [[nodiscard]] const ProjectTarget *findTarget(std::string_view name) const;
   [[nodiscard]] const ProjectProfile *findProfile(std::string_view name) const;
 
@@ -143,6 +166,7 @@ private:
   std::vector<ProjectDependency> packageDependencies;
   std::optional<ProjectWorkspaceManifest> workspaceManifest;
   ProjectBuildSettings projectBuildSettings;
+  std::vector<ProjectBindgenImport> projectBindgenImports;
 };
 
 enum class ManifestDiscoveryStatus {
