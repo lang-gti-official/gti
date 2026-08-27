@@ -229,7 +229,10 @@ overload performs copy assignment without constructing a class temporary. Its
 by-value route still stages an explicit move or fresh prvalue before the bounds
 check, then move-assigns without a second materialization. Projected sources,
 unmatched failure metadata, cleanup-owning temporaries, and every other
-projected destination remain outside this fusion vocabulary.
+projected destination remain outside this fusion vocabulary. The fresh-value
+form serves one further unprojected destination — a bare mutable binding,
+described with the prvalue assignment routes below — where the assignment
+carries no bounds site at all.
 
 A fixed-array element place may carry several `Index` projections, and MIR
 describes that whole chained access with one instruction and one bounds site.
@@ -497,6 +500,28 @@ destination binding's own obligation, and a single unconditional `Drop` of the
 slot. Aliased source and destination bindings, projected or non-binding places,
 failure sites on either instruction, extra uses, and any additional lifecycle
 event on the staging obligation fail closed.
+
+Assigning a freshly constructed class prvalue into an existing mutable binding
+has its own exact representation, and MIR represents it in two shapes rather
+than one. A cleanup-owning prvalue is staged in a value-rooted obligation: the
+backend constructs that staging slot from the `Construct`, move-assigns the
+destination binding from the slot, and then drops only the moved-from staging
+shell. A non-raising constructor arms the staging obligation with its own
+unconditional `Initialize` and sits immediately before the publication; a
+raising one arms it on its invoke success edge instead, so the `Construct`
+ends the invoking block and the `Assign` opens that edge's successor. Either
+way the route requires an unconditional `Replace` from the staging drop into
+the destination binding's own obligation, an adjacent single unconditional
+`Drop` of the slot, and exactly one activation. Projected or non-binding
+destinations, failure sites on the publication, extra uses, and any additional
+lifecycle event on the staging obligation fail closed.
+
+A cleanup-free class prvalue has no staging obligation at all: no place or
+drop obligation owns the constructed value and the discarded assignment result
+is metadata only, so the construction spells directly in the value position of
+its one adjacent assignment — into a checked fixed-array element or into a
+bare mutable binding. Materializing an intermediate C++ object there would
+invent construction and destruction that MIR does not contain.
 
 ### Declarations And ABI
 
