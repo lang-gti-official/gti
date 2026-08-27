@@ -278,6 +278,15 @@ loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
 eligibility from the generated signature.
 
+For a loan-carrying reference argument, the operand may name both a loan and
+an exact referent-typed runtime place. The place is the argument lvalue and
+the loan is provenance: a borrow-carrying local (an owner-tied iterator, for
+example) records its owner loan on the staged operand, and that loan may be
+representation-erased. Whenever the operand records a place, the body emitter
+spells that place at the call site; only a place-less loan operand spells the
+dereferenced loan pointer carrier, which must therefore name a declared
+carrier such as a reference-parameter entry loan.
+
 For an exact cleanup-owning class value consumed by an ordinary by-value call,
 the body emitter uses the caller-owned `PreparedParameter` slot named by MIR.
 A direct `Construct` or admitted cleanup-owning call result publishes once into

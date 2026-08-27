@@ -20014,8 +20014,7 @@ private:
                       ? loanStagedCallInput(facts.body,
                                             instruction.operands[index].value)
                       : nullptr) {
-            output << "(*__gti_mir_loan_" << staged->operands.front().loan
-                   << ')';
+            emitLoanArgument(facts, staged->operands.front());
             continue;
           }
           const bool consumed =
@@ -20339,7 +20338,7 @@ private:
         }
         if (const MirInstruction *stage =
                 loanStagedCallInput(facts.body, operand.value)) {
-          output << "(*__gti_mir_loan_" << stage->operands.front().loan << ')';
+          emitLoanArgument(facts, stage->operands.front());
           return;
         }
         if (const MirInstruction *stage =
@@ -20384,19 +20383,7 @@ private:
       }
       if (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
           facts.body.findLoan(operand.loan) != nullptr) {
-        if (operand.place != 0) {
-          const MirPlace *place = facts.body.findPlace(operand.place);
-          if (place == nullptr ||
-              operand.type.kind != SemanticType::Reference ||
-              operand.type.arguments.size() != 1 ||
-              place->type != operand.type.arguments.front()) {
-            throw std::logic_error(
-                "verified MIR loan argument lost its exact runtime place");
-          }
-          emitStoragePlaceValue(facts, *place);
-        } else {
-          output << "(*__gti_mir_loan_" << operand.loan << ')';
-        }
+        emitLoanArgument(facts, operand);
         return;
       }
       if (marshalled) {
@@ -20720,7 +20707,7 @@ private:
             output << ", ";
           }
           if (operand.kind == MirOperandKind::Loan) {
-            output << "(*__gti_mir_loan_" << operand.loan << ')';
+            emitLoanArgument(facts, operand);
           } else {
             emitOperand(operand);
           }
@@ -20779,10 +20766,10 @@ private:
           output << ", ";
         }
         // A loaned argument dereferences its pointer carrier (ADR 018
-        // §4); every other argument is a staged value.
+        // §4) or spells its recorded runtime place; every other
+        // argument is a staged value.
         if (instruction.operands[index].kind == MirOperandKind::Loan) {
-          output << "(*__gti_mir_loan_" << instruction.operands[index].loan
-                 << ')';
+          emitLoanArgument(facts, instruction.operands[index]);
         } else {
           emitOperand(instruction.operands[index]);
         }
@@ -22924,6 +22911,28 @@ private:
     if (slotPlace(facts.body, place)) {
       output << ".get()";
     }
+  }
+
+  // A loaned reference argument spells its exact runtime place when the
+  // operand carries one: for a borrow-carrying argument (an owner-tied
+  // iterator local, for example) the loan records provenance over the
+  // owner and may itself be representation-erased, so only the place
+  // names the argument lvalue. Without a place the loan names a live
+  // pointer carrier and the argument dereferences it (ADR 018 §4).
+  void emitLoanArgument(const ScalarBodyFacts &facts,
+                        const MirOperand &operand) {
+    if (operand.place != 0) {
+      const MirPlace *place = facts.body.findPlace(operand.place);
+      if (place == nullptr || operand.type.kind != SemanticType::Reference ||
+          operand.type.arguments.size() != 1 ||
+          place->type != operand.type.arguments.front()) {
+        throw std::logic_error(
+            "verified MIR loan argument lost its exact runtime place");
+      }
+      emitStoragePlaceValue(facts, *place);
+      return;
+    }
+    output << "(*__gti_mir_loan_" << operand.loan << ')';
   }
 
   void emitPlaceExpression(const ScalarBodyFacts &facts,

@@ -1,0 +1,28 @@
+// Regression: passing an owner-tied iterator local (a class value holding a
+// reference field, here std::detail::vector_iterator<T> from begin()) as a
+// by-reference argument to a generic function must stage the iterator place
+// itself. The staged Loan operand records the owner loan as provenance only;
+// spelling the loan (which is representation-erased) emitted a dereference of
+// an undeclared __gti_mir_loan_N symbol and broke the native C++ compile.
+#include <std/vector>
+#include <std/iterator>
+
+bool has_any<Iterator, Sentinel>(Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  values.push_back(2);
+  mut auto cursor = values.begin();
+  auto last = values.end();
+  bool first_probe = has_any(cursor, last);
+  ++cursor;
+  ++cursor;
+  bool second_probe = has_any(cursor, last);
+  std::println(first_probe && !second_probe ? "ok" : "bad");
+  return 0;
+}
