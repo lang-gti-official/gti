@@ -5651,6 +5651,162 @@ int main() { return helper(); }
          "for diagnostics and tooling");
 }
 
+void testMovedLoopLocalRedeclarations() {
+  const lang::FrontendResult trivialLocals =
+      lang::Frontend().analyze("moved-loop-local-trivial.gti", R"(
+int32_t sink(int32_t value) { return value; }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 2) {
+    int32_t element = index + 1;
+    total = total + std::move(element);
+    index++;
+  }
+
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    int32_t local = iteration + 1;
+    total = total + std::move(local);
+  }
+
+  mut int32_t values[4] = {0, 0, 0, 0};
+  mut int32_t position = 0;
+  while (position < 4) {
+    int32_t element = position * 10;
+    values[position] = std::move(element);
+    position++;
+  }
+
+  mut int32_t guard = 0;
+  while (guard < 4) {
+    int32_t element = guard + 1;
+    if (guard % 2 == 0) {
+      total = total + sink(std::move(element));
+    }
+    guard++;
+  }
+  return total + values[3];
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(trivialLocals.canGenerateCode() && trivialLocals.mirValid &&
+             trivialLocals.mir.valid(),
+         "a moved trivially dropped loop-local must leave its storage "
+         "re-initializable across while, for, indexed, and conditional "
+         "backedge forms");
+
+  const lang::FrontendResult genericLocals =
+      lang::Frontend().analyze("moved-loop-local-generic.gti", R"(
+T accumulate<std::numeric T>(T seed, T limit) {
+  mut T total = seed;
+  mut T step = seed;
+  while (step < limit) {
+    T element = step + T(1);
+    total = total + std::move(element);
+    step = step + T(1);
+  }
+  return total;
+}
+
+int main() {
+  int32_t narrow = accumulate<int32_t>(0, 2);
+  int64_t wide = accumulate<int64_t>(int64_t(0), int64_t(2));
+  return narrow + int32_t(wide);
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(genericLocals.canGenerateCode() && genericLocals.mirValid &&
+             genericLocals.mir.valid(),
+         "every generic instance must rearm a moved trivially dropped "
+         "loop-local for the next iteration");
+
+  const lang::FrontendResult lexicalLocals =
+      lang::Frontend().analyze("moved-loop-local-lexical.gti", R"(
+class Tracker {
+  int32_t value;
+
+public:
+  Tracker(int32_t initial) : value(initial) {}
+  Tracker(Tracker&& other) = default;
+  ~Tracker() {}
+
+  int32_t read() { return this.value; }
+};
+
+int32_t consume(Tracker taken) { return taken.read(); }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 4) {
+    mut Tracker element{index + 1};
+    if (index % 2 == 0) {
+      total = total + consume(std::move(element));
+    }
+    index++;
+  }
+  return total;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(lexicalLocals.canGenerateCode() && lexicalLocals.mirValid &&
+             lexicalLocals.mir.valid(),
+         "a conditionally moved lexically dropped loop-local should verify "
+         "through its scope-end drop across the loop backedge");
+
+  const lang::HirFunctionInstance *lexicalMain = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       lexicalLocals.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "main") {
+      lexicalMain = &function;
+      break;
+    }
+  }
+  lang::MirProgram hiddenScopeEnd = lexicalLocals.mir;
+  std::size_t hiddenDrops = 0;
+  if (lexicalMain != nullptr) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        hiddenScopeEnd.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != lexicalMain->id) {
+        continue;
+      }
+      for (lang::MirBlock &block : function.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              !instruction.destination) {
+            continue;
+          }
+          const lang::MirPlace *place =
+              function.body.findPlace(*instruction.destination);
+          if (place == nullptr ||
+              place->root != lang::MirPlaceRootKind::Binding ||
+              !place->projections.empty() ||
+              place->traits.drop != lang::DropKind::Lexical || !place->key) {
+            continue;
+          }
+          instruction.ownership =
+              lang::OwnershipEvent{.kind = lang::OwnershipEventKind::Read,
+                                   .place = *place->key,
+                                   .reachable = false};
+          ++hiddenDrops;
+        }
+      }
+    }
+  }
+  const lang::MirVerificationResult hiddenScopeEndResult =
+      lang::verifyMirProgram(hiddenScopeEnd);
+  expect(hiddenDrops != 0 && !hiddenScopeEndResult.valid() &&
+             hasMirVerificationError(
+                 hiddenScopeEndResult,
+                 "initialization targets a place whose lifetime is already "
+                 "active"),
+         "a lexically dropped loop-local whose scope-end drop is hidden from "
+         "the ownership flow model must still fail re-initialization");
+}
+
 void testInferredVoidGenericArguments() {
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("inferred-void-generic.gti", R"(
@@ -34178,6 +34334,7 @@ int main(int argc, char **argv) {
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();
   testEdgeSensitiveMoveFlow();
+  testMovedLoopLocalRedeclarations();
   testInferredVoidGenericArguments();
   testProjectedFieldMoves();
   testIndexedPlaceMovesAndInitialization();

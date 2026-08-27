@@ -716,7 +716,13 @@ computed an ordinary index. Its verifier runs a sparse
 available/moved/uninitialized state-set fixed point over reachable CFG edges.
 Local binding storage begins uninitialized, parameters begin available,
 initialization activates a local lifetime, and drop returns the root to
-uninitialized for roots that participate in an explicit move. The sparse
+uninitialized for roots that participate in an explicit move. Because a
+lexically dropped binding spells every scope end as a drop, its
+re-initialization requires definitely uninitialized storage; a trivially
+dropped binding leaves scope without any MIR instruction, so a moved or
+conditionally moved loop-local may still carry moved state across the back
+edge and its re-initialization at the declaration is accepted from any prior
+state as the implicit scope end. The sparse
 fixed point does not impose lifecycle state on unrelated legacy MIR places.
 Moves require an exact available key, element assignment restores that key,
 ancestor uses observe moved descendants, and different constant elements are
