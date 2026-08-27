@@ -23,8 +23,9 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
                         declaration.name().lexeme +
                         "' is not a constant expression.";
   std::string hint =
-      "Use literals, earlier constexpr bindings, scalar operators, and "
-      "explicit numeric conversions in this constexpr initializer.";
+      "Use literals, earlier constexpr bindings, supported operators and "
+      "conversions, fixed-array or structural-field observation, or calls "
+      "to available constexpr functions and constructors.";
   switch (failure) {
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The initializer for constexpr binding '" +
@@ -63,7 +64,8 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   case ConstantEvaluationFailure::UnsupportedType:
     message = "The bounded constexpr evaluator supports fixed-width "
               "integers, float, double, bool, char, string_view, and "
-              "nullptr_t values, plus checked-integer expected results; "
+              "nullptr_t values, scoped enums, concrete fixed arrays, "
+              "structural aggregates, and checked-integer expected results; "
               "type '" +
               typeSpelling(type) + "' is not supported yet.";
     break;
@@ -215,8 +217,8 @@ void SemanticDiagnosticReporter::reportConstexprConditionFailure(
   std::string message =
       "The condition of 'if constexpr' must be a constant bool expression.";
   std::string hint =
-      "Use literals, earlier constexpr bindings, or calls to available "
-      "constexpr functions.";
+      "Use literals, earlier constexpr bindings, supported aggregate "
+      "observation, or calls to available constexpr functions.";
   switch (failure) {
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'if constexpr' reads a binding that is not "
@@ -280,7 +282,8 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
       "The condition of 'static_assert' must be a constant bool expression.";
   std::string hint =
       "Use literals, earlier constexpr bindings, supported target layout "
-      "queries, or calls to available constexpr functions.";
+      "queries, aggregate observation, or calls to available constexpr "
+      "functions.";
   switch (failure) {
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'static_assert' reads a binding that is not "

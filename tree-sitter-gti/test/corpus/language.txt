@@ -96,6 +96,41 @@ uint64_t pow(uint64_t base, uint64_t exponent) {
                 (identifier)))))))))
 
 ==================
+Constexpr constructor
+==================
+
+struct Point {
+  int32_t x;
+  constexpr Point(int32_t value) : x(value) {}
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (identifier)))))
+        (block)))))
+
+==================
 Symbolic logical aliases
 ==================
 

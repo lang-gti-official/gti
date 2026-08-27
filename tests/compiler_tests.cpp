@@ -16235,6 +16235,17 @@ void testConstexprBindings() {
              keyword.front().kind == lang::TokenKind::CONSTEXPR,
          "constexpr should be a dedicated declaration keyword");
 
+  const std::string formattedConstructor = lang::Formatter().format(
+      "struct Point{constexpr Point(int32_t value):coordinate(value){}"
+      "int32_t coordinate;};");
+  expect(formattedConstructor.find(
+             "constexpr Point(int32_t value) : coordinate(value) {}") !=
+                 std::string::npos &&
+             lang::Formatter().format(formattedConstructor) ==
+                 formattedConstructor,
+         "the formatter should preserve constexpr constructors and remain "
+         "idempotent");
+
   const std::string source = R"(
 constexpr uint64_t factorial(mut uint64_t value) {
   mut uint64_t result = 1;
@@ -16263,11 +16274,38 @@ constexpr int32_t classify(int32_t value) {
   }
 }
 
+enum class BuildMode : uint8_t {
+  debug = 1,
+  release = 2,
+};
+
+class ConstantBox<T> {
+  T value;
+
+public:
+  constexpr ConstantBox(T initial) : value(initial) {}
+  constexpr T get() { return this.value; }
+};
+
+constexpr T preserve<T>(T value) { return value; }
+
 constexpr uint64_t extent = uint64_t(2 + 2);
 constexpr int32_t base = 6 * 7;
 constexpr bool selected = base == 42 and true;
 constexpr uint64_t factorial_value = factorial(uint64_t(5));
 constexpr uint64_t fibonacci_value = fibonacci(uint64_t(10));
+constexpr int32_t raw_values[3] = {2, 4, 6};
+constexpr ConstantBox<int32_t> signed_box = ConstantBox<int32_t>(7);
+constexpr ConstantBox<uint64_t> wide_box =
+    ConstantBox<uint64_t>(uint64_t(9));
+constexpr BuildMode selected_mode = BuildMode::release;
+constexpr int32_t preserved = preserve<int32_t>(11);
+
+static_assert(raw_values[1] == 4);
+static_assert(signed_box.get() == 7);
+static_assert(wide_box.get() == uint64_t(9));
+static_assert(selected_mode == BuildMode::release);
+static_assert(preserved == 11);
 
 namespace values {
 constexpr char marker = 'G';
@@ -16294,7 +16332,9 @@ int main() {
                 fibonacci_value == uint64_t(55) and
                 doubled == uint64_t(42)) {
     if (local == 42 and Limits::count == 4 and data[3] == 4 and
-        values::marker == 'G') {
+        values::marker == 'G' and raw_values[2] == 6 and
+        signed_box.get() == 7 and wide_box.get() == uint64_t(9) and
+        selected_mode == BuildMode::release and preserved == 11) {
       return classify(0) - 10;
     }
     return 1;
@@ -16310,13 +16350,18 @@ int main() {
          "and value-generic extents");
 
   const lang::VariableDecl *extent = nullptr;
+  const lang::VariableDecl *signedBox = nullptr;
+  const lang::VariableDecl *wideBox = nullptr;
   const lang::ClassDecl *limits = findTopLevelClass(frontend.program, "Limits");
   for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
     const auto *variable =
         dynamic_cast<const lang::VariableDecl *>(declaration.get());
     if (variable != nullptr && variable->name().lexeme == "extent") {
       extent = variable;
-      break;
+    } else if (variable != nullptr && variable->name().lexeme == "signed_box") {
+      signedBox = variable;
+    } else if (variable != nullptr && variable->name().lexeme == "wide_box") {
+      wideBox = variable;
     }
   }
   const lang::BindingInfo *extentBinding =
@@ -16329,6 +16374,34 @@ int main() {
              extentValue->magnitude == 4 && !extentValue->negative &&
              extentValue->domain == lang::CheckedIntegerDomain{.width = 64},
          "semantic bindings should retain the typed computed constexpr value");
+
+  const lang::BindingInfo *signedBoxBinding =
+      signedBox == nullptr ? nullptr
+                           : frontend.semantics.findBinding(*signedBox);
+  const lang::BindingInfo *wideBoxBinding =
+      wideBox == nullptr ? nullptr : frontend.semantics.findBinding(*wideBox);
+  const auto *signedBoxValue =
+      signedBoxBinding == nullptr || !signedBoxBinding->constant
+          ? nullptr
+          : std::get_if<lang::ConstantAggregateValue>(
+                &*signedBoxBinding->constant);
+  const auto *wideBoxValue =
+      wideBoxBinding == nullptr || !wideBoxBinding->constant
+          ? nullptr
+          : std::get_if<lang::ConstantAggregateValue>(
+                &*wideBoxBinding->constant);
+  expect(signedBoxValue != nullptr && signedBoxValue->value != nullptr &&
+             signedBoxValue->value->exactType != nullptr &&
+             signedBoxBinding != nullptr &&
+             *signedBoxValue->value->exactType == signedBoxBinding->type &&
+             wideBoxValue != nullptr && wideBoxValue->value != nullptr &&
+             wideBoxValue->value->exactType != nullptr &&
+             wideBoxBinding != nullptr &&
+             *wideBoxValue->value->exactType == wideBoxBinding->type &&
+             *signedBoxValue->value->exactType !=
+                 *wideBoxValue->value->exactType,
+         "aggregate constants should retain exact concrete generic type "
+         "identity rather than only their class declaration");
 
   const lang::VariableDecl *count = nullptr;
   if (limits != nullptr) {
@@ -16381,6 +16454,33 @@ int main() {
          "typed HIR should represent if constexpr as a selected compile-time "
          "branch");
 
+  lang::MirProgram forgedAggregate = frontend.mir;
+  auto &forgedSteps =
+      const_cast<std::vector<lang::MirProgramInitializationStep> &>(
+          forgedAggregate.programInitializationPlan().steps);
+  bool corruptedAggregateField = false;
+  for (lang::MirProgramInitializationStep &step : forgedSteps) {
+    auto *aggregate =
+        step.dataConstant
+            ? std::get_if<lang::ConstantAggregateValue>(&*step.dataConstant)
+            : nullptr;
+    if (aggregate == nullptr || aggregate->value == nullptr ||
+        aggregate->value->kind != lang::ConstantAggregateKind::Object ||
+        aggregate->value->fields.empty()) {
+      continue;
+    }
+    lang::ConstantAggregate corrupted = *aggregate->value;
+    corrupted.fields.front().symbol = 0;
+    step.dataConstant =
+        lang::ConstantValue{lang::makeConstantAggregate(std::move(corrupted))};
+    corruptedAggregateField = true;
+    break;
+  }
+  expect(corruptedAggregateField &&
+             !lang::verifyMirProgram(forgedAggregate).valid(),
+         "MIR verification should reject an aggregate constant whose exact "
+         "field inventory was forged after semantic analysis");
+
   const std::string generated = gti_test::emitCppText(frontend);
   expect(
       generated.find(
@@ -16404,28 +16504,34 @@ constexpr mut int32_t mutable_value = 1;
 constexpr int32_t missing;
 int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
-constexpr float floating = 1.0;
-constexpr T generic_value<T>(T value) { return value; }
+constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
 class InvalidMethod {
-  constexpr int32_t method() { return 1; }
+  constexpr int32_t method() mut { return 1; }
 };
 class InvalidMember {
   constexpr int32_t value = 1;
 };
+struct RuntimePoint {
+  int32_t value;
+  RuntimePoint(int32_t initial) : value(initial) {}
+};
+constexpr RuntimePoint runtime_point = RuntimePoint(1);
 )");
-  expect(
-      !invalid.semanticValid &&
-          countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
-          hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
-          hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "does not name a constexpr function") &&
-          hasDiagnostic(invalid.diagnostics, "Generic constexpr functions") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "constexpr method must be static") &&
-          hasDiagnostic(invalid.diagnostics, "must be static"),
-      "unsupported constexpr forms should fail with focused bounded "
-      "diagnostics");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
+             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "does not name a constexpr function") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Constexpr generic parameter packs") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must have a read-only receiver") &&
+             hasDiagnostic(invalid.diagnostics, "must be static") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "not an available constexpr constructor"),
+         "unsupported constexpr forms should fail with focused bounded "
+         "diagnostics");
 
   const lang::FrontendResult invalidBranch =
       lang::Frontend().analyze("invalid-if-constexpr.gti", R"(
@@ -16454,6 +16560,16 @@ constexpr uint64_t result = recurse(uint64_t(0));
           hasDiagnostic(exhausted.diagnostics, "constexpr call depth exceeded"),
       "constexpr recursion should stop at a deterministic frontend "
       "resource limit");
+
+  const lang::FrontendResult exhaustedAggregate =
+      lang::Frontend().analyze("exhausted-constexpr-aggregate.gti", R"(
+constexpr int32_t values[4096] = {};
+)");
+  expect(!exhaustedAggregate.semanticValid &&
+             hasDiagnostic(exhaustedAggregate.diagnostics,
+                           "bounded evaluation limit"),
+         "default aggregate synthesis should consume the same deterministic "
+         "constexpr step budget as explicit expressions");
 }
 
 void testStaticAssertions() {
@@ -32635,6 +32751,10 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "forward-iterators") {
     testStoredCarrierReturnProvenance();
     testForwardIteratorContractsAndBinarySearch();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc == 2 && std::string(argv[1]) == "constexpr") {
+    testConstexprBindings();
     return failures == 0 ? 0 : 1;
   }
   testConstructorPartialRollbackRepresentation();

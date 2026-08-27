@@ -289,7 +289,7 @@ namespace std {
     return initial;
   }
 
-  T gcd<std::integral T>(mut T left, mut T right) {
+  constexpr T gcd<std::integral T>(mut T left, mut T right) {
     if (left == T(0) && right == T(0)) {
       return T(0);
     }

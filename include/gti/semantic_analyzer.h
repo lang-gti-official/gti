@@ -1182,6 +1182,7 @@ struct ConstructorInfo {
   std::vector<std::size_t> defaultArgumentEffectOwners;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  bool constexprConstructor = false;
   bool compilerPrivate = false;
 };
 

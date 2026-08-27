@@ -719,31 +719,48 @@ uint8_t payload[word_bytes] = {};
 ```
 
 A `constexpr` variable is immutable, has an initializer, and has a supported
-scalar type. A `constexpr` class or struct field is also `static`. Its value is
-computed by the GTI frontend and retained as typed semantic and HIR data; the
+value type. A `constexpr` class or struct field is also `static`. Its value is
+computed by the GTI frontend and retained with its exact semantic type; the
 C++ backend is not an authority for whether an expression is constant.
 
 The evaluator accepts fixed-width integer, `float`, `double`, `bool`, `char`,
-`std::string_view`, and `nullptr_t` literals; layout-query constants; earlier
-constexpr bindings; grouping; supported scalar unary, binary, comparison, and
-short-circuit logical operations; lazy conditional expressions; and explicit
-numeric conversions plus lossless `uint8_t(char)` code-unit extraction.
+`std::string_view`, and `nullptr_t` literals; exact scoped-enum constants;
+concrete fixed arrays; structural class and struct values; layout-query
+constants; earlier constexpr bindings; grouping; supported scalar unary,
+binary, comparison, and short-circuit logical operations; lazy conditional
+expressions; read-only field and fixed-array indexing; and explicit numeric
+conversions plus lossless `uint8_t(char)` code-unit extraction.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the selected binary32 or binary64 rules in execution
-semantics. Evaluation has a shared 4096-step budget and a 64-call-depth limit
-and reports integer
-overflow, integer zero divisors, invalid shifts, out-of-range conversions,
-non-constant references, unsupported operations, and resource exhaustion at
-source locations.
+semantics. Evaluation has one shared 4096-step budget, including recursively
+synthesized default array elements, and a 64-call-depth limit. It reports
+integer overflow, integer zero divisors, invalid shifts, out-of-range
+conversions, non-constant references, unsupported operations, and resource
+exhaustion at source locations.
 
-A non-generic free function or static method may be `constexpr` when its
-parameters and return use those scalar domains. Its body may use scalar local
-bindings, assignment and compound assignment, increment and decrement,
-blocks, returns, ordinary and constexpr conditionals, loops, switch,
-`break`/`continue`, compile-time conditionals, recursion, and calls to available
-constexpr definitions. Calling such a function at runtime remains an ordinary
-GTI call.
+A free function or method may be `constexpr` when each concrete call has
+non-pack, by-value supported parameters and a supported value result. Concrete
+type and `uint64_t` value-generic arguments retain canonical declaration and
+type/value identity throughout evaluation. A non-static instance method must
+have a read-only receiver of a supported structural class or struct. Its body
+may use supported automatic value bindings, exact assignment, scalar compound
+assignment, increment and decrement, blocks, returns, ordinary and constexpr
+conditionals, loops, switch, `break`/`continue`, compile-time conditionals,
+recursion, and calls to available constexpr definitions. Calling the same
+function at runtime remains an ordinary GTI call with the same language
+semantics.
+
+An ordinary constructor with a source body may be `constexpr`. The constructed
+class or struct must have no base, polymorphism, union state, stored reference,
+or active destructor, and every recursively reachable field must have a
+supported constexpr value type. Each field must be fully initialized by its
+declaration or one exact constructor initializer before the body runs. The
+bounded initial subset permits local computation in the constructor body but
+does not permit receiver mutation after initialization or a control transfer
+out of the body. A read-only constexpr instance method may subsequently
+observe the exact stored fields. Mutable receivers, special-member policies,
+generic packs, and polymorphic dispatch remain outside this subset.
 
 `if constexpr (condition)` requires the frontend to compute one `bool`. Only
 the selected branch is semantically analyzed and lowered; the discarded branch
@@ -754,10 +771,17 @@ Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
 computed value rather than reinterpreting emitted C++.
 
-Generic constexpr instantiation, instance methods and class values, operator or
-polymorphic constexpr functions, references, allocation, arrays, and
-runtime/intrinsic/C calls are rejected until they have compiler-owned
-evaluation rules.
+Aggregate constants retain their complete concrete array or class type,
+including generic type and value arguments. Scoped-enum constants retain their
+nominal enum identity as well as their underlying value; equal discriminants
+from unrelated enums are not interchangeable. The backend may materialize a
+frontend-computed structural value, but it may not replay constructors or use
+native C++ constant evaluation to decide that value.
+
+Generic parameter packs, constexpr operator functions, mutable or polymorphic
+instance calls, references, allocation, payload enums, unions, inherited or
+cleanup-owning aggregates, and runtime/intrinsic/C calls are rejected until
+they have compiler-owned evaluation rules.
 
 ## 3.12 Static Assertions
 
@@ -805,8 +829,10 @@ current implementation:
 - owned callable escape beyond exact same-type generic return, the bounded
   one-field generic owner, local closure movement, and explicit owned
   move-capture;
-- generic and aggregate constexpr function/value evaluation beyond dependent
-  static-assertion conditions;
+- constexpr execution beyond the bounded concrete-generic, scoped-enum,
+  fixed-array, and structural-aggregate subset, including references,
+  allocation, mutation through aggregate places, payload enums, packs,
+  operators, and polymorphism;
 - audited expansion beyond the bounded scalar, counted-text-input,
   `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, one-level raw-pointer,
   pointer-plus-count, and exact same-thread callback C surface, including

@@ -694,6 +694,24 @@ outer declaration plus the first available declared-cleanup/base/field cause.
 HIR and MIR can therefore rely on the absence of source global/static drop
 obligations; this does not define global shutdown.
 
+## Bounded Aggregate Constant Evaluation
+
+Semantics owns the `L-CONST-01` bounded evaluator extension. Recursive
+constant nodes retain exact scoped-enum, array, class, generic type, and value-
+argument identity; declaration spelling and emitted C++ types are never used as
+substitutes for those identities. One execution context carries concrete
+generic substitutions, automatic values, and an optional read-only receiver
+through constexpr calls and constructors while enforcing the existing shared
+4096-step and 64-call-depth limits.
+
+Only fully initialized structural aggregates enter this representation.
+Semantics rejects bases, polymorphism, stored references, union state, active
+cleanup, mutable receiver execution, and unsupported field types before a
+constant is accepted. HIR and MIR retain only facts needed by runtime or
+program-storage materialization. The C++ backend may serialize an accepted
+constant from its exact fields, but it cannot invoke source constructors or
+host constant evaluation to recover language meaning.
+
 ## Boundaries
 
 - Resolve names, types, visibility, overloads, access, conversions, ownership,

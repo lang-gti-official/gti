@@ -108,6 +108,7 @@ public:
     functionGenericParameters.clear();
     constructorGenericParameters.clear();
     constexprDefinitionsAnalyzed.clear();
+    constexprConstructorsAnalyzed.clear();
     defaultArgumentSyntax.clear();
     defaultArgumentDependencies.clear();
     reportedDefaultArgumentCycles.clear();
@@ -274,6 +275,7 @@ public:
     functionGenericParameters.clear();
     constructorGenericParameters.clear();
     constexprDefinitionsAnalyzed.clear();
+    constexprConstructorsAnalyzed.clear();
     defaultArgumentSyntax.clear();
     defaultArgumentDependencies.clear();
     reportedDefaultArgumentCycles.clear();
@@ -807,7 +809,7 @@ public:
       return;
     }
 
-    ConstexprExecutionContext context;
+    ConstexprExecutionContext context = constexprContext();
     ConstexprEvaluation evaluated =
         evaluateConstexprExpression(stmt.condition(), context);
     const bool *value =
@@ -840,6 +842,7 @@ public:
   }
 
   void visitConstructorDecl(const ConstructorDecl &stmt) override {
+    const std::size_t constructorDiagnosticStart = diagnostics.size();
     if (!currentClass) {
       report(stmt.name(),
              "Constructors can only be declared in a class or struct.");
@@ -922,6 +925,8 @@ public:
         ordinary ? "this constructor declaration"
                  : "copy or move constructor policies",
         hasPack, !instanceClassContextActive);
+    const bool constexprDeclarationValid = validateConstexprConstructor(
+        stmt, constructorInfo, openClassType(owner.id));
 
     if (constructorInfo == nullptr ||
         constructorInfo->kind != ConstructorKind::Ordinary || !stmt.body() ||
@@ -1201,6 +1206,10 @@ public:
     }
 
     analyze(stmt.body()->statements());
+    if (stmt.isConstexpr() && constexprDeclarationValid &&
+        diagnostics.size() == constructorDiagnosticStart) {
+      constexprConstructorsAnalyzed.insert(&stmt);
+    }
     finalizeLoanFlow();
     endScope();
     --constructorDepth;
@@ -1954,7 +1963,7 @@ public:
         return;
       }
 
-      ConstexprExecutionContext context;
+      ConstexprExecutionContext context = constexprContext();
       ConstexprEvaluation evaluated =
           evaluateConstexprExpression(stmt.condition(), context);
       const bool *selected =
@@ -7377,6 +7386,8 @@ private:
     std::size_t steps = 0;
     std::size_t callDepth = 0;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
+    std::vector<GenericSubstitution> substitutions;
+    std::vector<ConstantValue> receivers;
   };
 
   enum class ConstexprControlFlow {
@@ -7396,15 +7407,106 @@ private:
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
 
-  [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
+  [[nodiscard]] ConstexprExecutionContext constexprContext() const {
+    ConstexprExecutionContext context;
+    if (!instanceTypeSubstitution.empty() ||
+        !instanceValueSubstitution.empty()) {
+      context.substitutions.push_back({.types = instanceTypeSubstitution,
+                                       .values = instanceValueSubstitution});
+    }
+    return context;
+  }
+
+  [[nodiscard]] SemanticType
+  constexprType(SemanticType type,
+                const ConstexprExecutionContext &context) const {
+    for (const GenericSubstitution &substitution : context.substitutions) {
+      type = substituteType(type, substitution);
+    }
+    return type;
+  }
+
+  [[nodiscard]] CompileTimeValue
+  constexprValue(CompileTimeValue value,
+                 const ConstexprExecutionContext &context) const {
+    if (value.kind != CompileTimeValue::Parameter) {
+      return value;
+    }
+    for (auto substitution = context.substitutions.rbegin();
+         substitution != context.substitutions.rend(); ++substitution) {
+      const auto found = substitution->values.find(value.parameterId);
+      if (found != substitution->values.end()) {
+        value = found->second;
+        if (value.kind != CompileTimeValue::Parameter) {
+          break;
+        }
+      }
+    }
+    return value;
+  }
+
+  [[nodiscard]] bool isSupportedConstexprType(
+      const SemanticType &type, bool allowDependent = false,
+      std::vector<SemanticType> *visiting = nullptr) const {
+    if (allowDependent && type.kind == SemanticType::TypeParameter) {
+      return true;
+    }
     if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
       return constantIntegerDomain(type.arguments[0]).has_value() &&
              type.arguments[1].kind == SemanticType::Enum;
     }
-    return constantIntegerDomain(type).has_value() ||
-           semanticFloatFormat(type).has_value() ||
-           type == SemanticType::Bool || type == SemanticType::Char ||
-           type == SemanticType::StringView || type == SemanticType::NullPtr;
+    if (constantIntegerDomain(type).has_value() ||
+        semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
+        type == SemanticType::Char || type == SemanticType::StringView ||
+        type == SemanticType::NullPtr) {
+      return true;
+    }
+    if (type.kind == SemanticType::Enum) {
+      const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
+      return enumeration != nullptr && !enumeration->payload;
+    }
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
+      if (!allowDependent && type.arrayLengthParameterId != 0) {
+        return false;
+      }
+      return isSupportedConstexprType(type.arguments.front(), allowDependent,
+                                      visiting);
+    }
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr || owner->kind == ClassKind::Interface ||
+        owner->kind == ClassKind::Union || !owner->bases.empty() ||
+        owner->polymorphic || owner->storedReference || owner->destructor) {
+      return false;
+    }
+    std::vector<SemanticType> localVisiting;
+    if (visiting == nullptr) {
+      visiting = &localVisiting;
+    }
+    if (std::find(visiting->begin(), visiting->end(), type) !=
+        visiting->end()) {
+      return false;
+    }
+    visiting->push_back(type);
+    const GenericSubstitution substitution = classSubstitution(type);
+    for (const FieldInfo &field : owner->fields) {
+      if (field.declaration == nullptr) {
+        visiting->pop_back();
+        return false;
+      }
+      const auto member = owner->members.find(field.declaration->name().lexeme);
+      if (member == owner->members.end() ||
+          !isSupportedConstexprType(
+              substituteType(member->second.symbol.type, substitution),
+              allowDependent, visiting)) {
+        visiting->pop_back();
+        return false;
+      }
+    }
+    visiting->pop_back();
+    return true;
   }
 
   bool validateConstexprFunction(const FunctionDecl &function,
@@ -7433,23 +7535,26 @@ private:
       reject(*function.constexprKeyword(),
              "The main entry point cannot be constexpr.");
     }
-    if (!function.genericParameters().empty()) {
+    if (std::any_of(function.genericParameters().begin(),
+                    function.genericParameters().end(),
+                    [](const GenericParameter &parameter) {
+                      return parameter.pack.has_value();
+                    })) {
       reject(function.name(),
-             "Generic constexpr functions require concrete-instance "
-             "evaluation and are not supported yet.",
-             "Use a non-generic constexpr overload for compile-time work in "
-             "the current language version.");
+             "Constexpr generic parameter packs are outside the bounded "
+             "constexpr subset.");
     }
-    if (methodDeclaration && !function.isStatic()) {
+    if (methodDeclaration && !function.isStatic() &&
+        function.receiverMutability() != ReceiverMutability::ReadOnly) {
       reject(function.name(),
-             "A constexpr method must be static until constexpr class values "
-             "and receiver state are supported.");
+             "A constexpr instance method must have a read-only receiver.");
     }
-    if (methodDeclaration && currentClass &&
-        !classInfo(*currentClass).genericParameters.empty()) {
+    if (methodDeclaration && !function.isStatic() && currentClass &&
+        !isSupportedConstexprType(openClassType(*currentClass), true)) {
       reject(function.name(),
-             "A constexpr static method on a generic class is not supported "
-             "until concrete-instance evaluation is available.");
+             "A constexpr instance method requires a structural aggregate "
+             "receiver with no base, polymorphism, stored reference, union "
+             "state, or active destructor.");
     }
     if (function.runtimeBinding() || intrinsicDeclaration ||
         function.hasCLinkage()) {
@@ -7459,8 +7564,8 @@ private:
     }
     if (function.operatorName()) {
       reject(function.operatorName()->symbol,
-             "Operator functions cannot be constexpr until constexpr class "
-             "values are supported.");
+             "Operator functions are outside the bounded initial constexpr "
+             "subset; use a named constexpr function for compile-time work.");
     }
     if (function.isVirtual() || function.isOverride() || function.isPure()) {
       const Token &location =
@@ -7474,19 +7579,64 @@ private:
     if (function.returnType().reference ||
         function.returnMutability() == Mutability::Mutable ||
         (returnType != SemanticType::Unknown &&
-         !isSupportedConstexprType(returnType))) {
+         !isSupportedConstexprType(returnType, true))) {
       reject(function.returnType().name.last(),
              "A constexpr function must return a supported value: a "
              "fixed-width integer, float, double, bool, char, string_view, "
-             "nullptr_t, or a checked-integer expected result.");
+             "nullptr_t, scoped enum, fixed array, structural aggregate, or "
+             "checked-integer expected result.");
     }
     for (const Parameter &parameter : function.parameters()) {
       const SemanticType parameterType = typeOf(parameter);
       if (parameter.pack || parameter.type.reference ||
           (parameterType != SemanticType::Unknown &&
-           !isSupportedConstexprType(parameterType))) {
+           !isSupportedConstexprType(parameterType, true))) {
         reject(parameter.name,
                "Constexpr function parameters must be non-pack, by-value "
+               "supported values.");
+      }
+    }
+    return valid;
+  }
+
+  bool validateConstexprConstructor(const ConstructorDecl &constructor,
+                                    const ConstructorInfo *info,
+                                    const SemanticType &ownerType) {
+    if (!constructor.isConstexpr()) {
+      return true;
+    }
+    bool valid = true;
+    const auto reject = [&](const Token &location, std::string message) {
+      report(location, std::move(message), "GTI-S2057");
+      valid = false;
+    };
+    if (info == nullptr || info->kind != ConstructorKind::Ordinary ||
+        constructor.specifier() || !constructor.body()) {
+      reject(constructor.name(),
+             "A constexpr constructor must be an ordinary constructor with "
+             "a source body.");
+    }
+    if (!isSupportedConstexprType(ownerType, true)) {
+      reject(*constructor.constexprKeyword(),
+             "A constexpr constructor requires a structural class or struct "
+             "with supported fields and no base, polymorphism, union state, "
+             "stored reference, or active destructor.");
+    }
+    for (const GenericParameter &parameter : constructor.genericParameters()) {
+      if (parameter.pack) {
+        reject(*parameter.pack,
+               "Constexpr constructor generic packs are outside the bounded "
+               "constexpr subset.");
+      }
+    }
+    for (const Parameter &parameter : constructor.parameters()) {
+      const SemanticType parameterType = typeOf(parameter);
+      if (parameter.pack || parameter.type.reference ||
+          (parameterType != SemanticType::Unknown &&
+           !isSupportedConstexprType(parameterType, true))) {
+        reject(parameter.name.lexeme.empty() ? parameter.type.name.last()
+                                             : parameter.name,
+               "Constexpr constructor parameters must be non-pack, by-value "
                "supported values.");
       }
     }
@@ -7502,6 +7652,31 @@ private:
           target.arguments.size() == 2 &&
           constantIntegerDomain(target.arguments[0]) == checked->domain &&
           target.arguments[1].kind == SemanticType::Enum) {
+        return {.value = value};
+      }
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+      return target.kind == SemanticType::Enum && target.enumId != 0 &&
+                     target.enumId == enumerator->enumId
+                 ? ConstantEvaluation{.value = value}
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value)) {
+      if (aggregate->value == nullptr ||
+          aggregate->value->exactType == nullptr ||
+          *aggregate->value->exactType != target) {
+        return {.failure = ConstantEvaluationFailure::UnsupportedType};
+      }
+      if (target.kind == SemanticType::Array &&
+          aggregate->value->kind == ConstantAggregateKind::Array &&
+          aggregate->value->elements.size() == target.arrayLength) {
+        return {.value = value};
+      }
+      if (target.kind == SemanticType::Class && target.classId != 0 &&
+          aggregate->value->kind == ConstantAggregateKind::Object &&
+          aggregate->value->identity == target.classId) {
         return {.value = value};
       }
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
@@ -7650,6 +7825,288 @@ private:
     return constexprSuccess(source, postfix ? previous : **local, context);
   }
 
+  [[nodiscard]] ConstantEvaluation
+  defaultConstexprValue(const SemanticType &type,
+                        ConstexprExecutionContext &context) const {
+    if (context.steps++ >= constexprExpressionStepLimit) {
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    }
+    if (const std::optional<CheckedIntegerDomain> domain =
+            constantIntegerDomain(type)) {
+      return {.value = ConstantValue{makeConstantInteger({}, *domain)}};
+    }
+    if (const std::optional<BinaryFloatFormat> format =
+            semanticFloatFormat(type)) {
+      return convertConstantFloat(
+          ConstantValue{makeConstantInteger(
+              {}, CheckedIntegerDomain{.width = 32, .signedValue = true})},
+          *format);
+    }
+    if (type == SemanticType::Bool) {
+      return {.value = ConstantValue{false}};
+    }
+    if (type == SemanticType::Char) {
+      return {.value = ConstantValue{CharacterLiteral{}}};
+    }
+    if (type == SemanticType::StringView) {
+      return {.value = ConstantValue{std::string{}}};
+    }
+    if (type == SemanticType::NullPtr) {
+      return {.value = ConstantValue{NullConstant{}}};
+    }
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+        type.arrayLengthParameterId == 0) {
+      ConstantAggregate aggregate{
+          .kind = ConstantAggregateKind::Array,
+          .exactType = std::make_shared<const SemanticType>(type)};
+      aggregate.elements.reserve(type.arrayLength);
+      for (std::uint64_t index = 0; index < type.arrayLength; ++index) {
+        ConstantEvaluation element =
+            defaultConstexprValue(type.arguments.front(), context);
+        if (!element) {
+          return element;
+        }
+        aggregate.elements.push_back(*element.value);
+      }
+      return {.value =
+                  ConstantValue{makeConstantAggregate(std::move(aggregate))}};
+    }
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+
+  void seedConstexprValueParameters(
+      const std::vector<GenericParameterInfo> &parameters,
+      const GenericSubstitution &substitution,
+      std::unordered_map<SymbolId, ConstexprLocalValue> &scope) {
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (!parameter.value) {
+        continue;
+      }
+      const auto found = substitution.values.find(parameter.id);
+      if (found == substitution.values.end() ||
+          found->second.kind != CompileTimeValue::UInt64) {
+        continue;
+      }
+      const SymbolId symbol = symbolForDeclaration(parameter.name);
+      if (symbol != 0) {
+        scope.insert_or_assign(
+            symbol, ConstantValue{ConstantInteger{
+                        .magnitude = found->second.value,
+                        .domain = CheckedIntegerDomain{.width = 64}}});
+      }
+    }
+  }
+
+  [[nodiscard]] ConstexprEvaluation evaluateConstexprConstruction(
+      const Expr &source, const ResolvedConstructionInfo &resolved,
+      const ExprList &explicitArguments, const Token &callSite,
+      ConstexprExecutionContext &context) {
+    const ConstructorDecl *declaration = resolved.declaration;
+    if (resolved.generatedDefault || declaration == nullptr ||
+        !declaration->isConstexpr() ||
+        !constexprConstructorsAnalyzed.contains(declaration)) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::UnsupportedExpression,
+          "The selected constructor is not an available constexpr "
+          "constructor.");
+    }
+    if (context.callDepth >= constexprCallDepthLimit) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::ResourceLimit,
+          "The constexpr call depth exceeded the compiler limit of " +
+              std::to_string(constexprCallDepthLimit) + ".");
+    }
+
+    const SemanticType constructedType =
+        constexprType(resolved.constructedType, context);
+    if (!isSupportedConstexprType(constructedType) ||
+        constructedType.kind != SemanticType::Class) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::UnsupportedType,
+          "The selected constexpr constructor does not produce a supported "
+          "structural aggregate.");
+    }
+    const ClassInfo *owner = classInfo(constructedType);
+    const ConstructorInfo *constructor =
+        semanticModel.findConstructor(*declaration);
+    if (owner == nullptr || constructor == nullptr ||
+        constructor->kind != ConstructorKind::Ordinary) {
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::UnsupportedType);
+    }
+
+    std::vector<const Expr *> argumentExpressions;
+    argumentExpressions.reserve(resolved.parameterTypes.size());
+    for (const ExprPtr &argument : explicitArguments) {
+      argumentExpressions.push_back(argument.get());
+    }
+    argumentExpressions.insert(argumentExpressions.end(),
+                               resolved.defaultArguments.begin(),
+                               resolved.defaultArguments.end());
+    if (argumentExpressions.size() != resolved.parameterTypes.size()) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::UnsupportedExpression,
+          "The resolved constexpr constructor has an invalid argument "
+          "count.");
+    }
+    std::vector<ConstantValue> arguments;
+    arguments.reserve(argumentExpressions.size());
+    for (std::size_t index = 0; index < argumentExpressions.size(); ++index) {
+      if (argumentExpressions[index] == nullptr) {
+        return constexprFailure(
+            callSite, ConstantEvaluationFailure::UnsupportedExpression,
+            "The resolved constexpr constructor has a missing default "
+            "argument.");
+      }
+      ConstexprEvaluation argument =
+          evaluateConstexprExpression(*argumentExpressions[index], context);
+      if (!argument) {
+        return argument;
+      }
+      const SemanticType parameterType =
+          constexprType(resolved.parameterTypes[index], context);
+      ConstantEvaluation converted =
+          convertConstantToType(*argument.value, parameterType);
+      if (!converted) {
+        return constexprFailure(expressionToken(*argumentExpressions[index]),
+                                converted.failure);
+      }
+      arguments.push_back(*converted.value);
+    }
+
+    GenericSubstitution substitution = classSubstitution(constructedType);
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    for (const GenericParameterInfo &parameter :
+         constructor->genericParameters) {
+      if (parameter.value) {
+        if (valueIndex < resolved.valueArguments.size()) {
+          substitution.values.insert_or_assign(
+              parameter.id,
+              constexprValue(resolved.valueArguments[valueIndex++], context));
+        }
+      } else if (typeIndex < resolved.typeArguments.size()) {
+        substitution.types.insert_or_assign(
+            parameter.id,
+            constexprType(resolved.typeArguments[typeIndex++], context));
+      }
+    }
+
+    const std::size_t enclosingScopeCount = context.scopes.size();
+    const std::size_t enclosingSubstitutionCount = context.substitutions.size();
+    const std::size_t enclosingReceiverCount = context.receivers.size();
+    context.scopes.emplace_back();
+    context.substitutions.push_back(substitution);
+    ++context.callDepth;
+    const auto restore = [&]() {
+      --context.callDepth;
+      context.scopes.resize(enclosingScopeCount);
+      context.substitutions.resize(enclosingSubstitutionCount);
+      context.receivers.resize(enclosingReceiverCount);
+    };
+
+    seedConstexprValueParameters(owner->genericParameters, substitution,
+                                 context.scopes.back());
+    seedConstexprValueParameters(constructor->genericParameters, substitution,
+                                 context.scopes.back());
+    for (std::size_t index = 0; index < declaration->parameters().size();
+         ++index) {
+      const BindingInfo *binding =
+          semanticModel.findBinding(declaration->parameters()[index]);
+      if (binding == nullptr || binding->symbol == 0 ||
+          index >= arguments.size()) {
+        restore();
+        return constexprFailure(
+            callSite, ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr evaluator could not resolve a constructor "
+            "parameter.");
+      }
+      context.scopes.back().insert_or_assign(binding->symbol, arguments[index]);
+    }
+
+    ConstantAggregate aggregate{
+        .kind = ConstantAggregateKind::Object,
+        .identity = constructedType.classId,
+        .exactType = std::make_shared<const SemanticType>(constructedType)};
+    aggregate.fields.reserve(owner->fields.size());
+    const GenericSubstitution classArguments =
+        classSubstitution(constructedType);
+    for (const FieldInfo &field : owner->fields) {
+      if (field.declaration == nullptr) {
+        restore();
+        return constexprFailure(callSite,
+                                ConstantEvaluationFailure::UnsupportedType);
+      }
+      const auto member = owner->members.find(field.declaration->name().lexeme);
+      const BindingInfo *binding =
+          semanticModel.findBinding(*field.declaration);
+      if (member == owner->members.end() || binding == nullptr ||
+          binding->symbol == 0) {
+        restore();
+        return constexprFailure(
+            field.declaration->name(),
+            ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr evaluator could not resolve a structural field.");
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, classArguments);
+      const Expr *initializerExpression = nullptr;
+      for (const ConstructorInitializer &initializer :
+           declaration->initializers()) {
+        const ResolvedConstructorInitializerInfo *initializerInfo =
+            semanticModel.findConstructorInitializer(initializer);
+        if (initializerInfo != nullptr &&
+            initializerInfo->kind == ConstructorInitializerTargetKind::Field &&
+            initializerInfo->field == binding->symbol &&
+            initializer.arguments.size() == 1) {
+          initializerExpression = initializer.arguments.front().get();
+          break;
+        }
+      }
+      if (initializerExpression == nullptr) {
+        initializerExpression = field.declaration->initializer().get();
+      }
+      if (initializerExpression == nullptr) {
+        restore();
+        return constexprFailure(
+            field.declaration->name(),
+            ConstantEvaluationFailure::UnsupportedExpression,
+            "Every field of a constexpr aggregate must be initialized.");
+      }
+      ConstexprEvaluation initializer =
+          evaluateConstexprExpression(*initializerExpression, context);
+      if (!initializer) {
+        restore();
+        return initializer;
+      }
+      ConstantEvaluation converted =
+          convertConstantToType(*initializer.value, fieldType);
+      if (!converted) {
+        restore();
+        return constexprFailure(expressionToken(*initializerExpression),
+                                converted.failure);
+      }
+      aggregate.fields.push_back(
+          {.symbol = binding->symbol, .value = *converted.value});
+    }
+
+    ConstantValue object = makeConstantAggregate(std::move(aggregate));
+    context.receivers.push_back(object);
+    ConstexprStatementEvaluation execution =
+        executeConstexprStatements(declaration->body()->statements(), context);
+    restore();
+    if (execution.control == ConstexprControlFlow::Failure) {
+      return std::move(execution.failure);
+    }
+    if (execution.control != ConstexprControlFlow::Next) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::UnsupportedExpression,
+          "A constexpr constructor body cannot transfer control outside the "
+          "constructor.");
+    }
+    return constexprSuccess(source, std::move(object), context);
+  }
+
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const ExprPtr &expression,
                               ConstexprExecutionContext &context) {
@@ -7668,7 +8125,8 @@ private:
                               ConstantEvaluationFailure::ResourceLimit);
     }
 
-    const SemanticType sourceType = semanticModel.typeOf(source);
+    const SemanticType sourceType =
+        constexprType(semanticModel.typeOf(source), context);
     if (exprAs<LayoutQuery>(&source) != nullptr) {
       if (const std::optional<ConstantValue> value =
               semanticModel.findConstant(source)) {
@@ -7689,6 +8147,42 @@ private:
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : evaluated;
     }
+    if (const auto *qualified = exprAs<QualifiedName>(&source)) {
+      if (const ResolvedEnumeratorInfo *enumerator =
+              semanticModel.findEnumerator(*qualified)) {
+        if (sourceType.kind != SemanticType::Enum || sourceType.enumId == 0 ||
+            sourceType.enumId != enumerator->owner) {
+          return constexprFailure(
+              expressionToken(source),
+              ConstantEvaluationFailure::UnsupportedType,
+              "A constexpr enumerator lost its exact scoped-enum identity.");
+        }
+        const EnumTypeInfo *owner =
+            semanticModel.findEnumType(enumerator->owner);
+        if (owner == nullptr || owner->payload) {
+          return constexprFailure(
+              expressionToken(source),
+              ConstantEvaluationFailure::UnsupportedType,
+              "Payload enumerators are outside the bounded constexpr "
+              "subset.");
+        }
+        const std::optional<CheckedIntegerDomain> domain =
+            constantIntegerDomain(owner->underlyingType);
+        if (!domain) {
+          return constexprFailure(expressionToken(source),
+                                  ConstantEvaluationFailure::UnsupportedType);
+        }
+        return constexprSuccess(
+            source,
+            ConstantValue{ConstantEnum{
+                .enumId = enumerator->owner,
+                .value =
+                    ConstantInteger{.negative = enumerator->value.negative,
+                                    .magnitude = enumerator->value.magnitude,
+                                    .domain = *domain}}},
+            context);
+      }
+    }
     if (exprAs<Variable>(&source) != nullptr ||
         exprAs<QualifiedName>(&source) != nullptr) {
       const SymbolId symbol = semanticModel.findResolvedSymbol(source);
@@ -7708,6 +8202,76 @@ private:
       }
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::NonConstantReference);
+    }
+    if (exprAs<This>(&source) != nullptr) {
+      if (context.receivers.empty()) {
+        return constexprFailure(
+            expressionToken(source),
+            ConstantEvaluationFailure::NonConstantReference,
+            "'this' is not available outside a constexpr aggregate call.");
+      }
+      return constexprSuccess(source, context.receivers.back(), context);
+    }
+    if (const auto *member = exprAs<Get>(&source)) {
+      ConstexprEvaluation object =
+          evaluateConstexprExpression(member->object(), context);
+      if (!object) {
+        return object;
+      }
+      const auto *aggregate =
+          std::get_if<ConstantAggregateValue>(&*object.value);
+      if (aggregate == nullptr || aggregate->value == nullptr ||
+          aggregate->value->kind != ConstantAggregateKind::Object) {
+        return constexprFailure(
+            member->name(), ConstantEvaluationFailure::UnsupportedType,
+            "Constexpr member access requires a structural aggregate value.");
+      }
+      const SymbolId field = semanticModel.findResolvedSymbol(source);
+      const auto found = std::find_if(
+          aggregate->value->fields.begin(), aggregate->value->fields.end(),
+          [field](const ConstantAggregateField &candidate) {
+            return candidate.symbol == field;
+          });
+      if (field == 0 || found == aggregate->value->fields.end()) {
+        return constexprFailure(
+            member->name(), ConstantEvaluationFailure::UnsupportedExpression,
+            "The selected member is not a constexpr structural field.");
+      }
+      return constexprSuccess(source, found->value, context);
+    }
+    if (const auto *indexExpression = exprAs<Index>(&source)) {
+      ConstexprEvaluation object =
+          evaluateConstexprExpression(indexExpression->object(), context);
+      if (!object) {
+        return object;
+      }
+      ConstexprEvaluation index =
+          evaluateConstexprExpression(indexExpression->index(), context);
+      if (!index) {
+        return index;
+      }
+      const auto *aggregate =
+          std::get_if<ConstantAggregateValue>(&*object.value);
+      const std::optional<std::uint64_t> offset =
+          constantUnsignedMagnitude(*index.value);
+      if (aggregate == nullptr || aggregate->value == nullptr ||
+          aggregate->value->kind != ConstantAggregateKind::Array || !offset) {
+        return constexprFailure(
+            indexExpression->bracket(),
+            ConstantEvaluationFailure::InvalidOperands,
+            "Constexpr indexing requires a fixed array and a non-negative "
+            "integer index.");
+      }
+      if (*offset >= aggregate->value->elements.size()) {
+        return constexprFailure(
+            indexExpression->bracket(),
+            ConstantEvaluationFailure::InvalidOperands,
+            "Constexpr fixed-array index " + std::to_string(*offset) +
+                " is outside the bound " +
+                std::to_string(aggregate->value->elements.size()) + ".");
+      }
+      return constexprSuccess(source, aggregate->value->elements[*offset],
+                              context);
     }
     if (const auto *assignment = exprAs<Assign>(&source)) {
       ConstexprLocalValue *target = findMutableConstexprLocal(
@@ -7846,7 +8410,61 @@ private:
                  ? constexprSuccess(source, *evaluated.value, context)
                  : constexprFailure(conversion->paren(), evaluated.failure);
     }
+    if (const auto *array = exprAs<ArrayInitializer>(&source)) {
+      if (sourceType.kind != SemanticType::Array ||
+          sourceType.arguments.size() != 1 ||
+          sourceType.arrayLengthParameterId != 0) {
+        return constexprFailure(
+            array->brace(), ConstantEvaluationFailure::UnsupportedType,
+            "Constexpr array initialization requires a concrete fixed-array "
+            "type.");
+      }
+      ConstantAggregate aggregate{
+          .kind = ConstantAggregateKind::Array,
+          .exactType = std::make_shared<const SemanticType>(sourceType)};
+      aggregate.elements.reserve(sourceType.arrayLength);
+      if (array->elements().empty()) {
+        for (std::uint64_t index = 0; index < sourceType.arrayLength; ++index) {
+          ConstantEvaluation value =
+              defaultConstexprValue(sourceType.arguments.front(), context);
+          if (!value) {
+            return constexprFailure(array->brace(), value.failure);
+          }
+          aggregate.elements.push_back(*value.value);
+        }
+      } else {
+        if (array->elements().size() != sourceType.arrayLength) {
+          return constexprFailure(
+              array->brace(), ConstantEvaluationFailure::InvalidOperands,
+              "The constexpr fixed-array element count differs from its "
+              "declared bound.");
+        }
+        for (const ExprPtr &element : array->elements()) {
+          ConstexprEvaluation value =
+              evaluateConstexprExpression(element, context);
+          if (!value) {
+            return value;
+          }
+          ConstantEvaluation converted =
+              convertConstantToType(*value.value, sourceType.arguments.front());
+          if (!converted) {
+            return constexprFailure(expressionToken(element),
+                                    converted.failure);
+          }
+          aggregate.elements.push_back(*converted.value);
+        }
+      }
+      return constexprSuccess(
+          source, ConstantValue{makeConstantAggregate(std::move(aggregate))},
+          context);
+    }
     if (const auto *initializer = exprAs<DirectInitializer>(&source)) {
+      if (const ResolvedConstructionInfo *construction =
+              semanticModel.findConstruction(*initializer)) {
+        return evaluateConstexprConstruction(source, *construction,
+                                             initializer->arguments(),
+                                             initializer->brace(), context);
+      }
       if (initializer->arguments().size() != 1) {
         return constexprFailure(
             initializer->brace(),
@@ -7864,6 +8482,11 @@ private:
                  : constexprFailure(initializer->brace(), evaluated.failure);
     }
     if (const auto *call = exprAs<Call>(&source)) {
+      if (const ResolvedConstructionInfo *construction =
+              semanticModel.findConstruction(*call)) {
+        return evaluateConstexprConstruction(
+            source, *construction, call->arguments(), call->paren(), context);
+      }
       if (const auto *member = exprAs<Get>(call->callee().get())) {
         const SemanticType objectType = semanticModel.typeOf(*member->object());
         if (objectType.kind == SemanticType::Expected &&
@@ -7923,15 +8546,30 @@ private:
         return constexprFailure(
             call->paren(), ConstantEvaluationFailure::UnsupportedExpression);
       }
-      if (resolved->intrinsic == IntrinsicKind::NumericAliasConversion &&
+      if ((resolved->intrinsic == IntrinsicKind::NumericAliasConversion ||
+           resolved->intrinsic ==
+               IntrinsicKind::NumericTypeParameterConversion) &&
           call->arguments().size() == 1) {
         ConstexprEvaluation operand =
             evaluateConstexprExpression(call->arguments().front(), context);
         if (!operand) {
           return operand;
         }
-        const ConstantEvaluation evaluated =
-            convertConstantToType(*operand.value, resolved->returnType);
+        const ConstantEvaluation evaluated = convertConstantToType(
+            *operand.value, constexprType(resolved->returnType, context));
+        return evaluated ? constexprSuccess(source, *evaluated.value, context)
+                         : constexprFailure(call->paren(), evaluated.failure);
+      }
+      if (resolved->intrinsic ==
+              IntrinsicKind::DefaultTypeParameterConstruction &&
+          call->arguments().size() == 1) {
+        ConstexprEvaluation operand =
+            evaluateConstexprExpression(call->arguments().front(), context);
+        if (!operand) {
+          return operand;
+        }
+        const ConstantEvaluation evaluated = convertConstantToType(
+            *operand.value, constexprType(resolved->returnType, context));
         return evaluated ? constexprSuccess(source, *evaluated.value, context)
                          : constexprFailure(call->paren(), evaluated.failure);
       }
@@ -8020,6 +8658,73 @@ private:
             "The constexpr definition of '" + declaration->name().lexeme +
                 "' must be available before this constant-evaluated call.");
       }
+      const FunctionInfo *functionInfo =
+          semanticModel.findFunction(resolved->function);
+      if (functionInfo == nullptr) {
+        return constexprFailure(
+            call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr call lost its canonical function identity.");
+      }
+
+      GenericSubstitution substitution;
+      std::optional<ConstantValue> receiver;
+      if (functionInfo->ownerClass != 0 && !functionInfo->staticMember) {
+        const auto *member = exprAs<Get>(call->callee().get());
+        if (member == nullptr || resolved->dispatch != CallDispatch::Static) {
+          return constexprFailure(
+              call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+              "Polymorphic constexpr dispatch is not supported.");
+        }
+        ConstexprEvaluation object =
+            evaluateConstexprExpression(member->object(), context);
+        if (!object) {
+          return object;
+        }
+        const auto *aggregate =
+            std::get_if<ConstantAggregateValue>(&*object.value);
+        if (aggregate == nullptr || aggregate->value == nullptr ||
+            aggregate->value->kind != ConstantAggregateKind::Object) {
+          return constexprFailure(
+              member->name(), ConstantEvaluationFailure::UnsupportedType,
+              "A constexpr instance call requires a structural aggregate "
+              "receiver.");
+        }
+        receiver = *object.value;
+        const SemanticType dispatchOwner =
+            constexprType(resolved->dispatchOwner, context);
+        substitution = classSubstitution(dispatchOwner);
+      } else if (functionInfo->ownerClass != 0) {
+        substitution =
+            classSubstitution(constexprType(resolved->dispatchOwner, context));
+      }
+
+      std::size_t typeArgument = 0;
+      std::size_t valueArgument = 0;
+      for (const GenericParameterInfo &parameter :
+           functionInfo->genericParameters) {
+        if (parameter.value) {
+          if (valueArgument >= resolved->valueArguments.size()) {
+            return constexprFailure(
+                call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+                "The constexpr call is missing a concrete generic value "
+                "argument.");
+          }
+          substitution.values.insert_or_assign(
+              parameter.id,
+              constexprValue(resolved->valueArguments[valueArgument++],
+                             context));
+        } else {
+          if (typeArgument >= resolved->typeArguments.size()) {
+            return constexprFailure(
+                call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+                "The constexpr call is missing a concrete generic type "
+                "argument.");
+          }
+          substitution.types.insert_or_assign(
+              parameter.id,
+              constexprType(resolved->typeArguments[typeArgument++], context));
+        }
+      }
       if (call->arguments().size() + resolved->defaultArguments.size() !=
           resolved->parameterTypes.size()) {
         return constexprFailure(
@@ -8049,7 +8754,8 @@ private:
           return argument;
         }
         const ConstantEvaluation converted = convertConstantToType(
-            *argument.value, resolved->parameterTypes[index]);
+            *argument.value,
+            constexprType(resolved->parameterTypes[index], context));
         if (!converted) {
           return constexprFailure(expressionToken(*argumentExpressions[index]),
                                   converted.failure);
@@ -8057,9 +8763,9 @@ private:
         arguments.push_back(*converted.value);
       }
 
-      ConstexprEvaluation evaluated =
-          executeConstexprFunction(*declaration, resolved->returnType,
-                                   arguments, call->paren(), context);
+      ConstexprEvaluation evaluated = executeConstexprFunction(
+          *declaration, constexprType(resolved->returnType, context), arguments,
+          substitution, receiver, call->paren(), context);
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : evaluated;
     }
@@ -8117,11 +8823,12 @@ private:
             ConstantEvaluationFailure::UnsupportedExpression,
             "The constexpr evaluator could not resolve a local binding."));
       }
-      if (declaration->isStatic() || !isSupportedConstexprType(binding->type)) {
+      const SemanticType bindingType = constexprType(binding->type, context);
+      if (declaration->isStatic() || !isSupportedConstexprType(bindingType)) {
         return constexprStatementFailure(constexprFailure(
             declaration->name(), ConstantEvaluationFailure::UnsupportedType,
-            "Executed constexpr function locals must be automatic scalar "
-            "bindings."));
+            "Executed constexpr function locals must be automatic supported "
+            "value bindings."));
       }
 
       ConstexprLocalValue value;
@@ -8134,7 +8841,7 @@ private:
           return constexprStatementFailure(std::move(initializer));
         }
         const ConstantEvaluation converted =
-            convertConstantToType(*initializer.value, binding->type);
+            convertConstantToType(*initializer.value, bindingType);
         if (!converted) {
           return constexprStatementFailure(constexprFailure(
               expressionToken(declaration->initializer()), converted.failure));
@@ -8362,7 +9069,9 @@ private:
 
   [[nodiscard]] ConstexprEvaluation executeConstexprFunction(
       const FunctionDecl &function, const SemanticType &returnType,
-      const std::vector<ConstantValue> &arguments, const Token &callSite,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
       ConstexprExecutionContext &context) {
     if (context.callDepth >= constexprCallDepthLimit) {
       return constexprFailure(
@@ -8378,9 +9087,24 @@ private:
     }
 
     const std::size_t enclosingScopeCount = context.scopes.size();
+    const std::size_t enclosingSubstitutionCount = context.substitutions.size();
+    const std::size_t enclosingReceiverCount = context.receivers.size();
     context.scopes.emplace_back();
+    context.substitutions.push_back(substitution);
+    if (receiver) {
+      context.receivers.push_back(*receiver);
+    }
     ++context.callDepth;
     ConstexprEvaluation setupFailure;
+    if (const FunctionInfo *info = semanticModel.findFunction(function)) {
+      if (info->ownerClass != 0) {
+        seedConstexprValueParameters(
+            classInfo(info->ownerClass).genericParameters, substitution,
+            context.scopes.back());
+      }
+      seedConstexprValueParameters(info->genericParameters, substitution,
+                                   context.scopes.back());
+    }
     for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       const BindingInfo *binding =
           semanticModel.findBinding(function.parameters()[index]);
@@ -8401,6 +9125,8 @@ private:
     }
     --context.callDepth;
     context.scopes.resize(enclosingScopeCount);
+    context.substitutions.resize(enclosingSubstitutionCount);
+    context.receivers.resize(enclosingReceiverCount);
 
     if (setupFailure.failure != ConstantEvaluationFailure::None) {
       return setupFailure;
@@ -8512,7 +9238,8 @@ private:
       report(*declaration.constexprKeyword(),
              "The bounded constexpr evaluator supports fixed-width integers, "
              "float, double, bool, char, string_view, and nullptr_t values, "
-             "plus checked-integer expected results; type '" +
+             "plus scoped enums, concrete fixed arrays, structural "
+             "aggregates, and checked-integer expected results; type '" +
                  typeSpelling(type) + "' is not supported yet.",
              "GTI-S2057");
       valid = false;
@@ -8521,7 +9248,7 @@ private:
       return std::nullopt;
     }
 
-    ConstexprExecutionContext context;
+    ConstexprExecutionContext context = constexprContext();
     ConstexprEvaluation evaluated =
         evaluateConstexprExpression(declaration.initializer(), context);
     if (!evaluated) {
@@ -8535,6 +9262,9 @@ private:
       evaluated.location = expressionToken(declaration.initializer());
       reportConstexprFailure(declaration, type, evaluated);
       return std::nullopt;
+    }
+    if (currentProgramEffectOwner.valid()) {
+      programEffects.erase(currentProgramEffectOwner);
     }
     return converted.value;
   }
@@ -26568,7 +27298,9 @@ private:
         ConstructorInfo info{.id = nextConstructorId++,
                              .owner = owner.id,
                              .declaration = constructor,
-                             .access = access};
+                             .access = access,
+                             .constexprConstructor =
+                                 constructor->isConstexpr()};
         info.requiredParameterCount =
             requiredParameterCount(constructor->parameters());
         info.defaultArgumentEffectOwners =
@@ -27231,6 +27963,12 @@ private:
 
   [[nodiscard]] static bool
   canMaterializeProgramConstant(const ConstantValue &value) {
+    return !std::holds_alternative<ConstantCheckedIntegerResult>(value) &&
+           !std::holds_alternative<ConstantAggregateValue>(value);
+  }
+
+  [[nodiscard]] static bool
+  canDataInitializeProgramConstant(const ConstantValue &value) {
     return !std::holds_alternative<ConstantCheckedIntegerResult>(value);
   }
 
@@ -27893,7 +28631,8 @@ private:
                                 : ProgramStorageKind::NamespaceGlobal,
          .role = (!variable->initializer() ||
                   (variable->isConstexpr() && binding->constant &&
-                   canMaterializeProgramConstant(*binding->constant)))
+                   canDataInitializeProgramConstant(*binding->constant) &&
+                   !requiresActiveCleanupFor(binding->type)))
                      ? ProgramInitializationStepRole::DataOnly
                      : ProgramInitializationStepRole::Initializer,
          .declaration = variable,
@@ -32154,7 +32893,7 @@ private:
       std::optional<ConstantValue> evaluated =
           semanticModel.findConstant(*index);
       if (!evaluated) {
-        ConstexprExecutionContext context;
+        ConstexprExecutionContext context = constexprContext();
         ConstexprEvaluation result =
             evaluateConstexprExpression(index, context);
         if (result) {
@@ -33845,6 +34584,7 @@ private:
   std::unordered_map<const ConstructorDecl *, std::vector<GenericParameterInfo>>
       constructorGenericParameters;
   std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
+  std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
   std::unordered_map<const Expr *, const ParameterDefault *>
       defaultArgumentSyntax;
   std::unordered_map<const Expr *, std::vector<const Expr *>>

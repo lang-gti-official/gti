@@ -36,6 +36,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.declaration != nullptr && info.declaration->isStatic()) {
     result += "static ";
   }
+  if (declaration != nullptr && declaration->isConstexpr()) {
+    result += "constexpr ";
+  }
   result += types.print(returnType) + " " + functionName(info);
   if (selected != nullptr &&
       (!selected->typeArguments.empty() || !selected->valueArguments.empty())) {
@@ -140,7 +143,10 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
     return constructedType + "(" + constructedType +
            (selected.kind == ConstructorKind::Move ? "&&)" : "&)");
   }
-  std::string result = constructedType;
+  std::string result =
+      selected.declaration != nullptr && selected.declaration->isConstexpr()
+          ? "constexpr " + constructedType
+          : constructedType;
   if (!selected.typeArguments.empty() || !selected.valueArguments.empty()) {
     const ConstructorInfo *constructor =
         selected.declaration == nullptr
@@ -188,7 +194,10 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
     return appendSpecifier(ownerName + "(" + ownerName +
                            (info.kind == ConstructorKind::Move ? "&&)" : "&)"));
   }
-  std::string result = ownerName;
+  std::string result =
+      info.declaration != nullptr && info.declaration->isConstexpr()
+          ? "constexpr " + ownerName
+          : ownerName;
   if (!info.genericParameters.empty()) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);

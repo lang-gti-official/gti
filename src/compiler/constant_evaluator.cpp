@@ -1,4 +1,4 @@
-#include "gti/constant_evaluator.h"
+#include "gti/semantic_analyzer.h"
 
 #include <cstdint>
 #include <limits>
@@ -7,6 +7,16 @@
 #include <variant>
 
 namespace lang {
+
+bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
+  const bool sameType =
+      left.exactType == right.exactType ||
+      (left.exactType != nullptr && right.exactType != nullptr &&
+       *left.exactType == *right.exactType);
+  return sameType && left.kind == right.kind &&
+         left.identity == right.identity && left.elements == right.elements &&
+         left.fields == right.fields;
+}
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,
                                                   CheckedIntegerDomain domain) {
@@ -175,6 +185,14 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
       ordering = compareConstantIntegers(*leftInteger, *rightInteger);
     }
   }
+  if (!ordering) {
+    const auto *leftEnum = std::get_if<ConstantEnum>(&left);
+    const auto *rightEnum = std::get_if<ConstantEnum>(&right);
+    if (leftEnum != nullptr && rightEnum != nullptr && leftEnum->enumId != 0 &&
+        leftEnum->enumId == rightEnum->enumId) {
+      ordering = compareConstantIntegers(leftEnum->value, rightEnum->value);
+    }
+  }
   if (!ordering && (std::holds_alternative<BinaryFloat>(left) ||
                     std::holds_alternative<BinaryFloat>(right))) {
     const BinaryFloatFormat format = constantBinaryFloatFormat(left, right);
@@ -339,7 +357,13 @@ evaluateConstantBinary(TokenKind operation, const ConstantValue &left,
   if (const auto integerOperation = constantIntegerOperation(operation)) {
     const auto *leftInteger = std::get_if<ConstantInteger>(&left);
     const auto *rightInteger = std::get_if<ConstantInteger>(&right);
-    if (leftInteger == nullptr || rightInteger == nullptr || !resultDomain) {
+    if (leftInteger == nullptr || rightInteger == nullptr) {
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    }
+    if (!resultDomain && leftInteger->domain == rightInteger->domain) {
+      resultDomain = leftInteger->domain;
+    }
+    if (!resultDomain) {
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     }
     return constantFromChecked(

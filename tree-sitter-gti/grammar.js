@@ -481,6 +481,7 @@ module.exports = grammar({
 
     constructor_declaration: ($) =>
       seq(
+        optional("constexpr"),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),

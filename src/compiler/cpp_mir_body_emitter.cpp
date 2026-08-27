@@ -17386,6 +17386,25 @@ private:
       output << ";\n";
       return;
     }
+    if (instruction.operation == MirOperation::EnumConstant) {
+      const CppMirEnumRepresentation *enumRow = nullptr;
+      if (instruction.enumOwner) {
+        for (const CppMirEnumRepresentation &candidate :
+             representations.enums()) {
+          if (candidate.owner == *instruction.enumOwner) {
+            enumRow = &candidate;
+          }
+        }
+      }
+      if (enumRow == nullptr || !instruction.enumValue) {
+        throw std::logic_error(
+            "verified MIR enum constant lost its representation row");
+      }
+      output << "static_cast<" << enumRow->spelling << ">(";
+      emitSwitchInteger(*instruction.enumValue, enumRow->underlyingType);
+      output << ");\n";
+      return;
+    }
     if (instruction.operation == MirOperation::Identity) {
       emitOperand(instruction.operands.front());
       output << ";\n";
@@ -27121,6 +27140,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
           continue;
+        case MirOperation::EnumConstant: {
+          const CppMirEnumRepresentation *enumRow = nullptr;
+          if (instruction.enumOwner) {
+            for (const CppMirEnumRepresentation &candidate :
+                 representations_.enums()) {
+              if (candidate.owner == *instruction.enumOwner) {
+                enumRow = &candidate;
+              }
+            }
+          }
+          if (enumRow == nullptr || enumRow->spelling.empty() ||
+              instruction.info.type.kind != SemanticType::Enum ||
+              instruction.info.type.enumId != instruction.enumOwner ||
+              !instruction.enumValue || !instruction.operands.empty() ||
+              instruction.literal || !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        }
         case MirOperation::Identity:
         case MirOperation::LogicalNot:
           if (instruction.operands.size() != 1 ||

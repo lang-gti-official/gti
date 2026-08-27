@@ -2528,16 +2528,26 @@ name recognition.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/role:** bounded-first measured work requiring a concrete library client;
-  default generic arguments additionally require stable declaration identity.
-- **Scope:** Extend the existing evaluator to concrete generic functions and
-  supported aggregate values, then enum values/library constants. Default
-  generic arguments are a separate final slice with declaration-owned exact
-  identity. Do not widen exact qualified specialization into partial
-  specialization or introduce a bytecode interpreter.
-- **Exit gate:** the selected constant family has constexpr/runtime parity,
-  deterministic identity, recursion/resource limits, and diagnostics that do
-  not depend on emitted C++ evaluation.
+- **State/role:** the bounded aggregate initial release is implemented for the
+  ordinary `std::array<T, N>` constructor/observer and `std::gcd<T>` clients.
+  Default generic arguments remain a separate final slice requiring
+  declaration-owned exact identity.
+- **Implemented scope:** The existing evaluator admits concrete non-pack type
+  and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
+  fully initialized structural class/struct values, ordinary constexpr
+  constructors, and read-only instance methods. Constants retain exact
+  declaration/type/value identity through semantics and required HIR/MIR data;
+  the backend only materializes an already-proven value. One shared 4096-step
+  budget and 64-call-depth limit cover recursive/default aggregate work.
+- **Remaining scope:** Default generic arguments are a separate final slice.
+  References, allocation, aggregate-place mutation, payload enums, unions,
+  inherited or cleanup-owning aggregates, generic packs, constexpr operators,
+  mutable receivers, and polymorphism remain excluded. Do not widen exact
+  qualified specialization into partial specialization or introduce a
+  bytecode interpreter.
+- **Initial exit gate:** met by positive/negative identity and limit tests plus
+  an O0/O3 and C++20/C++23 runtime-parity matrix whose result is independent of
+  native C++ constant evaluation.
 
 ### L-TEXT-01: Formatting, Parsing, And Text Policy
 

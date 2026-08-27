@@ -1537,13 +1537,14 @@ struct SpecialMemberSpecifier {
 
 class ConstructorDecl final : public StmtOfKind<StmtKind::ConstructorDecl> {
 public:
-  ConstructorDecl(Token name, std::vector<GenericParameter> genericParameters,
+  ConstructorDecl(std::optional<Token> constexprKeyword, Token name,
+                  std::vector<GenericParameter> genericParameters,
                   std::vector<Parameter> parameters,
                   std::optional<RequiresClause> requiresClause,
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body)
-      : name_(std::move(name)),
+      : constexprKeyword_(std::move(constexprKeyword)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
         requiresClause_(std::move(requiresClause)),
@@ -1555,6 +1556,12 @@ public:
   }
 
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
+    return constexprKeyword_;
+  }
+  [[nodiscard]] bool isConstexpr() const {
+    return constexprKeyword_.has_value();
+  }
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
@@ -1574,6 +1581,7 @@ public:
   [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
 
 private:
+  std::optional<Token> constexprKeyword_;
   Token name_;
   std::vector<GenericParameter> genericParameters_;
   std::vector<Parameter> parameters_;
