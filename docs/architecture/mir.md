@@ -923,6 +923,19 @@ no later stage can key coherently. A derived call-result chain whose links do
 not already end at the retained loan's semantic parent still normalizes
 through that parent, so parent suspension and reactivation are preserved.
 
+When the call's own argument or
+receiver was already a borrowed call result, the retained loan is the outermost
+link of a call-result reborrow chain: lowering keeps that link rather than
+ending the chain and recreating a loan from the receiver or argument origin,
+because the recreated loan cannot name the returned address and its source
+place would record the returned referent's type over a projection chain that
+derives the origin's. The links the retained loan reborrows carry nothing
+themselves, but a parent must outlive its child on every edge, so they stay
+live past the full expression that produced them and end together with the last
+loan that reborrows them, child-first. Loan release by expression extent alone
+would end such a link while the retained child is still active, which
+verification rejects.
+
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access
 mode, parent range loan, child element loan, condition/body/increment/cleanup
