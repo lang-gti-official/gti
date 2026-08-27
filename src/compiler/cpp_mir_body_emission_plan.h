@@ -154,7 +154,9 @@ public:
 private:
   CppMirBodyEmissionAnalysis analysis_;
   std::string plainTextTemplate_;
+  std::string plainDeducedCallableTextTemplate_;
   std::string failureTextTemplate_;
+  std::string failureDeducedCallableTextTemplate_;
   bool boundaryDeclaration_ = false;
   bool initializerSchedule_ = false;
   std::vector<CppMirFieldInitializerSpelling> initializerFields_;
@@ -194,5 +196,7 @@ private:
 
 inline constexpr std::string_view cppMirBodyEmissionFamilyPlaceholder =
     "__gti_emission_family__";
+inline constexpr std::string_view cppMirBodyEmissionIndentationPlaceholder =
+    "__gti_emission_indentation__";
 
 } // namespace lang

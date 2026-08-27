@@ -15387,9 +15387,13 @@ class ScalarBodyTextEmitter {
 public:
   ScalarBodyTextEmitter(const MirProgram &program,
                         const CppMirBodyEmissionMap &representations,
-                        std::size_t indentation, bool failureForm = false)
+                        std::size_t indentation, bool failureForm = false,
+                        std::string_view indentationPlaceholder = {},
+                        bool deducedCallableFamily = false)
       : program(program), representations(representations),
-        indentation(indentation), failureForm(failureForm) {}
+        indentation(indentation), failureForm(failureForm),
+        indentationPlaceholder(indentationPlaceholder),
+        deducedCallableFamilyOverride(deducedCallableFamily) {}
 
   [[nodiscard]] std::string emit(const MirFunctionInstance &function,
                                  std::string_view familyLabel) {
@@ -16627,9 +16631,15 @@ private:
   }
 
   void writeIndent() {
+    output << indentationPlaceholder;
     for (std::size_t index = 0; index < indentation; ++index) {
       output << "  ";
     }
+  }
+
+  [[nodiscard]] bool deducedCallableFamily() const {
+    return deducedCallableFamilyOverride ||
+           currentFamilyLabel.starts_with("deduced-callable");
   }
 
   [[nodiscard]] static MirPlaceId
@@ -16926,11 +16936,14 @@ private:
       }
       output << "::gti_failure_record_v1 *__gti_mir_failure_record) -> bool "
              << ScalarBodyTextEmitter(program, representations, indentation,
-                                      true)
+                                      true, indentationPlaceholder,
+                                      deducedCallableFamilyOverride)
                     .emit(*closure.lambda, currentFamilyLabel);
     } else {
       output << ") -> " << typeSpelling(closure.lambda->returnType) << ' '
-             << ScalarBodyTextEmitter(program, representations, indentation)
+             << ScalarBodyTextEmitter(program, representations, indentation,
+                                      false, indentationPlaceholder,
+                                      deducedCallableFamilyOverride)
                     .emit(*closure.lambda, currentFamilyLabel);
     }
     output << ";\n";
@@ -17073,7 +17086,7 @@ private:
     }
     const MirThreadTaskAdapter *adapter = threadTaskAdapterFor(function);
     output << '<';
-    if (currentFamilyLabel.starts_with("deduced-callable")) {
+    if (deducedCallableFamily()) {
       output << "__gti_thread_task_adapter";
     } else {
       output << adapter->id;
@@ -17395,12 +17408,15 @@ private:
       }
       output << "::gti_failure_record_v1 *__gti_mir_failure_record) -> bool "
              << ScalarBodyTextEmitter(program, representations, indentation,
-                                      true)
+                                      true, indentationPlaceholder,
+                                      deducedCallableFamilyOverride)
                     .emit(*lambda, currentFamilyLabel);
       return;
     }
     output << ") -> " << typeSpelling(lambda->returnType) << ' '
-           << ScalarBodyTextEmitter(program, representations, indentation)
+           << ScalarBodyTextEmitter(program, representations, indentation,
+                                    false, indentationPlaceholder,
+                                    deducedCallableFamilyOverride)
                   .emit(*lambda, currentFamilyLabel);
   }
 
@@ -20622,7 +20638,7 @@ private:
         output << "_value";
       }
       output << '<'
-             << (currentFamilyLabel.starts_with("deduced-callable")
+             << (deducedCallableFamily()
                      ? std::string{"__gti_thread_task_adapter"}
                      : std::to_string(adapter->id));
       if (adapter->resultType != SemanticType::Void) {
@@ -23791,6 +23807,8 @@ private:
   const CppMirBodyEmissionMap &representations;
   std::size_t indentation;
   bool failureForm = false;
+  std::string_view indentationPlaceholder;
+  bool deducedCallableFamilyOverride = false;
   std::string_view currentFamilyLabel;
   const MirBody *currentBody = nullptr;
   std::ostringstream output;
@@ -30794,8 +30812,11 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
   }
   const MirBodyAddress address = plan.analysis_.body;
 
-  const auto emitTemplate = [&](bool failure) -> std::string {
-    ScalarBodyTextEmitter writer(program_, representations_, 0, failure);
+  const auto emitTemplate = [&](bool failure,
+                                bool deducedCallable) -> std::string {
+    ScalarBodyTextEmitter writer(program_, representations_, 0, failure,
+                                 cppMirBodyEmissionIndentationPlaceholder,
+                                 deducedCallable);
     switch (address.kind) {
     case MirBodyKind::Module:
       if (address.owner == 0) {
@@ -30834,12 +30855,65 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
     return {};
   };
 
+  const auto familySensitive = [&] {
+    const MirBody *root = findMirBody(program_, address);
+    if (root == nullptr || program_.threadTaskAdapters().empty()) {
+      return false;
+    }
+    if (address.kind == MirBodyKind::Function) {
+      const MirFunctionInstance *function =
+          program_.findFunctionInstance(address.owner);
+      if (function != nullptr &&
+          std::any_of(function->parameterTypes.begin(),
+                      function->parameterTypes.end(),
+                      semanticTypeContainsLambda) &&
+          std::any_of(program_.threadTaskAdapters().begin(),
+                      program_.threadTaskAdapters().end(),
+                      [&](const MirThreadTaskAdapter &adapter) {
+                        return adapter.sourceBody == address;
+                      })) {
+        return true;
+      }
+    }
+
+    std::vector<const MirBody *> pending{root};
+    std::unordered_set<const MirBody *> visited;
+    while (!pending.empty()) {
+      const MirBody *body = pending.back();
+      pending.pop_back();
+      if (!visited.insert(body).second) {
+        continue;
+      }
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.intrinsic == IntrinsicKind::ThreadSpawn) {
+            return true;
+          }
+          if (instruction.lambdaTarget) {
+            const MirLambdaInstance *lambda =
+                program_.findLambda(*instruction.lambdaTarget);
+            if (lambda != nullptr) {
+              pending.push_back(&lambda->body);
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }();
+
   try {
     if (supportsBodyTextImpl(address, false)) {
-      plan.plainTextTemplate_ = emitTemplate(false);
+      plan.plainTextTemplate_ = emitTemplate(false, false);
+      if (familySensitive) {
+        plan.plainDeducedCallableTextTemplate_ = emitTemplate(false, true);
+      }
     }
     if (supportsBodyTextImpl(address, true)) {
-      plan.failureTextTemplate_ = emitTemplate(true);
+      plan.failureTextTemplate_ = emitTemplate(true, false);
+      if (familySensitive) {
+        plan.failureDeducedCallableTextTemplate_ = emitTemplate(true, true);
+      }
     }
     plan.boundaryDeclaration_ = boundaryDeclarationBody(address);
     if (address.kind == MirBodyKind::Module ||
@@ -30872,7 +30946,9 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
          .detail =
              std::string("body plan construction failed: ") + error.what()});
     plan.plainTextTemplate_.clear();
+    plan.plainDeducedCallableTextTemplate_.clear();
     plan.failureTextTemplate_.clear();
+    plan.failureDeducedCallableTextTemplate_.clear();
     plan.boundaryDeclaration_ = false;
     plan.initializerSchedule_ = false;
     plan.initializerFields_.clear();

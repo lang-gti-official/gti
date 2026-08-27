@@ -371,6 +371,7 @@ add_library(
   "gti_cpp_backend" STATIC
   "src/compiler/cpp_backend.cpp"
   "src/compiler/cpp_emitter.cpp"
+  "src/compiler/cpp_failure_support_writer.cpp"
   "src/compiler/cpp_mir_control_flow.cpp"
   "src/compiler/cpp_representation.cpp"
   "src/compiler/cpp_mir_body_emitter.cpp"
@@ -378,6 +379,7 @@ add_library(
   "src/compiler/cpp_mir_body_text_writer.cpp"
   "src/compiler/cpp_mir_program_plan.cpp"
   "src/compiler/cpp_mir_representation_snapshot.cpp"
+  "src/compiler/cpp_support_preamble.cpp"
 )
 target_include_directories(
   "gti_cpp_backend"
