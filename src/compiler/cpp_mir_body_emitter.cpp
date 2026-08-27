@@ -17377,7 +17377,7 @@ public:
         // The entry loan aliases the reference parameter's pointer
         // carrier (ADR 018 §4): the place prelude above already bound
         // the carrier from the argument, so the loan pointer copies it.
-        writeIndent();
+        // The declaration is already indented and may already carry `const`.
         output << "auto *__gti_mir_loan_" << loan.id << " = __gti_mir_p_"
                << loan.source << ";\n";
         continue;

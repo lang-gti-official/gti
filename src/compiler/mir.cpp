@@ -7175,8 +7175,62 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        // A reference parameter's entry loan is seeded at the body entry and
+        // has no producing instruction, so it cannot become the escaping
+        // Return loan by reclassification: nothing would ever name the address
+        // it publishes. A body that returns its read-only reference parameter
+        // forwards that entry loan's caller-owned dependency into a fresh
+        // parentless Return loan and retires the entry loan at this exact
+        // instruction boundary, exactly as the by-value carrier and
+        // nested-call transfers above do.
+        const bool parameterEntryReturnTransfer = [&] {
+          if (produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              source.type != instruction.info.type) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr || retained->kind != MirLoanKind::Parameter ||
+              !retained->entry || retained->escapes || retained->parent != 0 ||
+              retained->producedBy != 0 || retained->carriers.empty() ||
+              retained->source != produced.source ||
+              (retained->access != produced.access &&
+               retained->access != AccessMode::Mutable)) {
+            return false;
+          }
+          // The entry loan names the parameter's own pointer carrier, so the
+          // published referent is exactly that carrier's referent type.
+          const MirPlace *carrier = body.findPlace(retained->source);
+          if (carrier == nullptr ||
+              carrier->root != MirPlaceRootKind::Binding ||
+              !carrier->projections.empty() ||
+              carrier->type.kind != SemanticType::Reference ||
+              carrier->type.arguments.size() != 1 ||
+              carrier->type.arguments.front() != instruction.info.type ||
+              std::find(retained->carriers.begin(), retained->carriers.end(),
+                        carrier->binding) == retained->carriers.end()) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
-             !storedCarrierReturnTransfer && !callResultReturnTransfer) ||
+             !storedCarrierReturnTransfer && !callResultReturnTransfer &&
+             !parameterEntryReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,

@@ -518,14 +518,33 @@ int main() {
       }
     }
   }
-  expect(relayReturnLoan != nullptr && relayReturnLoan->entry &&
+  const lang::MirLoan *relayEntryLoan = nullptr;
+  if (relayMir != nullptr) {
+    for (const lang::MirLoan &loan : relayMir->body.loans) {
+      if (loan.entry) {
+        relayEntryLoan = &loan;
+        break;
+      }
+    }
+  }
+  // A direct borrowed formal return forwards the formal's entry loan into a
+  // fresh escaping Return loan and retires the entry loan at that transfer,
+  // exactly as the by-value carrier and summarized call-result returns do.
+  // Reclassifying the entry loan itself left a Return loan whose address no
+  // instruction ever named, so the emitted callee published a null pointer.
+  expect(relayReturnLoan != nullptr && relayEntryLoan != nullptr &&
+             relayHir != nullptr && !relayReturnLoan->entry &&
+             relayReturnLoan->id != relayEntryLoan->id &&
              relayReturnLoan->kind == lang::MirLoanKind::Return &&
-             relayReturnLoan->escapes &&
-             relayReturnLoan->carriers.size() == 1 && relayHir != nullptr &&
-             relayReturnLoan->carriers.front() ==
+             relayReturnLoan->escapes && relayReturnLoan->parent == 0 &&
+             relayReturnLoan->source == relayEntryLoan->source &&
+             relayEntryLoan->kind == lang::MirLoanKind::Parameter &&
+             !relayEntryLoan->escapes && relayEntryLoan->carriers.size() == 1 &&
+             relayEntryLoan->carriers.front() ==
                  relayHir->parameterBindings.front(),
-         "a direct borrowed formal return should remain one entry loan and "
-         "be attached explicitly to its return terminator");
+         "a direct borrowed formal return should publish a fresh escaping "
+         "Return loan from the formal's entry loan and attach it explicitly "
+         "to its return terminator");
 
   const lang::HirFunctionInstance *aliasHir =
       findHirFunction(frontend, "relay_alias");
@@ -563,23 +582,29 @@ int main() {
   const lang::MirLoan *branchAliasLoan = entryLoan(branchAliasMir);
   const lang::MirLoan *aliasReturnLoan = returnedLoan(aliasMir);
   const lang::MirLoan *branchAliasReturnLoan = returnedLoan(branchAliasMir);
+  // Local read-only aliases still share the one formal entry loan and extend
+  // its carrier set; only the escaping return dependency is published
+  // separately, from that same entry source.
   expect(aliasHir != nullptr && aliasMir != nullptr && aliasLoan != nullptr &&
              aliasReturnLoan != nullptr && aliasLoan->source != 0 &&
              aliasLoan->carriers.size() >= 2 &&
              std::find(aliasLoan->carriers.begin(), aliasLoan->carriers.end(),
                        aliasHir->parameterBindings.front()) !=
                  aliasLoan->carriers.end() &&
-             aliasReturnLoan->id == aliasLoan->id &&
+             aliasReturnLoan->id != aliasLoan->id && !aliasReturnLoan->entry &&
+             aliasReturnLoan->escapes &&
+             aliasReturnLoan->kind == lang::MirLoanKind::Return &&
              aliasReturnLoan->source == aliasLoan->source &&
-             aliasReturnLoan->carriers.size() >= 2 &&
              lang::verifyMirBody(aliasMir->body).valid(),
          "a direct read-only local reference alias should share the formal "
          "entry loan and extend its carrier set");
   expect(branchAliasHir != nullptr && branchAliasMir != nullptr &&
              branchAliasLoan != nullptr && branchAliasReturnLoan != nullptr &&
-             branchAliasReturnLoan->id == branchAliasLoan->id &&
+             branchAliasReturnLoan->id != branchAliasLoan->id &&
+             !branchAliasReturnLoan->entry && branchAliasReturnLoan->escapes &&
+             branchAliasReturnLoan->kind == lang::MirLoanKind::Return &&
              branchAliasReturnLoan->source == branchAliasLoan->source &&
-             branchAliasReturnLoan->carriers.size() >= 3 &&
+             branchAliasLoan->carriers.size() >= 3 &&
              std::find(branchAliasLoan->carriers.begin(),
                        branchAliasLoan->carriers.end(),
                        branchAliasHir->parameterBindings[1]) !=
@@ -603,8 +628,15 @@ int main() {
     }
   }
   const lang::MirLoan *independentEntry = entryLoan(independentMir);
-  expect(independentMir != nullptr && independentChildren.empty() &&
-             independentEntry != nullptr &&
+  const lang::MirLoan *independentReturn = returnedLoan(independentMir);
+  // Both aliases share the one entry loan; the only additional loan is the
+  // escaping Return dependency published from it at the return.
+  expect(independentMir != nullptr && independentChildren.size() == 1 &&
+             independentReturn != nullptr &&
+             independentChildren.front() == independentReturn &&
+             independentReturn->kind == lang::MirLoanKind::Return &&
+             independentReturn->escapes && independentEntry != nullptr &&
+             independentReturn->source == independentEntry->source &&
              independentEntry->semanticLoan != 0 &&
              independentEntry->carriers.size() >= 3 &&
              lang::verifyMirBody(independentMir->body).valid(),
@@ -792,7 +824,9 @@ int main() {
     auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
         wrongFormalCarrier.functionInstances());
     lang::MirFunctionInstance &wrongAlias = functions[aliasHir->id - 1];
-    lang::MirLoan &wrongLoan = wrongAlias.body.loans[aliasReturnLoan->id - 1];
+    // The entry loan is the summarized formal source that also carries the
+    // local aliases; the published Return loan carries nothing.
+    lang::MirLoan &wrongLoan = wrongAlias.body.loans[aliasLoan->id - 1];
     const auto localCarrier =
         std::find_if(wrongLoan.carriers.begin(), wrongLoan.carriers.end(),
                      [&](lang::HirBindingId binding) {
