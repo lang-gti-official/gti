@@ -182,8 +182,36 @@ both optional units is therefore required. See
 Public ownership and container classes retain logical state and policy in
 ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
-deallocation, logical size, capacity policy, or slot engagement as public
-language state.
+deallocation, logical size, or capacity policy as public language state.
+
+`<std/memory>` implements the first public typed allocation slice:
+
+- `std::allocator` is a stateless process allocator with
+  `try_storage<T>(count)` and
+  `try_storage<T>(count, std::alignment minimum)`;
+- `std::storage<T>` is a move-only owner of `capacity()` independently
+  initialized typed slots for `std::movable T` without borrowed state;
+- `std::alignment` carries an explicit minimum byte alignment; and
+- `std::alloc_errc` distinguishes `invalid_alignment`, `size_overflow`, and
+  `resource_exhausted`.
+
+Both allocator operations return
+`expected<std::storage<T>, std::alloc_errc>`. Zero capacity succeeds without a
+host allocation. An explicit alignment must be a nonzero power of two, and the
+effective alignment is never weaker than `alignof(T)`. Allocation is
+failure-atomic and the resulting storage owner, rather than the allocator,
+carries release authority.
+
+Each public storage slot is checked. `construct(index, value)` consumes one
+completed `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
+require a live slot and return references tied to the storage receiver;
+`destroy` requires a live slot; `initialized` reports checked slot state; and
+`clear` destroys all live slots in reverse index order. Owner destruction
+clears any remaining values and releases the allocation. Arbitrary in-slot
+constructor argument forwarding is not part of this first slice. The surface
+exposes no address, raw byte view, manual deallocation, `new`, or `delete`.
+ADR 022 defines its provenance and comparison with other systems-language
+models.
 
 The initial `std::vector<T>` requires movable elements and rejects element
 types that retain borrowed state. It is move-only even when `T` is copyable.
@@ -247,7 +275,9 @@ replaced by the executable read-only single-owner `std::span<T>` surface above;
 mutable access and raw address exposure remain absent.
 
 The standard library currently has no stable public raw allocator, shared
-owner, weak owner, or general unsafe memory API.
+owner, weak owner, or general unsafe memory API. The typed
+`std::allocator`/`std::storage<T>` pair is intentionally not a raw-memory escape
+hatch.
 
 `<std/functional>` declares the generic customization primary `std::hash<T>`.
 A package may provide a complete exact specialization for a nominal type it
@@ -278,7 +308,8 @@ error is reported before any bytes are written.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
 `GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
-`try_make_*` factories return `expected` without invoking the failure observer.
+`std::allocator::try_storage` and future `try_make_*` factories return
+`expected` without invoking the failure observer.
 Best-effort resource cleanup, such as destruction-time close, may discard a
 host error only when the component contract explicitly says so and an explicit
 recoverable close operation exists.
@@ -335,8 +366,7 @@ The following component families remain planned or incomplete:
   breadth, connected networking, traffic buffers, atomics, mutexes, condition
   variables, stop tokens, detached/scoped tasks, typed argument packs, and
   broader threading;
-- recoverable allocation factories;
-- allocator-aware containers and safe pools/arenas; and
+- stateful allocator policy, allocator-aware containers, and safe pools/arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks, including general pointer nesting and ownership transfer, array

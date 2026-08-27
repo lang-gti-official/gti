@@ -1,0 +1,271 @@
+# ADR 022: Safe Typed Allocation And Storage Provenance
+
+Status: Accepted
+
+## Context
+
+GTI needs allocator-controlled storage for arenas, pools, containers, and
+game-engine workloads. Fixed arrays cannot represent spare or partially
+initialized capacity, while `std::unique_ptr<T>` represents one initialized
+object rather than a set of independently live slots. Exposing C++-style
+`new`/`delete`, an address/count/alignment deallocation tuple, or an untyped
+byte allocator would make application code responsible for provenance,
+initialization, aliasing, cleanup, and failure invariants that GTI otherwise
+enforces.
+
+The first public slice must therefore answer four questions together:
+
+1. who owns the allocation and the authority to release it;
+2. which type and alignment the allocation is valid for;
+3. which slots currently contain live values; and
+4. how allocation and checked storage failures interact with deterministic
+   cleanup.
+
+The closest precedents separate these concerns but leave different parts
+unsafe or conventional:
+
+- Rust's `Allocator` returns a fallible byte allocation and requires an unsafe
+  matching deallocation; `MaybeUninit<T>` represents initialization state but
+  safe code must not perform `assume_init` until it has separately proved the
+  value valid. Its documentation explicitly makes element-by-element cleanup
+  the programmer's responsibility.
+- Zig conventionally passes an allocator into allocating functions, exposes
+  allocation failure in the error set, and recommends arenas for request or
+  frame lifetimes. Ownership and the point at which returned pointers become
+  invalid remain API contracts rather than language-tracked provenance.
+- Swift typed allocation binds memory to a pointee type, but direct allocation,
+  initialization, deinitialization, pointer arithmetic, and deallocation are
+  still unsafe manual operations.
+- C++ allocators return pointer-like values to unconstructed elements,
+  allocation may throw, a zero-count result is unspecified, and deallocation
+  requires the original pointer plus a matching count and allocator
+  relationship. Construction and destruction are separate lifetime operations
+  whose correct pairing is not carried by the allocation result type.
+
+GTI adopts the useful separation of allocation from construction and Zig's
+explicit recoverable-failure bias, but makes the allocation result itself a
+typed lexical owner with checked initialization state.
+
+Primary references used for this comparison are the
+[Rust `Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html) and
+[`MaybeUninit`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html)
+documentation, the
+[Zig allocator guidance](https://ziglang.org/documentation/master/#Choosing-an-Allocator),
+Apple's
+[typed-pointer initialization guidance](https://developer.apple.com/documentation/swift/unsafemutablepointer/initialize%28to%3A%29),
+and the C++ draft
+[`Allocator` requirements](https://eel.is/c++draft/allocator.requirements).
+
+## Decision
+
+### 1. The public surface is typed and lives directly in `std`
+
+The first public API is:
+
+```gti
+std::alloc_errc
+std::alignment
+std::allocator
+std::storage<T>
+```
+
+There is no public `std::mem` namespace, raw allocator handle, allocation
+address, byte slice, `new`, `delete`, `deallocate`, `release`, or unchecked
+slot operation.
+
+`std::allocator` is initially a stateless process allocator. It creates typed
+storage through two generic methods:
+
+```gti
+expected<std::storage<T>, std::alloc_errc>
+allocator.try_storage<T>(size_t count)
+
+expected<std::storage<T>, std::alloc_errc>
+allocator.try_storage<T>(size_t count, std::alignment minimum)
+```
+
+The returned owner does not borrow the allocator. All release authority moves
+into `std::storage<T>`, so the allocator value may end immediately after a
+successful call.
+
+### 2. `std::storage<T>` is the allocation and provenance token
+
+A `std::storage<T>` value uniquely owns one allocation origin and its metadata:
+the typed capacity, effective alignment, initialized-slot map, and authority to
+destroy remaining values and release the allocation. It is move-only. Moving
+it transfers the same allocation origin and invalidates use of the moved-from
+owner; copying or constructing one without a successful allocator result is
+rejected.
+
+This is capability-based ownership rather than pointer ownership. Application
+code cannot separate the address from the release authority, manufacture an
+owner from an integer or pointer, or accidentally deallocate with a mismatched
+count, alignment, or allocator.
+
+The first public slice requires `T` to satisfy `std::movable` and rejects
+element types containing borrowed state. This is the exact boundary needed to
+move a completed value into a slot without exposing constructor argument packs
+or an untracked placement-construction failure edge.
+
+The public operations are:
+
+```gti
+size_t storage.capacity()
+bool storage.initialized(size_t index)
+void storage.construct(size_t index, T value) mut
+void storage.destroy(size_t index) mut
+T& storage.get(size_t index)
+mut T& storage.get_mut(size_t index) mut
+void storage.clear() mut
+```
+
+Capacity is allocation extent, not logical container size. A container or
+arena built over storage retains its own public policy such as length, growth,
+free-list order, and invalidation rules.
+
+### 3. Slots have checked initialization state and lifetime epochs
+
+Each index in `[0, capacity)` is either uninitialized or contains exactly one
+live `T`:
+
+- `construct` requires an uninitialized in-bounds slot, consumes one completed
+  `T`, and begins a new slot lifetime only after its move succeeds;
+- `get` and `get_mut` require a live in-bounds slot and return references tied
+  to the storage receiver;
+- `destroy` requires a live in-bounds slot, ends that value's lifetime exactly
+  once, and makes the slot available for a later, distinct lifetime; and
+- `clear` destroys every live value once in descending index order.
+
+Destroying the owner performs the same reverse-slot cleanup for every value
+still live and then releases the allocation. A slot lifetime is not revived by
+reusing its index: references from an earlier slot epoch cannot be used after
+destruction and reconstruction. The first implementation enforces a
+conservative owner-wide borrow, so any live returned reference blocks storage
+mutation or movement even when another index would be disjoint. Later indexed
+place precision may relax that conservatism without changing this contract.
+
+Types containing borrowed state are not valid storage elements in this slice.
+The owner cannot prove that independently stored references remain valid for
+the allocation's whole lifetime.
+
+### 4. Allocation is failure-atomic and recoverable
+
+`try_storage` returns one of:
+
+```gti
+enum class std::alloc_errc {
+  invalid_alignment,
+  size_overflow,
+  resource_exhausted,
+};
+```
+
+No owner is published until allocation storage and all private initialization
+metadata have succeeded. On failure, no slot is live, no application-visible
+state changes, and temporary backend resources are released.
+
+`size_overflow` covers a count that cannot be represented by the target or for
+which `count * sizeof(T)` plus alignment padding overflows. It is distinct from
+host resource exhaustion. Explicit alignment must be a nonzero power of two;
+natural alignment is requested by omitting the alignment argument. The
+effective alignment is at least both `alignof(T)` and the requested minimum.
+
+A zero-count request succeeds, owns no host allocation, and returns a value
+whose capacity is zero. The `expected` value state distinguishes that success
+from failure; no special pointer sentinel or unspecified zero-allocation result
+is exposed.
+
+Checked bounds, duplicate construction, uninitialized access, and
+uninitialized destruction follow GTI's defined runtime-failure and cleanup
+contract. They are programming-state violations, not allocation errors.
+
+The first public operation consumes an already constructed `T` instead of
+forwarding an arbitrary constructor argument pack. Construction of that value
+therefore completes before the storage operation begins. If it raises defined
+failure, no new slot lifetime is published and ordinary MIR cleanup destroys
+every previously live owner, including the storage and its initialized slots.
+Exact in-slot `emplace<Args...>` requires an explicit MIR constructor-failure
+boundary and is deferred rather than routing failure through an untracked C++
+placement call.
+
+### 5. Public policy remains ordinary GTI source
+
+The public classes and methods in `<std/memory>` are ordinary source-defined
+GTI. No compiler or backend phase recognizes `std::allocator`,
+`std::storage<T>`, `std::alignment`, or `std::alloc_errc` by spelling.
+
+Their implementation uses exact declaration-bound `gti_internal` operations
+for the irreducible allocation, alignment, bitmap, construction, destruction,
+and checked-reference mechanics. Those declarations are available only to the
+trusted prelude and installed standard-library sources. HIR and MIR retain
+their selected intrinsic identities and effects, and the backend receives
+only verified typed operations.
+
+### 6. Arenas and pools compose over storage; they do not weaken it
+
+A homogeneous arena can own `std::storage<T>`, monotonically choose an empty
+slot, construct a value, and clear all remaining values at arena teardown. A
+pool can additionally keep an ordinary GTI free list and use `initialized` to
+check its internal invariant. Neither needs an exposed allocation address or
+manual deallocation.
+
+Allocator-state ownership, arena reset generations, pool handles, stale-handle
+diagnostics, and one allocator-aware container are S-ALLOC-03 work. They must
+be expressed as ordinary GTI policy over this owner rather than by adding raw
+escape hatches to the first slice.
+
+## Why This Is Safer Than The C++ Model
+
+The claim is narrower than “GTI allocation is more flexible than C++.” It is
+not. The first GTI surface deliberately trades low-level generality for
+enforceable invariants:
+
+- the owner carries pointer, count, alignment, initialization map, and release
+  authority together instead of asking callers to reproduce a matching
+  deallocation tuple;
+- typed provenance prevents cross-type access and forged owner creation;
+- checked initialization state prevents safe reads of unconstructed objects,
+  duplicate construction, and duplicate destruction;
+- receiver-tied borrows prevent move, destruction, or mutation while a
+  returned reference may remain live;
+- recoverable allocation uses `expected` rather than a hidden exception or
+  process termination; and
+- lexical reverse cleanup covers partially initialized allocations on every
+  supported normal and failure exit, including failure while constructing the
+  value passed to `construct`.
+
+C++ remains the appropriate escape level for the current backend
+implementation, but its pointer and object-lifetime rules are representation
+mechanics, not GTI source semantics.
+
+## Alternatives
+
+- **Expose `allocate`/`deallocate` and typed pointers.** Rejected because the
+  caller could lose or forge the provenance/count/alignment relationship and
+  must manually pair every live object with destruction.
+- **Expose a public `MaybeUninit<T>`-style value.** Rejected for this slice
+  because an unchecked `assume_init` would move the crucial proof into
+  `unsafe`; storage can track the finite slot state directly.
+- **Use `std::allocator<T>` and C++ allocator traits.** Rejected because rebind,
+  equality, propagation traits, fancy pointers, and container-specific copy
+  rules are not required to create the first safe arena/pool substrate.
+- **Put the surface under `std::mem`.** Rejected because it adds syntax without
+  introducing a separate policy or safety boundary; the public names are
+  already unambiguous in `std`.
+- **Make arenas part of S-ALLOC-02.** Rejected because allocation/provenance is
+  a reusable primitive while reset generations, free lists, handle validity,
+  and container policy require their own acceptance client.
+
+## Consequences
+
+- GTI can allocate and partially initialize typed capacity from safe
+  application code without exposing raw memory management.
+- The first surface is suitable for homogeneous arenas, pools, and future
+  allocator-aware containers, but not heterogeneous byte arenas, custom
+  placement layouts, memory mapping, DMA, or native buffer adoption.
+- Owner-wide borrowing is intentionally conservative. Per-slot disjoint
+  mutable borrows require indexed place/epoch precision and must preserve this
+  API's stale-reference guarantees.
+- Stateful allocators, allocator propagation, arbitrary in-slot emplacement,
+  bulk initialization, growth, shrinking, pool handles, and arena reset are
+  later coherent slices rather than optional parameters on this one.

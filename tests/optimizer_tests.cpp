@@ -3288,6 +3288,35 @@ void testMirEffectClassification() {
   expect(lang::effects(lang::IntrinsicKind::AllocateStorage).maySynchronize,
          "intrinsic summaries should expose possible runtime synchronization");
 
+  const lang::MirEffectTraits recoverableAllocation =
+      lang::effects(lang::MirInstruction{
+          .kind = lang::MirInstructionKind::Call,
+          .intrinsic = lang::IntrinsicKind::StorageTryAllocate});
+  expect(recoverableAllocation.allocates &&
+             recoverableAllocation.invokesRuntime &&
+             recoverableAllocation.writesPlace &&
+             recoverableAllocation.writesUnknownMemory &&
+             recoverableAllocation.initializesValue &&
+             !recoverableAllocation.mayTrap &&
+             !recoverableAllocation.removableWhenUnused &&
+             !recoverableAllocation.reorderable,
+         "recoverable storage allocation should retain publication and host "
+         "allocation effects without claiming that request failure traps");
+
+  for (const lang::IntrinsicKind observer :
+       {lang::IntrinsicKind::StorageCapacity,
+        lang::IntrinsicKind::StorageInitialized}) {
+    const lang::MirEffectTraits observation =
+        lang::effects(lang::MirInstruction{
+            .kind = lang::MirInstructionKind::Call, .intrinsic = observer});
+    expect(observation.readsUnknownMemory && observation.invokesRuntime &&
+               !observation.writesPlace && !observation.writesUnknownMemory &&
+               !observation.allocates && !observation.mayTrap &&
+               !observation.reorderable,
+           "storage allocation-state observers should remain total runtime "
+           "reads without mutation, allocation, or trapping effects");
+  }
+
   const lang::MirEffectTraits drop = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Drop});
   expect(drop.dropsValue && drop.invokesUserCode && drop.writesPlace &&

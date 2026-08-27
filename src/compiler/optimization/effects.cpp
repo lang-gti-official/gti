@@ -149,6 +149,18 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true,
                     .initializesValue = true},
+    // StorageTryAllocate reports every request failure as a status. The
+    // destination changes only after a complete allocation succeeds.
+    MirEffectTraits{.writesPlace = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .initializesValue = true},
+    // StorageCapacity observes allocation metadata without failure.
+    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
+    // StorageInitialized observes one bitmap entry without failure. The
+    // public wrapper owns its separate logical bounds check.
+    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
     MirEffectTraits{.writesUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
@@ -411,6 +423,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "unique-owner-is-null",
     "unique-owner-upcast",
     "allocate-storage",
+    "storage-try-allocate",
+    "storage-capacity",
+    "storage-initialized",
     "storage-construct",
     "storage-read",
     "storage-read-mut",

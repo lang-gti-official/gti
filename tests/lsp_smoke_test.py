@@ -3254,11 +3254,14 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
 
 def test_compiler_private_tooling_boundary(executable, root):
     source = (
+        "#include <std/memory>\n"
         "namespace hidden = gti_internal;\n"
         "int main() {\n"
         "  int value = 1;\n"
         "  int moved = std::move(value);\n"
+        "  std::allocator allocator = std::allocator();\n"
         "  int public_completion_probe = std::mo;\n"
+        "  int allocator_completion_probe = std::al;\n"
         "  int direct_probe = gti_internal::allocate_storage;\n"
         "  int alias_probe = hidden::allocate_storage;\n"
         "  int private_completion_probe = gti_internal::sto;\n"
@@ -3412,16 +3415,40 @@ def test_compiler_private_tooling_boundary(executable, root):
         assert public_definition is not None
         assert public_definition["uri"] != uri
 
+        allocator_prefix = source.index(
+            "al;", source.index("allocator_completion_probe")
+        )
+        allocator_completion = semantic_request(
+            10,
+            "textDocument/completion",
+            allocator_prefix + len("al"),
+        )
+        allocator_labels = {
+            item["label"] for item in allocator_completion["items"]
+        }
+        assert {"alignment", "alloc_errc", "allocator"} <= allocator_labels
+
+        public_allocator = source.index("allocator allocator")
+        allocator_hover = semantic_request(
+            11, "textDocument/hover", public_allocator + 1
+        )
+        assert "std::allocator" in allocator_hover["contents"]["value"]
+        allocator_definition = semantic_request(
+            12, "textDocument/definition", public_allocator + 1
+        )
+        assert allocator_definition is not None
+        assert allocator_definition["uri"] != uri
+
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 10,
+                "id": 13,
                 "method": "textDocument/semanticTokens/full",
                 "params": {"textDocument": {"uri": uri}},
             }
         )
         semantic_data = session.receive_until(
-            lambda message: message.get("id") == 10
+            lambda message: message.get("id") == 13
         )["result"]["data"]
         semantic_tokens = semantic_tokens_by_position(semantic_data)
         for offset in (
@@ -3478,7 +3505,7 @@ def test_compiler_private_tooling_boundary(executable, root):
             )
             private_call = stdlib_source.index("storage_read")
             trusted_hover = semantic_request(
-                11,
+                14,
                 "textDocument/hover",
                 private_call + 1,
                 stdlib_uri,
@@ -3488,7 +3515,7 @@ def test_compiler_private_tooling_boundary(executable, root):
                 "contents"
             ]["value"]
             trusted_definition = semantic_request(
-                12,
+                15,
                 "textDocument/definition",
                 private_call + 1,
                 stdlib_uri,

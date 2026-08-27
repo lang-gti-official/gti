@@ -173,6 +173,42 @@ an API/verifier error. Reinitializing moved-from local storage restores the
 same structural key to `Available` while invalidating facts derived from its
 prior contents.
 
+### 3.4 Typed Allocation And Slot Provenance
+
+ADR 022's public `std::storage<T>` value is an owning allocation-origin
+capability, not an address. A successful allocation creates one origin carrying
+the element type, capacity, effective alignment, slot-live bookkeeping, and
+release authority. Moving the storage transfers that origin to the destination
+owner and closes the moved-from owner's epoch. No public operation splits the
+origin into an address and an independently callable deallocator.
+
+The durable precision target for an initialized element is:
+
+```text
+(allocation origin, evaluated slot selection, slot lifetime epoch)
+```
+
+Construction of an empty slot begins a new slot lifetime epoch only on
+successful construction. Destruction closes that epoch; reconstructing the
+same numeric index begins a distinct epoch and cannot revive loans from the
+earlier value. Owner destruction closes every remaining slot epoch in reverse
+index order before closing the allocation origin. Allocation failure publishes
+no origin or epoch.
+
+The first S-ALLOC-02 implementation intentionally maps a returned slot borrow
+to the exact storage receiver origin but retains owner-wide conflict precision.
+Consequently, a live `get`/`get_mut` result blocks storage mutation, movement,
+and destruction even when another constant index might eventually be proved
+disjoint. This is conservative and sound. A later indexed-place slice may add
+constant-index disjointness or one evaluated dynamic-selection identity, but it
+must preserve the slot-epoch rule and keep distinct dynamic evaluations
+may-alias unless a named proof relates them.
+
+Arena reset generations and pool-handle generations are not silently equated
+with slot epochs. S-ALLOC-03 must model those public policy generations in the
+arena/pool owner or handle and then translate a valid operation to the
+underlying storage slot lifetime. An integer index alone is never provenance.
+
 ## 4. One Exhaustive Relation
 
 The shared relation is:

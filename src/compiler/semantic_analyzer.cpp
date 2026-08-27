@@ -10803,6 +10803,15 @@ private:
     if (name == "allocate_storage") {
       return IntrinsicKind::AllocateStorage;
     }
+    if (name == "storage_try_allocate") {
+      return IntrinsicKind::StorageTryAllocate;
+    }
+    if (name == "storage_capacity") {
+      return IntrinsicKind::StorageCapacity;
+    }
+    if (name == "storage_initialized") {
+      return IntrinsicKind::StorageInitialized;
+    }
     if (name == "storage_construct") {
       return IntrinsicKind::StorageConstruct;
     }
@@ -14295,11 +14304,19 @@ private:
                "GTI-S2019");
       }
     } else {
-      const bool rangeOperation =
-          intrinsic == IntrinsicKind::StorageRelocate ||
-          intrinsic == IntrinsicKind::StorageShiftRight ||
-          intrinsic == IntrinsicKind::StorageShiftLeft;
-      const std::size_t expectedArguments = rangeOperation ? 3 : 2;
+      const std::size_t expectedArguments = [&] {
+        switch (intrinsic) {
+        case IntrinsicKind::StorageCapacity:
+          return std::size_t{1};
+        case IntrinsicKind::StorageTryAllocate:
+        case IntrinsicKind::StorageRelocate:
+        case IntrinsicKind::StorageShiftRight:
+        case IntrinsicKind::StorageShiftLeft:
+          return std::size_t{3};
+        default:
+          return std::size_t{2};
+        }
+      }();
       if (expr.arguments().size() != expectedArguments) {
         reportStorageArity(expr, intrinsic, expectedArguments);
       }
@@ -14321,7 +14338,8 @@ private:
 
     const SemanticType storageType = argumentTypes.front();
     const SemanticType elementType = storageType.arguments.front();
-    const bool mutatesFirst = intrinsic == IntrinsicKind::StorageConstruct ||
+    const bool mutatesFirst = intrinsic == IntrinsicKind::StorageTryAllocate ||
+                              intrinsic == IntrinsicKind::StorageConstruct ||
                               intrinsic == IntrinsicKind::StorageReadMut ||
                               intrinsic == IntrinsicKind::StorageDestroy ||
                               intrinsic == IntrinsicKind::StorageRelocate ||
@@ -14332,7 +14350,22 @@ private:
                             storageIntrinsicName(intrinsic));
     }
 
-    if (intrinsic == IntrinsicKind::StorageConstruct) {
+    if (intrinsic == IntrinsicKind::StorageTryAllocate) {
+      if (argumentTypes.size() >= 2) {
+        requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
+      }
+      if (argumentTypes.size() >= 3) {
+        requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
+      }
+      currentType = SemanticType::Int32;
+    } else if (intrinsic == IntrinsicKind::StorageCapacity) {
+      currentType = SemanticType::UInt64;
+    } else if (intrinsic == IntrinsicKind::StorageInitialized) {
+      if (argumentTypes.size() >= 2) {
+        requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
+      }
+      currentType = SemanticType::Bool;
+    } else if (intrinsic == IntrinsicKind::StorageConstruct) {
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
@@ -14616,6 +14649,12 @@ private:
     switch (intrinsic) {
     case IntrinsicKind::AllocateStorage:
       return "allocate_storage";
+    case IntrinsicKind::StorageTryAllocate:
+      return "storage_try_allocate";
+    case IntrinsicKind::StorageCapacity:
+      return "storage_capacity";
+    case IntrinsicKind::StorageInitialized:
+      return "storage_initialized";
     case IntrinsicKind::StorageConstruct:
       return "storage_construct";
     case IntrinsicKind::StorageRead:
@@ -30081,6 +30120,9 @@ private:
             addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                               DefinedFailureDetail::PrivateStorage);
             break;
+          case IntrinsicKind::StorageTryAllocate:
+          case IntrinsicKind::StorageCapacity:
+          case IntrinsicKind::StorageInitialized:
           case IntrinsicKind::PrefixStorageLength:
           case IntrinsicKind::PrefixStorageTextView:
           case IntrinsicKind::StringViewSize:

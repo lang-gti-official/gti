@@ -41,6 +41,39 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
+bool containsMangledFunction(std::string_view text, std::string_view prefix,
+                             std::string_view sourceName,
+                             std::string_view suffix) {
+  constexpr std::string_view marker = "__gti_fn_";
+  std::size_t search = 0;
+  while (true) {
+    const std::size_t function = text.find(marker, search);
+    if (function == std::string_view::npos) {
+      return false;
+    }
+    search = function + marker.size();
+    if (function < prefix.size() ||
+        text.substr(function - prefix.size(), prefix.size()) != prefix) {
+      continue;
+    }
+    std::size_t tail = search;
+    while (tail < text.size() && text[tail] >= '0' && text[tail] <= '9') {
+      ++tail;
+    }
+    if (tail == search || tail >= text.size() || text[tail] != '_') {
+      continue;
+    }
+    ++tail;
+    if (text.substr(tail, sourceName.size()) != sourceName) {
+      continue;
+    }
+    tail += sourceName.size();
+    if (text.substr(tail, suffix.size()) == suffix) {
+      return true;
+    }
+  }
+}
+
 std::string
 emitAnalyzedSource(std::string_view source,
                    lang::TargetInfo target = lang::TargetInfo::host(),
@@ -8285,10 +8318,10 @@ int main() {
                 "::gti_internal::backend::mir_prefix_pop_v1(") !=
                 std::string::npos &&
             artifact.contents.find(
-                "&::gti_internal::backend::prefix_storage_read(") !=
+                "::gti_internal::backend::mir_prefix_read_v1(") !=
                 std::string::npos &&
             artifact.contents.find(
-                "&::gti_internal::backend::prefix_storage_read_mut(") !=
+                "::gti_internal::backend::mir_prefix_read_mut_v1(") !=
                 std::string::npos &&
             artifact.contents.find(
                 "::gti_internal::backend::mir_prefix_relocate_v1(") !=
@@ -8407,14 +8440,146 @@ int main() {
   expect(
       artifact.contents.find("_get__gti_mir_failure(const std::int32_t **") !=
               std::string::npos &&
+          containsMangledFunction(artifact.contents, "::", "get",
+                                  "__gti_mir_failure(const std::int32_t **") &&
           artifact.contents.find("const std::int32_t *__gti_mir_loan_1{};") !=
               std::string::npos &&
-          artifact.contents.find("*__gti_mir_out_result = __gti_mir_loan_1;") !=
+          artifact.contents.find("const std::int32_t *__gti_mir_loan_2{};") !=
               std::string::npos &&
-          artifact.contents.find("&::gti_internal::backend::storage_read(") !=
+          artifact.contents.find("__gti_mir_loan_2 = __gti_mir_loan_1;") !=
+              std::string::npos &&
+          artifact.contents.find("*__gti_mir_out_result = __gti_mir_loan_2;") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "::gti_internal::backend::mir_storage_read_v1(") !=
               std::string::npos,
       "receiver-tied borrows should lower through exact const loan carriers "
       "and publish the returned loan without copying its referent");
+
+  const lang::FrontendResult nested =
+      analyzeTrustedPreludeFixture("nested-receiver-reference.gti", R"(
+class ElementBuffer {
+  mut gti_internal::storage<int> data;
+
+public:
+  ElementBuffer()
+      : data(gti_internal::allocate_storage<int>(uint64_t(1))) {}
+
+  void set(int value) mut {
+    gti_internal::storage_construct(this.data, uint64_t(0), value);
+  }
+
+  int& at() {
+    return gti_internal::storage_read(this.data, uint64_t(0));
+  }
+};
+
+class BufferFacade {
+  mut ElementBuffer buffer;
+
+public:
+  BufferFacade() : buffer(ElementBuffer()) {}
+
+  void set(int value) mut {
+    this.buffer.set(value);
+  }
+
+  int& at() {
+    return this.buffer.at();
+  }
+};
+
+int main() {
+  mut BufferFacade facade = BufferFacade();
+  facade.set(42);
+  return facade.at() - 42;
+}
+)");
+  if (!nested.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : nested.diagnostics) {
+      std::cerr << "Unexpected nested receiver-reference diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+
+  const lang::MirFunctionInstance *nestedReturn = nullptr;
+  const lang::MirInstruction *nestedTransfer = nullptr;
+  const lang::MirLoan *callResultLoan = nullptr;
+  const lang::MirLoan *nestedReturnLoan = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       nested.mir.functionInstances()) {
+    for (const lang::MirLoan &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Return || !loan.escapes) {
+        continue;
+      }
+      for (const lang::MirBlock &block : function.body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Borrow ||
+              instruction.loan != loan.id || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != lang::MirOperandKind::Loan) {
+            continue;
+          }
+          const lang::MirLoan *candidate =
+              function.body.findLoan(instruction.operands.front().loan);
+          if (candidate != nullptr &&
+              candidate->kind == lang::MirLoanKind::CallResult) {
+            nestedReturn = &function;
+            nestedTransfer = &instruction;
+            callResultLoan = candidate;
+            nestedReturnLoan = &loan;
+          }
+        }
+      }
+    }
+  }
+  expect(nested.canGenerateCode() &&
+             lang::verifyMirProgram(nested.mir).valid() &&
+             nestedReturn != nullptr && nestedTransfer != nullptr &&
+             callResultLoan != nullptr && nestedReturnLoan != nullptr &&
+             callResultLoan->source == nestedReturnLoan->source &&
+             callResultLoan->access == nestedReturnLoan->access &&
+             nestedReturn->body.returnType.arguments.size() == 1 &&
+             nestedTransfer->info.type ==
+                 nestedReturn->body.returnType.arguments.front(),
+         "a wrapper reference return should retain its receiver as the "
+         "semantic owner while transferring the nested call's exact referent");
+
+  if (nestedReturn != nullptr && nestedTransfer != nullptr &&
+      callResultLoan != nullptr && nestedReturnLoan != nullptr) {
+    const lang::OptimizationResult nestedOptimizations =
+        lang::OptimizationPipeline().run(nested.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact nestedArtifact =
+        gti_test::emitCpp(nested, nested.mir, nested.mir, nestedOptimizations);
+    const std::string transferText =
+        "__gti_mir_loan_" + std::to_string(nestedReturnLoan->id) +
+        " = __gti_mir_loan_" + std::to_string(callResultLoan->id) + ";";
+    expect(nestedArtifact.contents.find(transferText) != std::string::npos,
+           "the C++ backend should emit the verified call-result pointer "
+           "transfer instead of re-borrowing the wrapper object");
+
+    lang::MirProgram forged = nested.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    lang::MirFunctionInstance &forgedReturn = functions[nestedReturn->id - 1];
+    bool corrupted = false;
+    for (lang::MirBlock &block : forgedReturn.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == nestedTransfer->id &&
+            !instruction.operands.empty()) {
+          instruction.operands.front().loan = nestedReturnLoan->id;
+          corrupted = true;
+        }
+      }
+    }
+    const lang::MirVerificationResult rejected = lang::verifyMirProgram(forged);
+    expect(corrupted && !rejected.valid() &&
+               hasMirVerificationError(
+                   rejected,
+                   "borrow instruction does not match the loan's parent"),
+           "MIR verification should reject a forged nested-reference return "
+           "that no longer transfers its exact call-result loan");
+  }
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-reference-returns.gti", R"(
@@ -12827,7 +12992,10 @@ int main() {
               "__gti_mir_arg_0") != std::string::npos &&
           nullArtifact.contents.find("_reset__gti_mir_failure("
                                      "__gti_mir_failure_record)") !=
-              std::string::npos,
+              std::string::npos &&
+          containsMangledFunction(
+              nullArtifact.contents, "::", "reset",
+              "__gti_mir_failure(__gti_mir_failure_record)"),
       "the C++ backend should retain source-defined null construction and "
       "assignment identities without a public-type special case");
 
@@ -13425,8 +13593,7 @@ int main() {
                  std::string::npos &&
              artifact.contents.find(
                  "::gti_internal::backend::mir_storage_destroy_v1(") !=
-                 std::string::npos &&
-             artifact.contents.find("storage_capacity") == std::string::npos,
+                 std::string::npos,
          "the C++ backend should lower private storage through its exact "
          "verified-MIR RAII capability family");
 
@@ -13467,12 +13634,217 @@ int main() {
   return int(capacity);
 }
 )");
-  expect(!hiddenStoragePolicy.canGenerateCode() &&
-             hasDiagnostic(hiddenStoragePolicy.diagnostics,
-                           "Undefined qualified name "
-                           "'gti_internal::storage_capacity'"),
-         "storage allocation extent should remain private safety bookkeeping, "
-         "not an intrinsic container-policy query");
+  const lang::OptimizationResult hiddenOptimizations =
+      lang::OptimizationPipeline().run(hiddenStoragePolicy.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact hiddenArtifact =
+      gti_test::emitCpp(hiddenStoragePolicy, hiddenStoragePolicy.mir,
+                        hiddenStoragePolicy.mir, hiddenOptimizations);
+  expect(hiddenStoragePolicy.canGenerateCode() &&
+             hiddenArtifact.contents.find(
+                 "::gti_internal::backend::storage_capacity(") !=
+                 std::string::npos,
+         "trusted storage policy should observe allocation extent without "
+         "exposing a raw address or deallocation capability");
+
+  const lang::FrontendResult recoverableStorage =
+      analyzeTrustedPreludeFixture("recoverable-storage-policy.gti", R"(
+int main() {
+  mut gti_internal::storage<int> values =
+      gti_internal::allocate_storage<int>(uint64_t(0));
+  int32_t status = gti_internal::storage_try_allocate(
+      values, uint64_t(2), uint64_t(64));
+  if (status != 0 || gti_internal::storage_capacity(values) != uint64_t(2) ||
+      gti_internal::storage_initialized(values, uint64_t(1))) {
+    return 1;
+  }
+  gti_internal::storage_construct(values, uint64_t(1), 42);
+  if (!gti_internal::storage_initialized(values, uint64_t(1))) {
+    return 2;
+  }
+  return gti_internal::storage_read(values, uint64_t(1)) - 42;
+}
+)");
+  std::array<bool, 3> hirOperations{};
+  for (const lang::HirFunctionInstance &function :
+       recoverableStorage.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      switch (value.intrinsic) {
+      case lang::IntrinsicKind::StorageTryAllocate:
+        hirOperations[0] =
+            hirOperations[0] || value.info.type == lang::SemanticType::Int32;
+        break;
+      case lang::IntrinsicKind::StorageCapacity:
+        hirOperations[1] =
+            hirOperations[1] || value.info.type == lang::SemanticType::UInt64;
+        break;
+      case lang::IntrinsicKind::StorageInitialized:
+        hirOperations[2] =
+            hirOperations[2] || value.info.type == lang::SemanticType::Bool;
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  std::array<bool, 3> mirOperations{};
+  for (const lang::MirFunctionInstance &function :
+       recoverableStorage.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        switch (instruction.intrinsic) {
+        case lang::IntrinsicKind::StorageTryAllocate:
+          mirOperations[0] = mirOperations[0] ||
+                             instruction.info.type == lang::SemanticType::Int32;
+          break;
+        case lang::IntrinsicKind::StorageCapacity:
+          mirOperations[1] =
+              instruction.info.type == lang::SemanticType::UInt64;
+          break;
+        case lang::IntrinsicKind::StorageInitialized:
+          mirOperations[2] = instruction.info.type == lang::SemanticType::Bool;
+          break;
+        default:
+          break;
+        }
+      }
+    }
+  }
+  const lang::OptimizationResult recoverableOptimizations =
+      lang::OptimizationPipeline().run(recoverableStorage.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact recoverableArtifact =
+      gti_test::emitCpp(recoverableStorage, recoverableStorage.mir,
+                        recoverableStorage.mir, recoverableOptimizations);
+  expect(recoverableStorage.canGenerateCode() &&
+             lang::verifyMirProgram(recoverableStorage.mir).valid() &&
+             std::all_of(hirOperations.begin(), hirOperations.end(),
+                         [](bool found) { return found; }) &&
+             std::all_of(mirOperations.begin(), mirOperations.end(),
+                         [](bool found) { return found; }) &&
+             recoverableArtifact.contents.find(
+                 "::gti_internal::backend::storage_try_allocate(") !=
+                 std::string::npos &&
+             recoverableArtifact.contents.find(
+                 "::gti_internal::backend::storage_initialized(") !=
+                 std::string::npos,
+         "recoverable allocation and allocation-state observers should retain "
+         "their exact identity and result types through HIR, MIR, and backend "
+         "selection");
+
+  const lang::FrontendResult invalidRecoverableStorage =
+      analyzeTrustedPreludeFixture("invalid-recoverable-storage.gti", R"(
+int main() {
+  gti_internal::storage<int> fixed =
+      gti_internal::allocate_storage<int>(uint64_t(0));
+  int32_t immutable = gti_internal::storage_try_allocate(
+      fixed, uint64_t(1), uint64_t(0));
+  mut gti_internal::storage<int> values =
+      gti_internal::allocate_storage<int>(uint64_t(0));
+  int32_t wrong_count = gti_internal::storage_try_allocate(
+      values, true, uint64_t(0));
+  int32_t missing_alignment =
+      gti_internal::storage_try_allocate(values, uint64_t(1));
+  uint64_t extra_capacity =
+      gti_internal::storage_capacity(values, uint64_t(0));
+  bool wrong_index = gti_internal::storage_initialized(values, true);
+  return immutable + wrong_count + missing_alignment + int(extra_capacity) +
+         int(wrong_index);
+}
+)");
+  expect(!invalidRecoverableStorage.canGenerateCode() &&
+             hasDiagnostic(invalidRecoverableStorage.diagnostics,
+                           "storage_try_allocate requires mutable storage") &&
+             hasDiagnostic(invalidRecoverableStorage.diagnostics,
+                           "storage_try_allocate requires a uint64_t") &&
+             hasDiagnostic(invalidRecoverableStorage.diagnostics,
+                           "storage_try_allocate expects 3 arguments") &&
+             hasDiagnostic(invalidRecoverableStorage.diagnostics,
+                           "storage_capacity expects 1 argument") &&
+             hasDiagnostic(invalidRecoverableStorage.diagnostics,
+                           "storage_initialized requires a uint64_t"),
+         "recoverable storage intrinsics should diagnose exact arity, scalar "
+         "types, and mutable destination access");
+
+  const lang::FrontendResult publicStorage = lang::Frontend().analyze(
+      "public-storage.gti", R"(
+#include <std/memory>
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(42));
+  return values.get(std::size_t(0)) - 42;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  bool ordinaryPublicFactory = false;
+  for (const lang::HirFunctionInstance &function :
+       publicStorage.hir.functionInstances()) {
+    if (function.source == nullptr ||
+        function.source->name().lexeme != "main") {
+      continue;
+    }
+    for (const lang::HirValue &value : function.body.values) {
+      const lang::HirFunctionInstance *target =
+          value.functionTarget
+              ? publicStorage.hir.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      ordinaryPublicFactory = ordinaryPublicFactory ||
+                              (target != nullptr && target->source != nullptr &&
+                               target->source->name().lexeme == "try_storage" &&
+                               value.intrinsic == lang::IntrinsicKind::None);
+    }
+  }
+  expect(
+      publicStorage.canGenerateCode() && ordinaryPublicFactory,
+      "std::allocator and std::storage should remain ordinary source-defined "
+      "policy while only their private implementation calls are intrinsic");
+
+  const lang::FrontendResult invalidPublicStorage = lang::Frontend().analyze(
+      "invalid-public-storage.gti", R"(
+#include <std/memory>
+
+class fixed_value {
+public:
+  fixed_value() {}
+  fixed_value(fixed_value& other) = delete;
+  fixed_value(fixed_value&& other) = delete;
+};
+
+int main() {
+  std::storage<int32_t> forged = std::storage<int32_t>();
+  std::allocator allocator = std::allocator();
+  auto unsupported = allocator.try_storage<fixed_value>(std::size_t(1));
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(42));
+  values.construct(std::size_t(0), int32_t(1), int32_t(2));
+  int32_t& borrowed = values.get(std::size_t(0));
+  values.destroy(std::size_t(0));
+  std::storage<int32_t> copied = values;
+  return borrowed;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !invalidPublicStorage.canGenerateCode() &&
+          hasDiagnostic(invalidPublicStorage.diagnostics,
+                        "No constructor of 'storage'") &&
+          hasDiagnostic(invalidPublicStorage.diagnostics, "'std::movable'") &&
+          hasDiagnostic(invalidPublicStorage.diagnostics,
+                        "Function expects 2 arguments but received 3") &&
+          hasDiagnostic(invalidPublicStorage.diagnostics,
+                        "while a reference borrowed from it may still be "
+                        "live") &&
+          hasDiagnostic(invalidPublicStorage.diagnostics,
+                        "Cannot initialize 'copied'"),
+      "public storage should require movable elements and prevent owner "
+      "forgery, variadic emplacement, copies, and mutation while a "
+      "receiver-tied element borrow remains live");
 }
 
 void testVariadicStorageConstructionAndVector() {
@@ -13663,6 +14035,9 @@ int main() {
                                 "__gti_fn_") != std::string::npos &&
              artifact.contents.find("_emplace__gti_mir_failure(") !=
                  std::string::npos &&
+             containsMangledFunction(artifact.contents,
+                                     "EmplacingBuffer<::__gti_program::Pair>::",
+                                     "emplace", "__gti_mir_failure(") &&
              artifact.contents.find(
                  "mir_storage_construct_v1(__gti_mir_p_6, __gti_mir_v_4, "
                  "__gti_mir_v_6, __gti_mir_v_8)") != std::string::npos &&
@@ -15599,7 +15974,7 @@ int main() {
           generated.find("string(const string &) = delete;") !=
               std::string::npos &&
           generated.find("string(string &&) = default;") != std::string::npos &&
-          generated.find("::gti_internal::backend::prefix_storage_read_mut") !=
+          generated.find("::gti_internal::backend::mir_prefix_read_mut_v1") !=
               std::string::npos,
       "std::string lowering should retain nominal move-only lifecycle and "
       "checked mutable storage access");
@@ -20736,6 +21111,13 @@ int main() {
              artifact.contents.find("___gti_operator_call(const "
                                     "std::int32_t amount) &;") !=
                  std::string::npos &&
+             containsMangledFunction(artifact.contents, "std::int32_t ",
+                                     "__gti_operator_call", "() &&;") &&
+             containsMangledFunction(artifact.contents, "std::int32_t ",
+                                     "__gti_operator_call", "() const &;") &&
+             containsMangledFunction(artifact.contents, "std::int32_t ",
+                                     "__gti_operator_call",
+                                     "(const std::int32_t amount) &;") &&
              artifact.contents.find(
                  "std::move(__gti_mir_p_1.get()).::__gti_program::OnceValue::"
                  "__gti_fn_") != std::string::npos &&
@@ -21939,12 +22321,16 @@ int main() {
               std::string::npos &&
           generated.find("_identity(__gti_mir_v_") != std::string::npos &&
           generated.find("Box<std::int32_t>::__gti_fn_") != std::string::npos &&
-          generated.find("_set(") != std::string::npos,
+          generated.find("_set(") != std::string::npos &&
+          containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
+          containsMangledFunction(generated, "Box<std::int32_t>::", "set", "("),
       "applied types and explicit generic calls should lower recursively");
   expect(generated.find(".template __gti_fn_") == std::string::npos &&
              generated.find("Box<std::int32_t>::__gti_fn_") !=
                  std::string::npos &&
-             generated.find("_echo(__gti_mir_v_") != std::string::npos,
+             generated.find("_echo(__gti_mir_v_") != std::string::npos &&
+             containsMangledFunction(generated, "Box<std::int32_t>::", "echo",
+                                     "(__gti_mir_v_"),
          "the backend should emit the concrete selected generic method "
          "without reopening C++ dependent-template lookup");
 
@@ -25186,20 +25572,33 @@ int main() {
              generated.find("_consume__gti_mir_failure("
                             "std::int32_t __gti_mir_arg_0, bool "
                             "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos,
+                            "__gti_mir_arg_2") != std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "consume",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
   expect(generated.find("_consume__gti_mir_failure("
                         "std::int32_t __gti_mir_arg_0, std::int32_t "
                         "__gti_mir_arg_1, bool __gti_mir_arg_2, "
                         "std::string_view __gti_mir_arg_3") !=
-             std::string::npos,
+                 std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "consume",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
+                 "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
+                 "std::string_view __gti_mir_arg_3"),
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
                  std::string::npos &&
              generated.find("_first__gti_mir_failure("
                             "std::int32_t __gti_mir_arg_0, bool "
                             "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos,
+                            "__gti_mir_arg_2") != std::string::npos &&
+             containsMangledFunction(
+                 generated, "", "first",
+                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 

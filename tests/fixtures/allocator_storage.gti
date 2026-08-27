@@ -1,0 +1,183 @@
+#include <std/memory>
+#include <std/numeric>
+
+extern "C" {
+  int32_t gti_test_is_aligned(int32_t* value, uint64_t alignment);
+}
+
+mut int32_t destruction_trace = 0;
+
+class tracked_value {
+  mut int32_t stored;
+
+public:
+  tracked_value(int32_t value) : stored(value) {}
+
+  tracked_value(tracked_value& other) = delete;
+  tracked_value(tracked_value&& other) = default;
+
+  int32_t get() {
+    return this.stored;
+  }
+
+  void set(int32_t value) mut {
+    this.stored = value;
+  }
+
+  ~tracked_value() {
+    destruction_trace = std::wrapping_add(
+        std::wrapping_mul(destruction_trace, int32_t(10)), this.stored);
+  }
+};
+
+expected<std::storage<int32_t>, std::alloc_errc>
+allocate_after_allocator_scope() {
+  std::allocator local = std::allocator();
+  return local.try_storage<int32_t>(std::size_t(1));
+}
+
+int main() {
+  std::allocator source = std::allocator();
+
+  mut expected<std::storage<int32_t>, std::alloc_errc> detached_result =
+      allocate_after_allocator_scope();
+  if (!detached_result) {
+    return 1;
+  }
+  mut std::storage<int32_t> detached =
+      std::move(detached_result).value();
+  detached.construct(std::size_t(0), int32_t(21));
+  if (detached.get(std::size_t(0)) != 21) {
+    return 1;
+  }
+
+  mut expected<std::storage<int32_t>, std::alloc_errc> empty_result =
+      source.try_storage<int32_t>(std::size_t(0));
+  if (!empty_result) {
+    return 2;
+  }
+  mut std::storage<int32_t> empty = std::move(empty_result).value();
+  if (empty.capacity() != std::size_t(0)) {
+    return 3;
+  }
+
+  mut expected<std::storage<int32_t>, std::alloc_errc> aligned_empty_result =
+      source.try_storage<int32_t>(std::size_t(0),
+                                  std::alignment(std::size_t(64)));
+  if (!aligned_empty_result) {
+    return 4;
+  }
+  mut std::storage<int32_t> aligned_empty =
+      std::move(aligned_empty_result).value();
+  if (aligned_empty.capacity() != std::size_t(0)) {
+    return 5;
+  }
+
+  expected<std::storage<int32_t>, std::alloc_errc> invalid_alignment =
+      source.try_storage<int32_t>(std::size_t(1),
+                                  std::alignment(std::size_t(3)));
+  if (invalid_alignment ||
+      invalid_alignment.error() != std::alloc_errc::invalid_alignment) {
+    return 6;
+  }
+
+  expected<std::storage<int32_t>, std::alloc_errc> zero_alignment =
+      source.try_storage<int32_t>(std::size_t(1),
+                                  std::alignment(std::size_t(0)));
+  if (zero_alignment ||
+      zero_alignment.error() != std::alloc_errc::invalid_alignment) {
+    return 7;
+  }
+
+  expected<std::storage<tracked_value>, std::alloc_errc> overflow =
+      source.try_storage<tracked_value>(
+          std::size_t(18446744073709551615));
+  if (overflow || overflow.error() != std::alloc_errc::size_overflow) {
+    return 8;
+  }
+
+  expected<std::storage<uint8_t>, std::alloc_errc> exhausted =
+      source.try_storage<uint8_t>(std::size_t(18446744073709551615));
+  if (exhausted ||
+      exhausted.error() != std::alloc_errc::resource_exhausted) {
+    return 9;
+  }
+
+  mut expected<std::storage<int32_t>, std::alloc_errc> aligned_integers =
+      source.try_storage<int32_t>(
+          std::size_t(1), std::alignment(std::size_t(64)));
+  if (!aligned_integers) {
+    return 10;
+  }
+  mut std::storage<int32_t> aligned_values =
+      std::move(aligned_integers).value();
+  aligned_values.construct(std::size_t(0), int32_t(17));
+  mut int32_t& aligned_value = aligned_values.get_mut(std::size_t(0));
+  unsafe {
+    if (gti_test_is_aligned(&aligned_value, uint64_t(64)) != 1) {
+      return 11;
+    }
+  }
+
+  {
+    mut expected<std::storage<tracked_value>, std::alloc_errc> created =
+        source.try_storage<tracked_value>(
+            std::size_t(4), std::alignment(std::size_t(64)));
+    if (!created) {
+      return 12;
+    }
+    mut std::storage<tracked_value> values = std::move(created).value();
+    if (values.capacity() != std::size_t(4) ||
+        values.initialized(std::size_t(1)) ||
+        values.initialized(std::size_t(3))) {
+      return 13;
+    }
+
+    values.construct(std::size_t(1), tracked_value(int32_t(1)));
+    values.construct(std::size_t(3), tracked_value(int32_t(3)));
+    if (!values.initialized(std::size_t(1)) ||
+        !values.initialized(std::size_t(3)) ||
+        values.get(std::size_t(1)).get() != 1) {
+      return 14;
+    }
+
+    values.get_mut(std::size_t(1)).set(int32_t(2));
+    values.destroy(std::size_t(1));
+    if (values.initialized(std::size_t(1)) || destruction_trace != 2) {
+      return 15;
+    }
+    values.construct(std::size_t(1), tracked_value(int32_t(4)));
+
+    mut std::storage<tracked_value> moved = std::move(values);
+    if (moved.capacity() != std::size_t(4) ||
+        moved.get(std::size_t(1)).get() != 4 ||
+        moved.get(std::size_t(3)).get() != 3) {
+      return 16;
+    }
+
+    moved.clear();
+    if (destruction_trace != 234 || moved.initialized(std::size_t(1)) ||
+        moved.initialized(std::size_t(3))) {
+      return 17;
+    }
+  }
+
+  if (destruction_trace != 234) {
+    return 18;
+  }
+
+  {
+    mut expected<std::storage<tracked_value>, std::alloc_errc> created =
+        source.try_storage<tracked_value>(std::size_t(3));
+    if (!created) {
+      return 19;
+    }
+    mut std::storage<tracked_value> values = std::move(created).value();
+    values.construct(std::size_t(0), tracked_value(int32_t(5)));
+    values.construct(std::size_t(2), tracked_value(int32_t(6)));
+  }
+  if (destruction_trace != 23465) {
+    return 20;
+  }
+  return 0;
+}

@@ -663,7 +663,8 @@ analysis, HIR, MIR, and the backend.
   MIR. The example matrix and invalidation table define snapshot, concrete
   instance, lifetime-epoch, projection dependency, and edit boundaries.
 - **Unlocks:** `M-OWN-02` and `M-LIFE-01`, which are now complete; bounded range
-  work is ready while allocator design still waits on layout.
+  and allocator design subsequently became ready, and `S-ALLOC-01/02` are now
+  complete.
 
 ### M-OWN-02: Indexed Places And Definite Initialization
 
@@ -1972,9 +1973,9 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-01: Allocator, Provenance, And Initialization Proposal
 
-- **State/role:** ready; `M-LIFE-01`, `D-LANG-01`, `D-FAIL-01`,
-  `S-LAYOUT-02`, and `M-OWN-02` are done; design-first systems-readiness work
-  paired with the arena/pool client.
+- **State/role:** complete; adopted by
+  [ADR 022](../decisions/022-safe-typed-allocation.md) after `M-LIFE-01`,
+  `D-LANG-01`, `D-FAIL-01`, `S-LAYOUT-02`, and `M-OWN-02`.
 - **Scope:** Define allocator ownership, byte/typed provenance, size and
   alignment, allocation failure, zero-sized requests, initialization state,
   placement construction, destruction, deallocation, and interaction with
@@ -1983,25 +1984,43 @@ do not expose C++ object layout as GTI semantics.
 - **Exit gate:** the proposal can express an arena and pool without duplicate
   destruction, uninitialized safe reads, hidden owner creation, or C++ layout
   assumptions.
+- **Completion evidence:** ADR 022 defines a typed move-only allocation origin,
+  owner-carried release authority, checked per-slot lifetime state, receiver-
+  tied borrows, failure-atomic `expected` allocation, minimum alignment,
+  overflow/exhaustion separation, successful zero capacity, reverse cleanup,
+  and the homogeneous arena/pool composition boundary without public raw
+  addresses or manual deallocation.
 
 ### S-ALLOC-02: Narrow Public Allocator Capability
 
-- **State/role:** blocked on accepted `S-ALLOC-01`; `I-CAP-01` is done;
-  systems-readiness implementation.
+- **State/role:** complete first public slice; `S-ALLOC-01` and `I-CAP-01` are
+  done; systems-readiness implementation.
 - **Scope:** Implement one GTI-owned allocator interface over narrow trusted
-  operations, plus a recoverable factory returning `expected`. Prove an arena
-  or pool in ordinary GTI before making containers allocator-aware.
+  operations, plus a recoverable factory returning `expected` and a typed
+  partial-storage owner on which an arena, pool, or container can build policy.
 - **Non-goals:** global replacement allocation, manual raw deletion, polymorphic
   allocator hierarchies, or changing `std::vector` in the first slice.
 - **Exit gate:** ownership, partial initialization, failure, and cleanup are
   visible in HIR/MIR and pass sanitizer/runtime failure tests.
+- **Completion evidence:** `<std/memory>` implements ordinary source-defined
+  `std::allocator`, `std::storage<T>`, `std::alignment`, and
+  `std::alloc_errc` over exact trusted allocation/state operations. HIR/MIR
+  retain recoverable allocation, observer, construction, borrow, destruction,
+  lifecycle, failure-origin, and effect facts. The public owner requires
+  `std::movable T` without borrowed state. The executable fixture covers
+  zero size, invalid/over-alignment, byte overflow, resource exhaustion,
+  sparse construct-by-value, checked read/mutation/destruction, movement,
+  reverse clear/drop, and structured failure across C++20/C++23 and O0/O3,
+  including cleanup when construction of an input value fails. Public forging,
+  copying, variadic emplacement, and mutation during a receiver-tied borrow are
+  rejected.
 - **Unlocks:** `S-ALLOC-03` container integration.
 
 ### S-ALLOC-03: Allocator-Aware Containers
 
-- **State/role:** blocked; prerequisites are `S-ALLOC-02` and completed
-  `L-RANGE-02`; bounded-first systems-readiness integration for one real
-  container.
+- **State/role:** ready and deliberately separate; prerequisites
+  `S-ALLOC-02` and `L-RANGE-02` are complete; bounded-first systems-readiness
+  integration for one real container.
 - **Scope:** Add allocator policy to one container without C++ allocator-traits
   complexity. Specify move/copy propagation, allocator lifetime, failure, and
   iterator invalidation before generalizing.
@@ -3327,7 +3346,7 @@ owned by the rows and domain plans above.
 | Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
-| Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
+| Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |

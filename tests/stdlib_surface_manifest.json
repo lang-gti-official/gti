@@ -1,9 +1,9 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "77c36d8a4f5509066c1bdf5c886ce08aaa39eb5eec4bb5a5a5cfd562c8ca985a",
+    "stdlib/prelude.gti": "f7503978a1cfb085e5950c9729af3afe859f21549ad057bb09e90681b918f360",
     "stdlib/std/algorithm.gti": "feda2c56b2d9a5d0f2ee9f9c99e4035ba3d3c6e14c75b4f5a109e3dd59b71203",
-    "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
+    "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
@@ -12,8 +12,8 @@
     "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
     "stdlib/std/iterator.gti": "023260ec12c328b581752a25a760e9697e4a42d32919ce2cf24b96c3d1630f84",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
-    "stdlib/std/memory.gti": "caf67131d2756d28c8f99507f374ecbe86ecea7ef68d24e2b92fe31ce99cc4e5",
-    "stdlib/std/numeric.gti": "0ce4f0056bc9d79823c8371fc2838181a40aabbd62e9636e65a4bdd0eeee93fc",
+    "stdlib/std/memory.gti": "fe434a15a85bdf91b44b70821b01821982bfcf9a758753bc235ed8ccc36c5bfa",
+    "stdlib/std/numeric.gti": "4cfbbf95a38d1d850f10211568d85aa486fc79ab2e56689b3bbac428dfea5e12",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
@@ -28,6 +28,14 @@
       "id": "algorithm",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_algorithm.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "allocator-storage",
+      "mode": "run",
+      "source": "tests/fixtures/allocator_storage.gti",
+      "native_sources": ["tests/fixtures/allocator_storage_alignment.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -478,6 +486,38 @@
       "operations": ["std::list public surface"],
       "reason": "The move-only shape is present, but node storage and operation bodies are absent.",
       "evidence": ["stdlib/std/list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "memory.executable",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": [
+        "std::alignment",
+        "std::alignment::bytes",
+        "std::alloc_errc",
+        "std::allocator",
+        "std::allocator::try_storage<T>(size_t)",
+        "std::allocator::try_storage<T>(size_t,std::alignment)",
+        "std::storage<T>",
+        "std::storage<T>::capacity",
+        "std::storage<T>::clear",
+        "std::storage<T>::construct",
+        "std::storage<T>::destroy",
+        "std::storage<T>::get",
+        "std::storage<T>::get_mut",
+        "std::storage<T>::initialized"
+      ],
+      "case_ids": ["allocator-storage"],
+      "required_instantiations": [
+        "std::alignment(64)",
+        "std::storage<int32_t>",
+        "std::storage<tracked>"
+      ],
+      "evidence": [
+        "tests/allocator_storage_runtime_test.py",
+        "tests/fixtures/allocator_storage.gti",
+        "stdlib/std/memory.gti"
+      ]
     },
     {
       "id": "memory.scaffold",

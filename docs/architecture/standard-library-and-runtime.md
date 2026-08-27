@@ -80,9 +80,26 @@ capability. HIR/MIR retain selected intrinsic identity, and the backend queries
 semantic capability facts rather than recognizing a source name before choosing
 its representation.
 
-Capabilities should expose only an irreducible invariant. Public engagement,
-size, capacity, allocation policy, or container behavior belongs in ordinary
-GTI wrappers.
+Capabilities expose only irreducible representation invariants. Public logical
+size, growth, allocation policy, and container behavior belong in ordinary GTI
+wrappers. The sparse-storage allocation extent and initialized-slot bitmap are
+the exception in kind, not in authority: narrow private observers let the
+source-defined `std::storage<T>` wrapper expose checked `capacity()` and
+`initialized(index)` without exposing an address, bitmap, raw mutation, or
+deallocation operation.
+
+The first public typed-allocation slice is the ordinary source-defined
+`std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
+surface in `<std/memory>`. The compiler recognizes none of those public names.
+The stateless allocator calls one recoverable private allocation operation; a
+successful storage owner carries allocation extent, alignment, per-slot live
+state, reverse cleanup, and release authority together. Allocation failure is
+returned as `expected`, while bounds and invalid slot-state operations use the
+normal defined-failure route. The public owner requires `std::movable T`
+without borrowed state. Construction consumes one completed `T`, so failure
+while creating the argument remains under ordinary MIR cleanup;
+arbitrary in-slot emplacement is intentionally not delegated to the private
+C++ representation. ADR 022 owns the public provenance and failure contract.
 
 The unique-owner upcast capability consumes one private owner after semantics
 has proved an exact public derived-to-base relationship and polymorphic

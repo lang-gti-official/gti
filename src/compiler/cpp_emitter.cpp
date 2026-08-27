@@ -552,50 +552,87 @@ public:
     }
   }
 
-  [[nodiscard]] static bool try_allocate(std::uint64_t requested,
-                                         storage *result) noexcept {
-    if (result == nullptr) {
-      return false;
+  // Recoverable public allocation statuses. These values are consumed by the
+  // ordinary-GTI std::storage wrapper and are deliberately not language
+  // failure codes: no owner is published until every allocation succeeds.
+  //   0 success
+  //   1 invalid minimum alignment
+  //   2 byte-count or alignment-padding overflow
+  //   3 host resource exhaustion
+  [[nodiscard]] static std::int32_t
+  try_allocate(std::uint64_t requested, std::uint64_t minimum_alignment,
+               storage *result) noexcept {
+    // Recoverable publication is valid only into a pristine destination. This
+    // keeps failure side-effect-free and prevents an intrinsic call from
+    // hiding destruction of an earlier allocation from MIR's lifecycle model.
+    if (result == nullptr || result->allocation_ != nullptr ||
+        result->data_ != nullptr || result->capacity_ != 0 ||
+        result->initialized_ != nullptr) {
+      return 3;
     }
     storage pending;
-    if (!pending.allocate_nothrow(requested)) {
-      return false;
+    const std::int32_t status =
+        pending.allocate_nothrow(requested, minimum_alignment);
+    if (status != 0) {
+      return status;
     }
     *result = std::move(pending);
-    return true;
+    return 0;
   }
 
 private:
   void allocate(std::uint64_t requested) {
-    if (!allocate_nothrow(requested)) {
+    if (allocate_nothrow(requested, 0) != 0) {
       allocation_error();
     }
   }
 
-  [[nodiscard]] bool allocate_nothrow(std::uint64_t requested) noexcept {
-    if (requested > (std::numeric_limits<std::size_t>::max)() ||
+  [[nodiscard]] std::int32_t
+  allocate_nothrow(std::uint64_t requested,
+                   std::uint64_t minimum_alignment) noexcept {
+    if (minimum_alignment != 0 &&
+        (minimum_alignment & (minimum_alignment - 1)) != 0) {
+      return 1;
+    }
+    if (minimum_alignment > (std::numeric_limits<std::size_t>::max)() ||
+        requested > (std::numeric_limits<std::size_t>::max)() ||
         (requested != 0 &&
          requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
-      return false;
+      return 2;
     }
-    capacity_ = static_cast<std::size_t>(requested);
-    if (capacity_ == 0) {
-      return true;
+    const std::size_t capacity = static_cast<std::size_t>(requested);
+    if (capacity == 0) {
+      return 0;
     }
-    data_ = ::operator new(sizeof(T) * capacity_, std::align_val_t{alignof(T)},
-                           std::nothrow);
-    if (data_ == nullptr) {
-      capacity_ = 0;
-      return false;
+    const std::size_t requested_alignment =
+        static_cast<std::size_t>(minimum_alignment);
+    const std::size_t effective_alignment =
+        requested_alignment > alignof(T) ? requested_alignment : alignof(T);
+    const std::size_t bytes = sizeof(T) * capacity;
+    const std::size_t padding = effective_alignment - 1;
+    if (bytes > (std::numeric_limits<std::size_t>::max)() - padding) {
+      return 2;
     }
-    initialized_.reset(new (std::nothrow) unsigned char[capacity_]{});
+    const std::size_t allocation_bytes = bytes + padding;
+    void *allocation = ::operator new(allocation_bytes, std::nothrow);
+    if (allocation == nullptr) {
+      return 3;
+    }
+    void *aligned = allocation;
+    std::size_t available = allocation_bytes;
+    if (std::align(effective_alignment, bytes, aligned, available) == nullptr) {
+      ::operator delete(allocation);
+      return 3;
+    }
+    initialized_.reset(new (std::nothrow) unsigned char[capacity]{});
     if (!initialized_) {
-      ::operator delete(data_, std::align_val_t{alignof(T)});
-      data_ = nullptr;
-      capacity_ = 0;
-      return false;
+      ::operator delete(allocation);
+      return 3;
     }
-    return true;
+    allocation_ = allocation;
+    data_ = aligned;
+    capacity_ = capacity;
+    return 0;
   }
 
   [[nodiscard]] std::size_t checked_index(std::uint64_t index) const {
@@ -625,27 +662,31 @@ private:
   }
 
   void release() noexcept {
-    if (data_ != nullptr) {
+    if (allocation_ != nullptr) {
       for (std::size_t index = capacity_; index > 0; --index) {
         if (initialized_[index - 1] != 0) {
           std::destroy_at(std::launder(slot(index - 1)));
         }
       }
-      ::operator delete(data_, std::align_val_t{alignof(T)});
+      ::operator delete(allocation_);
     }
     initialized_.reset();
+    allocation_ = nullptr;
     data_ = nullptr;
     capacity_ = 0;
   }
 
   void take(storage &&other) noexcept {
+    allocation_ = other.allocation_;
     data_ = other.data_;
     capacity_ = other.capacity_;
     initialized_ = std::move(other.initialized_);
+    other.allocation_ = nullptr;
     other.data_ = nullptr;
     other.capacity_ = 0;
   }
 
+  void *allocation_ = nullptr;
   void *data_ = nullptr;
   std::size_t capacity_ = 0;
   std::unique_ptr<unsigned char[]> initialized_;
@@ -654,6 +695,24 @@ private:
 template <typename T>
 inline storage<T> allocate_storage(std::uint64_t capacity) {
   return storage<T>(capacity);
+}
+
+template <typename T>
+inline std::int32_t
+storage_try_allocate(storage<T> &destination, std::uint64_t capacity,
+                     std::uint64_t minimum_alignment) noexcept {
+  return storage<T>::try_allocate(capacity, minimum_alignment, &destination);
+}
+
+template <typename T>
+inline std::uint64_t storage_capacity(const storage<T> &value) noexcept {
+  return value.capacity();
+}
+
+template <typename T>
+inline bool storage_initialized(const storage<T> &value,
+                                std::uint64_t index) noexcept {
+  return value.initialized(index);
 }
 
 template <typename T, typename... Args>
@@ -6161,16 +6220,22 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "add_assign",
         "allocate",
         "allocate_storage",
+        "allocation",
+        "allocation_",
+        "allocation_bytes",
         "allocation_error",
+        "aligned",
         "args",
         "array",
         "array_at",
         "array_bounds_error",
+        "available",
         "backend",
         "bitwise_and_assign",
         "bitwise_or_assign",
         "bitwise_xor_assign",
         "bits",
+        "bytes",
         "callable",
         "call_argument",
         "call_parameter",
@@ -6191,6 +6256,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "divide",
         "divide_assign",
         "empty_owner_error",
+        "effective_alignment",
         "elements",
         "error",
         "exact_call",
@@ -6216,6 +6282,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "message",
         "min",
         "minimum",
+        "minimum_alignment",
         "modulo",
         "multiply",
         "multiply_assign",
@@ -6230,6 +6297,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "other",
         "outside",
         "overflow",
+        "padding",
         "owner_access",
         "owner",
         "post_decrement",
@@ -6250,6 +6318,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "remainder_assign",
         "retag_call",
         "requested",
+        "requested_alignment",
         "result",
         "right",
         "saturating_add",
@@ -6263,10 +6332,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "shift_right_assign",
         "shifted",
         "slot",
+        "status",
         "storage",
+        "storage_capacity",
         "storage_construct",
         "storage_destroy",
         "storage_error",
+        "storage_initialized",
         "storage_read",
         "storage_read_mut",
         "storage_read_mut_unchecked",
@@ -6274,6 +6346,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "storage_relocate",
         "storage_shift_left",
         "storage_shift_right",
+        "storage_try_allocate",
         "string_view_at",
         "string_view_bounds_error",
         "subtract",
@@ -6283,6 +6356,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "target",
         "to_c_string_view",
         "truncated",
+        "try_allocate",
         "unique_owner_is_null",
         "unique_owner_upcast",
         "unsigned_count",
@@ -6296,6 +6370,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     };
     static constexpr std::string_view usedLanguageAndLibraryNames[] = {
         "abort",
+        "align",
         "align_val_t",
         "alignof",
         "auto",
@@ -7107,7 +7182,7 @@ template <typename T>
 inline mir_failure_status_v1
 mir_allocate_storage_v1(std::uint64_t count,
                         ::gti_internal::backend::storage<T> *result) noexcept {
-  if (!::gti_internal::backend::storage<T>::try_allocate(count, result)) {
+  if (::gti_internal::backend::storage<T>::try_allocate(count, 0, result) != 0) {
     return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
             GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
   }

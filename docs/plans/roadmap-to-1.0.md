@@ -728,7 +728,7 @@ implemented portably and remain behind source-defined GTI wrappers.
 | Module area | Minimum systems-ready surface |
 | --- | --- |
 | utility | move, swap, exchange, pair, comparison helpers, limits |
-| ownership | unique ownership, shared ownership, weak observation, recoverable allocation factories |
+| ownership | unique ownership, typed recoverable storage allocation, shared ownership, weak observation, and recoverable owner factories |
 | optional values | `std::optional<T>` over checked single-slot storage; `expected<T, E>` observers and combinators |
 | fixed and dynamic storage | complete array, vector, span, string view, and owning string APIs |
 | traversal | structural iterators, sentinels, sized ranges, range-first foundational algorithms |
