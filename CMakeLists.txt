@@ -1413,6 +1413,14 @@ if(BUILD_TESTING)
     set_tests_properties(reference_receiver_compound_assign_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME subscript_store_read_order_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/subscript_store_read_order_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(subscript_store_read_order_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
       NAME owner_tied_reference_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/owner_tied_reference_argument_runtime_test.py"
@@ -1623,6 +1631,7 @@ if(BUILD_TESTING)
         issue_146_class_value_positions_runtime
         issue_147_stored_reference_field_read_runtime
         reference_receiver_compound_assign_runtime
+        subscript_store_read_order_runtime
         owner_tied_reference_argument_runtime
         generic_symbolic_auto_local_runtime
         mutable_temporary_receiver_runtime

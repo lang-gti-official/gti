@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v49 valid=" << program.valid() << '\n';
+    output << "mir-v50 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -1102,7 +1102,8 @@ private:
     }
     output << "] field=" << value.storedField
            << " designated-field=" << value.designatedField
-           << " entry=" << value.entry << " escapes=" << value.escapes << '\n';
+           << " two-phase=" << value.twoPhase << " entry=" << value.entry
+           << " escapes=" << value.escapes << '\n';
   }
 
   void value(const MirValue &value) {

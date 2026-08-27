@@ -154,6 +154,22 @@ then commits one write. Built-in prefix and postfix increment/decrement form
 and read their target once before performing the checked update; postfix
 retains the prior value as its result and prefix retains the updated value.
 
+When a plain subscript or dereference assignment forms its target through a
+source-defined operator returning `mut T&`, the selected target call runs
+before the right operand and may fail before any part of that operand runs. A
+successful call reserves its exact local-, parameter-, receiver-, or loan-
+rooted stable target place without granting write access yet. The right operand
+may take and end non-retained read-only borrows of that place, but may not write
+it, retain an overlapping mutable borrow, perform raw-memory access, or
+synchronize while the reservation is live. Once the right operand and its
+transient loans complete, the reservation activates and the immediately
+following operation commits the one plain assignment. This bounded two-phase
+rule preserves target-first evaluation for expressions such as
+`values[i] = values[i] + delta`; compound assignment retains the separate
+read/operate/commit schedule above. Symbol-rooted globals retain an immediately
+exclusive target loan until interprocedural root-effect summaries can prove
+hidden calls do not alias the reserved place.
+
 ### 4.2.2 Initialization And Materialization
 
 Initialization reserves a destination without beginning the destination

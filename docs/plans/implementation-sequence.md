@@ -2514,7 +2514,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v49`/`mir-body-v45` carry explicit mutually exclusive
+  transport plan; `mir-v50`/`mir-body-v45` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact

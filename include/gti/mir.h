@@ -336,6 +336,12 @@ struct MirLoan {
   // storedField (a constructor storage target), this is provenance metadata
   // for a by-value carrier dependency and has no backend representation.
   SymbolId designatedField = 0;
+  // A two-phase mutable call-result loan reserves one stable target place at
+  // its producing call, but does not become exclusive until the unique
+  // ActivateBorrow instruction immediately before the committing write.
+  // Reads may overlap the reservation; writes, raw invalidation, escape, and
+  // activation with a live overlapping loan are rejected by MIR verification.
+  bool twoPhase = false;
   bool entry = false;
   bool escapes = false;
 
@@ -429,6 +435,7 @@ enum class MirInstructionKind {
   Modify,
   Move,
   Borrow,
+  ActivateBorrow,
   CallInput,
   Call,
   Construct,

@@ -4214,6 +4214,10 @@ int switch_reactivation(mut int& parent) {
   expect(frontend.canGenerateCode(),
          "exclusive reborrow fixtures should lower to valid frontend IR");
   if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected exclusive-reborrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
     return;
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
@@ -5177,6 +5181,152 @@ int switch_reactivation(mut int& parent) {
              lang::verifyMirBody(sharedCallBorrows).valid(),
          "call-boundary verification should allow overlapping read-only "
          "temporary borrows");
+}
+
+void testTwoPhaseStoreMirFlow() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("two-phase-store-mir.gti", R"(
+class Box {
+public:
+  mut int values[1] = {0};
+
+  int& operator[](uint64_t index) { return this.values[index]; }
+  mut int& operator[](uint64_t index) mut { return this.values[index]; }
+};
+
+void update(mut Box& box) {
+  box[uint64_t(0)] = box[uint64_t(0)] + 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "two-phase store fixture should lower to valid frontend IR");
+  const lang::MirBody *source = findFunction(frontend, "update");
+  expect(source != nullptr && lang::verifyMirBody(*source).valid(),
+         "two-phase overloaded store MIR should satisfy the verifier");
+  if (source == nullptr) {
+    return;
+  }
+
+  const auto hasError = [](const lang::MirVerificationResult &result,
+                           std::string_view text) {
+    return !result.valid() &&
+           std::any_of(result.errors.begin(), result.errors.end(),
+                       [&](const lang::MirVerificationError &error) {
+                         return error.message.find(text) != std::string::npos;
+                       });
+  };
+
+  const lang::MirLoan *reservation = nullptr;
+  for (const lang::MirLoan &loan : source->loans) {
+    if (loan.twoPhase) {
+      reservation = &loan;
+      break;
+    }
+  }
+  expect(reservation != nullptr,
+         "overloaded plain store should lower one two-phase reservation");
+  if (reservation == nullptr) {
+    return;
+  }
+
+  std::size_t activationBlock = source->blocks.size();
+  std::size_t activationIndex = 0;
+  for (std::size_t blockIndex = 0; blockIndex < source->blocks.size();
+       ++blockIndex) {
+    const auto &instructions = source->blocks[blockIndex].instructions;
+    const auto found = std::find_if(
+        instructions.begin(), instructions.end(),
+        [&](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::ActivateBorrow &&
+                 instruction.loan && *instruction.loan == reservation->id;
+        });
+    if (found != instructions.end()) {
+      activationBlock = blockIndex;
+      activationIndex =
+          static_cast<std::size_t>(std::distance(instructions.begin(), found));
+      break;
+    }
+  }
+  expect(activationBlock != source->blocks.size(),
+         "two-phase reservation should have one activation instruction");
+  if (activationBlock == source->blocks.size()) {
+    return;
+  }
+
+  const auto &instructions = source->blocks[activationBlock].instructions;
+  std::size_t rhsEndBlock = source->blocks.size();
+  std::size_t rhsEndIndex = 0;
+  const lang::MirBlockId activationBlockId = source->blocks[activationBlock].id;
+  for (std::size_t blockIndex = 0; blockIndex < source->blocks.size();
+       ++blockIndex) {
+    const lang::MirBlock &block = source->blocks[blockIndex];
+    if (block.terminator.target != activationBlockId) {
+      continue;
+    }
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [&](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                 instruction.loan && *instruction.loan != reservation->id;
+        });
+    if (found != block.instructions.end()) {
+      rhsEndBlock = blockIndex;
+      rhsEndIndex = static_cast<std::size_t>(
+          std::distance(block.instructions.begin(), found));
+      break;
+    }
+  }
+  expect(rhsEndBlock != source->blocks.size() &&
+             activationIndex + 1 < instructions.size() &&
+             instructions[activationIndex + 1].kind ==
+                 lang::MirInstructionKind::Assign,
+         "normal store path should end its RHS loan before activation and "
+         "then commit");
+
+  lang::MirBody missingActivation = *source;
+  auto &missingInstructions =
+      missingActivation.blocks[activationBlock].instructions;
+  missingInstructions.erase(missingInstructions.begin() +
+                            static_cast<std::ptrdiff_t>(activationIndex));
+  expect(hasError(lang::verifyMirBody(missingActivation),
+                  "must have exactly one activation"),
+         "the verifier should reject a two-phase loan without activation");
+
+  lang::MirBody commitBeforeActivation = *source;
+  auto &commitInstructions =
+      commitBeforeActivation.blocks[activationBlock].instructions;
+  std::swap(commitInstructions[activationIndex],
+            commitInstructions[activationIndex + 1]);
+  const lang::MirVerificationResult commitBeforeResult =
+      lang::verifyMirBody(commitBeforeActivation);
+  expect(hasError(commitBeforeResult,
+                  "before its two-phase borrow is activated") ||
+             hasError(commitBeforeResult,
+                      "immediately followed by the committing assignment"),
+         "the verifier should reject committing before activation");
+
+  if (rhsEndBlock != source->blocks.size()) {
+    lang::MirBody overlappingActivation = *source;
+    auto &predecessorInstructions =
+        overlappingActivation.blocks[rhsEndBlock].instructions;
+    const lang::MirInstruction delayedEnd =
+        predecessorInstructions[rhsEndIndex];
+    predecessorInstructions.erase(predecessorInstructions.begin() +
+                                  static_cast<std::ptrdiff_t>(rhsEndIndex));
+    auto &overlapInstructions =
+        overlappingActivation.blocks[activationBlock].instructions;
+    overlapInstructions.insert(
+        overlapInstructions.begin() +
+            static_cast<std::ptrdiff_t>(activationIndex + 2),
+        delayedEnd);
+    const lang::MirVerificationResult overlapResult =
+        lang::verifyMirBody(overlappingActivation);
+    expect(hasError(overlapResult,
+                    "cannot activate while its parent loan is not active") ||
+               hasError(overlapResult, "activates while overlapping loan"),
+           "the verifier should reject activation while the RHS read loan is "
+           "still live");
+  }
 }
 
 void testTransientBorrowNormalization() {
@@ -7373,6 +7523,7 @@ int main() {
   testScalarDefinedFailureEffectClosure();
   testSynchronizationMirContract();
   testExclusiveReborrowMirFlow();
+  testTwoPhaseStoreMirFlow();
   testTransientBorrowNormalization();
   testExactValueRootBorrowProducerIdentity();
   testReturnEdgeLoanIdentity();
