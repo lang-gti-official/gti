@@ -1,4 +1,5 @@
 import type { ReferenceExample } from "@/content/types";
+import { HighlightedCode } from "@/highlighting/HighlightedCode";
 
 export function ExampleReference({
   examples,
@@ -25,9 +26,7 @@ export function ExampleReference({
           </header>
           <div className="code-panel">
             <div className="code-panel-label">GTI</div>
-            <pre>
-              <code>{example.sourceText}</code>
-            </pre>
+            <HighlightedCode code={example.sourceText} language="gti" />
           </div>
           {example.mode === "run" && example.expectedStdout !== undefined ? (
             <div className="output-panel">
