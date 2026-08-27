@@ -1,4 +1,5 @@
 #include <std/string>
+#include <std/vector>
 
 mut int32_t drops_total = 0;
 mut int32_t dropped_tag_sum = 0;
@@ -158,6 +159,32 @@ int32_t check_array_element_loop_prvalue() {
   return 0;
 }
 
+// A mutable borrow's referent is the third destination family: `operator[]`
+// on a vector yields `mut T&`, so a cleanup-free class prvalue publishes
+// through the loan rather than into a binding or an element place.
+int32_t check_loan_referent_prvalue() {
+  mut std::vector<pair> rows = std::vector<pair>();
+  rows.push_back(pair(1, 2));
+  rows.push_back(pair(3, 4));
+  rows[std::size_t(0)] = pair(7, 8);
+  // Each read takes its own receiver loan, so the reads stay sequential.
+  int32_t replaced_first = rows[std::size_t(0)].first();
+  int32_t replaced_second = rows[std::size_t(0)].second();
+  if (replaced_first != 7 || replaced_second != 8) {
+    return 1;
+  }
+  // The untouched neighbour keeps its own value.
+  int32_t neighbour_first = rows[std::size_t(1)].first();
+  int32_t neighbour_second = rows[std::size_t(1)].second();
+  if (neighbour_first != 3 || neighbour_second != 4) {
+    return 2;
+  }
+  if (rows.size() != std::size_t(2)) {
+    return 3;
+  }
+  return 0;
+}
+
 int main() {
   int32_t string_prvalue = check_string_prvalue();
   if (string_prvalue != 0) {
@@ -186,6 +213,10 @@ int main() {
   int32_t array_element_loop = check_array_element_loop_prvalue();
   if (array_element_loop != 0) {
     return 60 + array_element_loop;
+  }
+  int32_t loan_referent = check_loan_referent_prvalue();
+  if (loan_referent != 0) {
+    return 70 + loan_referent;
   }
   return 0;
 }

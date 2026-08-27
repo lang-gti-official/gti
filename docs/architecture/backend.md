@@ -529,9 +529,13 @@ staging obligation also fail closed.
 A cleanup-free class prvalue has no staging obligation at all: no place or
 drop obligation owns the constructed value and the discarded assignment result
 is metadata only, so the construction spells directly in the value position of
-its one adjacent assignment — into a checked fixed-array element or into a
-bare mutable binding. Materializing an intermediate C++ object there would
-invent construction and destruction that MIR does not contain.
+its one adjacent assignment — into a checked fixed-array element, a bare
+mutable binding, or the referent of a mutable borrow, which is what an
+overloaded subscript yields. A loan referent's storage belongs to whatever
+the loan points into, so like an element it carries no obligation of its own
+and, like a bare binding, its write carries no failure site. Materializing an
+intermediate C++ object there would invent construction and destruction that
+MIR does not contain.
 
 ### Declarations And ABI
 
