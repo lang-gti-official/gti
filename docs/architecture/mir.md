@@ -11,9 +11,20 @@ alone is not the complete backend API.
 
 ## Representation
 
-`MirProgram` and `MirLowerer` live in `include/gti/mir.h`. Compiled repair,
-verification, and deterministic printing live in `src/compiler/mir.cpp` and
-`src/compiler/mir_printer.cpp`.
+Plain MIR records and deterministic model queries live in `include/gti/mir.h`.
+Operational contracts are separate: `mir_lowering.h`, `mir_verifier.h`,
+`mir_effects.h`, and `mir_editor.h` own lowering, verification, program-effect
+derivation, and transactional edits. The implementation mirrors those
+contracts: body-local verification remains beside the model primitives in
+`mir.cpp`, while cross-body/program verification, defined-failure derivation,
+optimization-proof replay, and shared private verification queries are
+compiled independently. Deterministic printing remains in `mir_printer.cpp`.
+
+Lowering has three lifetimes. `mir_body_lowering.cpp` owns body-local IDs,
+scopes, loans, drops, CFG, and ordered source lowering;
+`mir_lowering.cpp` owns program inventory and the bounded effect fixed point;
+and `mir_hosted_startup_builder.cpp` owns the generated entry schedule. No
+backend reconstructs hosted-startup policy.
 
 Core MIR also owns `MirBodyAddress`, exhaustive deterministic body inventory,
 and const/mutable body lookup. Inventory visits the module first, then each
@@ -369,7 +380,7 @@ gate between that canonical pre-optimization program and production MIR. It
 accepts exact equality plus only an in-place, provenance-bearing identity fold
 at the same body/block/instruction position, with the same IDs, type, and every
 other instruction field. The expected instruction is copied from source and
-patched independently of `MirProgramEditor`; the derived value-use index is
+patched independently of `MirEditor`; the derived value-use index is
 rebuilt before an exact whole-program comparison. There is no authorized CFG,
 branch-target, call-target, operation, operand, lifecycle, layout, or header
 rewrite today. This comparison is structural rather than based on
@@ -654,10 +665,16 @@ operations; checked built-in arithmetic keeps its failure effect. MIR records
 and verifies the selection but does not derive arithmetic mode from the public
 function name.
 
-`verifyMirProgram` checks identity ranges, definitions and uses, terminators,
-call/constructor and synchronization metadata, native-linkage invariants,
-program-entry adapter
-metadata, value availability, reachable loan state, and lifecycle state. It
+`verifyMirProgram` is the fail-closed composition facade. Its explicit
+component mask must contain body-local verification, cross-body/program
+contracts, and effect summaries; an incomplete or unknown mask is rejected.
+Body-local verification checks identity ranges, definitions and uses,
+terminators, call/constructor and synchronization metadata, native-linkage
+invariants, value availability, reachable loan state, and lifecycle state.
+Program verification owns program-entry adapters, cross-body callable and
+lifecycle contracts, generated inventories, initialization, and hosted
+startup. The separate effect service derives and checks the closed failure
+summaries. It
 also requires each lambda instance's exact type to reproduce its declaration,
 result, parameters, and captures, and requires callable targets to match that
 full type. Same-shaped closures from distinct enclosing generic instances are
@@ -823,7 +840,7 @@ without making the backend rediscover element order or destructor identity.
 
 ## Controlled Optimization Edits
 
-`optimization/rewrite.h` exposes a deliberately narrow `MirProgramEditor`.
+`mir_editor.h` exposes a deliberately narrow `MirEditor`.
 Core MIR identifies bodies by `MirBodyAddress`, a GTI body kind plus owning
 instance ID; instructions use stable `MirInstructionId`, and blocks use
 `MirBlockId`. The editor never exposes mutable program vectors or retains
@@ -834,8 +851,11 @@ literal, replace a branch terminator, promote one scalar place, attach one
 safety discharge, tombstone one dead computation, or remove one unreachable
 block. All queued claims are checked before mutation and applied to a copy in
 deterministic identity order. Touched bodies have required value-use/CFG facts
-repaired, then the complete candidate is verified before commit. Invalid,
-stale, duplicate, or malformed batches leave the input byte-identical.
+repaired, then the complete candidate is verified before commit. The editor
+owns analysis invalidation: semantic edits invalidate the body cache, while a
+metadata-only safety discharge advances the body revision and preserves the
+explicitly valid analyses. Invalid, stale, duplicate, or malformed batches
+leave the input byte-identical.
 
 `MirPass` and the body-scoped `MirBodyAnalysisManager` provide the current
 small pass framework. The manager revisions bodies and caches CFG/reachability,
