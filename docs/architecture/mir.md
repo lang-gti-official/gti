@@ -912,6 +912,17 @@ parameter therefore each name their exact `[dereference, field…]` place, which
 keeps them field-disjoint for verification and lets the backend key every
 field projection to one concrete class instance.
 
+A reference binding that retains a borrowed call result keeps that call
+result's own loan and adds itself as a carrier, whether the loan is a root or
+already hangs from the parent its retained semantic loan names. Lowering does
+not end the call result and recreate a child loan from the receiver or
+argument origin. Such a recreated loan cannot name the returned address for
+backend publication, and its source place would record the returned referent's
+type over a projection chain that derives the receiver subobject's — a place
+no later stage can key coherently. A derived call-result chain whose links do
+not already end at the retained loan's semantic parent still normalizes
+through that parent, so parent suspension and reactivation are preserved.
+
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access
 mode, parent range loan, child element loan, condition/body/increment/cleanup

@@ -34273,6 +34273,245 @@ int main() { return inspect(Report()); }
          "ephemeral-borrow fallback tier");
 }
 
+void testRetainedBorrowedCallResults() {
+  // A reference binding that retains a borrowed call result keeps the call
+  // result's own loan identity. Recreating a Local loan from the receiver
+  // origin instead produced a source place whose recorded type stated the
+  // returned referent while its projection chain derived the receiver's
+  // subobject, which the C++ emitter's place-coherence scan declined as
+  // GTI-B0001.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("retained-borrowed-call-results.gti", R"(
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Outer {
+public:
+  mut Boxes inner = Boxes();
+};
+
+int32_t retain_through_alias() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.left.write();
+  child = 5;
+  return parent.left.read();
+}
+
+int32_t retain_across_statements() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.right.write();
+  int32_t observed = alias.left.read();
+  child = observed + 40;
+  return parent.right.read();
+}
+
+int32_t retain_nested_field() {
+  mut Outer outer = Outer();
+  mut Outer& alias = outer;
+  mut int32_t& child = alias.inner.right.write();
+  child = 7;
+  return outer.inner.right.read();
+}
+
+int32_t retain_read_only() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  int32_t& observed = alias.left.observe();
+  return observed;
+}
+
+int32_t retain_from_local_receiver() {
+  mut Boxes parent = Boxes();
+  mut int32_t& child = parent.left.write();
+  child = 9;
+  return parent.left.read();
+}
+
+int32_t retain_through_reference_parameter(mut Box& box) {
+  mut int32_t& child = box.write();
+  child = 3;
+  return box.read();
+}
+
+int main() {
+  mut Box box = Box(0);
+  return retain_through_alias() + retain_across_statements() +
+         retain_nested_field() + retain_read_only() +
+         retain_from_local_receiver() +
+         retain_through_reference_parameter(box) - 66;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected retained-borrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "retained borrowed call results should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  // The emitter walks a projected place from its concrete root type; this
+  // mirrors that walk so the structural assertion below fails on exactly the
+  // disagreement the emitter declines, rather than on emission alone.
+  const auto derivedType =
+      [&](const lang::MirBody &body,
+          const lang::MirPlace &place) -> std::optional<lang::SemanticType> {
+    if (place.projections.empty()) {
+      return place.type;
+    }
+    std::optional<lang::SemanticType> current;
+    if (place.root == lang::MirPlaceRootKind::Binding) {
+      const auto root = std::find_if(
+          body.places.begin(), body.places.end(),
+          [&](const lang::MirPlace &candidate) {
+            return candidate.projections.empty() &&
+                   candidate.root == lang::MirPlaceRootKind::Binding &&
+                   candidate.binding == place.binding;
+          });
+      if (root != body.places.end()) {
+        current = root->type;
+      }
+    }
+    for (const lang::MirPlaceProjection &projection : place.projections) {
+      if (!current) {
+        return std::nullopt;
+      }
+      if (projection.kind == lang::MirProjectionKind::Dereference) {
+        if (current->arguments.size() != 1) {
+          return std::nullopt;
+        }
+        lang::SemanticType pointee = current->arguments.front();
+        current = std::move(pointee);
+        continue;
+      }
+      if (projection.kind != lang::MirProjectionKind::Field) {
+        return std::nullopt;
+      }
+      const auto owner =
+          std::find_if(frontend.mir.classInstances().begin(),
+                       frontend.mir.classInstances().end(),
+                       [&](const lang::MirClassInstance &candidate) {
+                         return candidate.type == *current;
+                       });
+      if (owner == frontend.mir.classInstances().end()) {
+        return std::nullopt;
+      }
+      const auto field = std::find_if(
+          owner->declaredFields.begin(), owner->declaredFields.end(),
+          [&](const lang::MirClassFieldInfo &candidate) {
+            return candidate.symbol == projection.field;
+          });
+      if (field == owner->declaredFields.end()) {
+        return std::nullopt;
+      }
+      current = field->type;
+    }
+    return current;
+  };
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  for (const std::string name :
+       {"retain_through_alias", "retain_across_statements",
+        "retain_nested_field", "retain_read_only", "retain_from_local_receiver",
+        "retain_through_reference_parameter"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    expect(body != nullptr,
+           "the retained-borrow fixture should retain the MIR body of " + name);
+    if (body == nullptr) {
+      continue;
+    }
+
+    bool coherent = true;
+    for (const lang::MirPlace &place : body->places) {
+      const std::optional<lang::SemanticType> derived =
+          derivedType(*body, place);
+      if (derived && *derived != place.type) {
+        coherent = false;
+      }
+    }
+    expect(coherent,
+           "every binding-rooted projected place in " + name +
+               " should record the type its own projection chain derives");
+
+    std::vector<lang::HirValueId> callValues;
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          callValues.push_back(instruction.hirValue);
+        }
+      }
+    }
+
+    std::size_t retainedCallResults = 0;
+    bool retainedSourcesAgree = true;
+    for (const lang::MirLoan &loan : body->loans) {
+      if (loan.carriers.empty() ||
+          std::find(callValues.begin(), callValues.end(), loan.producedBy) ==
+              callValues.end()) {
+        continue;
+      }
+      // A carried loan produced by a call is the retained borrow: it must
+      // stay that call result's own loan, and its origin place must record
+      // the type its own projection chain derives.
+      ++retainedCallResults;
+      const lang::MirPlace *source = body->findPlace(loan.source);
+      const std::optional<lang::SemanticType> derived =
+          source == nullptr ? std::nullopt : derivedType(*body, *source);
+      if (loan.kind != lang::MirLoanKind::CallResult || source == nullptr ||
+          !derived || *derived != source->type) {
+        retainedSourcesAgree = false;
+      }
+    }
+    expect(retainedCallResults == 1 && retainedSourcesAgree,
+           "the retained borrow in " + name +
+               " should keep the call result's own loan over an origin place "
+               "whose type agrees with its projection chain");
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the C++ backend should emit retained borrowed call results without "
+         "declining the retained loan's place");
+}
+
 void testCleanupOwningTemporaryArguments() {
   const std::string source = R"(
 class cleanup_t {
@@ -34760,6 +34999,7 @@ int main(int argc, char **argv) {
   testMutableFieldGroups();
   testMutableTemporaryReceivers();
   testTemporaryArgumentBorrows();
+  testRetainedBorrowedCallResults();
   testCleanupOwningTemporaryArguments();
   testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();

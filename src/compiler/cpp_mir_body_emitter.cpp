@@ -12391,7 +12391,8 @@ private:
     if (currentType && *currentType != place.type) {
       add(CppMirBodyEmissionIssueKind::InvalidMirProgram, 0, 0,
           "place projection result type disagrees with its concrete root "
-          "and projection chain");
+          "and projection chain (place p" +
+              std::to_string(place.id) + ")");
     }
   }
 
