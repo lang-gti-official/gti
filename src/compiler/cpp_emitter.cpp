@@ -4772,11 +4772,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const std::string_view familyLabel =
         failure ? "deduced-callable-failure-v1" : "deduced-callable-v1";
     struct BodyVariant {
+      // One canonical template body per parameter-cleanup shape: the bit at
+      // each declared parameter index records whether that instance binding
+      // carries a lexical drop obligation. Instances whose concrete callable
+      // environments need different cleanup (a scalar-capturing lambda beside
+      // a class-capturing one) form separate variants that the
+      // instantiation-time destructibility dispatch below reunites under the
+      // single emitted template.
+      std::vector<bool> cleanupShape;
       std::vector<std::string> banners;
       std::string canonical;
     };
-    BodyVariant trivialTask;
-    BodyVariant lexicalTask;
+    std::vector<BodyVariant> variants;
     const bool threadTaskTemplate =
         loweredFunctionNeedsThreadTaskTemplate(instances);
     std::optional<std::size_t> taskParameterIndex;
@@ -4872,7 +4879,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
       std::string body = emission.text;
       body.erase(lineStart, markerAt - lineStart + marker.size());
-      BodyVariant *variant = &trivialTask;
       if (threadTaskTemplate) {
         const std::optional<std::size_t> parameter =
             threadTaskParameter(*instance);
@@ -4882,9 +4888,24 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
               "lowered thread-task template lost its exact task parameter");
         }
         taskParameterIndex = parameter;
-        if (parameterHasLexicalDrop(*instance, *parameter)) {
-          variant = &lexicalTask;
+      }
+      // The overlay admission above already proved the instance parameter
+      // list matches the declaration parameter list exactly, so the shape
+      // indexes the declared parameters directly.
+      std::vector<bool> cleanupShape(function.parameters.size(), false);
+      for (std::size_t index = 0; index < cleanupShape.size(); ++index) {
+        cleanupShape[index] = parameterHasLexicalDrop(*instance, index);
+      }
+      BodyVariant *variant = nullptr;
+      for (BodyVariant &row : variants) {
+        if (row.cleanupShape == cleanupShape) {
+          variant = &row;
+          break;
         }
+      }
+      if (variant == nullptr) {
+        variants.push_back({.cleanupShape = std::move(cleanupShape)});
+        variant = &variants.back();
       }
       variant->banners.push_back(emission.text.substr(
           lineStart, markerAt - lineStart + marker.size()));
@@ -4896,7 +4917,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
             "representation");
       }
     }
-    if (trivialTask.canonical.empty() && lexicalTask.canonical.empty()) {
+    if (variants.empty()) {
       return {};
     }
     const auto assemble = [](const BodyVariant &variant) {
@@ -4915,23 +4936,47 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       assembled += variant.canonical.substr(brace + 2);
       return assembled;
     };
-    if (trivialTask.canonical.empty()) {
-      return assemble(lexicalTask);
+    std::sort(variants.begin(), variants.end(),
+              [](const BodyVariant &left, const BodyVariant &right) {
+                return left.cleanupShape < right.cleanupShape;
+              });
+    if (variants.size() == 1) {
+      return assemble(variants.front());
     }
-    if (lexicalTask.canonical.empty()) {
-      return assemble(trivialTask);
+    // Distinct cleanup shapes cannot share one body text. Reunite them under
+    // the single emitted template through an instantiation-time dispatch:
+    // every parameter whose drop presence varies across instances must be
+    // declared directly as a template type parameter (or be the exact
+    // thread-task parameter), so std::is_trivially_destructible_v over its
+    // declared spelling reproduces exactly the MIR drop decision each covered
+    // instance was built from.
+    std::vector<std::size_t> varying;
+    std::vector<std::string> varyingSpellings(function.parameters.size());
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      const bool first = variants.front().cleanupShape[index];
+      const bool varies = std::any_of(variants.begin(), variants.end(),
+                                      [&](const BodyVariant &row) {
+                                        return row.cleanupShape[index] != first;
+                                      });
+      if (!varies) {
+        continue;
+      }
+      const SemanticType &declared = function.parameters[index].type;
+      const bool threadTask = threadTaskTemplate && taskParameterIndex &&
+                              *taskParameterIndex == index;
+      const std::string spelling =
+          cppSemanticTypeSpelling(loweredProgram, standard, declared);
+      if ((declared.kind != SemanticType::TypeParameter && !threadTask) ||
+          spelling.empty()) {
+        throw std::logic_error(
+            "lowered callable template has incompatible cleanup variants");
+      }
+      varying.push_back(index);
+      varyingSpellings[index] = spelling;
     }
-    if (!threadTaskTemplate || !taskParameterIndex ||
-        *taskParameterIndex >= function.parameters.size()) {
+    if (varying.empty()) {
       throw std::logic_error(
           "lowered callable template has incompatible cleanup variants");
-    }
-    const std::string taskType =
-        cppSemanticTypeSpelling(loweredProgram, standard,
-                                function.parameters[*taskParameterIndex].type);
-    if (taskType.empty()) {
-      throw std::logic_error(
-          "lowered thread-task template has no dependent task spelling");
     }
     const std::string returnType =
         failure ? "bool"
@@ -4952,11 +4997,31 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       text += branchIndent + "}\n";
       return text;
     };
+    const auto condition = [&](const BodyVariant &variant) {
+      std::string text = "if constexpr (";
+      for (std::size_t position = 0; position < varying.size(); ++position) {
+        if (position != 0) {
+          text += " && ";
+        }
+        const std::size_t index = varying[position];
+        if (variant.cleanupShape[index]) {
+          text += "!";
+        }
+        text +=
+            "std::is_trivially_destructible_v<" + varyingSpellings[index] + ">";
+      }
+      text += ")";
+      return text;
+    };
     std::string assembled = "{\n";
-    assembled += branch("if constexpr (std::is_trivially_destructible_v<" +
-                            taskType + ">)",
-                        trivialTask);
-    assembled += branch("else", lexicalTask);
+    for (std::size_t index = 0; index < variants.size(); ++index) {
+      const bool last = index + 1 == variants.size();
+      const std::string label = last ? std::string("else")
+                                : index == 0
+                                    ? condition(variants[index])
+                                    : "else " + condition(variants[index]);
+      assembled += branch(label, variants[index]);
+    }
     assembled += std::string(indentation * 2, ' ') + "}\n";
     return assembled;
   }
