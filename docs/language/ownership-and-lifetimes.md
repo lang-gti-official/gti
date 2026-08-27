@@ -64,7 +64,8 @@ rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md):
 
 1. Ordinary application code uses safe standard-library classes such as
-   `std::unique_ptr<T>` and the first source-defined `std::vector<T>` slice.
+   `std::unique_ptr<T>`, `std::storage<T>`, `std::allocator`, and the first
+   source-defined `std::vector<T>` slice.
 2. Those classes are implemented, as the class and generic systems mature, in
    GTI over compiler-defined capabilities in `gti_internal`, including
    ownership and partially initialized storage operations.
@@ -72,10 +73,11 @@ rationale in
    needed by native wrappers and low-level code without making private
    `gti_internal` capabilities public.
 
-This implemented low-level surface deliberately stops before source-level
-allocation and deallocation functions or C++-style `new` and `delete`. Any
-future manual-lifetime surface must define its own provenance, aliasing,
-initialization, failure, and diagnostic contracts before it becomes public.
+The implemented public allocation surface is typed and owner-returning. It
+deliberately stops before source-level raw allocation/deallocation functions or
+C++-style `new` and `delete`. Any future untyped or manual-lifetime surface must
+define its own provenance, aliasing, initialization, failure, and diagnostic
+contracts before it becomes public.
 
 Intrinsic capabilities are declared as ordinary bodyless functions in the
 implicit prelude. Semantic registration marks only the trusted prelude
@@ -97,11 +99,14 @@ operation without treating its bodyless declaration as a source function to
 instantiate. Neither backend representation is part of the source language.
 
 An intrinsic must represent an operation or invariant that ordinary GTI cannot
-yet express. It may retain private bookkeeping needed to validate that operation,
-but it must not expose library policy or answer wrapper-level questions. Logical
-size, capacity, engagement, and similar state belong to the nominal stdlib type.
-In particular, partially initialized storage exposes no slot-engagement query,
-and the compiler has no `std::optional`-shaped storage API.
+yet express. It may retain private bookkeeping needed to validate that
+operation, but it must not expose library policy. Logical container size,
+growth, free-list order, and invalidation belong to nominal stdlib types. The
+private sparse-storage capability now has total allocation-extent and slot-live
+observers because those facts are irreducible representation state; only the
+ordinary `std::storage<T>` wrapper exposes them through checked public methods.
+This is not a general `std::optional`-shaped place API and exposes no bitmap or
+address.
 
 The unique-owner capabilities used by the wrapper are:
 
@@ -902,9 +907,72 @@ instances, destructors, deleters, or shared ownership control blocks.
 
 A future LLVM backend will consume the same ownership and drop operations and
 may implement them through LLVM IR and narrow runtime allocation helpers. A
-low-level aligned allocator can eventually live behind the runtime boundary,
-but it does not define public raw-pointer ownership or manual lifetime
-semantics.
+low-level aligned allocator can live behind the runtime boundary, but it does
+not define public raw-pointer ownership or manual lifetime semantics.
+
+## Public Typed Allocation
+
+`<std/memory>` provides a safe typed allocation boundary directly in `std`:
+
+```gti
+std::allocator allocator = std::allocator();
+auto attempt = allocator.try_storage<Widget>(
+    std::size_t(64), std::alignment(std::size_t(64)));
+if (!attempt) {
+  return 1;
+}
+mut std::storage<Widget> widgets = std::move(attempt).value();
+widgets.construct(std::size_t(3), Widget(7));
+Widget& value = widgets.get(std::size_t(3));
+```
+
+The public types are `std::allocator`, `std::storage<T>`, `std::alignment`, and
+`std::alloc_errc`. They are ordinary source-defined standard-library policy;
+the compiler does not recognize their spellings. There is no public `std::mem`
+namespace, address accessor, manual deallocation, `new`, or `delete`.
+
+`std::allocator` is initially stateless. `try_storage<T>(count)` requests
+natural alignment, while the overload taking `std::alignment` requests a
+nonzero power-of-two minimum. The effective alignment is at least
+`alignof(T)`. A request returns
+`expected<std::storage<T>, std::alloc_errc>` with these recoverable errors:
+
+- `invalid_alignment` for an explicit zero or non-power-of-two alignment;
+- `size_overflow` when the target cannot represent the element count, byte
+  extent, or alignment padding; and
+- `resource_exhausted` when the host cannot supply allocation or bookkeeping
+  storage.
+
+Zero elements is a successful allocation with capacity zero and no host
+allocation. Failure is atomic: no storage owner or initialized slot is
+published until every private resource has succeeded.
+
+`std::storage<T>` is a move-only lexical owner of one typed allocation origin.
+It retains capacity, alignment, slot-live state, and release authority as one
+capability. It cannot be forged, copied, converted to an address, or manually
+released. Public `T` must satisfy `std::movable` and must not contain borrowed
+state. Each in-bounds slot is either uninitialized or holds exactly one live
+`T`. `construct` consumes one completed `T` and begins a slot lifetime,
+`get`/`get_mut` return checked receiver-tied references, `destroy` ends one
+slot lifetime, and `clear` ends all live slot lifetimes in reverse index order.
+Owner destruction clears any remaining slots in the same order and then
+releases the allocation.
+
+A returned reference prevents storage mutation, movement, or destruction for
+as long as the ordinary borrow analysis considers it live. Reconstructing an
+index begins a new slot lifetime; a reference from the earlier lifetime cannot
+be reused. The current implementation conservatively treats the whole owner as
+borrowed rather than proving distinct dynamic slot indices.
+
+Bounds, duplicate construction, uninitialized access, and uninitialized
+destruction are defined runtime failures rather than allocation errors. The
+public operation accepts an already constructed `T`; failure while constructing
+that argument therefore occurs before the slot operation and follows ordinary
+MIR cleanup without publishing a new slot lifetime. Arbitrary in-slot
+constructor argument forwarding remains deferred until it has an explicit MIR
+failure boundary. The complete rationale, provenance model, and
+C++/Rust/Zig/Swift comparison are in
+[ADR 022](../decisions/022-safe-typed-allocation.md).
 
 ## Standard-Library Storage
 
@@ -933,6 +1001,10 @@ surface:
 ```gti
 gti_internal::storage<T>
 gti_internal::allocate_storage<T>(uint64_t capacity)
+gti_internal::storage_try_allocate(storage, uint64_t capacity,
+                                   uint64_t minimum_alignment)
+gti_internal::storage_capacity(storage)
+gti_internal::storage_initialized(storage, uint64_t index)
 gti_internal::storage_construct(storage, uint64_t index, arguments...)
 gti_internal::storage_read(storage, uint64_t index)
 gti_internal::storage_read_mut(storage, uint64_t index)
@@ -949,10 +1021,18 @@ require mutable storage. Index failures use `GTI-R0007`; duplicate,
 uninitialized, relocation-capacity, and relocation-state failures use `GTI-R0010`.
 Infallible allocation failure uses `GTI-R0011`. Each follows the common
 cleanup, containment, and reporting contract rather than exposing a
-compiler-private C++ helper message.
-The allocation extent and initialized-slot map are private safety bookkeeping,
-not queryable source state. A container records its own logical size and
-capacity and updates those fields when it allocates or relocates storage.
+compiler-private C++ helper message. `storage_try_allocate` is the narrow
+exception: it publishes into a fresh empty private owner only after complete
+success and returns a private integer status so the ordinary public wrapper can
+map invalid alignment, arithmetic overflow, and resource exhaustion into
+`std::alloc_errc`.
+
+The allocation extent and initialized-slot map remain private safety
+bookkeeping. The total `storage_capacity` and `storage_initialized` observers
+exist only so `std::storage<T>` can provide checked public queries; they expose
+neither an address nor mutation of the bookkeeping. A container still records
+its own logical size and growth policy rather than treating allocation extent
+as element count.
 The shift operations move an initialized half-open slot range through one
 verified empty slot. They expose no container size or insertion policy;
 source-defined containers use them to preserve partial-initialization state
@@ -998,9 +1078,10 @@ cannot yet move a value out of a partially initialized place. Once
 partial-place movement and precise loans can express that loop safely,
 relocation can move into ordinary library code.
 
-This facility currently belongs under the reserved `gti_internal` namespace
-and is available only to trusted compiler and standard-library code. It
-exposes no address, raw-data escape, or independent deallocation operation.
+This facility belongs under the reserved `gti_internal` namespace and is
+available only to trusted compiler and standard-library code. Applications use
+the public `std::storage<T>` owner instead. Neither layer exposes an address,
+raw-data escape, or independent deallocation operation.
 The existence of general raw-pointer syntax does not grant access to private
 storage representation or initialized-slot bookkeeping. Merely adding an
 intrinsic does not make it public or stable.

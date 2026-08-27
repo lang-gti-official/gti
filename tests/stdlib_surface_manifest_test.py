@@ -52,17 +52,22 @@ def main() -> int:
     expect_failure(missing_evidence, repository, "has no run case")
 
     wrong_case_kind = copy.deepcopy(original)
-    diagnostic_id = next(
-        case["id"]
-        for case in wrong_case_kind["cases"]
-        if case["mode"] == "diagnostic"
-    )
     executable = next(
         entry
         for entry in wrong_case_kind["entries"]
-        if entry["status"] == "executable"
+        if entry["status"] == "executable" and entry["case_ids"]
     )
-    executable["case_ids"] = [diagnostic_id]
+    diagnostic_id = executable["case_ids"][0]
+    diagnostic = next(
+        case for case in wrong_case_kind["cases"] if case["id"] == diagnostic_id
+    )
+    diagnostic["mode"] = "diagnostic"
+    diagnostic.pop("optimizations")
+    diagnostic["optimization"] = "O0"
+    diagnostic["expected"] = {
+        "exit_code": 65,
+        "stderr_contains": ["synthetic diagnostic evidence"],
+    }
     expect_failure(wrong_case_kind, repository, "references a non-run case")
 
     print("stdlib surface census rejected missing, stale, and mismatched evidence")

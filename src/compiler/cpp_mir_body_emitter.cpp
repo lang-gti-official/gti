@@ -14026,6 +14026,36 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
   return found;
 }
 
+// A checked storage read publishes its element address through the same
+// CallResult loan shape as a transformed reference-returning source call. The
+// difference is only the producer ABI: the shipped MIR helper writes both a
+// status and the element pointer before the paired Invoke branches. Keep this
+// recognition structural so source-defined wrappers can return that exact
+// reference without making any public method backend magic.
+[[nodiscard]] const MirInstruction *
+checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.producedBy == 0) {
+    return nullptr;
+  }
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          !storageReadIntrinsic(instruction.intrinsic) ||
+          !invokePairedInstruction(body, instruction.id) ||
+          producedCallResultLoan(body, instruction) != &loan) {
+        continue;
+      }
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &instruction;
+    }
+  }
+  return found;
+}
+
 // Moving a field out through one mutable call-result loan may stage the
 // move-only class in a Value-rooted obligation before replacing a direct
 // receiver field. Preserve that exact three-step lifetime schedule:
@@ -14910,6 +14940,80 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
   return publication == nullptr ? nullptr : producer;
 }
 
+// A wrapper method may return the exact reference produced by a nested method
+// while its public borrow origin remains the wrapper receiver or argument.
+// MIR preserves both facts: the Return loan names the semantic owner and this
+// Borrow transfers the CallResult loan's runtime pointer. Keep recognition
+// structural so no public source class or method becomes backend magic.
+[[nodiscard]] const MirInstruction *
+callResultReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
+      loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
+      !loan.carriers.empty() || loan.storedField != 0 ||
+      body.returnType.kind != SemanticType::Reference ||
+      body.returnType.arguments.size() != 1) {
+    return nullptr;
+  }
+
+  const MirInstruction *producer = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const MirInstruction &instruction = block.instructions[index];
+      if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
+          *instruction.loan != loan.id) {
+        continue;
+      }
+      if (producer != nullptr || instruction.hirValue != loan.producedBy ||
+          instruction.operands.size() != 1 ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.definedFailure.empty()) {
+        return nullptr;
+      }
+      const MirOperand &runtime = instruction.operands.front();
+      const MirLoan *retained = runtime.kind == MirOperandKind::Loan
+                                    ? body.findLoan(runtime.loan)
+                                    : nullptr;
+      if (retained == nullptr || retained->kind != MirLoanKind::CallResult ||
+          retained->entry || retained->escapes || !retained->carriers.empty() ||
+          retained->source != loan.source || retained->access != loan.access ||
+          runtime.place != 0 || runtime.value != 0 ||
+          runtime.type != instruction.info.type ||
+          runtime.type != body.returnType.arguments.front() ||
+          index + 1 >= block.instructions.size()) {
+        return nullptr;
+      }
+      const MirInstruction &retire = block.instructions[index + 1];
+      if (retire.kind != MirInstructionKind::EndBorrow || !retire.loan ||
+          *retire.loan != runtime.loan ||
+          retire.hirValue != instruction.hirValue) {
+        return nullptr;
+      }
+      producer = &instruction;
+    }
+  }
+  if (producer == nullptr) {
+    return nullptr;
+  }
+
+  const MirTerminator *publication = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind != MirTerminatorKind::Return ||
+        !block.terminator.returnLoan ||
+        *block.terminator.returnLoan != loan.id) {
+      continue;
+    }
+    if (publication != nullptr || !block.terminator.value ||
+        block.terminator.value->kind != MirOperandKind::Loan ||
+        block.terminator.value->loan != loan.id ||
+        block.terminator.value->place != 0 ||
+        block.terminator.value->type != body.returnType.arguments.front()) {
+      return nullptr;
+    }
+    publication = &block.terminator;
+  }
+  return publication == nullptr ? nullptr : producer;
+}
+
 [[nodiscard]] std::string_view
 unqualifiedBodySpelling(std::string_view spelling) {
   std::size_t scope = std::string_view::npos;
@@ -15187,6 +15291,22 @@ storageReadHelperSpelling(IntrinsicKind intrinsic, bool unchecked = false) {
   case IntrinsicKind::PrefixStorageReadMut:
     return unchecked ? "prefix_storage_read_mut_unchecked"
                      : "prefix_storage_read_mut";
+  default:
+    return "";
+  }
+}
+
+[[nodiscard]] std::string_view
+storageReadFailureHelperSpelling(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::StorageRead:
+    return "::gti_internal::backend::mir_storage_read_v1";
+  case IntrinsicKind::StorageReadMut:
+    return "::gti_internal::backend::mir_storage_read_mut_v1";
+  case IntrinsicKind::PrefixStorageRead:
+    return "::gti_internal::backend::mir_prefix_read_v1";
+  case IntrinsicKind::PrefixStorageReadMut:
+    return "::gti_internal::backend::mir_prefix_read_mut_v1";
   default:
     return "";
   }
@@ -16222,6 +16342,16 @@ public:
       if (loan.access == AccessMode::ReadOnly) {
         output << "const ";
       }
+      // A nested reference call publishes its exact referent pointer into
+      // this Return loan. The semantic source still names the owner used for
+      // conflicts, so the transfer payload owns the runtime pointer type.
+      if (const MirInstruction *transfer =
+              callResultReturnLoanProducer(facts.body, loan);
+          transfer != nullptr) {
+        output << typeSpelling(transfer->info.type) << " *__gti_mir_loan_"
+               << loan.id << "{};\n";
+        continue;
+      }
       // A loan published by a discharged storage read points at the
       // element, not the storage that sources it.
       if ((source->type.kind == SemanticType::Storage ||
@@ -16248,6 +16378,17 @@ public:
       // points at the callee's return element, not the receiver that
       // sources it (ADR 018 §5).
       if (loan.kind == MirLoanKind::CallResult) {
+        if (checkedStorageReadLoanProducer(facts.body, loan) != nullptr) {
+          if ((source->type.kind != SemanticType::Storage &&
+               source->type.kind != SemanticType::PrefixStorage) ||
+              source->type.arguments.empty()) {
+            throw std::logic_error(
+                "verified MIR checked storage loan lost its element type");
+          }
+          output << typeSpelling(source->type.arguments.front())
+                 << " *__gti_mir_loan_" << loan.id << "{};\n";
+          continue;
+        }
         const MirInstruction *call =
             loanProducingReferenceCall(program, facts.body, loan);
         const MirFunctionInstance *target =
@@ -16314,6 +16455,8 @@ public:
           if (instruction.kind == MirInstructionKind::Call &&
               (storageBoundsCheckCall(instruction) ||
                storageAllocationFailureCall(program, instruction) ||
+               (storageReadIntrinsic(instruction.intrinsic) &&
+                invokePairedInstruction(facts.body, instruction.id)) ||
                checkedConversionIntrinsicCall(instruction) ||
                ((instruction.intrinsic == IntrinsicKind::ExpectedValue ||
                  instruction.intrinsic == IntrinsicKind::ExpectedError) &&
@@ -18076,6 +18219,17 @@ private:
         output << "// GTI MIR element-borrow loan " << loan->id
                << " publishes at its consuming return\n";
         return;
+      }
+      if (loan != nullptr) {
+        const MirInstruction *transfer =
+            callResultReturnLoanProducer(facts.body, *loan);
+        if (transfer == &instruction) {
+          const MirOperand &runtime = instruction.operands.front();
+          writeIndent();
+          output << "__gti_mir_loan_" << loan->id << " = __gti_mir_loan_"
+                 << runtime.loan << ";\n";
+          return;
+        }
       }
       const MirPlace *source =
           loan == nullptr ? nullptr : facts.body.findPlace(loan->source);
@@ -20683,6 +20837,29 @@ private:
              << " publishes through its loan\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Call &&
+        storageReadIntrinsic(instruction.intrinsic) &&
+        invokePairedInstruction(facts.body, instruction.id)) {
+      const MirLoan *loan = producedCallResultLoan(facts.body, instruction);
+      const MirPlace *storage =
+          instruction.operands.empty()
+              ? nullptr
+              : storageStagedPlace(facts.body, instruction.operands.front());
+      const std::string_view helper =
+          storageReadFailureHelperSpelling(instruction.intrinsic);
+      if (!failureForm || loan == nullptr || storage == nullptr ||
+          instruction.operands.size() != 2 || helper.empty()) {
+        throw std::logic_error(
+            "verified MIR checked storage read lost its exact loan shape");
+      }
+      output << "__gti_mir_failure_status_" << instruction.id << " = " << helper
+             << '(';
+      emitStoragePlaceValue(facts, *storage);
+      output << ", ";
+      emitOperand(instruction.operands.back());
+      output << ", &__gti_mir_loan_" << loan->id << ");\n";
+      return;
+    }
     if (callableValueInvocation(instruction)) {
       if (failureForm) {
         const MirInstruction *closure =
@@ -20817,6 +20994,53 @@ private:
       output << "__gti_mir_v_" << *instruction.result
              << " = ::gti_internal::backend::prefix_storage_text_view(";
       emitStoragePlaceValue(facts, *storage);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::StorageCapacity ||
+         instruction.intrinsic == IntrinsicKind::StorageInitialized)) {
+      const MirPlace *storage =
+          instruction.operands.empty()
+              ? nullptr
+              : storageStagedPlace(facts.body, instruction.operands.front());
+      if (storage == nullptr || !instruction.result) {
+        throw std::logic_error(
+            "verified MIR storage observer lost its checked shape");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::"
+             << (instruction.intrinsic == IntrinsicKind::StorageCapacity
+                     ? "storage_capacity"
+                     : "storage_initialized")
+             << '(';
+      emitStoragePlaceValue(facts, *storage);
+      if (instruction.intrinsic == IntrinsicKind::StorageInitialized) {
+        output << ", ";
+        emitCallArgument(instruction.operands[1], false, false);
+      }
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::StorageTryAllocate) {
+      const MirPlace *storage =
+          instruction.operands.empty()
+              ? nullptr
+              : storageStagedPlace(facts.body, instruction.operands.front());
+      if (storage == nullptr || !instruction.result ||
+          instruction.operands.size() != 3) {
+        throw std::logic_error(
+            "verified MIR recoverable storage allocation lost its checked "
+            "shape");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::storage_try_allocate(";
+      emitStoragePlaceValue(facts, *storage);
+      output << ", ";
+      emitCallArgument(instruction.operands[1], false, false);
+      output << ", ";
+      emitCallArgument(instruction.operands[2], false, false);
       output << ");\n";
       return;
     }
@@ -22186,6 +22410,8 @@ private:
       const bool storageDetector =
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
           (storageAllocationFailureCall(program, *producer) ||
+           (storageReadIntrinsic(producer->intrinsic) &&
+            !producer->localFailureSites.empty()) ||
            (sparseStorageIntrinsic(producer->intrinsic) &&
             !producer->localFailureSites.empty()) ||
            (prefixStorageIntrinsic(producer->intrinsic) &&
@@ -25549,9 +25775,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     const MirInstruction *discharged =
         pairedDischargedRead(body, loan.producedBy);
-    const MirInstruction *referenceCall =
-        discharged == nullptr ? loanProducingReferenceCall(program_, body, loan)
+    const MirInstruction *checkedStorageRead =
+        discharged == nullptr ? checkedStorageReadLoanProducer(body, loan)
                               : nullptr;
+    const MirInstruction *referenceCall =
+        discharged == nullptr && checkedStorageRead == nullptr
+            ? loanProducingReferenceCall(program_, body, loan)
+            : nullptr;
     if (discharged != nullptr) {
       if (producedCallResultLoan(body, *discharged) == nullptr ||
           (loanSource->type.kind != SemanticType::Storage &&
@@ -25560,6 +25790,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         {
           return false;
         }
+      }
+    } else if (checkedStorageRead != nullptr) {
+      if ((loanSource->type.kind != SemanticType::Storage &&
+           loanSource->type.kind != SemanticType::PrefixStorage) ||
+          loanSource->type.arguments.empty() ||
+          checkedStorageRead->operands.size() != 2 ||
+          checkedStorageRead->info.type != loanSource->type.arguments.front()) {
+        return false;
       }
     } else if (referenceCall != nullptr) {
       // The pointer local declares from the callee's return element row;
@@ -26944,6 +27182,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // is the MIR-only provenance handoff from the body loan.
           continue;
         }
+        if (const MirInstruction *transfer =
+                callResultReturnLoanProducer(body, *loan);
+            transfer != nullptr) {
+          if (transfer != &instruction || !typeRow(transfer->info.type)) {
+            return false;
+          }
+          continue;
+        }
         const MirPlace *source = body.findPlace(loan->source);
         if (source == nullptr || !typeRow(source->type)) {
           {
@@ -27931,6 +28177,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (storageReadIntrinsic(instruction.intrinsic) &&
+            invokePairedInstruction(body, instruction.id)) {
+          const MirPlace *storage =
+              instruction.operands.empty()
+                  ? nullptr
+                  : storageStagedPlace(body, instruction.operands.front());
+          const MirLoan *loan = producedCallResultLoan(body, instruction);
+          if (instruction.functionTarget || instruction.operands.size() != 2 ||
+              storage == nullptr ||
+              !valueOperand(instruction.operands.back()) ||
+              !instruction.result || loan == nullptr ||
+              instruction.localFailureSites.size() != 1 ||
+              instruction.definedFailure.localOrigins.size() != 1 ||
+              instruction.definedFailure.propagation !=
+                  FailurePropagationKind::None ||
+              !instruction.lifecycle.empty() ||
+              storageReadFailureHelperSpelling(instruction.intrinsic).empty() ||
+              !typeRow(instruction.info.type) ||
+              !typeRow(storage->type.arguments.front())) {
+            return false;
+          }
+          continue;
+        }
         if (instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
           // The logical-length read carries no failure and spells the
           // shipped helper over the staged storage place on both forms.
@@ -27961,6 +28230,67 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   std::vector<SemanticType>{SemanticType::Char} ||
               instruction.info.type.kind != SemanticType::StringView ||
               !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::StorageCapacity ||
+            instruction.intrinsic == IntrinsicKind::StorageInitialized) {
+          const bool initialized =
+              instruction.intrinsic == IntrinsicKind::StorageInitialized;
+          const std::size_t expectedOperands = initialized ? 2 : 1;
+          const MirPlace *storage =
+              instruction.operands.empty()
+                  ? nullptr
+                  : storageStagedPlace(body, instruction.operands.front());
+          if (instruction.functionTarget || instruction.constructorTarget ||
+              instruction.bodyTarget || instruction.lambdaTarget ||
+              instruction.callableInvocation || instruction.receiver ||
+              !instruction.result ||
+              instruction.info.type !=
+                  (initialized ? SemanticType::Bool : SemanticType::UInt64) ||
+              instruction.parameterTypes.size() != expectedOperands ||
+              instruction.parameterTypes.front().kind !=
+                  SemanticType::Storage ||
+              instruction.parameterTypes.front().arguments.size() != 1 ||
+              instruction.operands.size() != expectedOperands ||
+              storage == nullptr ||
+              storage->type != instruction.parameterTypes.front() ||
+              (initialized &&
+               (instruction.parameterTypes[1] != SemanticType::UInt64 ||
+                instruction.operands[1].type != SemanticType::UInt64)) ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !instruction.lifecycle.empty() || !typeRow(storage->type) ||
+              !typeRow(storage->type.arguments.front())) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::StorageTryAllocate) {
+          const MirPlace *storage =
+              instruction.operands.empty()
+                  ? nullptr
+                  : storageStagedPlace(body, instruction.operands.front());
+          if (instruction.functionTarget || instruction.constructorTarget ||
+              instruction.bodyTarget || instruction.lambdaTarget ||
+              instruction.callableInvocation || instruction.receiver ||
+              !instruction.result ||
+              instruction.info.type != SemanticType::Int32 ||
+              instruction.parameterTypes.size() != 3 ||
+              instruction.parameterTypes.front().kind !=
+                  SemanticType::Storage ||
+              instruction.parameterTypes.front().arguments.size() != 1 ||
+              instruction.parameterTypes[1] != SemanticType::UInt64 ||
+              instruction.parameterTypes[2] != SemanticType::UInt64 ||
+              instruction.operands.size() != 3 || storage == nullptr ||
+              storage->type != instruction.parameterTypes.front() ||
+              instruction.operands[1].type != SemanticType::UInt64 ||
+              instruction.operands[2].type != SemanticType::UInt64 ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !instruction.lifecycle.empty() || !typeRow(storage->type) ||
+              !typeRow(storage->type.arguments.front())) {
             return false;
           }
           continue;
@@ -29394,6 +29724,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (storageAllocationFailureCall(program_, *producer)) {
           // The allocation helper writes the canonical checked status that
           // drives this Invoke edge; successful publication remains in MIR.
+          continue;
+        }
+        if (storageReadIntrinsic(producer->intrinsic) &&
+            invokePairedInstruction(body, producer->id) &&
+            !producer->localFailureSites.empty()) {
+          // The checked read helper publishes the exact element pointer and
+          // status before this Invoke routes success or failure cleanup.
           continue;
         }
         if (sparseStorageIntrinsic(producer->intrinsic) &&

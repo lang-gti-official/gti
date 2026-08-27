@@ -1,9 +1,152 @@
-// C++-familiar API scaffold for <std/memory>.
-// unique_ptr and make_unique are already supplied by the GTI prelude. Shared
-// ownership below remains declaration-only until its compiler-private owner
-// capability and lifetime rules exist.
+// Typed allocation is ordinary GTI policy over declaration-bound private
+// storage capabilities. unique_ptr and make_unique are supplied by the
+// prelude. Shared ownership remains declaration-only until its separate
+// compiler-private owner capability and lifetime rules exist.
 
 namespace std {
+/// Recoverable failures from typed storage allocation.
+enum class alloc_errc {
+  invalid_alignment,
+  size_overflow,
+  resource_exhausted,
+};
+
+/// A requested minimum byte alignment for typed storage.
+///
+/// Allocation accepts nonzero powers of two. Keeping validation in the
+/// fallible allocation operation makes invalid runtime input recoverable.
+class alignment {
+  size_t amount;
+
+public:
+  alignment(size_t bytes) : amount(bytes) {}
+
+  /// Returns the requested minimum byte alignment.
+  size_t bytes() {
+    return this.amount;
+  }
+};
+
+/// A move-only owner of partially initialized typed storage.
+///
+/// `T` must satisfy `std::movable` and must not contain borrowed state.
+/// Each slot is independently uninitialized or contains one live `T`.
+/// Construction, access, and destruction are checked. Destruction of the
+/// owner drops every remaining live slot once in reverse slot order and then
+/// releases the allocation. No address or manual deallocation operation is
+/// exposed.
+class storage<std::movable T> {
+  mut gti_internal::storage<T> data;
+
+public:
+  // This constructor is compiler-private despite its access label because its
+  // parameter exposes a declaration-bound capability. It is callable by the
+  // trusted allocator implementation and withheld from application lookup.
+  storage(gti_internal::storage<T> value)
+      : data(std::move(value)) {}
+
+  storage(storage<T>& other) = delete;
+  storage(storage<T>&& other) = default;
+
+  /// Returns the number of owned `T` slots.
+  size_t capacity() {
+    return gti_internal::storage_capacity(this.data);
+  }
+
+  /// Returns whether the checked slot currently contains a live `T`.
+  bool initialized(size_t index) {
+    gti_internal::index_bounds_check(index, this.capacity());
+    return gti_internal::storage_initialized(this.data, index);
+  }
+
+  /// Moves one completed `T` into an uninitialized checked slot.
+  ///
+  /// Construction of the argument completes before this operation begins, so
+  /// any failure in that construction follows ordinary MIR cleanup without
+  /// publishing a new slot lifetime. Duplicate construction is a defined
+  /// runtime failure.
+  void construct(size_t index, T value) mut {
+    gti_internal::index_bounds_check(index, this.capacity());
+    gti_internal::storage_construct(this.data, index, std::move(value));
+  }
+
+  /// Destroys the live value in one checked slot.
+  void destroy(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.capacity());
+    gti_internal::storage_destroy(this.data, index);
+  }
+
+  /// Returns a checked read-only reference to a live slot.
+  T& get(size_t index) {
+    gti_internal::index_bounds_check(index, this.capacity());
+    return gti_internal::storage_read(this.data, index);
+  }
+
+  /// Returns a checked exclusive reference to a live slot.
+  mut T& get_mut(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.capacity());
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+
+  /// Destroys every live slot once in reverse slot order.
+  void clear() mut {
+    mut size_t index = this.capacity();
+    while (index > size_t(0)) {
+      index--;
+      if (gti_internal::storage_initialized(this.data, index)) {
+        gti_internal::storage_destroy(this.data, index);
+      }
+    }
+  }
+};
+
+/// The process allocator capability used to create typed storage owners.
+///
+/// The initial allocator is stateless. The returned storage carries all
+/// release authority, so it never borrows this object and remains valid after
+/// the allocator value is destroyed.
+class allocator {
+  expected<storage<T>, alloc_errc>
+  try_storage_impl<std::movable T>(size_t count,
+                                   uint64_t minimum_alignment) {
+    mut gti_internal::storage<T> candidate =
+        gti_internal::allocate_storage<T>(uint64_t(0));
+    int32_t status = gti_internal::storage_try_allocate(
+        candidate, count, minimum_alignment);
+    if (status == 1) {
+      return unexpected(alloc_errc::invalid_alignment);
+    }
+    if (status == 2) {
+      return unexpected(alloc_errc::size_overflow);
+    }
+    if (status != 0) {
+      return unexpected(alloc_errc::resource_exhausted);
+    }
+    mut storage<T> result = storage<T>(std::move(candidate));
+    return std::move(result);
+  }
+
+public:
+  allocator() {}
+
+  /// Attempts to create naturally aligned typed storage.
+  expected<storage<T>, alloc_errc>
+  try_storage<std::movable T>(size_t count) {
+    return this.try_storage_impl<T>(count, uint64_t(0));
+  }
+
+  /// Attempts to create typed storage with a minimum byte alignment.
+  expected<storage<T>, alloc_errc>
+  try_storage<std::movable T>(size_t count, alignment requested) {
+    size_t bytes = requested.bytes();
+    if (bytes == size_t(0) or
+        (bytes & (bytes - size_t(1))) != size_t(0)) {
+      return unexpected(alloc_errc::invalid_alignment);
+    }
+    return this.try_storage_impl<T>(count, bytes);
+  }
+};
+
 class shared_ptr<T> {
 public:
   shared_ptr() {}

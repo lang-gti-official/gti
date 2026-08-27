@@ -103,6 +103,10 @@ for the current implementation when a document is stale or ambiguous.
   — makes libclang the mandatory private parser behind `gti bindgen`'s
   reader seam, bounds the Clang link surface to exactly that library, and
   defines its acquisition, packaging, and recovery rules.
+- [022: Safe typed allocation and storage provenance](decisions/022-safe-typed-allocation.md)
+  — adopts the direct `std::allocator`/`std::storage<T>` boundary, typed
+  provenance and slot lifetimes, recoverable allocation, alignment and
+  zero-size rules, and the arena/pool composition boundary.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

@@ -4056,11 +4056,19 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.lifecycle.empty() &&
       instruction.info.traits.drop == DropKind::Trivial &&
       !instruction.info.traits.containsBorrowedState;
+  const bool locallyFailingStorageRead =
+      (instruction.intrinsic == IntrinsicKind::StorageRead ||
+       instruction.intrinsic == IntrinsicKind::StorageReadMut ||
+       instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
+       instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
+      !instruction.localFailureSites.empty() &&
+      !instruction.definedFailure.localOrigins.empty();
   const bool borrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       !instruction.successResultDrop &&
-      instruction.definedFailure.propagation != FailurePropagationKind::None;
+      (instruction.definedFailure.propagation != FailurePropagationKind::None ||
+       locallyFailingStorageRead);
   const bool transferredBorrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
@@ -7123,6 +7131,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->kind != MirLoanKind::CallResult || retained->entry ||
               retained->escapes || retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
+              !retained->carriers.empty() ||
               retained->source != produced.source ||
               (retained->access != produced.access &&
                retained->access != AccessMode::Mutable)) {

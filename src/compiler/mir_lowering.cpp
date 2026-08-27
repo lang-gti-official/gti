@@ -6854,37 +6854,43 @@ private:
               valid = false;
             } else {
               const HirValue *value = findValue(*statement.value);
-              const MirLoanId returnedReference = borrow.loan;
-              const MirLoanId normalized =
-                  createLoan(MirLoanKind::Return, sourcePlace,
-                             function->returnBorrowAccess, *statement.value);
-              // The Return loan's source is the summarized lifetime origin.
-              // Its operand is the exact pointer produced by the final
-              // reference-returning call. Keeping both facts prevents a
-              // receiver shell from being emitted as the returned referent.
-              (void)appendInstruction(
-                  {.kind = MirInstructionKind::Borrow,
-                   .hirValue = *statement.value,
-                   .operands = {{.kind = MirOperandKind::Loan,
-                                 .loan = returnedReference,
-                                 .type = value == nullptr
-                                             ? SemanticType::Unknown
-                                             : value->info.type}},
-                   .loan = normalized,
-                   .info = value == nullptr ? ExpressionInfo{} : value->info});
-              for (const MirLoanId ended : transientChain) {
-                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                         .hirValue = *statement.value,
-                                         .loan = ended});
-                removeLoanFromState(ended, scopes, bindingLoans);
+              if (value == nullptr || output.returnType.arguments.size() != 1 ||
+                  value->info.type != output.returnType.arguments.front()) {
+                valid = false;
+              } else {
+                const MirLoanId normalized =
+                    createLoan(MirLoanKind::Return, sourcePlace,
+                               function->returnBorrowAccess, *statement.value);
+                // A nested reference-returning call carries the exact referent
+                // in its CallResult loan while sourcePlace names the owner used
+                // for semantic conflict checks. Publish the former into the
+                // Return loan before retiring the body-local chain.
+                (void)appendInstruction(
+                    {.kind = MirInstructionKind::Borrow,
+                     .hirValue = *statement.value,
+                     .operands = {{.kind = MirOperandKind::Loan,
+                                   .loan = borrow.loan,
+                                   .type = value->info.type}},
+                     .loan = normalized,
+                     .info = value->info});
+                for (const MirLoanId ended : transientChain) {
+                  (void)appendInstruction(
+                      {.kind = MirInstructionKind::EndBorrow,
+                       .hirValue = *statement.value,
+                       .loan = ended});
+                  removeLoanFromState(ended, scopes, bindingLoans);
+                }
+                if (summarizedEntry != 0) {
+                  (void)appendInstruction(
+                      {.kind = MirInstructionKind::EndBorrow,
+                       .hirValue = *statement.value,
+                       .loan = summarizedEntry});
+                  removeLoanFromState(summarizedEntry, scopes, bindingLoans);
+                }
+                borrow = {.kind = MirOperandKind::Loan,
+                          .loan = normalized,
+                          .type = value->info.type};
               }
-              if (summarizedEntry != 0) {
-                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                         .hirValue = *statement.value,
-                                         .loan = summarizedEntry});
-                removeLoanFromState(summarizedEntry, scopes, bindingLoans);
-              }
-              borrow.loan = normalized;
             }
           }
           MirLoan &loan = output.loans[borrow.loan - 1];
