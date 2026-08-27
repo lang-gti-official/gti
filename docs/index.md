@@ -117,6 +117,10 @@ than mixed into the active queue.
   — the sole prompt-sized work queue, prerequisites, status, and exit gates;
   retains the completed runtime-performance campaign baseline and owns the
   resumed queue
+- [Compiler structural refactor](plans/compiler-structural-refactor.md) — the
+  next exclusive compiler phase after current in-flight work is reconciled;
+  separates semantic, MIR, backend, test, and build ownership before feature
+  development resumes
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current
