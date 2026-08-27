@@ -11362,6 +11362,225 @@ int main() {
          "iterator place that merely shares owner provenance");
 }
 
+void testCallSiblingArgumentBorrowConflicts() {
+  // f(v.begin_mut(), v.end()): the first argument's exclusive owner loan is
+  // live while the second argument evaluates its receiver read. Semantics
+  // must reject this before MIR construction refuses the overlap.
+  const std::string mutThenReadSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenRead = lang::Frontend().analyze(
+      "sibling-argument-mut-then-read.gti", mutThenReadSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenRead.canGenerateCode() &&
+             countDiagnosticCode(mutThenRead.diagnostics, "GTI-S2017") == 1 &&
+             hasDiagnosticAt(mutThenRead.diagnostics, "GTI-S2017",
+                             "sibling-argument-mut-then-read.gti",
+                             mutThenReadSource.rfind("end()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand") &&
+             hasRelatedDiagnostic(mutThenRead.diagnostics,
+                                  "stays live until the call completes") &&
+             hasDiagnosticHint(mutThenRead.diagnostics,
+                               "Whole-container algorithms take the "
+                               "container itself"),
+         "a sibling read of an owner with a live exclusive argument borrow "
+         "should be a semantic rejection, not a MIR construction failure");
+
+  // The same conflict without any borrow in the read result: size() only
+  // reads the owner ephemerally, but the exclusive loan is still live.
+  const std::string mutThenPlainReadSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.size());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenPlainRead = lang::Frontend().analyze(
+      "sibling-argument-mut-then-plain-read.gti", mutThenPlainReadSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenPlainRead.canGenerateCode() &&
+             countDiagnosticCode(mutThenPlainRead.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnosticAt(mutThenPlainRead.diagnostics, "GTI-S2017",
+                             "sibling-argument-mut-then-plain-read.gti",
+                             mutThenPlainReadSource.rfind("size()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand"),
+         "an ephemeral receiver read after a sibling exclusive argument "
+         "borrow of the same owner should be rejected at semantics");
+
+  // Two exclusive borrows of one owner in a single call stay rejected by the
+  // pairwise overlap check.
+  const std::string mutThenMutSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.begin_mut());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenMut = lang::Frontend().analyze(
+      "sibling-argument-mut-then-mut.gti", mutThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenMut.canGenerateCode() &&
+             countDiagnosticCode(mutThenMut.diagnostics, "GTI-S2017") == 1 &&
+             hasDiagnostic(mutThenMut.diagnostics,
+                           "overlapping reference accesses"),
+         "two exclusive sibling argument borrows of one owner should stay "
+         "rejected by the call overlap check");
+
+  // Reversed order is sound: end() finishes its ephemeral receiver read
+  // before begin_mut() creates the exclusive loan.
+  const std::string readThenMutSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A last, B first) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.end(), values.begin_mut());
+  return 0;
+}
+)";
+  const lang::FrontendResult readThenMut = lang::Frontend().analyze(
+      "sibling-argument-read-then-mut.gti", readThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(readThenMut.canGenerateCode() &&
+             lang::verifyMirProgram(readThenMut.mir).valid(),
+         "an ephemeral read completed before a sibling exclusive borrow "
+         "begins should stay accepted through MIR verification");
+
+  // An unretained production loan survives a nested consuming call: the
+  // exclusive iterator is consumed inside the first operand, but its owner
+  // loan lasts through the full expression, so the sibling read conflicts.
+  const std::string consumedCarrierSource = R"(
+#include <std/vector>
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin_mut()), values.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult consumedCarrier = lang::Frontend().analyze(
+      "sibling-argument-consumed-carrier.gti", consumedCarrierSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!consumedCarrier.canGenerateCode() &&
+             countDiagnosticCode(consumedCarrier.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnosticAt(consumedCarrier.diagnostics, "GTI-S2017",
+                             "sibling-argument-consumed-carrier.gti",
+                             consumedCarrierSource.rfind("end()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand"),
+         "an exclusive borrow consumed by a nested call still holds its "
+         "owner loan through the full expression, so a sibling read is "
+         "rejected at semantics");
+
+  // The mirrored nesting: a read carrier consumed inside the first operand
+  // still holds a read loan, so a later operand mutation conflicts.
+  const std::string nestedReadThenMutSource = R"(
+#include <std/vector>
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B second) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin()), bump(values));
+  return 0;
+}
+)";
+  const lang::FrontendResult nestedReadThenMut = lang::Frontend().analyze(
+      "sibling-argument-nested-read-then-mut.gti", nestedReadThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedReadThenMut.canGenerateCode() &&
+             countDiagnosticCode(nestedReadThenMut.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnostic(nestedReadThenMut.diagnostics,
+                           "A later call operand mutates storage borrowed by "
+                           "an earlier operand"),
+         "a read borrow consumed by a nested call still holds its owner loan, "
+         "so a later sibling mutation is rejected at semantics");
+
+  // A completed nested mutable-reference call holds no loan afterwards, so
+  // a later sibling read of the same owner stays valid.
+  const std::string completedMutationSource = R"(
+#include <std/vector>
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(bump(values), values.size());
+  return 0;
+}
+)";
+  const lang::FrontendResult completedMutation = lang::Frontend().analyze(
+      "sibling-argument-completed-mutation.gti", completedMutationSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(completedMutation.canGenerateCode() &&
+             lang::verifyMirProgram(completedMutation.mir).valid(),
+         "a nested mutable-reference call completed in an earlier operand "
+         "should not block a later sibling read");
+
+  // Borrows of two different owners in one call never overlap.
+  const std::string twoOwnersSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> left = std::vector<int32_t>({1});
+  mut std::vector<int32_t> right = std::vector<int32_t>({2});
+  consume(left.begin_mut(), right.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult twoOwners = lang::Frontend().analyze(
+      "sibling-argument-two-owners.gti", twoOwnersSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(twoOwners.canGenerateCode() &&
+             lang::verifyMirProgram(twoOwners.mir).valid(),
+         "sibling argument borrows of two different owners should stay "
+         "accepted through MIR verification");
+}
+
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
@@ -33853,6 +34072,7 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "forward-iterators") {
     testStoredCarrierReturnProvenance();
     testReferenceArgumentRuntimePlaceCoherence();
+    testCallSiblingArgumentBorrowConflicts();
     testForwardIteratorContractsAndBinarySearch();
     return failures == 0 ? 0 : 1;
   }
@@ -33900,6 +34120,7 @@ int main(int argc, char **argv) {
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
   testStoredCarrierReturnProvenance();
+  testCallSiblingArgumentBorrowConflicts();
   testForwardIteratorContractsAndBinarySearch();
   testGeneralOwnerDependentReturns();
   testNestedMemberReferenceReturnForwarding();

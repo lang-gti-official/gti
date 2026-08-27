@@ -430,9 +430,18 @@ Within one call or construction, receivers and arguments evaluate strictly
 left to right under [Execution Section 4.2](execution.md#42-evaluation-order).
 A transient borrow produced by an earlier argument remains active through the
 invocation and its enclosing full-expression, so a later overlapping mutation
-is invalid. A mutation that completes in an earlier argument may be followed
-by a later borrow when no other active loan conflicts. Known-disjoint origin
-places remain valid in either order.
+is invalid. When the earlier transient borrow is exclusive, a later operand of
+the same call may not read the borrowed owner either, even through an
+ephemeral receiver access whose result carries no borrow, such as
+`values.end()` or `values.size()`. The classic
+`f(values.begin_mut(), values.end())` spelling is therefore a semantic
+rejection pointing at the reading argument, with a note at the exclusive
+argument and a hint that whole-container operations take the container
+itself. A read that completes in an earlier operand does not conflict with a
+later exclusive borrow, so the reversed order remains valid. A mutation that
+completes in an earlier argument may be followed by a later borrow when no
+other active loan conflicts. Known-disjoint origin places remain valid in
+either order.
 
 A plain overloaded subscript or dereference store over a local, parameter,
 receiver, or existing loan uses one non-escaping two-phase mutable call-result
