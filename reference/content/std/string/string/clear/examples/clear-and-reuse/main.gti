@@ -1,0 +1,9 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("old");
+  text.clear();
+  text.append("new");
+  std::println(text);
+  return 0;
+}

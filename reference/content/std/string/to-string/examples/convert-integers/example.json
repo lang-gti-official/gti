@@ -1,0 +1,6 @@
+{
+  "title": "Convert fixed-width integers",
+  "description": "Creates owned decimal strings for signed and unsigned values.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

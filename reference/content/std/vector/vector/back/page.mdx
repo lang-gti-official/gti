@@ -1,0 +1,16 @@
+---
+title: std::vector::back
+description: Borrows the final element through a read-only or mutable receiver.
+kind: member
+since: 0.120.0
+api:
+  - std/vector|method|std::vector::back
+examples:
+  - read-and-update-back
+---
+
+Returns a borrow of the last element. A read-only receiver produces `T&`; a
+mutable receiver can produce `mut T&` for in-place modification.
+
+The vector must not be empty. Empty access follows GTI's defined bounds-failure
+path. The returned borrow remains tied to the vector for its lifetime.

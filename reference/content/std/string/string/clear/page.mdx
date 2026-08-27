@@ -1,0 +1,13 @@
+---
+title: std::string::clear
+description: Removes every character while retaining reusable capacity.
+kind: member
+since: 0.36.0
+api:
+  - std/string|method|std::string::clear
+examples:
+  - clear-and-reuse
+---
+
+After `clear()`, `size()` is zero and `empty()` is true. Existing element or
+iterator loans must end before the mutable operation can run.

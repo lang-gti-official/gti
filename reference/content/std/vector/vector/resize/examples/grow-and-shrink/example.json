@@ -1,0 +1,6 @@
+{
+  "title": "Grow with a fill value, then shrink",
+  "description": "Adds copied values with resize and later destroys the trailing elements.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

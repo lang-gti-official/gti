@@ -1,0 +1,13 @@
+---
+title: std::string::shrink_to_fit
+description: Reduces spare storage so capacity matches the current string size.
+kind: member
+since: 0.105.0
+api:
+  - std/string|method|std::string::shrink_to_fit
+examples:
+  - release-spare-capacity
+---
+
+The current implementation makes capacity equal size. It may relocate
+characters, so no character or iterator loan may overlap the call.

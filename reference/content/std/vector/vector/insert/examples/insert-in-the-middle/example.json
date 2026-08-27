@@ -1,0 +1,6 @@
+{
+  "title": "Insert between existing elements",
+  "description": "Places a value at index one and iterates the resulting order.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}
