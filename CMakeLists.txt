@@ -398,6 +398,7 @@ endif()
 add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
+  "src/driver/bindgen_import.cpp"
   "src/driver/build.cpp"
   "src/driver/compilation.cpp"
   "src/driver/dependencies.cpp"
@@ -420,7 +421,7 @@ target_include_directories(
   "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
-target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend)
+target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen)
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
@@ -451,7 +452,12 @@ target_include_directories(
 target_include_directories(
   "gti_bindgen" SYSTEM PRIVATE ${GTI_CLANG_INCLUDE_DIRS}
 )
-target_link_libraries("gti_bindgen" PRIVATE libclang)
+# The installed archive keeps the same single clang-project link surface
+# through the imported GTI_LLVM::libclang defined by GTIConfig.cmake.
+target_link_libraries(
+  "gti_bindgen"
+  PRIVATE "$<BUILD_INTERFACE:libclang>" "$<INSTALL_INTERFACE:GTI_LLVM::libclang>"
+)
 target_compile_features("gti_bindgen" PUBLIC cxx_std_20)
 
 add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
@@ -520,9 +526,10 @@ install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
 set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
 set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
+set_target_properties(gti_bindgen PROPERTIES EXPORT_NAME bindgen)
 set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
 install(
-  TARGETS gti_compiler gti_cpp_backend gti_driver gti_runtime
+  TARGETS gti_compiler gti_cpp_backend gti_driver gti_bindgen gti_runtime
   EXPORT GTITargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   COMPONENT gti_toolchain

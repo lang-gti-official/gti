@@ -484,13 +484,70 @@ ProjectBuildPlan makeBuildPlan(
   for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
   }
+
+  // Bindgen imports become synthetic package source roots: the generated
+  // directory is an ordinary alias edge of the declaring package, so
+  // `#include <alias/bindings>` resolves through the existing dependency
+  // mechanism and stays invisible to every other package. The declared
+  // (relative) header spelling and options join the model identity; the
+  // generated unit's content participates in cache identity as ordinary
+  // loaded source.
+  std::vector<PackageSourceRoot> packageSourceRoots =
+      workspace.packageSourceRoots();
+  std::vector<BindgenImportPlan> bindgenImports;
+  for (const ResolvedProjectPackage &resolved : workspace.packages()) {
+    for (const ProjectBindgenImport &import : resolved.manifest.bindgen()) {
+      std::filesystem::path importDirectory =
+          workspace.root() / "build" / "gti" / "bindgen";
+      importDirectory /=
+          portableProjectNameKey(resolved.manifest.package().name);
+      importDirectory /= import.alias;
+      const std::string syntheticIdentity =
+          resolved.identity() + "/bindgen/" + import.alias;
+      const auto owner =
+          std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
+                       [&resolved](const PackageSourceRoot &root) {
+                         return root.identity == resolved.identity();
+                       });
+      if (owner == packageSourceRoots.end()) {
+        continue;
+      }
+      owner->dependencies.push_back(
+          {.alias = import.alias, .targetIdentity = syntheticIdentity});
+      packageSourceRoots.push_back({.identity = syntheticIdentity,
+                                    .name = import.alias,
+                                    .packageRoot = importDirectory,
+                                    .sourceRoot = importDirectory,
+                                    .dependencies = {}});
+      modelIdentity += "\nbindgen:" + resolved.identity() + ":" + import.alias +
+                       "=" + import.declaredHeader;
+      if (!import.namespaceName.empty()) {
+        modelIdentity += "|namespace=" + import.namespaceName;
+      }
+      for (const std::string &argument : import.macroArguments) {
+        modelIdentity += "|macro=" + argument;
+      }
+      bindgenImports.push_back({.packageName = resolved.manifest.package().name,
+                                .alias = import.alias,
+                                .header = import.header,
+                                .declaredHeader = import.declaredHeader,
+                                .namespaceName = import.namespaceName,
+                                .includeDirectories = import.includeDirectories,
+                                .macroArguments = import.macroArguments,
+                                .outputDirectory = std::move(importDirectory),
+                                .manifestPath = resolved.manifest.path(),
+                                .declaration = import.declaration});
+    }
+  }
+
   return ProjectBuildPlan(
       manifest.path(), manifest.packageRoot(), workspace.root(),
       manifest.package().name, manifest.package().version, selectedTarget.name,
       selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
       generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
-      std::move(nativeInputs), workspace.packageSourceRoots(),
-      configuration.configurationFlags(), std::move(modelIdentity));
+      std::move(nativeInputs), std::move(packageSourceRoots),
+      configuration.configurationFlags(), std::move(modelIdentity),
+      std::move(bindgenImports));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -626,7 +683,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
     NativeInputs nativeInputs,
     std::vector<PackageSourceRoot> packageSourceRoots,
-    ConfigurationFlags configurationFlags, std::string projectModelIdentity)
+    ConfigurationFlags configurationFlags, std::string projectModelIdentity,
+    std::vector<BindgenImportPlan> bindgenImports)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -641,7 +699,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
-      resolvedProjectModelIdentity(std::move(projectModelIdentity)) {}
+      resolvedProjectModelIdentity(std::move(projectModelIdentity)),
+      resolvedBindgenImports(std::move(bindgenImports)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -711,6 +770,10 @@ const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
 
 const std::string &ProjectBuildPlan::projectModelIdentity() const {
   return resolvedProjectModelIdentity;
+}
+
+const std::vector<BindgenImportPlan> &ProjectBuildPlan::bindgenImports() const {
+  return resolvedBindgenImports;
 }
 
 ProjectMetadata::ProjectMetadata(ProjectWorkspace workspace, TargetInfo target,
