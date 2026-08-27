@@ -30,8 +30,12 @@ enum class BindingItemKind {
   Enum,
   // using Name = <spelling>; for an object typedef.
   Alias,
-  // using Name = (params) -> result; for a function-pointer typedef.
+  // using Name = (params) -> result; for a function-pointer typedef, or a
+  // deterministic alias the planner synthesized for an inline
+  // function-pointer use (`synthesized` marks the latter).
   Callback,
+  // constexpr <type> Name = value; for an imported macro constant.
+  Constant,
   // One extern "C" declaration.
   Function,
   // Anything the bounded surface cannot express, with its reason.
@@ -61,11 +65,16 @@ struct BindingItem {
   std::vector<BindingField> fields;
   // Enum.
   std::vector<BindingConstant> constants;
-  // Alias.
+  // Alias, and the GTI scalar type of a Constant.
   std::string aliasSpelling;
   // Callback / Function.
   std::string resultSpelling;
   std::vector<BindingParameter> parameters;
+  // Constant.
+  std::int64_t constantValue = 0;
+  // Callback: the alias was synthesized for an inline function-pointer use
+  // rather than read from a header typedef.
+  bool synthesized = false;
   // Opaque degradation note or skip reason.
   std::string reason;
 };
