@@ -57,6 +57,7 @@ public:
       throw std::logic_error(
           "C++ emitter requires a coherent representation snapshot: " + detail);
     }
+    generalEmissionPlan = std::move(*snapshot.emissionPlan);
     programPlan = planCppMirProgram(mir, std::move(*snapshot.snapshot));
     if (selectCppMirBackendProgramRoute(programPlan) !=
             CppMirBackendProgramRoute::VerifiedMir ||
@@ -2450,7 +2451,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     for (const MirClassInstance *instance : instances) {
       result.instances.push_back(instance->id);
       const CppMirInitializerScheduleText fields =
-          generalMirBodyEmitter().initializerSchedule(
+          generalMirInitializerSchedule(
               {.kind = MirBodyKind::FieldInitializers, .owner = instance->id});
       std::unordered_map<SymbolId, std::string> current;
       if (fields.supported) {
@@ -2466,7 +2467,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         result.fieldsSupported = false;
       }
       const CppMirInitializerScheduleText statics =
-          generalMirBodyEmitter().initializerSchedule(
+          generalMirInitializerSchedule(
               {.kind = MirBodyKind::StaticFieldInitializers,
                .owner = instance->id});
       if (!statics.supported || !statics.fields.empty()) {
@@ -2498,7 +2499,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         });
     moduleRuntimeMayRaise = cppMirModuleMayRaiseDefinedFailure(mir);
     const CppMirInitializerScheduleText schedule =
-        generalMirBodyEmitter().initializerSchedule(moduleAddress);
+        generalMirInitializerSchedule(moduleAddress);
     if (!moduleRuntimeMayRaise && schedule.supported) {
       moduleGeneralSupported = true;
       for (const CppMirFieldInitializerSpelling &field : schedule.fields) {
@@ -2513,12 +2514,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
       return;
     }
-    const CppMirBodyEmissionAnalysis analysis =
-        generalMirBodyEmitter().analyze(moduleAddress);
-    const bool supported =
-        moduleRuntimeMayRaise
-            ? generalMirBodyEmitter().supportsFailureBodyText(moduleAddress)
-            : generalMirBodyEmitter().supportsBodyText(moduleAddress);
+    const CppMirBodyEmissionPlan &modulePlan =
+        generalMirBodyPlan(moduleAddress);
+    const CppMirBodyEmissionAnalysis &analysis = modulePlan.analysis();
+    const bool supported = moduleRuntimeMayRaise
+                               ? modulePlan.supportsFailureText()
+                               : modulePlan.supportsPlainText();
     if (!analysis.ready() || !supported) {
       throw std::logic_error(
           "lowered C++ emission has no MIR runtime module body");
@@ -2684,15 +2685,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   [[nodiscard]] bool
   loweredNormalBodySupported(const MirFunctionInstance &instance) const {
     return instance.definitionKind == MirDefinitionKind::Source &&
-           generalMirBodyEmitter().supportsBodyText(
-               {.kind = MirBodyKind::Function, .owner = instance.id});
+           generalMirBodyPlan(
+               {.kind = MirBodyKind::Function, .owner = instance.id})
+               .supportsPlainText();
   }
 
   [[nodiscard]] bool
   loweredFailureBodySupported(const MirFunctionInstance &instance) const {
     return instance.definitionKind == MirDefinitionKind::Source &&
-           generalMirBodyEmitter().supportsFailureBodyText(
-               {.kind = MirBodyKind::Function, .owner = instance.id});
+           generalMirBodyPlan(
+               {.kind = MirBodyKind::Function, .owner = instance.id})
+               .supportsFailureText();
   }
 
   [[nodiscard]] bool
@@ -2908,7 +2911,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
       const MirBodyAddress address{.kind = MirBodyKind::Function,
                                    .owner = instance->id};
-      if (!generalMirBodyEmitter().boundaryDeclarationBody(address)) {
+      if (!generalMirBodyPlan(address).boundaryDeclaration()) {
         throw std::logic_error(
             "lowered C++ emission has no boundary shell for function '" +
             row.name + "'");
@@ -3636,16 +3639,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const CppMirBodyEmitter emitter(mir, overlay);
     const MirBodyAddress address{.kind = MirBodyKind::Constructor,
                                  .owner = instance.id};
-    const bool supported = failure ? emitter.supportsFailureBodyText(address)
-                                   : emitter.supportsBodyText(address);
+    const CppMirBodyEmissionPlan plan = emitter.buildPlan(address);
+    const bool supported =
+        failure ? plan.supportsFailureText() : plan.supportsPlainText();
     if (!supported) {
       return std::nullopt;
     }
     const CppMirBodyEmissionText emission =
-        failure
-            ? emitter.emitFailureBodyText(
-                  address, "generic-owner-constructor-failure-v1", indentation)
-            : emitter.emitBodyText(address, "scalar-cfg-v1", indentation);
+        failure ? emitter.emitFailureBodyText(
+                      plan, "generic-owner-constructor-failure-v1", indentation)
+                : emitter.emitBodyText(plan, "scalar-cfg-v1", indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "lowered generic-owner constructor lost its overlay body");
@@ -3701,8 +3704,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   emitLoweredContainedConstructorBody(const LoweredDeclaration &owner,
                                       const MirConstructorInstance &instance) {
     if (loweredContainedConstructorRepresentation(instance.id) == nullptr ||
-        !generalMirBodyEmitter().supportsFailureBodyText(
-            {.kind = MirBodyKind::Constructor, .owner = instance.id})) {
+        !generalMirBodyPlan(
+             {.kind = MirBodyKind::Constructor, .owner = instance.id})
+             .supportsFailureText()) {
       throw std::logic_error(
           "contained constructor definition lost its admitted failure body");
     }
@@ -3770,8 +3774,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           loweredGenericOwnerConstructorBodyText(constructor, *instance, true)
               .has_value();
       const bool concreteFailure =
-          generalMirBodyEmitter().supportsFailureBodyText(
-              {.kind = MirBodyKind::Constructor, .owner = instance->id});
+          generalMirBodyPlan(
+              {.kind = MirBodyKind::Constructor, .owner = instance->id})
+              .supportsFailureText();
       if (!instance->mayRaiseDefinedFailure ||
           (!concreteFailure && !genericOwnerPrimary)) {
         continue;
@@ -3994,9 +3999,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const bool failure = std::any_of(
           destructors.begin(), destructors.end(), [&](const auto *instance) {
             return instance->mayRaiseDefinedFailure &&
-                   generalMirBodyEmitter().supportsFailureBodyText(
-                       {.kind = MirBodyKind::Destructor,
-                        .owner = instance->id});
+                   generalMirBodyPlan(
+                       {.kind = MirBodyKind::Destructor, .owner = instance->id})
+                       .supportsFailureText();
           });
       if (failure) {
         writeIndent();
@@ -4653,10 +4658,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   void emitLoweredNormalFunctionBody(
       const MirFunctionInstance &instance,
       std::string_view familyLabel = "scalar-cfg-v1") {
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Function, .owner = instance.id});
     const CppMirBodyEmissionText emission =
-        generalMirBodyEmitter().emitBodyText(
-            {.kind = MirBodyKind::Function, .owner = instance.id}, familyLabel,
-            indentation);
+        generalMirBodyEmitter().emitBodyText(plan, familyLabel, indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected lowered function body is not emit-ready (instance " +
@@ -4668,10 +4673,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   void emitLoweredFailureFunctionBody(
       const MirFunctionInstance &instance,
       std::string_view familyLabel = "scalar-cfg-failure-v1") {
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Function, .owner = instance.id});
     const CppMirBodyEmissionText emission =
-        generalMirBodyEmitter().emitFailureBodyText(
-            {.kind = MirBodyKind::Function, .owner = instance.id}, familyLabel,
-            indentation);
+        generalMirBodyEmitter().emitFailureBodyText(plan, familyLabel,
+                                                    indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected lowered failure function body is not emit-ready "
@@ -4819,15 +4825,15 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const CppMirBodyEmitter emitter(mir, overlay);
       const MirBodyAddress address{.kind = MirBodyKind::Function,
                                    .owner = instance->id};
-      const bool supported = failure ? emitter.supportsFailureBodyText(address)
-                                     : emitter.supportsBodyText(address);
+      const CppMirBodyEmissionPlan plan = emitter.buildPlan(address);
+      const bool supported =
+          failure ? plan.supportsFailureText() : plan.supportsPlainText();
       if (!supported) {
         continue;
       }
       const CppMirBodyEmissionText emission =
-          failure
-              ? emitter.emitFailureBodyText(address, familyLabel, indentation)
-              : emitter.emitBodyText(address, familyLabel, indentation);
+          failure ? emitter.emitFailureBodyText(plan, familyLabel, indentation)
+                  : emitter.emitBodyText(plan, familyLabel, indentation);
       if (!emission.emitted()) {
         throw std::logic_error(
             "lowered callable template body emission failed closed");
@@ -5254,7 +5260,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           const MirBodyAddress address{.kind = MirBodyKind::Constructor,
                                        .owner = instance->id};
           if (instance->mayRaiseDefinedFailure &&
-              generalMirBodyEmitter().supportsFailureBodyText(address) &&
+              generalMirBodyPlan(address).supportsFailureText() &&
               genericOwner) {
             writeIndent();
             output << "template <> " << ownerSpelling << "::" << owner->name
@@ -5262,7 +5268,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
             emitLoweredConstructorParameters(*instance, true);
             output << ");\n";
           }
-          if (generalMirBodyEmitter().supportsBodyText(address)) {
+          if (generalMirBodyPlan(address).supportsPlainText()) {
             writeIndent();
             output << "template <> " << ownerSpelling << "::" << owner->name
                    << '(';
@@ -5839,10 +5845,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         }
         continue;
       }
-      const bool normal = generalMirBodyEmitter().supportsBodyText(address);
-      const bool failure =
-          instance->mayRaiseDefinedFailure &&
-          generalMirBodyEmitter().supportsFailureBodyText(address);
+      const bool normal = generalMirBodyPlan(address).supportsPlainText();
+      const bool failure = instance->mayRaiseDefinedFailure &&
+                           generalMirBodyPlan(address).supportsFailureText();
       if (!normal && !failure) {
         throw std::logic_error(
             "source lowered constructor has no admitted MIR body");
@@ -5984,9 +5989,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         };
         const MirBodyAddress address{.kind = MirBodyKind::Destructor,
                                      .owner = destructor->id};
-        const bool failure =
-            destructor->mayRaiseDefinedFailure &&
-            generalMirBodyEmitter().supportsFailureBodyText(address);
+        const bool failure = destructor->mayRaiseDefinedFailure &&
+                             generalMirBodyPlan(address).supportsFailureText();
         if (failure) {
           emitPrefix();
           output << "bool " << ownerSpelling
@@ -6050,7 +6054,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           writeIndent();
           output << "}\n";
         } else {
-          if (!generalMirBodyEmitter().supportsBodyText(address)) {
+          if (!generalMirBodyPlan(address).supportsPlainText()) {
             throw std::logic_error(
                 "lowered lifecycle cleanup has no admitted destructor "
                 "body");
@@ -6961,15 +6965,34 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return *generalBodyEmitter;
   }
 
+  [[nodiscard]] const CppMirBodyEmissionPlan &
+  generalMirBodyPlan(MirBodyAddress address) const {
+    const CppMirBodyEmissionPlan *plan = generalEmissionPlan.find(address);
+    if (plan == nullptr) {
+      throw std::logic_error(
+          "general MIR emission plan lost an exact body address");
+    }
+    return *plan;
+  }
+
+  [[nodiscard]] CppMirInitializerScheduleText
+  generalMirInitializerSchedule(MirBodyAddress address) const {
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(address);
+    return {.analysis = plan.analysis(),
+            .supported = plan.supportsInitializerSchedule(),
+            .fields = plan.initializerFields()};
+  }
+
   void emitGeneralFailureConstructorBodyText(
       const MirConstructorInstance &instance) {
     if (!generalEmissionMap) {
       throw std::logic_error("general MIR body emission requires verified MIR");
     }
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Constructor, .owner = instance.id});
     const CppMirBodyEmissionText emission =
         generalMirBodyEmitter().emitFailureBodyText(
-            {.kind = MirBodyKind::Constructor, .owner = instance.id},
-            "scalar-cfg-constructor-failure-v1", indentation);
+            plan, "scalar-cfg-constructor-failure-v1", indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected failure-form verified-MIR constructor body is not ready "
@@ -6984,10 +7007,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (!generalEmissionMap) {
       throw std::logic_error("general MIR body emission requires verified MIR");
     }
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Destructor, .owner = instance.id});
     const CppMirBodyEmissionText emission =
         generalMirBodyEmitter().emitFailureBodyText(
-            {.kind = MirBodyKind::Destructor, .owner = instance.id},
-            "scalar-cfg-destructor-failure-v1", indentation);
+            plan, "scalar-cfg-destructor-failure-v1", indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected failure-form verified-MIR destructor body is not ready "
@@ -7912,10 +7936,11 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     if (!generalEmissionMap) {
       throw std::logic_error("general MIR body emission requires verified MIR");
     }
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Constructor, .owner = constructor.id});
     const CppMirBodyEmissionText emission =
-        generalMirBodyEmitter().emitBodyText(
-            {.kind = MirBodyKind::Constructor, .owner = constructor.id},
-            "scalar-cfg-v1", indentation);
+        generalMirBodyEmitter().emitBodyText(plan, "scalar-cfg-v1",
+                                             indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected verified-MIR constructor body is not ready for general "
@@ -7930,10 +7955,10 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     if (!generalEmissionMap) {
       throw std::logic_error("general MIR body emission requires verified MIR");
     }
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(
+        {.kind = MirBodyKind::Destructor, .owner = destructor.id});
     const CppMirBodyEmissionText emission =
-        generalMirBodyEmitter().emitBodyText(
-            {.kind = MirBodyKind::Destructor, .owner = destructor.id},
-            familyLabel, indentation);
+        generalMirBodyEmitter().emitBodyText(plan, familyLabel, indentation);
     if (!emission.emitted()) {
       std::string message =
           "selected verified-MIR body is not ready for general emission";
@@ -7992,12 +8017,13 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
       return;
     }
     const MirBodyAddress address{.kind = MirBodyKind::Module, .owner = 0};
+    const CppMirBodyEmissionPlan &plan = generalMirBodyPlan(address);
     const CppMirBodyEmissionText emission =
         moduleRuntimeMayRaise
             ? generalMirBodyEmitter().emitFailureBodyText(
-                  address, "program-initialization-v1", indentation)
+                  plan, "program-initialization-v1", indentation)
             : generalMirBodyEmitter().emitBodyText(
-                  address, "program-initialization-v1", indentation);
+                  plan, "program-initialization-v1", indentation);
     if (!emission.emitted()) {
       throw std::logic_error(
           "selected verified-MIR runtime module body is not emit-ready");
@@ -8107,8 +8133,9 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     const bool failure = entry->mayRaiseDefinedFailure;
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};
-    if (failure ? !generalMirBodyEmitter().supportsFailureBodyText(entryAddress)
-                : !generalMirBodyEmitter().supportsBodyText(entryAddress)) {
+    const CppMirBodyEmissionPlan &entryPlan = generalMirBodyPlan(entryAddress);
+    if (failure ? !entryPlan.supportsFailureText()
+                : !entryPlan.supportsPlainText()) {
       throw std::logic_error("lowered hosted entry has no admitted MIR body");
     }
 
@@ -8869,6 +8896,7 @@ namespace gti_internal::backend {
   const MirProgram &mir;
   const LoweredProgram &loweredProgram;
   CppMirProgramPlan programPlan;
+  CppMirProgramEmissionPlan generalEmissionPlan;
   std::unordered_map<SymbolId, std::string> moduleGeneralInitializers;
   bool moduleGeneralSupported = false;
   std::unordered_set<SymbolId> moduleRuntimeInitializedSymbols;

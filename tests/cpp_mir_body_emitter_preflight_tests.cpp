@@ -1,3 +1,4 @@
+#include "../src/compiler/cpp_mir_body_text_writer.h"
 #include "cpp_mir_body_emitter_test_fixture.h"
 
 namespace {
@@ -173,6 +174,40 @@ int32_t identity(int32_t value) { return value; }
               duplicate,
               lang::CppMirBodyEmissionIssueKind::DuplicateTypeRepresentation),
       "duplicate copied type rows should fail closed as incoherent");
+}
+
+void testImmutableBodyPlanOutlivesAdmissionInputs() {
+  const lang::CppMirBodyEmissionPlan plan = [] {
+    const lang::FrontendResult frontend =
+        analyze("cpp-mir-body-immutable-plan.gti",
+                "int32_t identity(int32_t value) { return value; }");
+    expect(frontend.canGenerateCode(),
+           "the immutable-plan fixture should pass the frontend");
+    const lang::MirFunctionInstance *function =
+        firstSourceFunction(frontend.mir);
+    expect(function != nullptr,
+           "the immutable-plan fixture should lower one source function");
+    if (function == nullptr) {
+      return lang::CppMirBodyEmissionPlan{};
+    }
+    const lang::CppMirBodyEmissionMap map(completeRows(frontend.mir));
+    return lang::CppMirBodyEmitter(frontend.mir, map)
+        .buildPlan(
+            {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  }();
+
+  expect(plan.ready() && plan.supportsPlainText(),
+         "a complete scalar body should produce an admitted immutable plan");
+  const lang::CppMirBodyEmissionText first = lang::CppMirBodyTextWriter::write(
+      plan, lang::CppMirBodyTextForm::Plain, "immutable-plan-v1", 1);
+  const lang::CppMirBodyEmissionText second = lang::CppMirBodyTextWriter::write(
+      plan, lang::CppMirBodyTextForm::Plain, "immutable-plan-v1", 1);
+  expect(first.emitted() && first.text == second.text &&
+             first.text.find("immutable-plan-v1") != std::string::npos &&
+             first.text.find(lang::cppMirBodyEmissionFamilyPlaceholder) ==
+                 std::string::npos,
+         "the formatting-only writer should remain deterministic after the "
+         "MIR program and representation map have been destroyed");
 }
 
 void testHostedStartupOwnsRemainingAuthorityGap() {
@@ -2138,6 +2173,8 @@ constexpr NamedTest kTests[] = {
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},
+    {"testImmutableBodyPlanOutlivesAdmissionInputs",
+     testImmutableBodyPlanOutlivesAdmissionInputs},
     {"testHostedStartupOwnsRemainingAuthorityGap",
      testHostedStartupOwnsRemainingAuthorityGap},
     {"testVerifiedProgramInitializationPlanClassification",
