@@ -366,8 +366,8 @@ The structural sequence is:
 | 1 | `R-STRUCT-00` | **complete** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit `4d4c8ae2`, the integration broad validation, controlled build measurements, and the complete artifact/MIR/diagnostic oracles are recorded in [`compiler-structural-baseline.json`](compiler-structural-baseline.json). |
 | 2 | `R-STRUCT-01` | **complete** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | One request owner/reset passes reuse regressions; the manifest-backed 125-test compiler aggregate, 81-test emitter census, focused suites, and exact-census corpus sweeps pass. |
 | 3 | `R-STRUCT-02` | **complete** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source/cache/recovery and the 125-test semantic aggregate pass; the sealed catalog, explicit callable projection, narrow HIR instance provider, three semantic headers, static boundary test, self-contained compilation, and exact three-object analyzer-facade rebuild prove the ownership/include boundary. |
-| 4 | `R-STRUCT-03` | **ready** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, and hosted startup. | MIR printers, verifier mutations, census, optimizer replay, and endpoint behavior are unchanged. |
-| 5 | `R-STRUCT-04` | **blocked** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
+| 4 | `R-STRUCT-03` | **complete** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, hosted startup, and lowered-program closure. | Separate service/header boundaries, fail-closed component mutation tests, optimizer suites, MIR/lowered census, hosted startup, and the 444-mode cutover oracle pass unchanged. |
+| 5 | `R-STRUCT-04` | **ready** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
 | 6 | `R-STRUCT-05` | **blocked** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Broad and installed gates pass; focused rebuilds are bounded; controlled clean/runtime metrics satisfy the plan. |
 
 From 2026-08-26 through 2026-08-27, the runtime-performance campaign was the
@@ -2938,7 +2938,7 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   calls, raw memory, lifetime change, or unknown mutation; then add only the
   loop-header threshold widening and bounded narrowing required by that
   client. Reuse `O-MIR-06` loop identity, `O-MIR-07` alias facts, the shared
-  solver, the existing arithmetic discharge records, `MirProgramEditor`, and
+  solver, the existing arithmetic discharge records, `MirEditor`, and
   independent replay. Source-MIR cyclic scalar promotion is not an entry
   prerequisite unless a focused probe proves the place-based analysis cannot
   carry the required fact.

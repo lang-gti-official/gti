@@ -405,6 +405,17 @@ MIR and lowered-program census, hosted startup, lowered-program rejection, and
 O0/O1/O3 behavior are unchanged. Controlled mutation tests prove that omitting
 any verifier component fails closed.
 
+**Completed evidence:** the MIR model no longer exports operational services;
+transactional edits own analysis invalidation; body, program, failure-effect,
+and optimization-replay verification compile independently behind an explicit
+fail-closed facade; and body/program/hosted lowering have separate lifetimes.
+`LoweredProgram` lookup, construction, deterministic closure derivation, and
+completed-value verification are separate units, with a static boundary
+rejecting frontend reach-back. Header boundaries, optimizer foundation/safety/
+analysis, program initialization, hosted startup, lowered contract/census, MIR
+census, and the C++20/C++23 O0/O1/O3 cutover oracle pass without diagnostic,
+inventory, or runtime drift.
+
 ## R-STRUCT-04: C++ Backend Admission And Text Ownership
 
 The C++ backend keeps the existing public `CppBackend`/`LoweredProgram`

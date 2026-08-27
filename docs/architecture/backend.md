@@ -64,6 +64,15 @@ Construction and consumption are intentionally separated. The consumer header
 builder declaration. `include/gti/lowered_program_builder.h` forward-declares
 the upstream representations needed only to construct the value.
 
+The implementation follows the same ownership boundary. `lowered_program.cpp`
+owns immutable lookup and enumeration, `lowered_program_builder.cpp` is the
+only frontend-aware conversion unit, `lowered_program_closure.cpp` derives the
+deterministic body/generated-item closure shared by construction and checking,
+and `lowered_program_verifier.cpp` consumes only the completed lowered value,
+MIR verification, and failure metadata. A repository boundary test rejects any
+AST, HIR, semantic-model, or builder dependency in the model, closure, or
+verifier units.
+
 `LoweredProgram` is value-owned and pointer-free. Its fields are private, its
 public views are const, and its identities are stable within the value. It
 contains:
