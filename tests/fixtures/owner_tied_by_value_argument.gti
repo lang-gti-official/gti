@@ -1,0 +1,43 @@
+#include <std/vector>
+#include <std/iterator>
+
+// A named owner-tied iterator local (a copyable class value holding a
+// reference field) passed BY VALUE into generic functions. The named
+// local forces the unstaged Load-copy argument shape; the fresh prvalue
+// calls pin the staged contrast beside it.
+
+Iterator relay<Iterator>(mut Iterator iterator)
+  requires std::input_iterator<Iterator> {
+  return std::move(iterator);
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+
+  // Read-only named local into std::distance by value.
+  auto cursor = values.begin();
+  std::ptrdiff_t whole = std::distance(cursor, values.end());
+  std::println(whole == std::ptrdiff_t(3) ? "distance-read ok"
+                                          : "distance-read bad");
+
+  // Mutable named local into std::distance by value.
+  mut auto walker = values.begin();
+  ++walker;
+  std::ptrdiff_t stepped = std::distance(walker, values.end());
+  std::println(stepped == std::ptrdiff_t(2) ? "distance-mut ok"
+                                            : "distance-mut bad");
+
+  // Named local into a user generic function by value; the copy keeps
+  // the owner dependency, so the relayed iterator still reads `values`.
+  auto handed = relay(cursor);
+  std::println(*handed == 1 ? "relay ok" : "relay bad");
+
+  // The fresh prvalue argument stays on the staged route.
+  std::ptrdiff_t direct = std::distance(values.begin(), values.end());
+  std::println(direct == std::ptrdiff_t(3) ? "prvalue ok" : "prvalue bad");
+
+  return 0;
+}

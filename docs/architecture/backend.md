@@ -305,6 +305,19 @@ prepared slot, and unsupported, aliased, duplicated, projected, or mismatched
 shapes remain rejected rather than receiving backend-invented storage or
 cleanup.
 
+A by-value class argument may also arrive without a `CallInput` stage: when
+the copied class carries borrowed state, HIR plans no call-input record, so
+the copy reaches MIR as a bare `Load` of a binding-rooted place whose one SSA
+use is one exact by-value operand of one call. The body emitter spells the
+source place at the consuming call and C++ copy-constructs the parameter at
+the boundary, preserving the copy's owner dependency exactly like a fresh
+prvalue argument — the named owner-tied iterator local passed to a generic
+callee is the motivating shape. Admission is exact: the `Load` and its call
+share one block, nothing between them can write the source binding, no
+exclusive loan aliases that binding anywhere in the body, and the value owns
+no place root or drop obligation; other shapes keep declining rather than
+deferring a copy whose source could have changed.
+
 For a verified `MoveBorrowedTemporary` constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
 slot, moves that value into the selected constructor parameter, and ends the
