@@ -133,6 +133,7 @@ public:
     commitSynthesis_ = true;
     BindingPlan plan;
     plan.options = options_;
+    plan.sourceFiles = model_.sources;
     for (const NativeDeclarationId id : model_.order) {
       const NativeDeclaration *declaration = model_.findDeclaration(id);
       if (declaration == nullptr) {
@@ -142,6 +143,16 @@ public:
           duplicateRecords_.count(id) != 0) {
         // The first declaration of this name already produced the binding;
         // every use of this entity spells the same name.
+        continue;
+      }
+      if (!declaration->inPolicy) {
+        // System provenance (C-05): the declaration resolves uses but is
+        // not part of the import. A skipped-typedef outcome makes those
+        // uses spell the canonical type; a referenced system record is
+        // pulled below as an opaque handle.
+        if (declaration->kind == NativeDeclarationKind::Typedef) {
+          typedefImported_.emplace(id, false);
+        }
         continue;
       }
       synthesisOrigin_ = declaration->origin;
@@ -187,6 +198,33 @@ public:
       pendingCallbacks_.clear();
       plan.items.push_back(std::move(planned));
     }
+    // Out-of-policy records that in-policy bindings reference through
+    // pointers surface as opaque handles ahead of every use, in model
+    // order, so the emitted file stays self-contained.
+    std::vector<BindingItem> pulled;
+    for (const NativeDeclarationId id : model_.order) {
+      if (pulledRecords_.count(id) == 0) {
+        continue;
+      }
+      const NativeDeclaration *declaration = model_.findDeclaration(id);
+      if (declaration == nullptr) {
+        continue;
+      }
+      BindingItem handle;
+      handle.kind = BindingItemKind::Opaque;
+      handle.name = declaration->name;
+      handle.origin = declaration->origin;
+      const NativeSourceFile *source =
+          model_.findSource(declaration->origin.file);
+      handle.reason =
+          "declared in " +
+          (source != nullptr ? source->path : std::string("a system header")) +
+          "; imported as an opaque handle because pointer uses reach it";
+      pulled.push_back(std::move(handle));
+    }
+    plan.items.insert(plan.items.begin(),
+                      std::make_move_iterator(pulled.begin()),
+                      std::make_move_iterator(pulled.end()));
     return plan;
   }
 
@@ -217,6 +255,9 @@ private:
   // duplicates leave the plan.
   std::unordered_map<std::string, NativeDeclarationId> recordIdByName_;
   std::set<NativeDeclarationId> duplicateRecords_;
+  // Out-of-policy records referenced by committed in-policy bindings; each
+  // becomes one opaque handle at the head of the plan.
+  mutable std::set<NativeDeclarationId> pulledRecords_;
 
   [[nodiscard]] static BindingItem skipped(const NativeDeclaration &declaration,
                                            std::string reason) {
@@ -350,6 +391,11 @@ private:
       if (target == nullptr) {
         return unsupportedType("the enum reference is invalid");
       }
+      if (!target->inPolicy) {
+        return unsupportedType("enum '" + target->name +
+                               "' comes from a system header outside the "
+                               "import policy");
+      }
       return supportedType(target->name);
     }
     case NativeTypeKind::Function:
@@ -443,6 +489,16 @@ private:
           binding->second == RecordBinding::Unavailable) {
         return unsupportedType("record " +
                                recordReasons_.at(pointee->declaration));
+      }
+      if (!record->inPolicy && commitSynthesis_) {
+        // A committed use of a system record pulls its opaque handle into
+        // the plan; name unification keeps one handle per tag name.
+        NativeDeclarationId pulledId = pointee->declaration;
+        if (const auto first = recordIdByName_.find(record->name);
+            first != recordIdByName_.end()) {
+          pulledId = first->second;
+        }
+        pulledRecords_.insert(pulledId);
       }
       // Both [[c_abi]] records and [[c_opaque]] handles admit one-level
       // pointers; degradation to opaque keeps exactly these uses alive.
@@ -589,6 +645,15 @@ private:
         continue;
       }
       std::string reason;
+      if (!declaration->inPolicy) {
+        // A system record is a handle at most: binding a platform layout by
+        // value would freeze facts the header owner never promised GTI.
+        recordBindings_.emplace(id, RecordBinding::Opaque);
+        if (!declaration->name.empty()) {
+          recordIdByName_.emplace(declaration->name, id);
+        }
+        continue;
+      }
       if (!declaration->complete) {
         // A genuinely opaque handle; no degradation note.
       } else if (declaration->recordIsUnion) {
@@ -747,6 +812,17 @@ private:
     const NativeType *type = model_.findType(declaration.type);
     if (type == nullptr || type->kind != NativeTypeKind::Function) {
       return skipped(declaration, "the function type is invalid");
+    }
+    if (!declaration.asmLabel.empty()) {
+      return skipped(declaration,
+                     "the assembler label '" + declaration.asmLabel +
+                         "' renames the link symbol; importing the C name "
+                         "would bind a different function");
+    }
+    if (!declaration.callingConvention.empty()) {
+      return skipped(declaration, "the '" + declaration.callingConvention +
+                                      "' calling convention is outside the "
+                                      "bounded C surface");
     }
     if (type->variadic) {
       return skipped(declaration,

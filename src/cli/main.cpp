@@ -2416,11 +2416,11 @@ int runBindgen(int argc, char *argv[]) {
   lang::driver::TemporaryArtifact preprocessedCleanup(preprocessed, true);
   lang::driver::TemporaryArtifact dependencyCleanup(dependencies, true);
 
-  // `-dD` keeps user-header macro definitions in the preprocessed text so
-  // the reader can import bounded integer constants; system-header macros
-  // stay out with their suppressed content.
-  std::vector<std::string> preprocessorArguments{
-      "-x", "c", "-P", "-fkeep-system-includes", "-dD"};
+  // System includes expand with line markers preserved (C-05): the reader
+  // maps every declaration back to its original file, applies the import
+  // policy by provenance, and resolves system types like `time_t`
+  // canonically. `-dD` keeps macro definitions for constant import.
+  std::vector<std::string> preprocessorArguments{"-x", "c", "-dD"};
   if (options.targetTriple) {
     preprocessorArguments.emplace_back("--target=" + *options.targetTriple);
   }
@@ -2466,9 +2466,18 @@ int runBindgen(int argc, char *argv[]) {
   const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
       contents.str(), options.header.filename().string(),
       std::move(options.bindings), profile);
+  // Origins are original (line-marker) locations: the root header by
+  // default, the consumed file's own path otherwise.
+  const auto originLabel =
+      [&result, &options](const lang::bindgen::SourceOrigin &origin) {
+        if (origin.file != 0 && origin.file <= result.plan.sourceFiles.size()) {
+          return result.plan.sourceFiles[origin.file - 1].path + ":" +
+                 std::to_string(origin.line);
+        }
+        return options.header.string() + ":" + std::to_string(origin.line);
+      };
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
-    std::cerr << options.header.string() << ": preprocessed line "
-              << diagnostic.origin.line << ": "
+    std::cerr << originLabel(diagnostic.origin) << ": "
               << (diagnostic.severity == lang::bindgen::ReaderSeverity::Error
                       ? "error: "
                       : "note: ")
@@ -2476,8 +2485,7 @@ int runBindgen(int argc, char *argv[]) {
   }
   for (const lang::bindgen::BindingItem &item : result.plan.items) {
     if (item.kind == lang::bindgen::BindingItemKind::Skipped) {
-      std::cerr << options.header.string() << ": preprocessed line "
-                << item.origin.line << ": note: skipped '" << item.name
+      std::cerr << originLabel(item.origin) << ": note: skipped '" << item.name
                 << "': " << item.reason << '\n';
     }
   }
