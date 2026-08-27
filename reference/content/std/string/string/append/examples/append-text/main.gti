@@ -1,0 +1,8 @@
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("compile");
+  text.append(" and run");
+  std::println(text);
+  return 0;
+}

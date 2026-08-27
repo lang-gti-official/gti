@@ -1,0 +1,13 @@
+---
+title: std::array::fill
+description: Copy-assigns one value into every element.
+kind: member
+since: 0.105.0
+api:
+  - std/array|method|std::array::fill
+examples:
+  - fill-elements
+---
+
+`fill(value)` requires `std::copyable<T>` because the same value is assigned
+to each element. For a zero-extent array it performs no assignments.

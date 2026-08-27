@@ -1,0 +1,6 @@
+{
+  "title": "Reserve without changing size",
+  "description": "Allocates spare storage and confirms that the live element count is unchanged.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

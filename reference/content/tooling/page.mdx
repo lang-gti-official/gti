@@ -1,0 +1,26 @@
+---
+title: GTI tooling
+description: Compiler, project, native-binding, formatting, and editor workflows shipped with GTI.
+kind: tooling
+api: []
+examples: []
+---
+
+GTI ships one compiler pipeline behind a small set of command-line and editor
+tools. Direct compilation is useful for a single source entry. Project mode
+adds manifests, named targets, profiles, dependencies, caching, and native
+inputs without changing the language compilation rules.
+
+## Tooling map
+
+| Area | Use it for |
+| --- | --- |
+| [`gti` command line](/tooling/cli/) | Direct compilation and project commands. |
+| [Projects and `gti.toml`](/tooling/projects/) | Reproducible packages, targets, profiles, workspaces, and dependencies. |
+| [`gti bindgen`](/tooling/bindgen/) | Generate bounded GTI declarations from C headers. |
+| [Formatter](/tooling/formatting/) | Configure the LSP's syntax-aware source formatter. |
+| [Language server](/tooling/lsp/) | Diagnostics, navigation, semantic highlighting, completion, and formatting. |
+
+Compiler diagnostics and language meaning come from the same frontend in
+direct builds, project builds, and the language server. Tooling should not
+invent a second interpretation of GTI source.

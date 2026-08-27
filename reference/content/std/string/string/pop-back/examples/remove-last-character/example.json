@@ -1,0 +1,6 @@
+{
+  "title": "Remove the final character",
+  "description": "Shrinks a non-empty string by one character.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

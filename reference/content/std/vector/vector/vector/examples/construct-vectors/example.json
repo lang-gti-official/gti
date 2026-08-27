@@ -1,0 +1,6 @@
+{
+  "title": "Use the supported construction forms",
+  "description": "Creates empty, sized, fixed-array, and moved vectors without implicit copying.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

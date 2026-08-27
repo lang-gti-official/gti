@@ -1,0 +1,6 @@
+{
+  "title": "Update the final element",
+  "description": "Borrows the last element mutably and changes it in place.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

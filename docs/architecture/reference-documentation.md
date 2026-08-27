@@ -6,9 +6,13 @@ The reference application under `reference/` is a statically exported
 Next.js site with a compiler-backed content pipeline. An author can add one
 trustworthy language or library page, bind it to current compiler
 declarations, give it dedicated examples, and have CI reject structural,
-semantic-binding, compilation, or rendering drift. The first complete
-vertical slice publishes the standard-library landing pages and a
-`/std/vector/vector/` reference page.
+semantic-binding, compilation, or rendering drift. The implemented site
+publishes 70 authored pages. Its complete API families cover `std::array`,
+`std::string`, and `std::vector`, including a canonical child route for every
+constructor/member group shown by those type pages. It also publishes a
+compiler-truthful standard-library status catalogue and an authored tooling
+section for direct/project compilation, manifests, C bindgen, formatting, and
+the LSP.
 
 The foundation separates three authorities:
 
@@ -59,8 +63,15 @@ build/gti_docgen --stdlib stdlib --output documentation-index.json
 Publishable content lives below `reference/content/`. A page directory maps
 directly to its route and contains one `page.mdx`. Frontmatter declares a
 page kind, title, summary, compiler API group keys, and page-local example IDs.
+`tooling` and `command` pages use the same validated content graph without
+pretending that CLI prose is a compiler declaration.
 For example, `content/std/vector/vector/page.mdx` maps to the familiar
 `/std/vector/vector/` route.
+
+API pages may also declare one authored `since` label. The content contract
+accepts current semantic release labels such as `0.301.0` and reserves edition
+labels such as `gti-20` for a future language-version model. This is authored
+release history rather than a compiler semantic fact.
 
 `reference/src/content/contract.ts` validates the complete graph before
 development, type checking, or production builds. It rejects:
@@ -68,8 +79,10 @@ development, type checking, or production builds. It rejects:
 - invalid or duplicate route segments, API bindings, and example IDs;
 - an API binding absent from the real compiler index;
 - missing, symlinked, or wrong-kind page/example files;
-- example identifiers that could escape their owning page; and
-- page-local example directories not explicitly listed by that page.
+- example identifiers that could escape their owning page;
+- page-local example directories not explicitly listed by that page;
+- member pages that bind zero, multiple, or non-member API groups; and
+- member bindings without one canonical child route beneath their owning type.
 
 `scripts/generate-content.ts` then emits an ignored deterministic TypeScript
 registry with static MDX imports, complete compiler declarations, and the
@@ -89,12 +102,36 @@ copying its implementation. Every content page receives:
 - rendered, page-owned source examples and expected results; and
 - page-specific title and description metadata.
 
+When present, the heading renders `since` as a compact availability tag. The
+current page-level value records the earliest availability of the documented
+overload group. Later overload-specific history remains authored prose until
+the compiler projection gains a versioned declaration model.
+
+The trait grid is rendered only for a non-generic primary declaration. The
+current index carries concrete booleans but not conditional trait formulas, so
+presenting an open `Type<T>` row as universally copyable or movable would be a
+false claim about some specializations. Generic pages state their capability
+requirements and unconditional ownership policy in authored prose until the
+projection can represent those conditions directly.
+
+An authored type page presents compiler-projected overload groups as its
+member table. Every constructor, method, operator, or field group in that table
+must have exactly one authored child page. The method name links to that route,
+where the same compiler-owned group supplies the exact declaration while MDX
+and page-owned examples provide operation-specific guidance. This contract
+prevents a type overview from publishing decorative, non-navigable member
+rows.
+
 The persistent header and sidebar are derived from the validated content
 registry. The header search filters the same page metadata entirely in the
 browser, so static export requires no search service and cannot return a route
-that was not built. This initial search indexes pages rather than individual
-member declarations; dedicated member routes can extend it without changing
-the content boundary.
+that was not built. Because member groups are first-class pages, search indexes
+their names and summaries without a separate symbol index. Member pages stay
+out of the global sidebar; command detail pages follow the same rule and are
+linked from their tooling overview. Their owning type or tooling table supplies
+the scalable local navigation surface. Type, function, concept, and member
+bindings all contribute canonical detail links when a broader header synopsis
+presents the same compiler group.
 
 ## Page-Owned Examples
 
@@ -136,7 +173,11 @@ Reference-only changes run this job without forcing the general compiler
 matrix. Any compiler/toolchain-visible change also runs it, because semantic
 or signature drift can invalidate existing reference bindings and examples.
 
-Complete language/library coverage, dedicated member pages, richer overload
-and constraint presentation, and ranked symbol search remain later vertical
-slices. They must consume these boundaries rather than replacing them with
-source-text scraping or a second language model.
+Complete language/library coverage, richer overload and constraint
+presentation, and ranked symbol search remain later vertical slices. They must
+consume these boundaries rather than replacing them with source-text scraping
+or a second language model. The implemented array, string, and vector families
+are the baseline for adding another class: bind the compiler-owned type/member
+groups, author one canonical route per presented member, identify
+declaration-only operations explicitly, and verify every displayed callable
+example with the real toolchain.

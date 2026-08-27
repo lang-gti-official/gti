@@ -1,0 +1,6 @@
+{
+  "title": "Fill every element",
+  "description": "Copy-assigns one integer into every slot of a mutable array.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

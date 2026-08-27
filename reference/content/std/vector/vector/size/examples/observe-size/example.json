@@ -1,0 +1,6 @@
+{
+  "title": "Observe changes to the element count",
+  "description": "Reads the size before and after removing the final element.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

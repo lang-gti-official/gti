@@ -3,16 +3,25 @@ import Link from "next/link";
 import { referencePages } from "@/generated/reference-pages";
 
 export default function HomePage() {
-  const declarationCount = referencePages.reduce(
-    (total, page) => total + page.apiDeclarations.length,
-    0,
-  );
+  const declarationCount = new Set(
+    referencePages.flatMap((page) =>
+      page.apiDeclarations.map((declaration) => declaration.key),
+    ),
+  ).size;
   const exampleCount = referencePages.reduce(
     (total, page) => total + page.examples.length,
     0,
   );
-  const libraryPages = referencePages.filter((page) =>
-    page.route === "std" || page.route.startsWith("std/"),
+  const featuredRoutes = new Set([
+    "std/vector/vector",
+    "std/array/array",
+    "std/string/string",
+    "tooling/cli",
+    "tooling/projects",
+    "tooling/bindgen",
+  ]);
+  const featuredPages = referencePages.filter((page) =>
+    featuredRoutes.has(page.route),
   );
   return (
     <article className="reference-page home-page">
@@ -60,7 +69,17 @@ export default function HomePage() {
             <strong>Core GTI concepts</strong>
             <p>Syntax, ownership, programs, build workflow, and interoperation.</p>
           </Link>
-          {libraryPages.map((page) => (
+          <Link className="reference-card" href="/std/">
+            <span>Standard library</span>
+            <strong>Headers and APIs</strong>
+            <p>Containers, algorithms, I/O, ownership, and host facilities.</p>
+          </Link>
+          <Link className="reference-card" href="/tooling/">
+            <span>Tooling</span>
+            <strong>Build and editor workflow</strong>
+            <p>Compiler commands, projects, native bindings, formatting, and LSP.</p>
+          </Link>
+          {featuredPages.map((page) => (
             <Link
               className="reference-card"
               href={`/${page.route}/`}
