@@ -34512,6 +34512,276 @@ int main() {
          "declining the retained loan's place");
 }
 
+void testNestedBorrowChainLoanOrdering() {
+  // A reference binding may retain the result of a call whose own argument or
+  // receiver is already a borrowed call result. Lowering keeps that outermost
+  // call result's loan, so the links it reborrows must stay live: a parent
+  // loan outlives its child reborrow on every edge, normal and failure alike.
+  // Releasing the transient links by expression extent ended the parent while
+  // the retained child was still active, which MIR verification correctly
+  // rejected as "loan N is ended before its active child reborrow".
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("nested-borrow-chain.gti", R"(
+class Leaf {
+  mut int32_t value = 1;
+  mut int32_t counter = 0;
+
+public:
+  Leaf() {}
+  mut int32_t& write() mut { return this.value; }
+  mut int32_t& overflow() mut {
+    this.counter = 2147483647;
+    this.counter += 1;
+    return this.value;
+  }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Middle {
+  mut Leaf leaf = Leaf();
+
+public:
+  Middle() {}
+  mut Leaf& reach() mut { return this.leaf; }
+  Leaf& look() { return this.leaf; }
+  int32_t read() { return this.leaf.read(); }
+};
+
+class Pair {
+public:
+  mut Middle left = Middle();
+  mut Middle right = Middle();
+};
+
+class Top {
+public:
+  mut Pair pair = Pair();
+};
+
+int32_t& pick(Leaf& candidate) { return candidate.observe(); }
+
+int32_t retained_argument() {
+  mut Pair pair = Pair();
+  int32_t& chosen = pick(pair.right.look());
+  return chosen;
+}
+
+int32_t retained_receiver() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().write();
+  chosen = 8;
+  return pair.right.read();
+}
+
+int32_t two_level_chain() {
+  mut Top top = Top();
+  mut int32_t& chosen = top.pair.left.reach().write();
+  chosen = 6;
+  return top.pair.left.read();
+}
+
+int32_t retained_across_statements() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.left.reach().write();
+  int32_t observed = 30;
+  chosen = observed + 7;
+  return pair.left.read();
+}
+
+int32_t retained_chain_can_fail() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().overflow();
+  chosen = 5;
+  return pair.right.read();
+}
+
+int32_t single_level_contrast() {
+  mut Leaf leaf = Leaf();
+  mut int32_t& chosen = leaf.write();
+  chosen = 9;
+  return leaf.read();
+}
+
+int main() {
+  return retained_argument() + retained_receiver() + two_level_chain() +
+         retained_across_statements() + retained_chain_can_fail() +
+         single_level_contrast() - 66;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected nested-borrow-chain diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "retained borrows built from another borrowed call result should "
+         "lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  const auto isAncestor = [&](const lang::MirBody &body, lang::MirLoanId older,
+                              lang::MirLoanId candidate) {
+    std::unordered_set<lang::MirLoanId> visited;
+    const lang::MirLoan *loan = body.findLoan(candidate);
+    while (loan != nullptr && loan->parent != 0 &&
+           visited.insert(loan->parent).second) {
+      if (loan->parent == older) {
+        return true;
+      }
+      loan = body.findLoan(loan->parent);
+    }
+    return false;
+  };
+
+  for (const std::string name :
+       {"retained_argument", "retained_receiver", "two_level_chain",
+        "retained_across_statements", "retained_chain_can_fail",
+        "single_level_contrast"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    expect(body != nullptr,
+           "the nested-borrow-chain fixture should retain the MIR body of " +
+               name);
+    if (body == nullptr) {
+      continue;
+    }
+
+    // The structural rule the schedule violated: within one block, no
+    // EndBorrow may precede the EndBorrow of a loan that descends from it.
+    // Every block is checked, so the normal route and each defined-failure
+    // cleanup edge are held to the same order.
+    bool parentsOutliveChildren = true;
+    std::size_t checkedEndings = 0;
+    for (const lang::MirBlock &block : body->blocks) {
+      std::vector<lang::MirLoanId> ended;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+            !instruction.loan) {
+          continue;
+        }
+        for (const lang::MirLoanId earlier : ended) {
+          if (isAncestor(*body, earlier, *instruction.loan)) {
+            parentsOutliveChildren = false;
+          }
+        }
+        ended.push_back(*instruction.loan);
+        ++checkedEndings;
+      }
+    }
+    expect(parentsOutliveChildren && checkedEndings > 0,
+           "every block of " + name +
+               " should end each parent loan after the child reborrows that "
+               "hang from it");
+
+    // Every reborrow's parent must still be live where the child is created,
+    // which is what keeping the transient links alive buys.
+    bool reborrowParentsAreLive = true;
+    for (const lang::MirBlock &block : body->blocks) {
+      std::vector<lang::MirLoanId> ended;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.loan) {
+          continue;
+        }
+        if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
+          ended.push_back(*instruction.loan);
+          continue;
+        }
+        const lang::MirLoan *loan = body->findLoan(*instruction.loan);
+        if (loan == nullptr || loan->parent == 0) {
+          continue;
+        }
+        if (std::find(ended.begin(), ended.end(), loan->parent) !=
+            ended.end()) {
+          reborrowParentsAreLive = false;
+        }
+      }
+    }
+    expect(reborrowParentsAreLive,
+           "no reborrow in " + name +
+               " should be created from a loan its own block already ended");
+  }
+
+  // The retained binding keeps the outermost call result's own loan rather
+  // than a Local loan rebuilt from the receiver or argument origin, and that
+  // loan reborrows the link the chain was built from.
+  for (const std::string name :
+       {"retained_argument", "retained_receiver", "two_level_chain",
+        "retained_across_statements", "retained_chain_can_fail"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    if (body == nullptr) {
+      continue;
+    }
+    std::vector<lang::HirValueId> callValues;
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          callValues.push_back(instruction.hirValue);
+        }
+      }
+    }
+    std::size_t retainedChainResults = 0;
+    for (const lang::MirLoan &loan : body->loans) {
+      if (loan.carriers.empty() ||
+          std::find(callValues.begin(), callValues.end(), loan.producedBy) ==
+              callValues.end()) {
+        continue;
+      }
+      const lang::MirLoan *parent = body->findLoan(loan.parent);
+      if (loan.kind == lang::MirLoanKind::CallResult && parent != nullptr &&
+          parent->kind == lang::MirLoanKind::CallResult) {
+        ++retainedChainResults;
+      }
+    }
+    expect(retainedChainResults == 1,
+           "the retained borrow in " + name +
+               " should keep the outermost call result's own loan as a "
+               "reborrow of the link it was built from");
+  }
+
+  // The single-level contrast keeps the root call-result rule unchanged.
+  const lang::MirBody *contrast = mirBodyFor("single_level_contrast");
+  bool contrastIsRooted = contrast != nullptr;
+  if (contrast != nullptr) {
+    for (const lang::MirLoan &loan : contrast->loans) {
+      if (!loan.carriers.empty() &&
+          (loan.kind != lang::MirLoanKind::CallResult || loan.parent != 0)) {
+        contrastIsRooted = false;
+      }
+    }
+  }
+  expect(contrastIsRooted,
+         "a single-level retained borrow should still keep its root "
+         "call-result loan");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the C++ backend should emit retained borrows built from another "
+         "borrowed call result");
+}
+
 void testCleanupOwningTemporaryArguments() {
   const std::string source = R"(
 class cleanup_t {
@@ -34883,6 +35153,10 @@ int main(int argc, char **argv) {
     testTemporaryArgumentBorrows();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "nested-borrow-chains") {
+    testNestedBorrowChainLoanOrdering();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "cleanup-temporary-arguments") {
     testCleanupOwningTemporaryArguments();
     return failures == 0 ? 0 : 1;
@@ -35000,6 +35274,7 @@ int main(int argc, char **argv) {
   testMutableTemporaryReceivers();
   testTemporaryArgumentBorrows();
   testRetainedBorrowedCallResults();
+  testNestedBorrowChainLoanOrdering();
   testCleanupOwningTemporaryArguments();
   testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();

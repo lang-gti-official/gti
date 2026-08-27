@@ -4263,11 +4263,39 @@ private:
     }
   }
 
+  // A reborrow is only as good as the loan it hangs from, so a parent must
+  // outlive its child on every edge — the MIR verifier rejects ending a
+  // suspended parent. Releasing loans by expression extent alone does not see
+  // that: a transient link is uncarried and unescaping, yet a binding may
+  // retain a reborrow of it. Collect every ancestor of a loan that outlives
+  // the current full expression so the release keeps them, and let the
+  // owning scope end the whole chain child-first.
+  [[nodiscard]] std::unordered_set<MirLoanId>
+  retainedReborrowAncestors() const {
+    std::unordered_set<MirLoanId> ancestors;
+    for (const Scope &scope : scopes) {
+      for (const MirLoanId live : scope.loans) {
+        const MirLoan *record = output.findLoan(live);
+        if (record == nullptr ||
+            (record->carriers.empty() && !record->escapes)) {
+          continue;
+        }
+        MirLoanId parent = record->parent;
+        while (parent != 0 && ancestors.insert(parent).second) {
+          const MirLoan *ancestor = output.findLoan(parent);
+          parent = ancestor == nullptr ? 0 : ancestor->parent;
+        }
+      }
+    }
+    return ancestors;
+  }
+
   void endFullExpressionLoans(const std::vector<Scope> &baseline) {
     if (baseline.size() != scopes.size()) {
       valid = false;
       return;
     }
+    const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
@@ -4278,7 +4306,8 @@ private:
       }
       for (std::size_t index = after.size(); index > before.size(); --index) {
         const MirLoan &loan = output.loans[after[index - 1] - 1];
-        if (loan.carriers.empty() && !loan.escapes) {
+        if (loan.carriers.empty() && !loan.escapes &&
+            !retained.contains(loan.id)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
         }
@@ -4290,7 +4319,8 @@ private:
                                    const MirLoan &candidate =
                                        output.loans[loan - 1];
                                    return candidate.carriers.empty() &&
-                                          !candidate.escapes;
+                                          !candidate.escapes &&
+                                          !retained.contains(loan);
                                  }),
                   after.end());
       after.erase(std::remove_if(after.begin(), after.end(),
@@ -4306,6 +4336,7 @@ private:
       valid = false;
       return;
     }
+    const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
@@ -4314,7 +4345,7 @@ private:
             std::find(before.begin(), before.end(), *candidate) == before.end();
         const MirLoan *loan = output.findLoan(*candidate);
         if (added && loan != nullptr && loan->carriers.empty() &&
-            !loan->escapes) {
+            !loan->escapes && !retained.contains(*candidate)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
           candidate = after.erase(candidate);
@@ -4412,6 +4443,38 @@ private:
           descendsFromSelected(loan.id) &&
           std::find(result.begin(), result.end(), loan.id) == result.end()) {
         result.push_back(loan.id);
+      }
+    }
+    // A retained call-result reborrow outlives the transient links it was
+    // built from — the outer call of `f(receiver.borrow())` designates what
+    // the inner call returned — so those links stay live past their full
+    // expression to keep every parent outliving its child. They carry
+    // nothing themselves, so they end exactly when the last loan that
+    // reborrows them does. Fold them into the same release; the child-first
+    // order below still ends each parent after its children.
+    for (std::size_t index = 0; index < result.size(); ++index) {
+      MirLoanId ancestor = output.loans[result[index] - 1].parent;
+      while (ancestor != 0 && ancestor <= output.loans.size() &&
+             std::find(result.begin(), result.end(), ancestor) ==
+                 result.end()) {
+        const MirLoan &candidate = output.loans[ancestor - 1];
+        if (!candidate.carriers.empty() || candidate.escapes ||
+            !loanIsActive(activeScopes, ancestor)) {
+          break;
+        }
+        const bool reborrowedElsewhere =
+            std::any_of(output.loans.begin(), output.loans.end(),
+                        [&](const MirLoan &other) {
+                          return other.parent == ancestor &&
+                                 loanIsActive(activeScopes, other.id) &&
+                                 std::find(result.begin(), result.end(),
+                                           other.id) == result.end();
+                        });
+        if (reborrowedElsewhere) {
+          break;
+        }
+        result.push_back(ancestor);
+        ancestor = candidate.parent;
       }
     }
     std::stable_sort(result.begin(), result.end(),
@@ -5563,6 +5626,25 @@ private:
           }
           if (!compatible || transient != 0 || transientChain.empty()) {
             valid = false;
+          } else if (desired->access == AccessMode::ReadOnly ||
+                     sourceLoan.access == AccessMode::Mutable) {
+            // The chain is a call-result reborrow chain the expression built
+            // for this very value — a borrowed call result passed as the
+            // argument (or receiver) of the call whose result is retained.
+            // Its outermost link is the exact runtime referent for the same
+            // reason the root case above is, so retain that identity rather
+            // than ending the chain and recreating a Local loan from the
+            // origin place: the recreated loan cannot name the address the
+            // outer call returned, and its source place would record the
+            // returned referent's type over a projection chain deriving the
+            // origin's. The links it reborrows stay live; a parent must
+            // outlive its child reborrow on every edge, which
+            // `retainedReborrowAncestors` keeps true when the full
+            // expression ends.
+            recordLoanIdentity(existing, *desired, binding);
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
           } else {
             for (const MirLoanId ended : transientChain) {
               (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
