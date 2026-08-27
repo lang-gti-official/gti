@@ -350,16 +350,15 @@ logical edge between them.
 
 ## Ready Queue
 
-This is the sole compiler implementation queue. Existing work already in
-flight when the structural plan was adopted may complete its original scope
-and be reconciled. The exact reconciled `main` commit then activates the
-**exclusive compiler structural gate** in
-[`compiler-structural-refactor.md`](compiler-structural-refactor.md). No new
-compiler feature row begins until `R-STRUCT-00` through `R-STRUCT-05` pass.
-This sequencing requirement is not an instruction to interrupt or repurpose
-the work that was already active at adoption.
+This is the sole compiler implementation queue. At adoption, already in-flight
+work completed its original scope before the reconciled `main` commit activated
+the exclusive structural gate. That gate has now passed; its preserved record
+is the
+[archived structural-refactor plan](archive/compiler-structural-refactor.md).
 
-The structural sequence is:
+The structural sequence completed on 2026-08-28. Its detailed measurements and
+exact equivalence evidence are retained in the
+[archived structural-refactor record](archive/compiler-structural-refactor.md).
 
 | Order | ID | State | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- |
@@ -367,14 +366,15 @@ The structural sequence is:
 | 2 | `R-STRUCT-01` | **complete** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | One request owner/reset passes reuse regressions; the manifest-backed 125-test compiler aggregate, 81-test emitter census, focused suites, and exact-census corpus sweeps pass. |
 | 3 | `R-STRUCT-02` | **complete** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source/cache/recovery and the 125-test semantic aggregate pass; the sealed catalog, explicit callable projection, narrow HIR instance provider, three semantic headers, static boundary test, self-contained compilation, and exact three-object analyzer-facade rebuild prove the ownership/include boundary. |
 | 4 | `R-STRUCT-03` | **complete** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, hosted startup, and lowered-program closure. | Separate service/header boundaries, fail-closed component mutation tests, optimizer suites, MIR/lowered census, hosted startup, and the 444-mode cutover oracle pass unchanged. |
-| 5 | `R-STRUCT-04` | **ready** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
-| 6 | `R-STRUCT-05` | **blocked** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Broad and installed gates pass; focused rebuilds are bounded; controlled clean/runtime metrics satisfy the plan. |
+| 5 | `R-STRUCT-04` | **complete** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Pointer-free body/program plans outlive input, preflight remains fail-closed, writer responsibilities are separate, and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
+| 6 | `R-STRUCT-05` | **complete** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Exact 444-configuration equivalence, 141/141 CTest, installed libraries/toolchain, formatter/Tree-sitter/LSP/docs, one-object focused rebuilds, -48.9% longest Release edge, and bounded shipped-binary/runtime latency pass; the measured clean-build and compiler-archive costs are explained in the archived report. |
 
 From 2026-08-26 through 2026-08-27, the runtime-performance campaign was the
 previous exclusive compiler gate. `O-PERF-00` through `O-PERF-05` and
 `O-GAME-01` closed in order. The completed rows and their exact evidence remain
-here as the baseline for later measured optimizer work, but they do not permit
-new optimizer work to bypass the structural gate.
+here as the baseline for later measured optimizer work. The later structural
+gate is also complete; future rows follow their declared prerequisites and the
+permanent executable-authority rule below.
 
 While an exclusive row is active, the only exceptions are correctness or
 security fixes, release/CI unblockers, and changes explicitly named as its
@@ -402,10 +402,9 @@ sequence into another plan.
 
 `P-MEASURE-01` benchmark breadth was consumed by `O-PERF-00`. The end of that
 campaign made `A-CACHE-01` and other unfinished rows logically eligible under
-their own prerequisites, but the later `R-STRUCT` gate now controls scheduling.
-Only work already in flight at adoption may finish before that gate; other
-unfinished rows wait for `R-STRUCT-05`. Completed performance rows remain
-historical prerequisites and do not occupy the queue.
+their own prerequisites. The later `R-STRUCT` gate then controlled scheduling
+until it completed on 2026-08-28. Completed performance and structural rows
+remain historical prerequisites and do not occupy the queue.
 
 `M-BACK-02` no longer blocks those outcome rows. After `R-STRUCT-05`, the
 permanent executable-authority gate remains: any new executable feature must
@@ -3230,20 +3229,18 @@ imply it.
 ## Parallel Engineering Tracks
 
 These rows improve maintainability, projects, and tooling without changing the
-language critical path. They were parked during the exclusive runtime-
-performance gate and are now parked behind the `R-STRUCT` gate, except for work
-already in flight when that gate was adopted and its explicit correctness,
-security, release/CI, or prerequisite exceptions. Their table states describe
-logical prerequisites, not permission to bypass the current exclusive queue.
+language critical path. They were parked during the completed runtime-
+performance and `R-STRUCT` exclusive gates. Their table states and the active
+ready queue now control scheduling by logical prerequisite.
 
 ### C-MIG: Compiled Compiler Library
 
 The accepted detailed plan remains
 [`compiler-library-migration.md`](archive/compiler-library-migration.md).
 That migration is complete and supplies the compiled target foundation for the
-new internal decomposition in
-[`compiler-structural-refactor.md`](compiler-structural-refactor.md); it is not
-a competing active queue.
+completed internal decomposition in the
+[archived structural-refactor plan](archive/compiler-structural-refactor.md);
+it is not a competing active queue.
 
 | ID | State | Next bounded result | Serialization rule |
 | --- | --- | --- | --- |
@@ -3380,7 +3377,7 @@ owned by the rows and domain plans above.
 | Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
-| Compiler structural ownership | **exclusive next phase after in-flight reconciliation** | `R-STRUCT-00` through `R-STRUCT-05`; [`compiler-structural-refactor.md`](compiler-structural-refactor.md) |
+| Compiler structural ownership | **exclusive campaign complete** | `R-STRUCT-00` through `R-STRUCT-05`; [archived closure report](archive/compiler-structural-refactor.md) |
 | Source/semantic/HIR/MIR compiled migration | **complete foundation** | `C-MIG-02` through `C-MIG-07`; internal decomposition is owned by `R-STRUCT` |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
