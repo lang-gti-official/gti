@@ -6,6 +6,7 @@
 #include "toml.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -1128,6 +1129,185 @@ parseDependencies(const toml::table &document,
   return dependencies;
 }
 
+// `[bindgen.<alias>]` import tables. Aliases share the per-package include
+// namespace with dependency aliases, so a collision is rejected here rather
+// than surfacing later as an ambiguous package include.
+[[nodiscard]] bool bindgenMacroName(std::string_view name) {
+  if (name.empty() ||
+      (std::isalpha(static_cast<unsigned char>(name.front())) == 0 &&
+       name.front() != '_')) {
+    return false;
+  }
+  return std::all_of(name.begin(), name.end(), [](unsigned char character) {
+    return std::isalnum(character) != 0 || character == '_';
+  });
+}
+
+std::vector<ProjectBindgenImport>
+parseBindgenImports(const toml::table &document,
+                    const std::filesystem::path &packageRoot,
+                    const std::vector<ProjectDependency> &dependencies,
+                    std::string_view sourceName, std::string_view source,
+                    std::vector<Diagnostic> &diagnostics) {
+  std::vector<ProjectBindgenImport> imports;
+  const toml::node *node = document.get("bindgen");
+  if (node == nullptr) {
+    return imports;
+  }
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", sourceSpan(sourceName, source, *node),
+        "Manifest field 'bindgen' must be a table of [bindgen.<alias>] "
+        "import tables."));
+    return imports;
+  }
+
+  for (const auto &[key, importNode] : *table) {
+    ProjectBindgenImport import;
+    import.alias = std::string(key.str());
+    import.declaration = sourceSpan(sourceName, source, key);
+    if (!isImportAlias(import.alias) || import.alias == "std") {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1800", import.declaration,
+          "Bindgen aliases must match [A-Za-z_][A-Za-z0-9_]* and cannot be "
+          "'std'."));
+      continue;
+    }
+    const auto dependencyCollision =
+        std::find_if(dependencies.begin(), dependencies.end(),
+                     [&import](const ProjectDependency &dependency) {
+                       return dependency.alias == import.alias;
+                     });
+    if (dependencyCollision != dependencies.end()) {
+      Diagnostic diagnostic = buildDiagnostic(
+          "GTI-B1801", import.declaration,
+          "Bindgen import '" + import.alias +
+              "' collides with a dependency alias; both resolve package "
+              "includes under one alias namespace.");
+      diagnostic.related.push_back({dependencyCollision->declaration,
+                                    "The conflicting dependency is declared "
+                                    "here."});
+      diagnostics.push_back(std::move(diagnostic));
+      continue;
+    }
+    const toml::table *importTable = importNode.as_table();
+    if (importTable == nullptr) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, importNode),
+          "Bindgen import '" + import.alias +
+              "' must be a table declaring 'header'."));
+      continue;
+    }
+    validateFields(
+        *importTable,
+        {"header", "namespace", "include-dirs", "defines", "undefines"},
+        "bindgen import", sourceName, source, diagnostics);
+
+    const std::optional<std::string> header =
+        requiredString(*importTable, "header", "bindgen import", sourceName,
+                       source, diagnostics);
+    if (!header) {
+      continue;
+    }
+    import.headerDeclaration =
+        sourceSpan(sourceName, source, *importTable->get("header"));
+    const std::filesystem::path declared(*header);
+    if (declared.empty() || isAbsoluteOnSupportedHost(*header, declared)) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", import.headerDeclaration,
+          "Bindgen header must be a non-empty path relative to gti.toml."));
+      continue;
+    }
+    std::error_code error;
+    const std::filesystem::path resolved =
+        std::filesystem::weakly_canonical(packageRoot / declared, error);
+    if (error) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", import.headerDeclaration,
+          "Failed to resolve bindgen header '" + pathString(declared) +
+              "': " + error.message() + "."));
+      continue;
+    }
+    if (!pathIsWithin(packageRoot, resolved)) {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1104", import.headerDeclaration,
+                          "Bindgen header escapes the package directory: " +
+                              pathString(declared) + "."));
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(resolved, error) || error) {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1802", import.headerDeclaration,
+                          "Bindgen header does not name an existing file: " +
+                              pathString(declared) + "."));
+      continue;
+    }
+    import.header = resolved;
+    import.declaredHeader = *header;
+
+    if (const toml::node *namespaceNode = importTable->get("namespace")) {
+      const std::optional<std::string> value =
+          namespaceNode->value<std::string>();
+      if (!value || !isImportAlias(*value)) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1803", sourceSpan(sourceName, source, *namespaceNode),
+            "Bindgen namespace must be an ordinary GTI identifier."));
+        continue;
+      }
+      import.namespaceName = *value;
+    }
+
+    std::vector<SourceSpan> includeDeclarations;
+    import.includeDirectories = containedPaths(
+        *importTable, "include-dirs", packageRoot, "Bindgen import",
+        "directory", sourceName, source, includeDeclarations, diagnostics);
+
+    bool macrosValid = true;
+    std::vector<SourceSpan> macroDeclarations;
+    const std::vector<std::string> defines =
+        stringArray(*importTable, "defines", "Bindgen import", sourceName,
+                    source, diagnostics, &macroDeclarations);
+    for (std::size_t index = 0; index < defines.size(); ++index) {
+      const std::string &value = defines[index];
+      const std::size_t equals = value.find('=');
+      if (!bindgenMacroName(value.substr(0, std::min(equals, value.size())))) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1804", macroDeclarations[index],
+            "Bindgen defines must be '<name>' or '<name>=<value>' with an "
+            "ordinary macro name."));
+        macrosValid = false;
+        continue;
+      }
+      import.macroArguments.push_back("-D" + value);
+    }
+    macroDeclarations.clear();
+    const std::vector<std::string> undefines =
+        stringArray(*importTable, "undefines", "Bindgen import", sourceName,
+                    source, diagnostics, &macroDeclarations);
+    for (std::size_t index = 0; index < undefines.size(); ++index) {
+      if (!bindgenMacroName(undefines[index])) {
+        diagnostics.push_back(
+            buildDiagnostic("GTI-B1804", macroDeclarations[index],
+                            "Bindgen undefines must name an ordinary macro."));
+        macrosValid = false;
+        continue;
+      }
+      import.macroArguments.push_back("-U" + undefines[index]);
+    }
+    if (!macrosValid) {
+      continue;
+    }
+    imports.push_back(std::move(import));
+  }
+  std::sort(
+      imports.begin(), imports.end(),
+      [](const ProjectBindgenImport &left, const ProjectBindgenImport &right) {
+        return left.alias < right.alias;
+      });
+  return imports;
+}
+
 std::optional<ProjectWorkspaceManifest>
 parseWorkspace(const toml::table &document,
                const std::filesystem::path &packageRoot,
@@ -1212,13 +1392,15 @@ ProjectManifest::ProjectManifest(
     std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
     std::vector<ProjectDependency> dependencies,
     std::optional<ProjectWorkspaceManifest> workspace,
-    ProjectBuildSettings build)
+    ProjectBuildSettings build,
+    std::vector<ProjectBindgenImport> bindgenImports)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)),
       packageDependencies(std::move(dependencies)),
       workspaceManifest(std::move(workspace)),
-      projectBuildSettings(std::move(build)) {}
+      projectBuildSettings(std::move(build)),
+      projectBindgenImports(std::move(bindgenImports)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1261,6 +1443,10 @@ ProjectManifest::workspace() const {
 
 const ProjectBuildSettings &ProjectManifest::build() const {
   return projectBuildSettings;
+}
+
+const std::vector<ProjectBindgenImport> &ProjectManifest::bindgen() const {
+  return projectBindgenImports;
 }
 
 const ProjectTarget *ProjectManifest::findTarget(std::string_view name) const {
@@ -1410,7 +1596,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   toml::table document = std::move(parsed).table();
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
-                  "dependencies", "workspace", "build"},
+                  "dependencies", "workspace", "build", "bindgen"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -1498,6 +1684,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
       document, packageRoot, sourceName, source, result.diagnostics);
   std::optional<ProjectWorkspaceManifest> workspace = parseWorkspace(
       document, packageRoot, sourceName, source, result.diagnostics);
+  std::vector<ProjectBindgenImport> bindgenImports =
+      parseBindgenImports(document, packageRoot, dependencies, sourceName,
+                          source, result.diagnostics);
   ProjectBuildSettings build;
   if (const toml::node *buildNode = document.get("build")) {
     build.declaration = sourceSpan(sourceName, source, *buildNode);
@@ -1760,7 +1949,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   result.status = ManifestLoadStatus::Success;
   result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
                           std::move(profiles), std::move(dependencies),
-                          std::move(workspace), std::move(build));
+                          std::move(workspace), std::move(build),
+                          std::move(bindgenImports));
   return result;
 }
 

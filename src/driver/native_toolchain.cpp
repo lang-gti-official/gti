@@ -313,6 +313,17 @@ std::string discoverCCompiler(const std::optional<std::string> &selected) {
   return "cc";
 }
 
+std::string discoverBindgenClang(const std::optional<std::string> &selected) {
+  if (selected) {
+    return *selected;
+  }
+  if (const char *configured = std::getenv("GTI_CLANG");
+      configured != nullptr && *configured != '\0') {
+    return configured;
+  }
+  return "clang";
+}
+
 std::string_view cStandardName(CStandard standard) {
   switch (standard) {
   case CStandard::C11:
