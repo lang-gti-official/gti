@@ -350,11 +350,31 @@ logical edge between them.
 
 ## Ready Queue
 
-This is the sole compiler implementation queue. From 2026-08-26 through
-2026-08-27, the runtime-performance campaign was an **exclusive compiler
-gate**. `O-PERF-00` through `O-PERF-05` and `O-GAME-01` have now closed in
-order, so that gate is released. The completed rows and their exact evidence
-remain here as the baseline for later measured optimizer work.
+This is the sole compiler implementation queue. Existing work already in
+flight when the structural plan was adopted may complete its original scope
+and be reconciled. The exact reconciled `main` commit then activates the
+**exclusive compiler structural gate** in
+[`compiler-structural-refactor.md`](compiler-structural-refactor.md). No new
+compiler feature row begins until `R-STRUCT-00` through `R-STRUCT-05` pass.
+This sequencing requirement is not an instruction to interrupt or repurpose
+the work that was already active at adoption.
+
+The structural sequence is:
+
+| Order | ID | State | Phase outcome | Exit evidence |
+| --- | --- | --- | --- | --- |
+| 1 | `R-STRUCT-00` | **ready after in-flight reconciliation** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit, one broad validation result, artifact/MIR/diagnostic oracles, and controlled compile measurements are recorded. |
+| 2 | `R-STRUCT-01` | **blocked** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | Reuse regressions pass and every former aggregate assertion remains covered by focused plus aggregate gates. |
+| 3 | `R-STRUCT-02` | **blocked** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source-graph parity holds, HIR uses a narrow instance provider, and semantic/include/rebuild boundaries pass. |
+| 4 | `R-STRUCT-03` | **blocked** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, and hosted startup. | MIR printers, verifier mutations, census, optimizer replay, and endpoint behavior are unchanged. |
+| 5 | `R-STRUCT-04` | **blocked** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
+| 6 | `R-STRUCT-05` | **blocked** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Broad and installed gates pass; focused rebuilds are bounded; controlled clean/runtime metrics satisfy the plan. |
+
+From 2026-08-26 through 2026-08-27, the runtime-performance campaign was the
+previous exclusive compiler gate. `O-PERF-00` through `O-PERF-05` and
+`O-GAME-01` closed in order. The completed rows and their exact evidence remain
+here as the baseline for later measured optimizer work, but they do not permit
+new optimizer work to bypass the structural gate.
 
 While an exclusive row is active, the only exceptions are correctness or
 security fixes, release/CI unblockers, and changes explicitly named as its
@@ -380,14 +400,17 @@ sequence into another plan.
 | 6 | `O-PERF-05` | **complete (measured no-op)** | `O-PERF-04` | Remove one measured residual backend/ABI representation cost after safety side exits are addressed. | Exact clean commit `9da44477` measures scalar GTI at 1.005x semantic C++ and the closed-call vector client at 0.109x semantic and 1.044x idiomatic; native hot loops contain no surviving call/failure boundary, so no backend change is justified. |
 | 7 | `O-GAME-01` | **complete** | `O-PERF-00` through `O-PERF-05` | Prove the combined result in a deterministic game-style update workload. | Exact clean implementation commit `c5bbfaa8` records 58.503 ms GTI versus 208.126 ms semantic C++ and 58.454 ms idiomatic C++, identical complete-state output, 53 replayed safety discharges, stable generated artifacts, bounded compile/memory controls, and conclusive fixed-array, vector, scalar, and managed-thread controls. |
 
-`P-MEASURE-01` benchmark breadth was consumed by `O-PERF-00`. `A-CACHE-01` and
-other unfinished rows may now resume under their own prerequisites and file
-ownership. Completed performance rows remain historical prerequisites and do
-not occupy the queue.
+`P-MEASURE-01` benchmark breadth was consumed by `O-PERF-00`. The end of that
+campaign made `A-CACHE-01` and other unfinished rows logically eligible under
+their own prerequisites, but the later `R-STRUCT` gate now controls scheduling.
+Only work already in flight at adoption may finish before that gate; other
+unfinished rows wait for `R-STRUCT-05`. Completed performance rows remain
+historical prerequisites and do not occupy the queue.
 
-`M-BACK-02` no longer blocks those outcome rows. The permanent gate is that any
-new executable feature must extend verified MIR, its verifier, and the general
-backend preflight; it may not add an AST/semantic/HIR-only C++ body case.
+`M-BACK-02` no longer blocks those outcome rows. After `R-STRUCT-05`, the
+permanent executable-authority gate remains: any new executable feature must
+extend verified MIR, its verifier, and the general backend preflight; it may
+not add an AST/semantic/HIR-only C++ body case.
 
 ## Phase D: Cross-Cutting Language Decisions
 
@@ -3138,15 +3161,19 @@ imply it.
 
 These rows improve maintainability, projects, and tooling without changing the
 language critical path. They were parked during the exclusive runtime-
-performance gate except for its explicit correctness, security, release/CI,
-or prerequisite exceptions. With `O-GAME-01` complete, they may run
-concurrently only when their owned files do not overlap an active
-semantic/lowering phase.
+performance gate and are now parked behind the `R-STRUCT` gate, except for work
+already in flight when that gate was adopted and its explicit correctness,
+security, release/CI, or prerequisite exceptions. Their table states describe
+logical prerequisites, not permission to bypass the current exclusive queue.
 
 ### C-MIG: Compiled Compiler Library
 
 The accepted detailed plan remains
 [`compiler-library-migration.md`](archive/compiler-library-migration.md).
+That migration is complete and supplies the compiled target foundation for the
+new internal decomposition in
+[`compiler-structural-refactor.md`](compiler-structural-refactor.md); it is not
+a competing active queue.
 
 | ID | State | Next bounded result | Serialization rule |
 | --- | --- | --- | --- |
@@ -3283,7 +3310,8 @@ owned by the rows and domain plans above.
 | Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
-| Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
+| Compiler structural ownership | **exclusive next phase after in-flight reconciliation** | `R-STRUCT-00` through `R-STRUCT-05`; [`compiler-structural-refactor.md`](compiler-structural-refactor.md) |
+| Source/semantic/HIR/MIR compiled migration | **complete foundation** | `C-MIG-02` through `C-MIG-07`; internal decomposition is owned by `R-STRUCT` |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
