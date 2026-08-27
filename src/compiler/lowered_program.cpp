@@ -4,7 +4,7 @@
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
 #include "gti/lowered_program_printer.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 
 #include <algorithm>
 #include <cstdint>

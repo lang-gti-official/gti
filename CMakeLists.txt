@@ -778,6 +778,23 @@ if(BUILD_TESTING)
   target_link_libraries("gti_source_unit_services_tests" PRIVATE gti_compiler)
   add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
+  add_test(
+    NAME semantic_header_boundary
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/semantic_header_boundary_test.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+
+  add_executable(
+    gti_semantic_header_smoke
+    tests/semantic_core_header_smoke.cpp
+    tests/semantic_model_header_smoke.cpp
+    tests/semantic_analyzer_header_smoke.cpp
+  )
+  target_link_libraries(gti_semantic_header_smoke PRIVATE gti_compiler)
+  add_test(NAME semantic_header_self_containment
+           COMMAND gti_semantic_header_smoke)
+
   add_executable("gti_pack_fold_syntax_tests"
                  "tests/pack_fold_syntax_tests.cpp")
   target_link_libraries("gti_pack_fold_syntax_tests" PRIVATE gti_compiler)
