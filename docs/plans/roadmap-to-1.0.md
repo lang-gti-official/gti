@@ -139,14 +139,13 @@ overflow-branch ceiling, and a fixed-array overflow client measured 73.684 ms
 versus 15.882 ms. These results select the problem; they do not authorize
 removing defined failure or importing an unproved speculative transform.
 
-The sole operational order is `O-PERF-00` through `O-PERF-05`, followed by
+The sole operational order was `O-PERF-00` through `O-PERF-05`, followed by
 `O-GAME-01`, in
-[`implementation-sequence.md`](implementation-sequence.md). That sequence is
-an exclusive compiler gate: unrelated compiler, language, MIR, backend,
-runtime-representation, and standard-library semantics work is parked until
-it closes. Only correctness/security fixes, release/CI unblockers, and exact
-prerequisites of the active row may interrupt it. This roadmap intentionally
-does not duplicate the row details.
+[`implementation-sequence.md`](implementation-sequence.md). That exclusive
+compiler gate closed on 2026-08-27 after every row reached its implementation
+or measured-defer exit condition. Unrelated compiler, language, MIR, backend,
+runtime-representation, and standard-library work may resume under the normal
+queue; this roadmap intentionally does not duplicate the row details.
 
 On the published reference configuration, the fixed-array overflow client
 targets at most 1.2x idiomatic C++, core checked kernels target at most 1.5x
@@ -785,11 +784,12 @@ randomness, formatting, and testing. No example imports `gti_internal`.
 
 ## Compiler Track A: MIR, Optimization, And Backend Authority
 
-This was originally organized as a parallel track, but it is not parallel
-while the runtime-performance gate is active. The exact compiler sequence in
-[`implementation-sequence.md`](implementation-sequence.md) parks unrelated
-language, MIR, backend, runtime-representation, and standard-library semantics
-work until `O-GAME-01` closes.
+This was originally organized as a parallel track and was serialized while the
+runtime-performance gate was active. The exact compiler sequence in
+[`implementation-sequence.md`](implementation-sequence.md) closed
+`O-GAME-01` on 2026-08-27, so unrelated language, MIR, backend,
+runtime-representation, and standard-library semantics work is no longer
+parked by that campaign.
 
 Implemented foundation:
 
@@ -977,7 +977,7 @@ standard-library need, and tooling impact.
 
 ## Operational Sequence
 
-The maintained sequence, blockers, and current exclusive ready queue live in
+The maintained sequence, blockers, and current ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the source executable-body cutover is complete. Every body identity
 recorded by `tests/mir_census_baseline.json` uses verified optimized MIR and
