@@ -15054,6 +15054,22 @@ valueRootedClassPrvalueAssignmentSlot(const MirProgram &program,
   const MirValue *assignmentResult = consumer != nullptr && consumer->result
                                          ? body.findValue(*consumer->result)
                                          : nullptr;
+  // Two destination families publish a staged class prvalue. A bare mutable
+  // binding owns its own cleanup obligation, so the publication transfers
+  // ownership to it. A checked fixed-array element does not: the array
+  // binding's obligation already covers every element, so the publication
+  // names no destination obligation and the write carries the element's
+  // bounds failure site. `checkedArrayElementDestination` is the same
+  // element-shape authority the cleanup-free fusion route already uses.
+  const bool bareDestination = destination != nullptr &&
+                               destination->root == MirPlaceRootKind::Binding &&
+                               destination->binding != 0 &&
+                               destination->projections.empty() &&
+                               destination->access == AccessMode::Mutable;
+  const std::optional<CheckedArrayElementDestination> checkedDestination =
+      destination == nullptr
+          ? std::nullopt
+          : checkedArrayElementDestination(body, *destination);
   if (consumer == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
       consumer->kind != MirInstructionKind::Assign ||
@@ -15066,15 +15082,17 @@ valueRootedClassPrvalueAssignmentSlot(const MirProgram &program,
       consumer->info.type != value->info.type ||
       assignmentResult->definition != consumer->id ||
       assignmentResult->info.type != value->info.type ||
-      !consumer->localFailureSites.empty() ||
-      !consumer->definedFailure.empty() || consumer->preparedParameterDrop ||
-      consumer->successResultDrop || consumer->successResultDestination ||
-      consumer->lifecycle.size() != 1 || consumer->fullExpressionEnd != 0 ||
-      consumer->cleanupBoundaryEnd != 0 ||
-      destination->root != MirPlaceRootKind::Binding ||
-      destination->binding == 0 || !destination->projections.empty() ||
+      // A bare binding assignment cannot fail; only the checked element
+      // write carries a bounds failure site for its enclosing invoke edge.
+      (bareDestination && (!consumer->localFailureSites.empty() ||
+                           !consumer->definedFailure.empty())) ||
+      (checkedDestination &&
+       !checkedArrayAssignmentFailure(program, *consumer)) ||
+      consumer->preparedParameterDrop || consumer->successResultDrop ||
+      consumer->successResultDestination || consumer->lifecycle.size() != 1 ||
+      consumer->fullExpressionEnd != 0 || consumer->cleanupBoundaryEnd != 0 ||
+      (!bareDestination && !checkedDestination) ||
       destination->type != value->info.type ||
-      destination->access != AccessMode::Mutable ||
       !destination->traits.moveAssignable) {
     return {};
   }
@@ -15089,14 +15107,24 @@ valueRootedClassPrvalueAssignmentSlot(const MirProgram &program,
                                  : body.findPlace(destinationDrop->place);
   if (publication.kind != MirLifecycleEventKind::Replace ||
       publication.source != drop->id || publication.conditional ||
-      publication.failureCleanup || destinationDrop == nullptr ||
-      destinationDrop->kind != MirDropObligationKind::Binding ||
-      destinationDrop->dropType.type != destination->type ||
-      !destinationDrop->dropType.requiresActiveCleanup ||
-      destinationDropPlace == nullptr ||
-      destinationDropPlace->root != MirPlaceRootKind::Binding ||
-      destinationDropPlace->binding != destination->binding ||
-      !destinationDropPlace->projections.empty()) {
+      publication.failureCleanup) {
+    return {};
+  }
+  if (bareDestination) {
+    if (destinationDrop == nullptr ||
+        destinationDrop->kind != MirDropObligationKind::Binding ||
+        destinationDrop->dropType.type != destination->type ||
+        !destinationDrop->dropType.requiresActiveCleanup ||
+        destinationDropPlace == nullptr ||
+        destinationDropPlace->root != MirPlaceRootKind::Binding ||
+        destinationDropPlace->binding != destination->binding ||
+        !destinationDropPlace->projections.empty()) {
+      return {};
+    }
+  } else if (publication.target != 0) {
+    // An element publication names no destination obligation: the array
+    // binding's obligation already covers the element being replaced, and a
+    // second obligation over the same storage would retire it twice.
     return {};
   }
 
