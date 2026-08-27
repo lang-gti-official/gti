@@ -1,3 +1,5 @@
+#include <std/span>
+
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
 namespace std {
@@ -194,6 +196,12 @@ public:
   detail::vector_sentinel end() {
     return detail::vector_sentinel(
         gti_internal::prefix_storage_length(this.data));
+  }
+
+  /// Returns a checked read-only view tied to this vector's storage.
+  span<T> as_span() {
+    return span<T>(this.data, size_t(0),
+                   gti_internal::prefix_storage_length(this.data));
   }
 
   void reserve(size_t requested) mut {

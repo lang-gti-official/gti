@@ -115,11 +115,13 @@ public:
       const HirConstructorInstance *constructor = nullptr,
       const HirLambda *lambda = nullptr,
       const HirProgramInitializationPlan *programInitialization = nullptr,
-      MirProgramInitializationPlan *loweredProgramInitialization = nullptr)
+      MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
+      const MirClassInstance *constructorOwner = nullptr)
       : program(program), failureMetadata(failureMetadata), source(source),
         definedFailureEffects(definedFailureEffects),
         implicitZeroReturn(implicitZeroReturn), function(function),
-        constructor(constructor), programInitialization(programInitialization),
+        constructor(constructor), constructorOwner(constructorOwner),
+        programInitialization(programInitialization),
         loweredProgramInitialization(loweredProgramInitialization) {
     output.kind = kind;
     output.placeDomain = source.placeDomain;
@@ -187,6 +189,7 @@ public:
         seedBodylessParameterPlaces();
       } else {
         seedParameterDrops();
+        seedDefaultFieldRollbacks(initializers);
         seedEntryLoans();
         seedReturnBorrow();
       }
@@ -417,6 +420,76 @@ private:
   // checked operations after it stay on the compatibility authority instead
   // of leaking through verified MIR.
   bool constructorUnarmedTransfer = false;
+
+  void seedDefaultFieldRollbacks(
+      const std::vector<HirConstructorInitializer> *initializers) {
+    if (output.kind != MirBodyKind::Constructor || constructor == nullptr ||
+        constructorOwner == nullptr) {
+      return;
+    }
+
+    std::unordered_set<SymbolId> explicitlyInitialized;
+    if (initializers != nullptr) {
+      for (const HirConstructorInitializer &initializer : *initializers) {
+        if (initializer.kind == ConstructorInitializerTargetKind::Field &&
+            initializer.field != 0) {
+          explicitlyInitialized.insert(initializer.field);
+        }
+      }
+    }
+
+    for (const MirClassFieldInfo &field : constructorOwner->declaredFields) {
+      if (field.dropKind != DropKind::Lexical ||
+          !field.requiresActiveCleanup ||
+          explicitlyInitialized.contains(field.symbol)) {
+        continue;
+      }
+
+      const MirDropObligation *initializerRollback = nullptr;
+      for (const MirDropObligation &candidate :
+           constructorOwner->fieldInitializers.dropObligations) {
+        if (candidate.kind !=
+            MirDropObligationKind::ConstructionRollback) {
+          continue;
+        }
+        const MirPlace *place =
+            constructorOwner->fieldInitializers.findPlace(candidate.place);
+        if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
+            place->binding != field.field || place->symbol != field.symbol ||
+            !place->projections.empty() || place->type != field.type ||
+            candidate.dropType.type != field.type) {
+          continue;
+        }
+        if (initializerRollback != nullptr) {
+          valid = false;
+          initializerRollback = nullptr;
+          break;
+        }
+        initializerRollback = &candidate;
+      }
+      if (initializerRollback == nullptr) {
+        continue;
+      }
+
+      const MirPlaceId destination = appendPlace(
+          {.root = MirPlaceRootKind::This,
+           .projections = {{.kind = MirProjectionKind::Field,
+                            .field = field.symbol}},
+           .type = field.type,
+           .access = AccessMode::Mutable,
+           .traits = resolvedTraits(field.type)});
+      const MirDropObligationId rollback =
+          output.dropObligations.size() + 1;
+      output.dropObligations.push_back(
+          {.id = rollback,
+           .constructionOrder = rollback,
+           .kind = MirDropObligationKind::ConstructionRollback,
+           .place = destination,
+           .dropType = initializerRollback->dropType,
+           .initiallyActive = true});
+      constructorRollback.push_back(rollback);
+    }
+  }
 
   struct PreparedCallInput {
     MirOperand operand;
@@ -6741,6 +6814,25 @@ private:
             if (!validTail || transientChain.empty()) {
               valid = false;
             } else {
+              const HirValue *value = findValue(*statement.value);
+              const MirLoanId returnedReference = borrow.loan;
+              const MirLoanId normalized =
+                  createLoan(MirLoanKind::Return, sourcePlace,
+                             function->returnBorrowAccess, *statement.value);
+              // The Return loan's source is the summarized lifetime origin.
+              // Its operand is the exact pointer produced by the final
+              // reference-returning call. Keeping both facts prevents a
+              // receiver shell from being emitted as the returned referent.
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = MirOperandKind::Loan,
+                                 .loan = returnedReference,
+                                 .type = value == nullptr
+                                             ? SemanticType::Unknown
+                                             : value->info.type}},
+                   .loan = normalized,
+                   .info = value == nullptr ? ExpressionInfo{} : value->info});
               for (const MirLoanId ended : transientChain) {
                 (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                          .hirValue = *statement.value,
@@ -6753,21 +6845,6 @@ private:
                                          .loan = summarizedEntry});
                 removeLoanFromState(summarizedEntry, scopes, bindingLoans);
               }
-              const HirValue *value = findValue(*statement.value);
-              const MirLoanId normalized =
-                  createLoan(MirLoanKind::Return, sourcePlace,
-                             function->returnBorrowAccess, *statement.value);
-              (void)appendInstruction(
-                  {.kind = MirInstructionKind::Borrow,
-                   .hirValue = *statement.value,
-                   .operands = {{.kind = function->returnBorrowAccess ==
-                                                 AccessMode::Mutable
-                                             ? MirOperandKind::BorrowWrite
-                                             : MirOperandKind::BorrowRead,
-                                 .place = sourcePlace,
-                                 .type = output.returnType}},
-                   .loan = normalized,
-                   .info = value == nullptr ? ExpressionInfo{} : value->info});
               borrow.loan = normalized;
             }
           }
@@ -6863,6 +6940,11 @@ private:
   bool implicitZeroReturn = false;
   const HirFunctionInstance *function = nullptr;
   const HirConstructorInstance *constructor = nullptr;
+  // The already-lowered class record is the authority for in-class field
+  // initialization that completed before a source constructor body begins.
+  // Constructor MIR copies only the resulting active rollback descriptors;
+  // it never re-executes or interprets the initializer body.
+  const MirClassInstance *constructorOwner = nullptr;
   const HirProgramInitializationPlan *programInitialization = nullptr;
   MirProgramInitializationPlan *loweredProgramInitialization = nullptr;
   MirBody output;
@@ -7163,6 +7245,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   result.program.constructors.reserve(source.constructorInstances().size());
   for (const HirConstructorInstance &instance : source.constructorInstances()) {
+    const MirClassInstance *constructorOwner =
+        result.program.findClassInstance(instance.owner);
     std::vector<MirConstructorInitializer> initializers;
     initializers.reserve(instance.initializers.size());
     for (const HirConstructorInitializer &initializer : instance.initializers) {
@@ -7203,7 +7287,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              SemanticType::Void, instance.initializerValues,
              definedFailureEffects, valid, false, &instance.initializers,
              nullptr, &instance, nullptr, nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit))});
+             compilerTrustedSourceUnit(source, instance.sourceUnit),
+             constructorOwner)});
   }
 
   result.program.destructors.reserve(source.destructorInstances().size());
@@ -8282,11 +8367,12 @@ MirBody MirLowerer::lowerBody(
     const HirConstructorInstance *constructor, const HirLambda *lambda,
     const HirProgramInitializationPlan *programInitialization,
     MirProgramInitializationPlan *loweredProgramInitialization,
-    bool compilerTrusted) {
+    bool compilerTrusted, const MirClassInstance *constructorOwner) {
   MirBodyLowerer lowerer(program, failureMetadata, body, kind,
                          std::move(returnType), definedFailureEffects,
                          implicitZeroReturn, function, constructor, lambda,
-                         programInitialization, loweredProgramInitialization);
+                         programInitialization, loweredProgramInitialization,
+                         constructorOwner);
   MirBody result = lowerer.lower(prologueValues, initializers);
   result.compilerTrustedSynchronization =
       compilerTrusted &&

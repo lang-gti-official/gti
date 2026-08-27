@@ -1565,6 +1565,17 @@ analysis, HIR, MIR, and the backend.
   destructor double-failure envelope, the withheld capability families,
   and the Stage-E containment proofs between the atomic families and
   dissolution.
+- **Default-field rollback now composes into source constructors.** Every
+  unoverridden active-cleanup field completed by the verified per-instance
+  initializer body enters the constructor as an initially active
+  `ConstructionRollback` on its exact This-rooted place. Program verification
+  matches owner, field binding and symbol, type, cleanup descriptor, uniqueness,
+  and declaration order; explicit constructor initializers suppress the
+  corresponding default entry state. Failure drains the inherited obligations
+  with later stages, while normal completion transfers them to the object.
+  This closes the concrete `std::filesystem::path(std::string_view)` backend
+  gap without source-name recognition or backend-inferred cleanup. State-bearing
+  bases and the destructor double-failure envelope remain separate work.
 - **Field-initializer bodies joined failure control flow (0.166.0).**
   Owning declaration initializers arm ConstructionRollback obligations on
   their field binding places at the persistent-storage Initialize site,

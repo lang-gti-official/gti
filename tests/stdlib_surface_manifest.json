@@ -6,7 +6,7 @@
     "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
-    "stdlib/std/filesystem.gti": "86b60462c0daa83a992e11ebe7248a14aa531b71301276949507dc4e8b08b722",
+    "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
     "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
@@ -68,13 +68,14 @@
       }
     },
     {
-      "id": "filesystem-constructor-backend-limitation",
-      "mode": "diagnostic",
+      "id": "filesystem-constructor",
+      "mode": "run",
       "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
-      "optimization": "O0",
+      "optimizations": ["O0", "O3"],
       "expected": {
-        "exit_code": 65,
-        "stderr_contains": ["GTI-B0003", "does not yet support", "construction-rollback obligation"]
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
       }
     },
     {
@@ -357,6 +358,7 @@
         "std::filesystem::path::operator/=",
         "std::filesystem::path::parent_path",
         "std::filesystem::path::path()",
+        "std::filesystem::path::path(string_view)",
         "std::filesystem::path::relative_path",
         "std::filesystem::path::remove_filename",
         "std::filesystem::path::replace_extension",
@@ -369,19 +371,13 @@
         "std::filesystem::path::string",
         "std::filesystem::path::swap"
       ],
-      "case_ids": ["filesystem"],
+      "case_ids": ["filesystem", "filesystem-constructor"],
       "required_instantiations": [],
-      "evidence": ["tests/fixtures/filesystem_path.gti", "stdlib/std/filesystem.gti"]
-    },
-    {
-      "id": "filesystem.unsupported-constructor",
-      "source": "stdlib/std/filesystem.gti",
-      "status": "unsupported",
-      "operations": ["std::filesystem::path::path(string_view)"],
-      "case_ids": ["filesystem-constructor-backend-limitation"],
-      "reason": "The declared converting constructor requires partial-construction rollback authority that MIR does not yet provide; callers use path() followed by assign(). The C++ backend reports this bounded gap as GTI-B0003.",
-      "evidence": ["tests/fixtures/stdlib_surface_filesystem_constructor.gti", "stdlib/README.md"],
-      "required_instantiations": []
+      "evidence": [
+        "tests/fixtures/filesystem_path.gti",
+        "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
+        "stdlib/std/filesystem.gti"
+      ]
     },
     {
       "id": "format.executable",

@@ -346,12 +346,15 @@ enum class MirDropObligationKind {
   Binding,
   Value,
   PreparedParameter,
-  // A completed constructor subobject transferred into `this`. Armed by the
-  // stage-completing Initialize, drained in reverse stage order on every
-  // defined-failure edge of the constructor body, and retired by transfer
-  // to the caller on normal completion. Compiler-generated: it has no HIR
-  // obligation or full-expression identity, and its place is the exact
-  // This-rooted field place of its stage.
+  // A completed constructor subobject transferred into `this`. Explicit
+  // constructor stages arm it through their stage-completing Initialize;
+  // completed in-class initializers enter the constructor body already active
+  // through the owning class's verified field-initializer schedule. Every
+  // defined-failure edge drains the active set in reverse construction order,
+  // and normal completion retires it by transfer to the caller.
+  // Compiler-generated: it has no HIR obligation or full-expression identity.
+  // Constructor bodies use the exact This-rooted field place; the owning
+  // field-initializer schedule uses that field's exact binding-rooted place.
   ConstructionRollback,
 };
 
@@ -1636,7 +1639,8 @@ private:
       const HirLambda *lambda = nullptr,
       const HirProgramInitializationPlan *programInitialization = nullptr,
       MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
-      bool compilerTrusted = false);
+      bool compilerTrusted = false,
+      const MirClassInstance *constructorOwner = nullptr);
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

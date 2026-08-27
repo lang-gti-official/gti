@@ -1,0 +1,55 @@
+#include <std/vector>
+#include <std/string>
+#include <std/span>
+
+std::span<T> relay_span<T>(std::span<T> view) {
+  return view;
+}
+
+std::span<T> move_span<T>(std::span<T> view) {
+  return std::move(view);
+}
+
+int32_t sum_span(std::span<int32_t> view) {
+  mut int32_t result = 0;
+  for (int32_t value : view) {
+    result += value;
+  }
+  return result;
+}
+
+int32_t main() {
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({1, 2, 3, 4});
+  {
+    std::span<int32_t> complete = values.as_span();
+    std::span<int32_t> middle = complete.subspan(std::size_t(1),
+                                                 std::size_t(2));
+    std::span<int32_t> copied = middle;
+    std::span<int32_t> relayed = relay_span<int32_t>(copied);
+    mut std::span<int32_t> moved =
+        move_span<int32_t>(std::move(relayed));
+    if (moved.size() != 2 || moved.empty() || moved.front() != 2 ||
+        moved.back() != 3 || moved[std::size_t(1)] != 3 ||
+        sum_span(moved) != 5) {
+      return 1;
+    }
+  }
+
+  values.push_back(5);
+  std::span<int32_t> empty = values.as_span().first(std::size_t(0));
+  if (!empty.empty() || empty.size() != 0 || sum_span(empty) != 0) {
+    return 2;
+  }
+
+  mut std::string text = std::string("span");
+  {
+    std::span<char> characters = text.as_span();
+    if (characters.size() != 4 || characters.front() != 's' ||
+        characters.last(std::size_t(2)).front() != 'a') {
+      return 3;
+    }
+  }
+  text.push_back('!');
+  return text.size() == 5 ? 0 : 4;
+}

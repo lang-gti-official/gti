@@ -23,11 +23,8 @@ void report(std::string_view label, std::string& actual, std::string_view wanted
   std::print("]\n");
 }
 
-// Builds a path without relying on the converting constructor.
 std::filesystem::path make(std::string_view text) {
-  mut std::filesystem::path result = std::filesystem::path();
-  result.assign(text);
-  return std::move(result);
+  return std::filesystem::path(text);
 }
 
 void check(std::string_view label, std::filesystem::path& actual,
