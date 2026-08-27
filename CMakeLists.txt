@@ -1405,6 +1405,15 @@ if(BUILD_TESTING)
     set_tests_properties(reference_receiver_compound_assign_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME owner_tied_reference_argument_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/owner_tied_reference_argument_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/owner_tied_reference_argument.gti"
+    )
+    set_tests_properties(owner_tied_reference_argument_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1596,6 +1605,7 @@ if(BUILD_TESTING)
         issue_146_class_value_positions_runtime
         issue_147_stored_reference_field_read_runtime
         reference_receiver_compound_assign_runtime
+        owner_tied_reference_argument_runtime
         mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
