@@ -848,6 +848,17 @@ void refineBranch(const MirBody &body, const MirBlock &block,
     state.reachable = false;
     return;
   }
+  auto branchEnvelope = variableFact->wideningEnvelope.value_or(std::pair{
+      minimumValue(variableFact->domain), maximumValue(variableFact->domain)});
+  if (lower && compare(*lower, branchEnvelope.first) > 0) {
+    branchEnvelope.first = *lower;
+  }
+  if (upper && compare(*upper, branchEnvelope.second) < 0) {
+    branchEnvelope.second = *upper;
+  }
+  if (compare(branchEnvelope.first, branchEnvelope.second) <= 0) {
+    variableFact->wideningEnvelope = branchEnvelope;
+  }
   state.integers[variable->value] = *variableFact;
   const auto prefixLength = state.prefixLengthValues.find(variable->value);
   if (prefixLength != state.prefixLengthValues.end()) {
@@ -875,6 +886,7 @@ void refineBranch(const MirBody &body, const MirBlock &block,
       state.reachable = false;
       return;
     }
+    placeFact.wideningEnvelope = variableFact->wideningEnvelope;
     state.integerPlaces[place] = std::move(placeFact);
   }
 }
@@ -4312,7 +4324,7 @@ bool mergeObserved(ObservedFact<T> &target, const ObservedFact<T> &incoming,
 }
 
 [[nodiscard]] bool mergeContext(ClosedCallContext &target,
-                                const ClosedCallContext &incoming) {
+                                const ClosedCallContext &incoming, bool widen) {
   if (!incoming.reached) {
     return false;
   }
@@ -4322,8 +4334,8 @@ bool mergeObserved(ObservedFact<T> &target, const ObservedFact<T> &incoming,
   }
   const ClosedCallContext before = target;
   mergeObserved(target.receiver, incoming.receiver,
-                [](ObjectFact &left, const ObjectFact &right) {
-                  (void)mergeObject(left, right, false);
+                [widen](ObjectFact &left, const ObjectFact &right) {
+                  (void)mergeObject(left, right, widen);
                 });
   const std::size_t argumentCount =
       std::max(target.arguments.size(), incoming.arguments.size());
@@ -4341,12 +4353,12 @@ bool mergeObserved(ObservedFact<T> &target, const ObservedFact<T> &incoming,
             ? incoming.argumentObjects[index]
             : ObservedFact<ObjectFact>{.observed = true};
     mergeObserved(target.arguments[index], incomingInteger,
-                  [](IntegerFact &left, const IntegerFact &right) {
-                    left = joinedInteger(left, right, false);
+                  [widen](IntegerFact &left, const IntegerFact &right) {
+                    left = joinedInteger(left, right, widen);
                   });
     mergeObserved(target.argumentObjects[index], incomingObject,
-                  [](ObjectFact &left, const ObjectFact &right) {
-                    (void)mergeObject(left, right, false);
+                  [widen](ObjectFact &left, const ObjectFact &right) {
+                    (void)mergeObject(left, right, widen);
                   });
   }
   return target != before;
@@ -4872,6 +4884,7 @@ MirClosedCallSafetyAnalysis::find(MirBodyAddress body) const {
 MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
   constexpr std::size_t kMaximumIterations = 32;
+  constexpr std::size_t kWidenAfterContextUpdates = 4;
   constexpr std::size_t kMaximumContextUpdates = 8;
 
   const std::vector<MirBodyAddress> addresses =
@@ -4913,7 +4926,8 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
     std::set<MirBodyAddress, MirBodyAddressLess> changedContexts;
     for (const auto &[address, context] : round.discovered) {
       if (!rejected.contains(address) &&
-          mergeContext(nextContexts[address], context)) {
+          mergeContext(nextContexts[address], context,
+                       contextUpdates[address] >= kWidenAfterContextUpdates)) {
         changedContexts.insert(address);
       }
     }

@@ -98,6 +98,57 @@ std::size_t functionDischarges(const lang::FrontendResult &frontend,
   return count;
 }
 
+std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
+                                        const lang::OptimizedProgram &optimized,
+                                        std::string_view name,
+                                        lang::MirSafetyCheckFamily family,
+                                        lang::MirOperation operation) {
+  const lang::HirFunctionInstance *hir = findFunction(frontend, name);
+  const lang::MirFunctionInstance *function =
+      hir == nullptr ? nullptr : optimized.mir.findFunctionInstance(hir->id);
+  if (function == nullptr) {
+    return 0;
+  }
+  std::size_t count = 0;
+  for (const lang::MirBlock &block : function->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.operation != operation) {
+        continue;
+      }
+      count += static_cast<std::size_t>(
+          std::count_if(instruction.safetyDischarges.begin(),
+                        instruction.safetyDischarges.end(),
+                        [family](const lang::MirSafetyDischarge &discharge) {
+                          return discharge.family == family;
+                        }));
+    }
+  }
+  return count;
+}
+
+std::size_t operatorDischarges(const lang::OptimizedProgram &optimized,
+                               lang::OverloadedOperator operation,
+                               lang::MirSafetyCheckFamily family) {
+  std::size_t count = 0;
+  for (const lang::MirFunctionInstance &function :
+       optimized.mir.functionInstances()) {
+    if (function.overloadedOperator != operation) {
+      continue;
+    }
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        count += static_cast<std::size_t>(
+            std::count_if(instruction.safetyDischarges.begin(),
+                          instruction.safetyDischarges.end(),
+                          [family](const lang::MirSafetyDischarge &discharge) {
+                            return discharge.family == family;
+                          }));
+      }
+    }
+  }
+  return count;
+}
+
 void testProofCarryingSafetyCheckElimination() {
   const std::string source = R"(
 mut int32_t observed = 0;
@@ -365,14 +416,19 @@ int32_t main() {
   const std::size_t mutatingCallRecurrence =
       functionDischarges(frontend, o2, "mutating_closed_call_recurrence",
                          lang::MirSafetyCheckFamily::ArithmeticOverflow);
+  const std::size_t mutatingAccumulator = functionOperationDischarges(
+      frontend, o2, "mutating_closed_call_recurrence",
+      lang::MirSafetyCheckFamily::ArithmeticOverflow,
+      lang::MirOperation::AddAssign);
   expect(boundedRecurrence == 2 && dynamicRecurrence == 0 &&
              repeatedRecurrence == 1 && callRecurrence == 0 &&
              contextualRecurrence == 2 && boundedIntervalRecurrence == 2 &&
-             observerRecurrence == 2 && mutatingCallRecurrence == 0,
+             observerRecurrence == 2 && mutatingCallRecurrence == 1 &&
+             mutatingAccumulator == 0,
          "finite exact or interval bounds and unrelated exact calls should "
-         "prove the counter and accumulator while dynamic bounds, repeated "
-         "writes, native calls, and exact calls mutating the accumulator "
-         "remain checked");
+         "prove independent counter arithmetic while dynamic bounds, repeated "
+         "writes, native calls, and exact calls mutating the accumulator keep "
+         "the affected arithmetic checked");
 
   const std::size_t arrayEnvelope =
       functionDischarges(frontend, o2, "fixed_array_envelope",
@@ -908,9 +964,10 @@ int32_t main() {
   const std::size_t repeatNarrowO3 = overflow(o3, "repeat_narrow");
   const std::size_t repeatUnboundedO2 = overflow(o2, "repeat_unbounded");
   const std::size_t repeatUnboundedO3 = overflow(o3, "repeat_unbounded");
-  expect(repeatNarrowO2 == 4 && repeatNarrowO3 == 4,
+  expect(repeatNarrowO2 == 5 && repeatNarrowO3 == 5,
          "a result-bounded record field update should preserve its envelope "
-         "across a finite loop and discharge every arithmetic check");
+         "across a finite loop and discharge its field arithmetic plus the "
+         "guard-bounded loop increment");
   expect(repeatUnboundedO2 == 0 && repeatUnboundedO3 == 0,
          "an unbounded record field recurrence must retain its field check");
   expect(overflow(o2, "increment_then_barrier") == 2 &&
@@ -923,6 +980,107 @@ int32_t main() {
          "envelopes before arithmetic mutation");
 }
 
+void testGuardedClosedCallContextWidening() {
+  const std::string source = R"(
+struct ContextEntity {
+  ContextEntity() {}
+
+  mut int32_t position_x = 0;
+  mut int32_t position_y = 0;
+  mut int32_t velocity_x = 0;
+  mut int32_t velocity_y = 0;
+};
+
+class ContextBuffer {
+  mut gti_internal::prefix_storage<ContextEntity> data;
+
+public:
+  ContextBuffer()
+      : data(gti_internal::allocate_prefix_storage<ContextEntity>(uint64_t(4))) {
+    gti_internal::prefix_storage_append(this.data, ContextEntity());
+    gti_internal::prefix_storage_append(this.data, ContextEntity());
+    gti_internal::prefix_storage_append(this.data, ContextEntity());
+    gti_internal::prefix_storage_append(this.data, ContextEntity());
+  }
+
+  uint64_t size() {
+    return gti_internal::prefix_storage_length(this.data);
+  }
+
+  mut ContextEntity& operator[](uint64_t index) mut {
+    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    gti_internal::index_bounds_check(index, live);
+    return gti_internal::prefix_storage_read_mut(this.data, index);
+  }
+};
+
+void update(mut ContextBuffer& entities) {
+  for (mut uint64_t index = 0; index < uint64_t(4); index++) {
+    mut ContextEntity& entity = entities[index];
+    entity.position_x = int32_t(index % uint64_t(7)) - int32_t(3);
+    entity.position_y = int32_t(index % uint64_t(5)) - int32_t(2);
+    entity.velocity_x = int32_t(index % uint64_t(3)) - int32_t(1);
+    entity.velocity_y = int32_t(index % uint64_t(2));
+  }
+
+  for (mut int32_t tick = 0; tick < int32_t(16); tick++) {
+    int32_t phase = tick % int32_t(7);
+    for (mut uint64_t index = 0; index < uint64_t(4); index++) {
+      mut ContextEntity& entity = entities[index];
+      int32_t lane = int32_t(index % uint64_t(3));
+      entity.velocity_x =
+          (entity.velocity_x * int32_t(3) + phase + lane) % int32_t(17) -
+          int32_t(8);
+      entity.velocity_y =
+          (entity.velocity_y * int32_t(5) + phase + lane) % int32_t(19) -
+          int32_t(9);
+      entity.position_x =
+          (entity.position_x + entity.velocity_x + int32_t(64)) %
+              int32_t(127) -
+          int32_t(63);
+      entity.position_y =
+          (entity.position_y + entity.velocity_y + int32_t(64)) %
+              int32_t(127) -
+          int32_t(63);
+    }
+  }
+}
+
+int32_t main() {
+  mut ContextBuffer entities = ContextBuffer();
+  update(entities);
+  return entities[uint64_t(0)].position_x;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-guarded-call-context.gti", source);
+  expect(frontend.canGenerateCode(),
+         "guarded closed-call context fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const auto optimize = [&](lang::OptimizationLevel level) {
+    return pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+  };
+  const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
+  const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
+  const auto bounds = [&](const lang::OptimizedProgram &optimized) {
+    return operatorDischarges(optimized, lang::OverloadedOperator::Subscript,
+                              lang::MirSafetyCheckFamily::Bounds);
+  };
+
+  expect(o2.valid() && o3.valid() && bounds(o2) == 2 && bounds(o3) == 2,
+         "guard-refined loop indices and exact storage lengths should survive "
+         "bounded closed-call context widening and discharge both bounds "
+         "checks");
+}
+
 } // namespace
 
 int main() {
@@ -931,6 +1089,7 @@ int main() {
   testPrefixStorageBoundsRelation();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
+  testGuardedClosedCallContextWidening();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";
     return 1;

@@ -112,6 +112,12 @@ writes, lifetime changes, and other unclassified mutation invalidate mutable
 facts instead of being guessed through. Every canonical normal edge
 participates, including a switch default edge; omitted infeasible branch edges
 retain their terminator slot identity when they later become executable.
+On a comparison edge, the refined interval also carries an edge-local widening
+envelope bounded by that comparison. A later loop join may widen the place,
+but replaying the dominating true edge restores its proved range before a call
+or checked operation. This envelope is derived only from the existing MIR
+predicate and exact comparison operand; it is not a relational solver or a
+source-name rule.
 
 Exact nonzero integer remainder and bitwise-and with one exact nonnegative mask
 have dedicated interval transfer. Remainder contributes a result-domain
@@ -169,13 +175,16 @@ participate. A scalar fact returned by reference crosses the call boundary only
 when the returned loan identifies one exact prefix-read producer with the same
 source and access. Prefix length is always constrained to the storage invariant
 `0 <= length <= capacity`; contradictory abstract facts fail closed. Contexts
-join monotonically, use fixed global and per-body update budgets, and contribute
-proofs only after convergence. A body may retain contextual proofs established
-before a conservative call barrier even when that barrier prevents the body
-from exporting a complete return or mutation summary. The barrier still clears
-mutable facts for every later instruction. Recursive SCCs, native or virtual
-calls, owning-argument transfers, synchronization, raw/unsafe memory,
-unsupported cleanup, open call families, and conflicting facts remain
+join monotonically and use the same typed integer/object widening policy as the
+body-local client after four prior per-body context updates. The global
+32-round limit and per-body eight-update limit remain fail-closed budgets; a
+body exceeding either boundary contributes no contextual proof. Proofs are
+published only after convergence. A body may retain contextual proofs
+established before a conservative call barrier even when that barrier prevents
+the body from exporting a complete return or mutation summary. The barrier
+still clears mutable facts for every later instruction. Recursive SCCs, native
+or virtual calls, owning-argument transfers, synchronization, raw/unsafe
+memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
 Discharged checked `+=`, `-=`, and `*=` may emit the equivalent native C++
