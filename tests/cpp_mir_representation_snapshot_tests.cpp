@@ -1788,6 +1788,81 @@ int main() {
          "concrete instances should be a contracted production family");
 }
 
+void testReferenceReceiverCompoundAssignPlaceCoherence() {
+  // A compound assignment through a reference-parameter receiver records a
+  // receiver place rooted at the reference binding with a dereference
+  // projection. The place's result type must be the referenced class type;
+  // recording the reference type itself made the body-emission scan reject
+  // the program as "place projection result type disagrees with its
+  // concrete root and projection chain".
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-reference-compound-assign.gti", R"(
+class Stepper {
+  mut int32_t position = 0;
+public:
+  Stepper() {}
+  void operator+=(int32_t distance) mut { this.position += distance; }
+  void operator-=(int32_t distance) mut { this.position -= distance; }
+  int32_t at() { return this.position; }
+};
+
+void jump(mut Stepper& cursor, int32_t distance) {
+  cursor += distance;
+}
+
+void retreat(mut Stepper& cursor, int32_t distance) {
+  cursor -= distance;
+}
+
+void jumpIndirect(mut Stepper& cursor, int32_t distance) {
+  jump(cursor, distance);
+}
+
+int main() {
+  mut Stepper cursor = Stepper();
+  jump(cursor, 4);
+  retreat(cursor, 1);
+  jumpIndirect(cursor, 2);
+  return cursor.at() - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the reference-receiver compound-assign fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O0,
+                                        .target = lang::TargetInfo::host()});
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
+  expect(optimized.valid() && lowered.valid(),
+         "the reference-receiver compound-assign fixture should produce "
+         "LoweredProgram");
+  if (!optimized.valid() || !lowered.valid()) {
+    return;
+  }
+  lang::CppMirRepresentationSnapshotBuild build =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program);
+  expect(build.valid(),
+         "a compound assignment through a reference-parameter receiver "
+         "should record a place whose result type agrees with its root and "
+         "projection chain");
+  if (!build.valid()) {
+    return;
+  }
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, std::move(*build.snapshot));
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         "the reference-receiver compound assignment should remain a "
+         "complete C++ plan");
+}
+
 int main() {
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();
@@ -1809,6 +1884,7 @@ int main() {
   testLifecycleCleanupGeneratedItemRows();
   testUnusedGenericDestructorNeedsNoConcreteDefinition();
   testConcreteInstanceGeneratedItemRows();
+  testReferenceReceiverCompoundAssignPlaceCoherence();
 
   if (failures != 0) {
     std::cerr << failures

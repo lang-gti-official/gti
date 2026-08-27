@@ -3111,18 +3111,32 @@ private:
                           ? HirValueKind::Variable
                           : HirValueKind::QualifiedName;
         target.symbol = symbol;
-        target.info = record == nullptr
-                          ? ExpressionInfo{.type = resolved->dispatchOwner,
-                                           .category = ValueCategory::Place,
-                                           .access = AccessMode::Mutable,
-                                           .traits = semanticTraits(
-                                               resolved->dispatchOwner)}
-                          : ExpressionInfo{.type = record->type,
-                                           .category = ValueCategory::Place,
-                                           .access = record->mutableBinding
-                                                         ? AccessMode::Mutable
-                                                         : AccessMode::ReadOnly,
-                                           .traits = record->traits};
+        // A reference binding names its referent. Semantic analysis records
+        // the referenced class type for a receiver expression, and MIR
+        // lowering derives a dereference projection from the binding type,
+        // so the manufactured receiver must carry the referenced type as
+        // well; keeping the raw reference type would record a place whose
+        // result type disagrees with its root and projection chain.
+        const bool referenceBinding =
+            record != nullptr && record->type.kind == SemanticType::Reference &&
+            record->type.arguments.size() == 1;
+        const SemanticType receiverType =
+            record == nullptr  ? resolved->dispatchOwner
+            : referenceBinding ? record->type.arguments.front()
+                               : record->type;
+        target.info =
+            record == nullptr
+                ? ExpressionInfo{.type = receiverType,
+                                 .category = ValueCategory::Place,
+                                 .access = AccessMode::Mutable,
+                                 .traits = semanticTraits(receiverType)}
+                : ExpressionInfo{
+                      .type = receiverType,
+                      .category = ValueCategory::Place,
+                      .access = record->mutableBinding ? AccessMode::Mutable
+                                                       : AccessMode::ReadOnly,
+                      .traits = referenceBinding ? semanticTraits(receiverType)
+                                                 : record->traits};
         if (const PlaceKey *place = model.findPlace(*assign)) {
           target.place = qualifyPlace(*place, body.placeDomain);
         }
