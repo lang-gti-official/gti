@@ -14686,6 +14686,114 @@ int main() {
       "use after move");
 }
 
+void testSemanticVisitorRequestReuse() {
+  const auto parseProgram = [](std::string source) {
+    lang::Lexer lexer;
+    std::vector<lang::Token> tokens = lexer.scan(std::move(source));
+    expect(!lexer.hadError(), "semantic reuse fixture should lex");
+    lang::Parser parser(std::move(tokens));
+    lang::Program program = parser.parse();
+    expect(!parser.hadError(), "semantic reuse fixture should parse");
+    return program;
+  };
+  const auto parseExpression = [](std::string source) {
+    lang::Lexer lexer;
+    std::vector<lang::Token> tokens = lexer.scan(std::move(source));
+    expect(!lexer.hadError(), "semantic reuse expression should lex");
+    lang::Parser parser(std::move(tokens));
+    lang::ExprPtr expression = parser.parseExpression();
+    expect(!parser.hadError() && expression != nullptr,
+           "semantic reuse expression should parse");
+    return expression;
+  };
+
+  lang::Program first = parseProgram(R"(
+static int hidden = 7;
+int first(mut int& value) {
+  mut int& alias = value;
+  return alias;
+}
+)");
+  const lang::FunctionDecl *firstFunction =
+      findTopLevelFunction(first, "first");
+  const auto *firstReturn =
+      firstFunction != nullptr && firstFunction->body() != nullptr
+          ? dynamic_cast<const lang::ReturnStmt *>(
+                firstFunction->body()->statements().back().get())
+          : nullptr;
+  const lang::Expr *firstReturnExpression =
+      firstReturn != nullptr ? firstReturn->value().get() : nullptr;
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(first),
+         "the first request in a reusable semantic visitor should pass");
+  const lang::FunctionInfo *firstInfo =
+      firstFunction != nullptr
+          ? semantic.model().findFunction(*firstFunction)
+          : nullptr;
+  expect(firstInfo != nullptr && firstInfo->id == 1,
+         "the first request should allocate its first function identity");
+  expect(!semantic.model().loans().empty(),
+         "the first request should publish its reference loan");
+  expect(firstReturnExpression != nullptr &&
+             semantic.model().findExpression(*firstReturnExpression) != nullptr,
+         "the first request should publish AST-backed expression facts");
+
+  lang::Program second = parseProgram(R"(
+int second() { return 2; }
+)");
+  const lang::FunctionDecl *secondFunction =
+      findTopLevelFunction(second, "second");
+  const auto *secondReturn =
+      secondFunction != nullptr && secondFunction->body() != nullptr
+          ? dynamic_cast<const lang::ReturnStmt *>(
+                secondFunction->body()->statements().back().get())
+          : nullptr;
+  expect(semantic.check(second),
+         "a second program request should start from a clean session");
+  const lang::FunctionInfo *secondInfo =
+      secondFunction != nullptr
+          ? semantic.model().findFunction(*secondFunction)
+          : nullptr;
+  expect(secondInfo != nullptr && secondInfo->id == 1,
+         "function identities should restart for every request");
+  expect(firstFunction != nullptr &&
+             semantic.model().findFunction(*firstFunction) == nullptr,
+         "declaration pointers from the first request must not survive");
+  expect(firstReturnExpression != nullptr &&
+             semantic.model().findExpression(*firstReturnExpression) == nullptr,
+         "expression pointers from the first request must not survive");
+  expect(secondReturn != nullptr && secondReturn->value() != nullptr &&
+             semantic.model().findExpression(*secondReturn->value()) != nullptr,
+         "the second request should publish only its own expression facts");
+  expect(semantic.model().loans().empty(),
+         "loan-flow state from the first request must not survive");
+
+  lang::Program invalid = parseProgram(R"(
+int broken() { return missing; }
+)");
+  expect(!semantic.check(invalid) && !semantic.errors().empty(),
+         "an invalid request should publish diagnostics");
+  expect(semantic.check(second) && semantic.errors().empty(),
+         "a later valid request should clear earlier diagnostics");
+
+  expect(semantic.check(first),
+         "the static-name fixture should remain reusable");
+  lang::ExprPtr hidden = parseExpression("hidden");
+  expect(hidden != nullptr && !semantic.check(*hidden) &&
+             !semantic.errors().empty() &&
+             semantic.expressionType() == lang::SemanticType::Unknown,
+         "program-to-expression reuse must not retain internal names or the "
+         "previous expression/return context");
+
+  lang::ExprPtr boolean = parseExpression("true");
+  expect(boolean != nullptr && semantic.check(*boolean) &&
+             semantic.errors().empty() && semantic.model().loans().empty() &&
+             semantic.expressionType() == lang::SemanticType::Bool,
+         "a later expression request should clear diagnostics and flow state "
+         "while publishing its own exact type");
+}
+
 void testCompletePipeline() {
   lang::Lexer lexer;
   const std::string source = R"(
@@ -33791,6 +33899,10 @@ private:
 
 int main(int argc, char **argv) {
   lang::installCrashHandlers("gti_tests");
+  if (argc == 2 && std::string(argv[1]) == "semantic-reuse") {
+    testSemanticVisitorRequestReuse();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "aggregate") {
     testAggregateOwnershipTraits();
     return failures == 0 ? 0 : 1;
@@ -33912,6 +34024,7 @@ int main(int argc, char **argv) {
   testCompilerPrivateStorage();
   testVariadicStorageConstructionAndVector();
   testAggregateOwnershipTraits();
+  testSemanticVisitorRequestReuse();
   testCompletePipeline();
   testLoopControlStatements();
   testDoWhileStatements();
