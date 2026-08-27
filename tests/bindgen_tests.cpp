@@ -264,11 +264,15 @@ int sum_row(Row row);
              contains(renamed->reason, "assembler label '_actual_symbol'"),
          "the planner should skip the assembler-labeled function with its "
          "reason");
+  // C-06: the layout attribute is a model fact, so the degradation reason
+  // names which attribute rather than saying "an attribute".
+  expect(contains(printed, "record Squeezed [packed]"),
+         "a packed record should carry its layout fact");
   const lang::bindgen::BindingItem *squeezed = findItem(plan, "Squeezed");
   expect(squeezed != nullptr &&
              squeezed->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(squeezed->reason, "attribute"),
-         "a packed record should degrade to opaque with its reason");
+             contains(squeezed->reason, "the record is packed"),
+         "a packed record should degrade to opaque naming the attribute");
 }
 
 // A non-C calling convention is likewise a model fact the planner rejects
@@ -670,16 +674,20 @@ int use_base(int value);
          "redefinition should keep the latest value");
   expect(!contains(source, "GUARD_ONLY") && !contains(source, "CALL"),
          "guards and function-like macros should stay silent");
-  expect(!contains(source, "STRINGY = ") && !contains(source, "FLOATY = ") &&
-             !contains(source, "TOO_BIG"),
-         "non-integer and out-of-range macros should not import");
-  bool notedString = false;
+  // C-06 constants cover every bounded form a C macro body can hold.
+  expect(contains(source, "constexpr std::string_view STRINGY = \"text\";"),
+         "a string macro should import as a string-view constant");
+  expect(contains(source, "constexpr double FLOATY = 1.5;"),
+         "a floating macro should import as a double constant");
+  expect(!contains(source, "TOO_BIG"),
+         "an out-of-range macro should not import");
+  bool notedUnevaluable = false;
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
-    notedString =
-        notedString || contains(diagnostic.message,
-                                "'STRINGY' is not a bounded integer constant");
+    notedUnevaluable =
+        notedUnevaluable ||
+        contains(diagnostic.message, "'TOO_BIG' is not a bounded constant");
   }
-  expect(notedString,
+  expect(notedUnevaluable,
          "a non-evaluable object-like macro should be noted, not dropped");
 }
 
@@ -887,6 +895,143 @@ void testSourceProvenanceAndImportPolicy() {
          "the frontend should accept the policy-filtered bindings");
 }
 
+// C-07: opt-in policy. Allow/deny narrow the import by name while excluded
+// declarations still resolve uses exactly like out-of-policy ones; a rename
+// gives a type whose C spelling GTI cannot use a usable name; and a declared
+// pointer-plus-count contract emits `[[c_array(count)]]`, including the
+// two-level result form the bounded surface otherwise refuses.
+void testOptInImportPolicy() {
+  const std::string header = R"(
+typedef struct Point { int x; int y; } Point;
+typedef struct Handle Handle;
+struct lib__internal { int state; };
+const Point *lib_points(unsigned int *count);
+Handle **lib_handles(int *count);
+int lib_take_internal(struct lib__internal *state);
+int lib_internal_helper(int value);
+int lib_public(int value);
+)";
+
+  {
+    lang::bindgen::BindingOptions options;
+    options.deny.push_back({"lib_internal_*"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(result.usable(), "the deny-configured header should read");
+    expect(!contains(result.gtiSource, "lib_internal_helper"),
+           "a denied declaration should not emit");
+    expect(contains(result.gtiSource, "lib_public"),
+           "declarations outside the deny list should emit");
+  }
+  {
+    lang::bindgen::BindingOptions options;
+    options.allow.push_back({"lib_public"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "lib_public") &&
+               !contains(result.gtiSource, "lib_points"),
+           "a non-empty allow list should admit only matching declarations");
+  }
+  {
+    // The rename gives the reserved-spelling record a usable name, so the
+    // function taking it through a pointer becomes importable.
+    lang::bindgen::BindingOptions options;
+    options.renames.emplace("lib__internal", "LibInternal");
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "[[c_abi]]\nstruct LibInternal {"),
+           "the renamed record should emit under its GTI name");
+    expect(contains(result.gtiSource, "lib_take_internal(LibInternal* state)"),
+           "uses of the renamed record should spell the new name");
+  }
+  {
+    // A function's GTI name is its link symbol, so renaming one is refused
+    // rather than silently binding a different symbol.
+    lang::bindgen::BindingOptions options;
+    options.renames.emplace("lib_public", "lib_renamed");
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "int32_t lib_public(int32_t value)"),
+           "a function keeps its C name regardless of a rename entry");
+    bool refused = false;
+    for (const lang::bindgen::ReaderDiagnostic &diagnostic :
+         result.diagnostics) {
+      refused = refused ||
+                contains(diagnostic.message, "'lib_public' names a function");
+    }
+    expect(refused, "renaming a function should report why it cannot apply");
+  }
+  {
+    lang::bindgen::BindingOptions options;
+    options.arrayReturns.push_back({"lib_points", "count"});
+    options.arrayReturns.push_back({"lib_handles", "count"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource,
+                    "[[c_array(count)]] const Point* lib_points("
+                    "uint32_t* count)"),
+           "a one-level array result should carry the attribute");
+    expect(contains(result.gtiSource,
+                    "[[c_array(count)]] Handle** lib_handles(int32_t* count)"),
+           "the two-level array result form should import with the "
+           "attribute");
+    const lang::bindgen::BindgenResult unannotated =
+        lang::bindgen::runCBindgen(header, "lib.h", {});
+    const lang::bindgen::BindingItem *handles =
+        findItem(unannotated.plan, "lib_handles");
+    expect(handles != nullptr &&
+               handles->kind == lang::bindgen::BindingItemKind::Skipped,
+           "without the contract the two-level result stays refused");
+  }
+  {
+    // An unusable count parameter must refuse the function rather than emit
+    // an attribute the frontend rejects.
+    lang::bindgen::BindingOptions options;
+    options.arrayReturns.push_back({"lib_points", "missing"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    const lang::bindgen::BindingItem *points =
+        findItem(result.plan, "lib_points");
+    expect(points != nullptr &&
+               points->kind == lang::bindgen::BindingItemKind::Skipped &&
+               contains(points->reason, "does not name a parameter"),
+           "an array count naming no parameter should refuse the function");
+  }
+  {
+    // A configured entry that matches nothing is reported, never silent.
+    lang::bindgen::BindingOptions options;
+    options.deny.push_back({"lib_absent_*"});
+    options.renames.emplace("AbsentType", "Present");
+    options.arrayReturns.push_back({"lib_absent", "count"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(result.plan.policyProblems.size() == 3,
+           "every unmatched configuration entry should be reported");
+  }
+
+  // The closing gate: a fully configured import is real GTI.
+  lang::bindgen::BindingOptions options;
+  options.deny.push_back({"lib_internal_*"});
+  options.renames.emplace("lib__internal", "LibInternal");
+  options.arrayReturns.push_back({"lib_points", "count"});
+  options.arrayReturns.push_back({"lib_handles", "count"});
+  const lang::bindgen::BindgenResult configured =
+      lang::bindgen::runCBindgen(header, "lib.h", std::move(options));
+  const std::string program = configured.gtiSource + "\nint main() {\n"
+                                                     "  return 0;\n"
+                                                     "}\n";
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "bindgen-policy.gti", program, {standardLibrary / "prelude.gti"}, {},
+      {standardLibrary});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(),
+         "the frontend should accept the configured bindings");
+}
+
 // -- Frontend acceptance ----------------------------------------------------
 
 // The closing gate: generated bindings must be accepted by the real
@@ -956,6 +1101,7 @@ int main() {
   testReaderAbiSafetyGates();
   testCallingConventionFacts();
   testSourceProvenanceAndImportPolicy();
+  testOptInImportPolicy();
   testReaderFieldAndQualifierForms();
   testRecordDegradation();
   testFieldPositionDegradation();

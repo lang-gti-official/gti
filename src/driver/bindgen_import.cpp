@@ -91,6 +91,26 @@ readFileText(const std::filesystem::path &path) {
     hash.update("\nmacro:");
     hash.update(argument);
   }
+  for (const std::string &pattern : import.allowPatterns) {
+    hash.update("\nallow:");
+    hash.update(pattern);
+  }
+  for (const std::string &pattern : import.denyPatterns) {
+    hash.update("\ndeny:");
+    hash.update(pattern);
+  }
+  for (const auto &[from, to] : import.renames) {
+    hash.update("\nrename:");
+    hash.update(from);
+    hash.update(">");
+    hash.update(to);
+  }
+  for (const auto &[function, count] : import.arrayReturns) {
+    hash.update("\narray:");
+    hash.update(function);
+    hash.update(">");
+    hash.update(count);
+  }
   hash.update("\n--\n");
   hash.update(preprocessed);
   return hash.finishHex();
@@ -189,6 +209,18 @@ void generateImport(const BindgenImportPlan &import,
           : lang::bindgen::CDataModel::Lp64);
   lang::bindgen::BindingOptions options;
   options.namespaceName = import.namespaceName;
+  for (const std::string &pattern : import.allowPatterns) {
+    options.allow.push_back({pattern});
+  }
+  for (const std::string &pattern : import.denyPatterns) {
+    options.deny.push_back({pattern});
+  }
+  for (const auto &[from, to] : import.renames) {
+    options.renames.emplace(from, to);
+  }
+  for (const auto &[function, count] : import.arrayReturns) {
+    options.arrayReturns.push_back({function, count});
+  }
   const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
       *text, import.header.filename().string(), std::move(options), profile);
   const std::string headerName = import.declaredHeader;

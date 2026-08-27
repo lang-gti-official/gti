@@ -2,6 +2,7 @@
 
 #include "gti/bindgen/native_model.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -13,10 +14,49 @@
 
 namespace lang::bindgen {
 
+// One `name` or `prefix*` selector. Exact names and a single trailing
+// wildcard are the whole grammar: an import policy has to be auditable, and
+// a general expression language would make "what does this header export?"
+// unanswerable without running the tool.
+struct BindingNamePattern {
+  std::string text;
+
+  [[nodiscard]] bool matches(std::string_view name) const {
+    if (!text.empty() && text.back() == '*') {
+      return name.substr(0, text.size() - 1) ==
+             std::string_view(text).substr(0, text.size() - 1);
+    }
+    return name == text;
+  }
+};
+
+// The pointer-plus-count contract for one function result (C-07). C headers
+// cannot state it, so the caller declares it and the planner validates the
+// shape against the language's `[[c_array(count)]]` rule.
+struct BindingArrayReturn {
+  std::string function;
+  std::string countParameter;
+};
+
+// Opt-in import policy (C-07). Every field narrows or renames what the
+// bounded surface already admits; none of it widens the ABI.
 struct BindingOptions {
   // Optional GTI namespace wrapped around the generated source names; the C
   // symbols stay global exactly as the language defines.
   std::string namespaceName;
+  // When non-empty, only matching declarations are emitted. Non-matching
+  // declarations still resolve uses exactly like out-of-policy system
+  // declarations do.
+  std::vector<BindingNamePattern> allow;
+  // Matching declarations are never emitted; deny wins over allow.
+  std::vector<BindingNamePattern> deny;
+  // C name to GTI name, for types and constants whose C spelling GTI cannot
+  // use. Functions are excluded: a function's GTI name is its link symbol,
+  // so renaming one would bind a different function.
+  std::map<std::string, std::string> renames;
+  // Functions whose result is borrowed array storage counted through an out
+  // parameter.
+  std::vector<BindingArrayReturn> arrayReturns;
 };
 
 enum class BindingItemKind {
@@ -70,11 +110,18 @@ struct BindingItem {
   // Callback / Function.
   std::string resultSpelling;
   std::vector<BindingParameter> parameters;
-  // Constant.
+  // Constant: `aliasSpelling` is its GTI type and the tagged value follows
+  // the native model's evaluated form.
+  NativeConstantKind constantKind = NativeConstantKind::Integer;
   std::int64_t constantValue = 0;
+  double constantFloating = 0.0;
+  std::string constantText;
   // Callback: the alias was synthesized for an inline function-pointer use
   // rather than read from a header typedef.
   bool synthesized = false;
+  // Function: the validated `[[c_array(count)]]` count parameter, empty when
+  // the function declares no array-return contract.
+  std::string arrayCountParameter;
   // Opaque degradation note or skip reason.
   std::string reason;
 };
@@ -86,6 +133,10 @@ struct BindingPlan {
   // The model's consumed-file table (C-05): item and diagnostic origins
   // resolve their `file` ids here; 0 is the root header.
   std::vector<NativeSourceFile> sourceFiles;
+  // Configuration entries that matched no declaration, or that named a
+  // shape the policy refused. A typo in an opt-in list must be visible
+  // rather than silently doing nothing.
+  std::vector<std::string> policyProblems;
   [[nodiscard]] std::size_t importedCount() const;
   [[nodiscard]] std::size_t skippedCount() const;
 };

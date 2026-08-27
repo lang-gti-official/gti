@@ -151,7 +151,8 @@ void printUsage(std::ostream &stream) {
          "       gti format init [directory]\n"
          "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] "
          "[--target <triple>] [--sysroot <path>] [-I <dir>] [-D <macro>] "
-         "[-U <macro>]\n"
+         "[-U <macro>] [--allow <pattern>] [--deny <pattern>] "
+         "[--rename <from>=<to>] [--array-return <fn>=<count>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -228,6 +229,16 @@ void printUsage(std::ostream &stream) {
          "      --sysroot <path>\n"
          "                       Select the platform SDK the preprocessor\n"
          "                       resolves system includes against.\n"
+         "      --allow <name|prefix*>\n"
+         "                       Import only matching declarations.\n"
+         "      --deny <name|prefix*>\n"
+         "                       Never import matching declarations.\n"
+         "      --rename <c-name>=<gti-name>\n"
+         "                       Spell an imported type or constant\n"
+         "                       differently; functions cannot be renamed.\n"
+         "      --array-return <function>=<count>\n"
+         "                       Annotate a pointer-plus-count result with\n"
+         "                       [[c_array(count)]].\n"
          "  -I <dir>             Add a C header search directory.\n"
          "  -D <macro[=value]>   Define a C preprocessor macro.\n"
          "  -U <macro>           Undefine a C preprocessor macro.\n"
@@ -2299,6 +2310,53 @@ int runBindgen(int argc, char *argv[]) {
         return exitCode(ExitStatus::Usage);
       }
       options.bindings.namespaceName = argv[++index];
+      continue;
+    }
+    if (argument == "--allow" || argument == "--deny") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: " << argument
+                  << " requires a name or 'prefix*' pattern\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      const std::string pattern = argv[++index];
+      if (pattern.empty()) {
+        std::cerr << "gti: " << argument << " requires a non-empty pattern\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      (argument == "--allow" ? options.bindings.allow : options.bindings.deny)
+          .push_back({pattern});
+      continue;
+    }
+    if (argument == "--rename") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --rename requires <c-name>=<gti-name>\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      const std::string spelling = argv[++index];
+      const std::size_t separator = spelling.find('=');
+      if (separator == std::string::npos || separator == 0 ||
+          separator + 1 == spelling.size()) {
+        std::cerr << "gti: --rename requires <c-name>=<gti-name>\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.bindings.renames.emplace(spelling.substr(0, separator),
+                                       spelling.substr(separator + 1));
+      continue;
+    }
+    if (argument == "--array-return") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --array-return requires <function>=<count>\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      const std::string spelling = argv[++index];
+      const std::size_t separator = spelling.find('=');
+      if (separator == std::string::npos || separator == 0 ||
+          separator + 1 == spelling.size()) {
+        std::cerr << "gti: --array-return requires <function>=<count>\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.bindings.arrayReturns.push_back(
+          {spelling.substr(0, separator), spelling.substr(separator + 1)});
       continue;
     }
     if (argument == "--target") {
