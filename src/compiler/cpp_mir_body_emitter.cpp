@@ -19939,7 +19939,8 @@ private:
       }
       const StagedClassResult staged =
           stagedClassResultForSource(facts.body, *instruction.result);
-      if (staged.producer == &instruction && staged.slot != nullptr) {
+      if (staged.producer == &instruction && staged.slot != nullptr &&
+          (!failureForm || transformedConstructor(instruction) == nullptr)) {
         writeIndent();
         output << "__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *staged.slot)

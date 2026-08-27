@@ -11,7 +11,9 @@ class tracked_value {
   mut int32_t stored;
 
 public:
-  tracked_value(int32_t value) : stored(value) {}
+  tracked_value(int32_t value) : stored(value) {
+    this.stored = value + int32_t(0);
+  }
 
   tracked_value(tracked_value& other) = delete;
   tracked_value(tracked_value&& other) = default;

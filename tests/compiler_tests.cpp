@@ -13803,6 +13803,120 @@ int main() {
       "std::allocator and std::storage should remain ordinary source-defined "
       "policy while only their private implementation calls are intrinsic");
 
+  const lang::FrontendResult checkedConstructorStorage =
+      lang::Frontend().analyze("checked-constructor-storage.gti", R"(
+#include <std/memory>
+
+class checked_value {
+  mut int32_t stored;
+
+public:
+  checked_value(int32_t value) : stored(value) {
+    this.stored = value + int32_t(0);
+  }
+
+  checked_value(checked_value& other) = delete;
+  checked_value(checked_value&& other) = default;
+};
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated =
+      allocator.try_storage<checked_value>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<checked_value> values =
+      std::move(allocated).value();
+  values.construct(std::size_t(0), checked_value(int32_t(7)));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()}, {},
+                               {standardLibraryRoot()});
+  const lang::BackendArtifact checkedConstructorArtifact =
+      checkedConstructorStorage.canGenerateCode()
+          ? gti_test::emitCpp(
+                checkedConstructorStorage, checkedConstructorStorage.mir,
+                checkedConstructorStorage.mir,
+                lang::OptimizationPipeline().run(checkedConstructorStorage.hir,
+                                                 lang::OptimizationLevel::O0))
+          : lang::BackendArtifact{};
+  const lang::MirInstruction *checkedConstruction = nullptr;
+  const lang::MirConstructorInstance *checkedTarget = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       checkedConstructorStorage.mir.functionInstances()) {
+    const lang::HirFunctionInstance *hirFunction =
+        checkedConstructorStorage.hir.findFunctionInstance(function.id);
+    if (hirFunction == nullptr || hirFunction->source == nullptr ||
+        hirFunction->source->name().lexeme != "main") {
+      continue;
+    }
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirConstructorInstance *target =
+            instruction.constructorTarget
+                ? checkedConstructorStorage.mir.findConstructorInstance(
+                      *instruction.constructorTarget)
+                : nullptr;
+        const lang::HirConstructorInstance *hirTarget =
+            target == nullptr
+                ? nullptr
+                : checkedConstructorStorage.hir.findConstructorInstance(
+                      target->id);
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorKind == lang::ConstructorKind::Ordinary &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::Constructor &&
+            hirTarget != nullptr && hirTarget->source != nullptr &&
+            hirTarget->source->name().lexeme == "checked_value") {
+          checkedConstruction = &instruction;
+          checkedTarget = target;
+        }
+      }
+    }
+  }
+  const std::string checkedSuccess =
+      checkedConstruction == nullptr
+          ? ""
+          : "__gti_mir_construct_success_" +
+                std::to_string(checkedConstruction->id);
+  const std::string checkedTag =
+      checkedTarget == nullptr ? ""
+                               : "mir_failure_constructor_tag_v1<" +
+                                     std::to_string(checkedTarget->id) + ">{}";
+  bool checkedInvoke = false;
+  if (checkedConstruction != nullptr) {
+    for (const lang::MirFunctionInstance &function :
+         checkedConstructorStorage.mir.functionInstances()) {
+      checkedInvoke =
+          checkedInvoke ||
+          std::any_of(function.body.blocks.begin(), function.body.blocks.end(),
+                      [&](const lang::MirBlock &block) {
+                        return block.terminator.kind ==
+                                   lang::MirTerminatorKind::Invoke &&
+                               block.terminator.invokeInstruction ==
+                                   checkedConstruction->id;
+                      });
+    }
+  }
+  expect(
+      checkedConstructorStorage.canGenerateCode() &&
+          lang::verifyMirProgram(checkedConstructorStorage.mir).valid() &&
+          checkedConstruction != nullptr && checkedTarget != nullptr &&
+          checkedInvoke &&
+          checkedConstruction->definedFailure.propagation ==
+              lang::FailurePropagationKind::Constructor &&
+          checkedConstructorArtifact.contents.find(
+              "bool " + checkedSuccess + " = false;") != std::string::npos &&
+          checkedConstructorArtifact.contents.find(checkedTag) !=
+              std::string::npos &&
+          checkedConstructorArtifact.contents.find(", &" + checkedSuccess) !=
+              std::string::npos &&
+          checkedConstructorArtifact.contents.find("if (" + checkedSuccess +
+                                                   ")") != std::string::npos,
+      "a may-raise constructor staged into a by-value storage call must use "
+      "the verified failure ABI and publish its prepared-parameter slot only "
+      "on the Invoke success edge");
+
   const lang::FrontendResult invalidPublicStorage = lang::Frontend().analyze(
       "invalid-public-storage.gti", R"(
 #include <std/memory>
