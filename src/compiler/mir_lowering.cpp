@@ -2601,6 +2601,84 @@ private:
     }
   }
 
+  // The not-yet-emitted borrow-forming access call (for example a mutable
+  // `operator[]` returning a checked element reference) that roots a
+  // projected store target's place chain. A plain field store through such a
+  // call defers the call, and the exclusive receiver-tied loan it begins,
+  // to the commit, so the walk crosses only evaluation-free projections
+  // (groupings and ordinary member accesses) on the way to the root.
+  [[nodiscard]] const HirValue *
+  pendingProjectedBorrowStoreRoot(HirValueId id) const {
+    const HirValue *value = findValue(id);
+    if (value == nullptr || emittedValues.contains(id)) {
+      return nullptr;
+    }
+    if (isCallLike(*value)) {
+      return value->functionTarget &&
+                     value->borrowOrigin != BorrowOriginKind::None
+                 ? value
+                 : nullptr;
+    }
+    switch (value->kind) {
+    case HirValueKind::Grouping:
+      return value->operands.empty()
+                 ? nullptr
+                 : pendingProjectedBorrowStoreRoot(value->operands.front());
+    case HirValueKind::MemberAccess:
+      return value->operands.empty() ||
+                     value->unsafeOperation == UnsafeOperationKind::RawMember
+                 ? nullptr
+                 : pendingProjectedBorrowStoreRoot(value->operands.front());
+    default:
+      return nullptr;
+    }
+  }
+
+  // Target-first operand evaluation for a deferred borrow-forming access
+  // call: the receiver place and the argument values are formed now, before
+  // the store's right operand, while the checked call itself, and the
+  // exclusive loan it begins, waits for the commit. Each branch performs
+  // exactly the emission side of the operand handling emitCall() will repeat,
+  // so the later call finds every operand already materialized.
+  void emitDeferredBorrowRootOperands(const HirValue &call) {
+    if (call.callPlan) {
+      if (call.callPlan->receiver) {
+        const HirCallReceiver &receiver = *call.callPlan->receiver;
+        if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
+            receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
+          (void)valueOperand(receiver.value);
+        } else {
+          emitPlaceDependencies(receiver.value);
+        }
+      }
+      for (const HirCallArgument &argument : call.callPlan->arguments) {
+        switch (argument.kind) {
+        case HirCallInputKind::ReadBorrow:
+        case HirCallInputKind::MutableBorrow:
+        case HirCallInputKind::CopyValue:
+          emitPlaceDependencies(argument.value);
+          break;
+        default:
+          (void)valueOperand(argument.value);
+          break;
+        }
+      }
+      return;
+    }
+    if (const std::optional<HirValueId> receiver = receiverValue(call)) {
+      emitPlaceDependencies(*receiver);
+    }
+    const std::vector<HirValueId> arguments = callArgumentValues(call);
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      if (index < call.parameterTypes.size() &&
+          call.parameterTypes[index].kind == SemanticType::Reference) {
+        emitPlaceDependencies(arguments[index]);
+      } else {
+        (void)valueOperand(arguments[index]);
+      }
+    }
+  }
+
   [[nodiscard]] MirLoanId loanForValue(HirValueId id) const {
     if (const auto direct = valueLoans.find(id); direct != valueLoans.end()) {
       return direct->second;
@@ -5056,6 +5134,32 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
+          // A plain field store whose base place is an element reached
+          // through a checked borrow-forming access call (for example
+          // `points[i].x = ...` over an overloaded subscript) follows the
+          // commit-time loan contract of the element store itself: the
+          // call's receiver place and argument values are formed
+          // target-first, the right operand then completes and its transient
+          // element loans end, and only the checked access call that begins
+          // the exclusive element loan, plus the field projection and the
+          // committed write, remain for the commit. Without this deferral
+          // the destination call's exclusive loan is active while the right
+          // operand reads the same container, and loan verification rejects
+          // a program semantic analysis accepted. A compound store instead
+          // reads the stabilized prior value through the once-formed target
+          // before its right operand, so it keeps the formed-target-first
+          // schedule.
+          const bool plainStore =
+              !value->operation ||
+              assignmentOperation(*value->operation) == MirOperation::Assign;
+          const HirValue *deferredRoot =
+              plainStore && value->operands.size() >= 2
+                  ? pendingProjectedBorrowStoreRoot(value->operands.front())
+                  : nullptr;
+          if (deferredRoot != nullptr) {
+            emitDeferredBorrowRootOperands(*deferredRoot);
+            (void)valueOperand(value->operands.back());
+          }
           emitPlaceDependencies(value->operands.front());
         }
       } else if (value->kind == HirValueKind::IndexSet &&
