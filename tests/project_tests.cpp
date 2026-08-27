@@ -1914,6 +1914,156 @@ void testNativeDependencyComposition() {
          "a dependency's target-scoped native table does not compose");
 }
 
+// `[bindgen.<alias>]` imports: parsing and validation, the resolved plan's
+// generation requests, the synthetic package source root and its alias edge
+// on the declaring package, and model-identity participation.
+void testBindgenImportManifest() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  writeFile(root / "src" / "main.gti", "int main() { return 0; }\n");
+  writeFile(root / "native" / "engine.h", "int engine_start(int mode);\n");
+  writeFile(root / "gti.toml", validManifest() +
+                                   "\n[bindgen.engine]\n"
+                                   "header = \"native/engine.h\"\n"
+                                   "namespace = \"eng\"\n"
+                                   "include-dirs = [\"native\"]\n"
+                                   "defines = [\"ENGINE_STEP=2\"]\n"
+                                   "undefines = [\"ENGINE_TRACE\"]\n");
+
+  const lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", lang::TargetInfo::host()));
+  expect(resolution.succeeded(), "the bindgen manifest should resolve");
+  if (!resolution.succeeded()) {
+    return;
+  }
+  const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  expect(plan.bindgenImports().size() == 1,
+         "the plan should carry one bindgen import");
+  if (plan.bindgenImports().size() == 1) {
+    const lang::driver::BindgenImportPlan &import = plan.bindgenImports()[0];
+    expect(import.alias == "engine" && import.namespaceName == "eng",
+           "the import should carry its alias and namespace");
+    expect(import.header ==
+               std::filesystem::weakly_canonical(root / "native" / "engine.h"),
+           "the header should resolve inside the package");
+    expect(import.macroArguments ==
+               std::vector<std::string>{"-DENGINE_STEP=2", "-UENGINE_TRACE"},
+           "defines and undefines should become ordered macro arguments");
+    expect(import.outputDirectory.string().find("build") != std::string::npos &&
+               import.outputDirectory.filename() == "engine",
+           "the output directory should live under the managed build tree");
+  }
+  const lang::PackageSourceRoot *owner = nullptr;
+  const lang::PackageSourceRoot *synthetic = nullptr;
+  for (const lang::PackageSourceRoot &sourceRoot : plan.packageSources()) {
+    if (sourceRoot.name == "engine_tools") {
+      owner = &sourceRoot;
+    }
+    if (sourceRoot.name == "engine") {
+      synthetic = &sourceRoot;
+    }
+  }
+  expect(owner != nullptr && synthetic != nullptr,
+         "the plan should carry the package and the synthetic bindgen root");
+  if (owner != nullptr && synthetic != nullptr) {
+    const bool edge = std::any_of(
+        owner->dependencies.begin(), owner->dependencies.end(),
+        [&synthetic](const lang::PackageSourceDependency &dependency) {
+          return dependency.alias == "engine" &&
+                 dependency.targetIdentity == synthetic->identity;
+        });
+    expect(edge, "the declaring package should gain the alias edge");
+    expect(synthetic->sourceRoot == synthetic->packageRoot &&
+               synthetic->sourceRoot ==
+                   plan.bindgenImports()[0].outputDirectory,
+           "the synthetic root should be the generated directory");
+  }
+  expect(plan.projectModelIdentity().find(
+             "bindgen:engine_tools@0.1.0:engine=native/engine.h") !=
+             std::string::npos,
+         "the bindgen import should participate in the model identity");
+}
+
+void testBindgenImportManifestDiagnostics() {
+  const auto loadWith = [](std::string_view bindgen,
+                           const std::filesystem::path &root) {
+    writeFile(root / "src" / "main.gti", "int main() { return 0; }\n");
+    writeFile(root / "native" / "engine.h", "int engine_start(int mode);\n");
+    writeFile(root / "gti.toml", validManifest() + std::string(bindgen));
+    return lang::driver::loadProjectManifest(root / "gti.toml");
+  };
+
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nnamespace = \"eng\"\n", temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1002") != nullptr,
+           "a bindgen import without 'header' should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded = loadWith(
+        "\n[bindgen.engine]\nheader = \"../outside.h\"\n", temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1104") != nullptr,
+           "a header escaping the package should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/missing.h\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1802") != nullptr,
+           "a missing header should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded = loadWith(
+        "\n[bindgen.std]\nheader = \"native/engine.h\"\n", temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1800") != nullptr,
+           "the reserved 'std' alias should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const std::filesystem::path root = temporary.root();
+    writeFile(root / "dep" / "gti.toml",
+              "manifest-version = 1\n[package]\nname = \"dep\"\n"
+              "version = \"0.1.0\"\n");
+    writeFile(root / "dep" / "src" / "lib.gti", "\n");
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[dependencies]\nengine = { path = \"dep\" }\n"
+                 "\n[bindgen.engine]\nheader = \"native/engine.h\"\n",
+                 root);
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1801") != nullptr,
+           "a bindgen alias colliding with a dependency should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/engine.h\"\n"
+                 "defines = [\"2BAD\"]\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1804") != nullptr,
+           "an invalid macro name should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/engine.h\"\n"
+                 "output = \"somewhere\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1001") != nullptr,
+           "an unknown bindgen import field should be rejected");
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -1930,6 +2080,8 @@ int main() {
   testNativeDependencyComposition();
   testProjectScaffolding();
   testFormatConfigScaffolding();
+  testBindgenImportManifest();
+  testBindgenImportManifestDiagnostics();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";
