@@ -1440,6 +1440,15 @@ if(BUILD_TESTING)
     set_tests_properties(issue_127_constructor_temporary_field_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME constructor_constructed_field_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/constructor_constructed_field_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(constructor_constructed_field_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
@@ -1790,6 +1799,7 @@ if(BUILD_TESTING)
         issue_123_cleanup_temporary_argument_runtime
         issue_126_array_element_assignment_runtime
         issue_127_constructor_temporary_field_runtime
+        constructor_constructed_field_runtime
         issues_117_120_regressions
         issue_143_polymorphic_class_array_runtime
         issue_144_class_array_field_runtime

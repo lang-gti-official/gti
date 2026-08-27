@@ -466,6 +466,27 @@ The scalar copy route continues to require its explicit `Load`/`Initialize`
 pair. Custom lifecycle, extra uses, forged ownership, ambiguous fields, and
 mixed initializer schedules fail closed.
 
+An explicit class-typed field initializer whose single argument is one ordinary
+`Construct` of the field's own type publishes through the same native
+member-initializer list. C++17 guaranteed elision makes `field(Type(parameter
+...))` the exact representation of MIR's construct-then-publish schedule: the
+field is constructed once, in place, with no intermediate object and no invented
+copy or move. Because C++ initializes members in declaration order, the proof is
+whole-constructor: every declared field must have its own explicit initializer in
+declaration order, each construction's arguments must be exact copy-loads of the
+constructor's scalar parameters, and the entry block must contain nothing but the
+named instructions and metadata boundaries. A sibling field may share the
+schedule only through the exact parameter-copy proof, which publishes natively as
+well. A cleanup-free field carries no drop obligation and publishes through
+initializer metadata alone; an active-cleanup field additionally requires the
+produced value's `Value` obligation, its `Reparent` into the field's
+`ConstructionRollback` obligation, and one unconditional transfer-out at normal
+completion. A failure-capable target constructor is admitted only when its
+verified MIR body can never report a failure status and that ordinary body is
+itself published by this route, so the plain C++ overload exists at the call
+site. Computed arguments, call results, borrowed sources, base initializers, and
+partially claimed schedules stay in the MIR body schedule.
+
 Obligation-free class values in a move capture or an owning `Expected` payload
 remain concrete MIR values rather than backend-recognized library types. The
 C++ backend may materialize the exact closure environment, direct payload

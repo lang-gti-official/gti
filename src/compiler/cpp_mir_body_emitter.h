@@ -563,6 +563,51 @@ std::optional<std::vector<CppMirCopyParameterFieldBinding>>
 cppMirCopyParameterFieldBindings(const MirProgram &program,
                                  const MirConstructorInstance &constructor);
 
+// An explicit class-typed field initializer whose single argument is one exact
+// ordinary `Construct` of the field's own type from copy-loads of this
+// constructor's scalar parameters. C++17 guaranteed elision makes
+// `field(Type(parameter...))` in the native member-initializer list the exact
+// representation of MIR's construct-then-publish schedule: the field is
+// constructed once, in place, with no intermediate object and no invented copy
+// or move.
+//
+// The proof is deliberately whole-constructor. Because C++ initializes members
+// in declaration order, one hoisted initializer could otherwise be reordered
+// against a sibling that still publishes from the body. This family therefore
+// claims a schedule only when every declared field has its own explicit
+// initializer in declaration order and the entry block contains nothing but the
+// instructions named below.
+//
+// A cleanup-free field publishes through initializer metadata alone, so its
+// `initializeInstruction`, `slotPlace`, `fieldPlace`, and drop identities are
+// zero. An active-cleanup field additionally requires the produced value's
+// `Value` obligation, its `Reparent` into the field's `ConstructionRollback`
+// obligation, and one unconditional transfer-out at normal completion. Every
+// other initializer-expression shape stays in the MIR body schedule.
+struct CppMirConstructedFieldInitializerBinding {
+  std::size_t initializer = 0;
+  SymbolId field = 0;
+  SemanticType fieldType = SemanticType::Unknown;
+  HirConstructorInstanceId constructor = 0;
+  std::vector<std::size_t> parameters;
+  MirValueId constructedValue = 0;
+  MirInstructionId constructInstruction = 0;
+  std::vector<MirInstructionId> argumentInstructions;
+  MirInstructionId initializeInstruction = 0;
+  MirInstructionId boundaryInstruction = 0;
+  MirPlaceId slotPlace = 0;
+  MirPlaceId fieldPlace = 0;
+  MirDropObligationId valueDrop = 0;
+  MirDropObligationId fieldDrop = 0;
+};
+// Returns the complete claimed schedule, or an empty vector when this
+// constructor is outside the family. The family is purely additive: an
+// unclaimed constructor keeps whatever route it already had.
+[[nodiscard]]
+std::vector<CppMirConstructedFieldInitializerBinding>
+cppMirConstructedFieldInitializerBindings(
+    const MirProgram &program, const MirConstructorInstance &constructor);
+
 // The owned-parameter initializer schedule: each `field(std::move(parameter))`
 // metadata row is tied bijectively to the exact parameter place, ownership
 // Move, optional explicit This.field publication, the exact value-to-field
