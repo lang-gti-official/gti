@@ -967,6 +967,23 @@ scan even when nothing uses it. The links the retained loan reborrows stay
 live for its extent, keeping every parent outliving its child on each edge, and
 the owning scope ends the whole chain child-first.
 
+Returning a read-only reference parameter directly uses the same transfer as
+the by-value carrier and summarized call-result returns above. The parameter's
+seeded `Parameter` entry loan is the body's whole-extent capability and has no
+producing instruction, so it cannot become the escaping `Return` loan by
+reclassification: nothing in the body would ever name the address the return
+publishes, and a backend can only default-initialize that pointer. Lowering
+publishes a fresh parentless escaping `Return` loan from the entry loan's own
+source through one `Borrow` whose single `Loan` operand names the entry loan,
+and retires the entry loan at that same instruction boundary. Local read-only
+aliases of the formal still share the one entry loan and extend its carrier
+set; only the escaping dependency is published separately. The verifier admits
+exactly this forward — a `Parameter` entry loan carried by its own
+projection-free reference-typed formal place, matching source place, non-
+widened access, and an immediately following `EndBorrow` of the forwarded loan
+— and continues to reject every other parentless `Borrow` from a `Loan`
+operand. No body may record a loan that is at once `entry` and `Return`.
+
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access
 mode, parent range loan, child element loan, condition/body/increment/cleanup

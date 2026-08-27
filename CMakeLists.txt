@@ -1586,6 +1586,14 @@ if(BUILD_TESTING)
     set_tests_properties(class_payload_enum_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME argument_reference_return_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/argument_reference_return_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(argument_reference_return_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
       NAME temporary_argument_borrow_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
@@ -1816,6 +1824,7 @@ if(BUILD_TESTING)
         class_prvalue_assignment_runtime
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
+        argument_reference_return_runtime
         temporary_argument_borrow_runtime
         disjoint_field_projection_runtime
         retained_borrowed_call_result_runtime

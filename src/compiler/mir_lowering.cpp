@@ -7041,6 +7041,7 @@ private:
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
+          MirLoanId referenceParameterEntry = 0;
           if (function != nullptr &&
               function->returnBorrowOrigin == BorrowOriginKind::Argument &&
               function->returnBorrowParameter <
@@ -7050,13 +7051,18 @@ private:
                 function->parameterBindings[function->returnBorrowParameter];
             const MirLoan &candidate = output.loans[borrow.loan - 1];
             const MirPlace *source = output.findPlace(candidate.source);
-            if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
-                candidate.designatedField != 0 && source != nullptr &&
+            const bool carriedByParameter =
+                source != nullptr &&
                 source->root == MirPlaceRootKind::Binding &&
                 source->binding == parameter && source->projections.empty() &&
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
-                          parameter) != candidate.carriers.end()) {
+                          parameter) != candidate.carriers.end();
+            if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
+                candidate.designatedField != 0 && carriedByParameter) {
               storedCarrierEntry = borrow.loan;
+            } else if (candidate.kind == MirLoanKind::Parameter &&
+                       candidate.entry && carriedByParameter) {
+              referenceParameterEntry = borrow.loan;
             }
           }
           if (storedCarrierEntry != 0) {
@@ -7096,6 +7102,44 @@ private:
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,
+                        .loan = published,
+                        .type = value->info.type};
+            }
+          } else if (referenceParameterEntry != 0) {
+            const HirValue *value = findValue(*statement.value);
+            if (value == nullptr || output.returnType.arguments.size() != 1 ||
+                value->info.type != output.returnType.arguments.front()) {
+              valid = false;
+            } else {
+              // A read-only reference parameter's entry loan is seeded at the
+              // body entry and has no producing instruction, so its runtime
+              // address lives only in the parameter's pointer carrier. The
+              // fallback below reclassifies the returned loan in place, which
+              // would leave this loan a Return loan for the whole body with
+              // nothing that ever names the address it publishes. Publish a
+              // fresh Return loan from the entry loan's source and retire the
+              // entry loan at the same instruction boundary, exactly as the
+              // by-value carrier and nested-call cases above do.
+              const MirLoan retainedLoan =
+                  output.loans[referenceParameterEntry - 1];
+              const MirLoanId published =
+                  createLoan(MirLoanKind::Return, retainedLoan.source,
+                             retainedLoan.access, *statement.value);
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = MirOperandKind::Loan,
+                                 .loan = referenceParameterEntry,
+                                 .type = value->info.type}},
+                   .loan = published,
+                   .info = value->info});
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = *statement.value,
+                                       .loan = referenceParameterEntry});
+              removeLoanFromState(referenceParameterEntry, scopes,
+                                  bindingLoans);
+              output.loans[published - 1].escapes = true;
+              borrow = {.kind = MirOperandKind::Loan,
                         .loan = published,
                         .type = value->info.type};
             }

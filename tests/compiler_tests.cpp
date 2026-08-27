@@ -8937,6 +8937,176 @@ int main() {
          "borrow diagnostics should prevent receiver invalidation");
 }
 
+void testArgumentTiedReferenceReturns() {
+  // A free function whose borrowed return derives from its single read-only
+  // reference parameter returns that parameter's seeded entry loan. An entry
+  // loan has no producing instruction, so reclassifying it in place as the
+  // escaping Return loan left a body in which nothing ever named the address
+  // the return published: the emitted callee returned a null pointer and
+  // every caller that read through the result crashed. Lowering publishes a
+  // fresh Return loan from the entry loan and retires the entry loan at the
+  // same instruction boundary instead.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("argument-tied-reference-returns.gti", R"(
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+int32_t& forward(int32_t& candidate) { return pick(candidate); }
+
+int32_t retain_argument_return() {
+  mut int32_t local = 7;
+  int32_t& chosen = pick(local);
+  return chosen;
+}
+
+int32_t retain_forwarded_return() {
+  mut int32_t local = 11;
+  int32_t& chosen = forward(local);
+  return chosen;
+}
+
+int32_t retain_call_result_argument() {
+  mut Box box = Box(13);
+  int32_t& chosen = pick(box.observe());
+  return chosen;
+}
+
+int main() {
+  return retain_argument_return() + retain_forwarded_return() +
+         retain_call_result_argument() - 31;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected argument-tied reference diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a borrowed return derived from a read-only reference parameter "
+         "should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  // No body may record a loan that is simultaneously the body-entry
+  // capability and the escaping return dependency: that is the exact shape
+  // whose address nothing publishes.
+  bool entryReturnLoan = false;
+  for (const lang::MirFunctionInstance &instance :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirLoan &loan : instance.body.loans) {
+      if (loan.entry && loan.kind == lang::MirLoanKind::Return) {
+        entryReturnLoan = true;
+      }
+    }
+  }
+  expect(!entryReturnLoan,
+         "no MIR body should reclassify a seeded entry loan as its escaping "
+         "Return loan");
+
+  const lang::MirBody *picked = mirBodyFor("pick");
+  expect(picked != nullptr,
+         "the argument-tied fixture should retain the MIR body of pick");
+  if (picked == nullptr) {
+    return;
+  }
+
+  const lang::MirLoan *entryLoan = nullptr;
+  const lang::MirLoan *returnLoan = nullptr;
+  for (const lang::MirLoan &loan : picked->loans) {
+    if (loan.entry && loan.kind == lang::MirLoanKind::Parameter) {
+      entryLoan = &loan;
+    } else if (loan.kind == lang::MirLoanKind::Return) {
+      returnLoan = &loan;
+    }
+  }
+  expect(entryLoan != nullptr && returnLoan != nullptr &&
+             returnLoan->parent == 0 && returnLoan->escapes &&
+             !returnLoan->entry && returnLoan->source == entryLoan->source &&
+             returnLoan->access == entryLoan->access,
+         "pick should publish a fresh parentless escaping Return loan from "
+         "its reference parameter's entry loan");
+  if (entryLoan == nullptr || returnLoan == nullptr) {
+    return;
+  }
+
+  // The published Return loan must be produced by a Borrow that names the
+  // entry loan and is immediately followed by that entry loan's retirement:
+  // the transfer, not a second independent root borrow.
+  bool publishedTransfer = false;
+  bool returnsPublishedLoan = false;
+  for (const lang::MirBlock &block : picked->blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      if (instruction.kind != lang::MirInstructionKind::Borrow ||
+          instruction.loan != returnLoan->id ||
+          instruction.operands.size() != 1) {
+        continue;
+      }
+      const lang::MirOperand &source = instruction.operands.front();
+      if (source.kind != lang::MirOperandKind::Loan ||
+          source.loan != entryLoan->id ||
+          index + 1 >= block.instructions.size()) {
+        continue;
+      }
+      const lang::MirInstruction &retire = block.instructions[index + 1];
+      publishedTransfer = retire.kind == lang::MirInstructionKind::EndBorrow &&
+                          retire.loan == entryLoan->id &&
+                          retire.hirValue == instruction.hirValue;
+    }
+    if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+        block.terminator.returnLoan &&
+        *block.terminator.returnLoan == returnLoan->id) {
+      returnsPublishedLoan = true;
+    }
+  }
+  expect(publishedTransfer && returnsPublishedLoan,
+         "pick should forward its entry loan into the published Return loan "
+         "and retire the entry loan at that same instruction boundary");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  // The regression the runtime test catches: without an instruction that
+  // names it, the emitted callee published a default-initialized pointer.
+  expect(
+      !artifact.contents.empty() &&
+          artifact.contents.find("auto *__gti_mir_loan_1 = __gti_mir_p_1;") !=
+              std::string::npos &&
+          artifact.contents.find("__gti_mir_loan_2 = __gti_mir_loan_1;") !=
+              std::string::npos,
+      "the C++ backend should alias the reference parameter's carrier and "
+      "publish it through the returned loan");
+}
+
 void testStoredReferenceGroundwork() {
   const std::string source = R"(
 struct SingleSentinel {};
@@ -35420,6 +35590,7 @@ int main(int argc, char **argv) {
   testDisjointFieldReceiverBorrowsThroughReferenceParameters();
   testPrefixStorageCapability();
   testReceiverTiedReferenceReturns();
+  testArgumentTiedReferenceReturns();
   testStoredReferenceGroundwork();
   testStoredCarrierReturnProvenance();
   testCallSiblingArgumentBorrowConflicts();
