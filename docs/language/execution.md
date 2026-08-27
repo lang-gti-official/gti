@@ -170,6 +170,20 @@ read/operate/commit schedule above. Symbol-rooted globals retain an immediately
 exclusive target loan until interprocedural root-effect summaries can prove
 hidden calls do not alias the reserved place.
 
+For a plain assignment to a field of an element reached through a checked
+borrow-forming access (for example `points[i].x` over a selected mutable
+`operator[]`), forming the place evaluates the receiver and index constituents
+in the same target-first order, but the selected checked access call itself
+belongs to the commit: it runs after the right operand has completed and the
+right operand's transient element loans have ended, and the exclusive
+receiver-tied element loan it begins spans only the commit: the field
+projection and the committed write. A right operand may therefore read the
+same element or container, matching the cross-statement form that reads first
+and stores in a following statement, and the checked access failure of the
+target (for example `index_out_of_bounds`) follows right-operand effects. A
+compound assignment still reads its stabilized prior value through the
+once-formed target before the right operand.
+
 ### 4.2.2 Initialization And Materialization
 
 Initialization reserves a destination without beginning the destination

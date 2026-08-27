@@ -1541,6 +1541,14 @@ if(BUILD_TESTING)
     )
     set_tests_properties(temporary_argument_borrow_runtime
                          PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME field_subscript_store_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/field_subscript_store_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(field_subscript_store_runtime
+                         PROPERTIES TIMEOUT 240)
     # Sharded by (optimization, standard) configuration; three shards of two
     # configurations each, union = the full six-configuration matrix.
     foreach(shard RANGE 1 3)
