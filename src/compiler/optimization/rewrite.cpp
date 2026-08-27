@@ -1,4 +1,5 @@
 #include "gti/optimization/rewrite.h"
+#include "gti/optimization/pass.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 
@@ -154,6 +155,17 @@ void MirProgramEditor::queueSafetyDischarge(MirInstructionKey target,
 }
 
 MirEditResult MirProgramEditor::apply() {
+  return applyWithSafetySnapshot(nullptr);
+}
+
+MirEditResult MirProgramEditor::apply(MirBodyAnalysisManager &analyses) {
+  const MirClosedCallSafetyAnalysis *sourceSafety =
+      safetyDischarges.empty() ? nullptr : analyses.closedCallSafety(program);
+  return applyWithSafetySnapshot(sourceSafety);
+}
+
+MirEditResult MirProgramEditor::applyWithSafetySnapshot(
+    const MirClosedCallSafetyAnalysis *cachedSourceSafety) {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
   patches.clear();
@@ -383,11 +395,12 @@ MirEditResult MirProgramEditor::apply() {
                "effects");
     }
   }
-  const std::optional<MirClosedCallSafetyAnalysis> sourceSafety =
-      queuedSafetyDischarges.empty()
-          ? std::nullopt
-          : std::optional<MirClosedCallSafetyAnalysis>{
-                analyzeMirClosedCallSafetyChecks(program)};
+  std::optional<MirClosedCallSafetyAnalysis> ownedSourceSafety;
+  const MirClosedCallSafetyAnalysis *sourceSafety = cachedSourceSafety;
+  if (!queuedSafetyDischarges.empty() && sourceSafety == nullptr) {
+    ownedSourceSafety = analyzeMirClosedCallSafetyChecks(program);
+    sourceSafety = &*ownedSourceSafety;
+  }
   for (std::size_t index = 0; index < queuedSafetyDischarges.size(); ++index) {
     const SafetyDischarge &claim = queuedSafetyDischarges[index];
     if (index != 0 &&
@@ -402,7 +415,8 @@ MirEditResult MirProgramEditor::apply() {
         body == nullptr ? ConstInstructionLocation{}
                         : findInstruction(*body, claim.target.instruction);
     const MirClosedCallBodyAnalysis *analysis =
-        sourceSafety ? sourceSafety->find(claim.target.body) : nullptr;
+        sourceSafety == nullptr ? nullptr
+                                : sourceSafety->find(claim.target.body);
     if (body == nullptr || location.block == nullptr ||
         location.instruction == nullptr ||
         hasMirSafetyDischarge(*location.instruction, claim.discharge) ||
@@ -704,18 +718,24 @@ MirEditResult MirProgramEditor::apply() {
       touched.push_back(cleanup.body);
     }
   }
-  const std::optional<MirClosedCallSafetyAnalysis> candidateSafety =
-      queuedSafetyDischarges.empty()
-          ? std::nullopt
-          : std::optional<MirClosedCallSafetyAnalysis>{
-                analyzeMirClosedCallSafetyChecks(candidate)};
+  const bool safetyMetadataOnly = queued.empty() && queuedBranchFolds.empty() &&
+                                  queuedScalarPromotions.empty() &&
+                                  queuedDeadInstructions.empty() &&
+                                  queuedUnreachableBlocks.empty();
+  std::optional<MirClosedCallSafetyAnalysis> ownedCandidateSafety;
+  const MirClosedCallSafetyAnalysis *candidateSafety = sourceSafety;
+  if (!queuedSafetyDischarges.empty() && !safetyMetadataOnly) {
+    ownedCandidateSafety = analyzeMirClosedCallSafetyChecks(candidate);
+    candidateSafety = &*ownedCandidateSafety;
+  }
   for (const SafetyDischarge &claim : queuedSafetyDischarges) {
     MirBody *target = findMirBody(candidate, claim.target.body);
     InstructionLocation location =
         target == nullptr ? InstructionLocation{}
                           : findInstruction(*target, claim.target.instruction);
     const MirClosedCallBodyAnalysis *analysis =
-        candidateSafety ? candidateSafety->find(claim.target.body) : nullptr;
+        candidateSafety == nullptr ? nullptr
+                                   : candidateSafety->find(claim.target.body);
     const MirSafetyProof *proof =
         analysis == nullptr
             ? nullptr
