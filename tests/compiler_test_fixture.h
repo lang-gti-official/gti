@@ -12,6 +12,7 @@
 #include "gti/lexer.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"

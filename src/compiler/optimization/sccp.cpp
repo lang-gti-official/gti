@@ -1,6 +1,7 @@
 #include "gti/optimization/sccp.h"
+#include "gti/mir_editor.h"
 
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <optional>

@@ -1,9 +1,11 @@
-#include "gti/optimization/rewrite.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 
 #include <algorithm>
+#include <iterator>
 #include <tuple>
 #include <utility>
 
@@ -95,23 +97,24 @@ void addError(MirEditResult &result, MirBodyAddress body, MirBlockId block,
 
 } // namespace
 
-void MirProgramEditor::queueLiteralReplacement(MirInstructionKey target,
-                                               MirOperation expectedOperation,
-                                               Literal literal) {
+void MirEditor::queueLiteralReplacement(MirInstructionKey target,
+                                        MirOperation expectedOperation,
+                                        Literal literal) {
   patches.push_back({.target = target,
                      .expectedOperation = expectedOperation,
                      .literal = std::move(literal)});
 }
 
-void MirProgramEditor::queueComputeFoldReplacement(
-    MirInstructionKey target, MirOperation expectedOperation, Literal literal) {
+void MirEditor::queueComputeFoldReplacement(MirInstructionKey target,
+                                            MirOperation expectedOperation,
+                                            Literal literal) {
   patches.push_back({.target = target,
                      .expectedOperation = expectedOperation,
                      .literal = std::move(literal),
                      .computeFold = true});
 }
 
-void MirProgramEditor::queueSparseConstantReplacement(
+void MirEditor::queueSparseConstantReplacement(
     MirInstructionKey target, MirOperation expectedOperation, Literal literal,
     std::vector<MirBlockId> relatedBlocks,
     std::vector<MirInstructionId> relatedInstructions,
@@ -125,46 +128,82 @@ void MirProgramEditor::queueSparseConstantReplacement(
                      .relatedValues = std::move(relatedValues)});
 }
 
-void MirProgramEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
-                                       MirValueId expectedCondition,
-                                       bool taken) {
+void MirEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
+                                MirValueId expectedCondition, bool taken) {
   branchFolds.push_back({.body = body,
                          .block = block,
                          .expectedCondition = expectedCondition,
                          .taken = taken});
 }
 
-void MirProgramEditor::queueScalarPromotion(MirBodyAddress body,
-                                            MirPlaceId place) {
+void MirEditor::queueScalarPromotion(MirBodyAddress body, MirPlaceId place) {
   scalarPromotions.push_back({.body = body, .place = place});
 }
 
-void MirProgramEditor::queueDeadInstructionRemoval(MirInstructionKey target) {
+void MirEditor::queueDeadInstructionRemoval(MirInstructionKey target) {
   deadInstructions.push_back(target);
 }
 
-void MirProgramEditor::queueUnreachableBlockRemoval(MirBodyAddress body,
-                                                    MirBlockId block) {
+void MirEditor::queueUnreachableBlockRemoval(MirBodyAddress body,
+                                             MirBlockId block) {
   unreachableBlocks.push_back({.body = body, .block = block});
 }
 
-void MirProgramEditor::queueSafetyDischarge(MirInstructionKey target,
-                                            MirSafetyDischarge discharge) {
+void MirEditor::queueSafetyDischarge(MirInstructionKey target,
+                                     MirSafetyDischarge discharge) {
   safetyDischarges.push_back(
       {.target = target, .discharge = std::move(discharge)});
 }
 
-MirEditResult MirProgramEditor::apply() {
-  return applyWithSafetySnapshot(nullptr);
-}
+MirEditResult MirEditor::apply() { return applyWithSafetySnapshot(nullptr); }
 
-MirEditResult MirProgramEditor::apply(MirBodyAnalysisManager &analyses) {
+MirEditResult MirEditor::apply(MirBodyAnalysisManager &analyses) {
   const MirClosedCallSafetyAnalysis *sourceSafety =
       safetyDischarges.empty() ? nullptr : analyses.closedCallSafety(program);
-  return applyWithSafetySnapshot(sourceSafety);
+  MirEditResult result = applyWithSafetySnapshot(sourceSafety);
+  if (!result.changed) {
+    return result;
+  }
+
+  const bool metadataOnly = std::all_of(
+      result.transformations.begin(), result.transformations.end(),
+      [](const MirTransformRecord &record) {
+        return record.kind == MirTransformKind::DischargeSafetyCheck;
+      });
+  std::vector<MirBodyAddress> touched;
+  for (const MirTransformRecord &record : result.transformations) {
+    if (std::find(touched.begin(), touched.end(), record.body) ==
+        touched.end()) {
+      touched.push_back(record.body);
+    }
+  }
+  std::sort(
+      touched.begin(), touched.end(),
+      [](MirBodyAddress left, MirBodyAddress right) {
+        return std::pair{static_cast<std::size_t>(left.kind), left.owner} <
+               std::pair{static_cast<std::size_t>(right.kind), right.owner};
+      });
+  const MirPreservedAnalyses preserved =
+      metadataOnly ? MirPreservedAnalyses::all() : MirPreservedAnalyses::none();
+  for (const MirBodyAddress address : touched) {
+    std::vector<std::string> invalidated =
+        analyses.invalidate(address, preserved);
+    result.invalidatedAnalyses.insert(
+        result.invalidatedAnalyses.end(),
+        std::make_move_iterator(invalidated.begin()),
+        std::make_move_iterator(invalidated.end()));
+  }
+  std::sort(result.invalidatedAnalyses.begin(),
+            result.invalidatedAnalyses.end());
+  result.invalidatedAnalyses.erase(
+      std::unique(result.invalidatedAnalyses.begin(),
+                  result.invalidatedAnalyses.end()),
+      result.invalidatedAnalyses.end());
+  result.analysesInvalidated = true;
+  return result;
 }
 
-MirEditResult MirProgramEditor::applyWithSafetySnapshot(
+MirEditResult MirEditor::applyWithSafetySnapshot(
     const MirClosedCallSafetyAnalysis *cachedSourceSafety) {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);

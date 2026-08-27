@@ -5,6 +5,7 @@
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 #include "gti/source_graph.h"
 #include "gti/standard_library.h"

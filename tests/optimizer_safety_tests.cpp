@@ -1,8 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
-#include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 
@@ -502,8 +502,7 @@ int32_t main() {
     lang::MirBodyAnalysisManager cachedAnalyses;
     const lang::MirClosedCallSafetyAnalysis *cachedSafety =
         cachedAnalyses.closedCallSafety(cachedCandidate);
-    lang::MirProgramEditor cachedEditor(cachedCandidate,
-                                        "cached-safety-replay-test");
+    lang::MirEditor cachedEditor(cachedCandidate, "cached-safety-replay-test");
     cachedEditor.queueSafetyDischarge(
         {.body = firstSafetyRecord->body,
          .instruction = firstSafetyRecord->instruction},
@@ -511,9 +510,13 @@ int32_t main() {
     const lang::MirEditResult cachedEdit = cachedEditor.apply(cachedAnalyses);
     expect(cachedSafety != nullptr && cachedSafety->converged &&
                cachedEdit.valid() && cachedEdit.changed &&
-               cachedEdit.appliedPatches == 1,
+               cachedEdit.appliedPatches == 1 &&
+               cachedEdit.analysesInvalidated &&
+               cachedEdit.invalidatedAnalyses.empty() &&
+               cachedAnalyses.revision(firstSafetyRecord->body) == 1 &&
+               cachedAnalyses.closedCallSafety(cachedCandidate) == cachedSafety,
            "metadata-only safety edits should reuse the manager's canonical "
-           "snapshot without weakening proof replay");
+           "snapshot while advancing the edited body revision");
 
     std::vector<lang::MirTransformRecord> forged = o2.report.transformations;
     const std::size_t index = static_cast<std::size_t>(
@@ -592,7 +595,7 @@ int32_t main() {
   }
   lang::MirProgram editorCandidate = frontend.mir;
   const std::string beforeEditor = lang::MirPrinter().print(editorCandidate);
-  lang::MirProgramEditor editor(editorCandidate, "forged-bounds-proof");
+  lang::MirEditor editor(editorCandidate, "forged-bounds-proof");
   if (unproven) {
     editor.queueSafetyDischarge(
         {.body = dynamicAddress, .instruction = unproven->first},

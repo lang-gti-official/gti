@@ -4,7 +4,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/optimization/alias.h"
 #include "gti/optimization/dataflow.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/loops.h"
 
 #include <algorithm>

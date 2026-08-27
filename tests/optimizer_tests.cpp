@@ -1,9 +1,10 @@
 #include "gti/frontend.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
-#include "gti/optimization/effects.h"
 #include "gti/optimization/pass.h"
-#include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 
@@ -2508,7 +2509,7 @@ int main() {
            "a non-literal instruction");
   }
 
-  const auto queue = [](lang::MirProgramEditor &editor,
+  const auto queue = [](lang::MirEditor &editor,
                         const PatchCandidate &candidate) {
     editor.queueLiteralReplacement(
         {.body = candidate.address.body, .instruction = candidate.instruction},
@@ -2517,7 +2518,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-atomicity-test");
+    lang::MirEditor editor(invalid, "editor-atomicity-test");
     queue(editor, candidates.front());
     editor.queueLiteralReplacement(
         {.body = candidates.back().address.body,
@@ -2531,7 +2532,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-duplicate-test");
+    lang::MirEditor editor(invalid, "editor-duplicate-test");
     queue(editor, candidates.front());
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
@@ -2542,7 +2543,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-stale-id-test");
+    lang::MirEditor editor(invalid, "editor-stale-id-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = std::numeric_limits<lang::MirInstructionId>::max()},
@@ -2555,7 +2556,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-type-test");
+    lang::MirEditor editor(invalid, "editor-type-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = candidates.front().instruction},
@@ -2570,7 +2571,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-domain-test");
+    lang::MirEditor editor(invalid, "editor-domain-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = candidates.front().instruction},
@@ -2597,7 +2598,7 @@ int main() {
               .body);
     }
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-proof-test");
+    lang::MirEditor editor(invalid, "editor-proof-test");
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
     expect(identity != nullptr && !edited.valid() && !edited.changed &&
@@ -2608,8 +2609,8 @@ int main() {
 
   lang::MirProgram forward = frontend.mir;
   lang::MirProgram reverse = frontend.mir;
-  lang::MirProgramEditor forwardEditor(forward, "editor-order-test");
-  lang::MirProgramEditor reverseEditor(reverse, "editor-order-test");
+  lang::MirEditor forwardEditor(forward, "editor-order-test");
+  lang::MirEditor reverseEditor(reverse, "editor-order-test");
   for (const PatchCandidate &candidate : candidates) {
     queue(forwardEditor, candidate);
   }
@@ -2631,6 +2632,26 @@ int main() {
                  lang::MirPrinter().print(o1.mir),
          "patch application should be deterministic regardless of queue "
          "order");
+
+  lang::MirProgram revisioned = frontend.mir;
+  lang::MirBodyAnalysisManager revisionedAnalyses;
+  const lang::MirBodyAddress revisionedBody = candidates.front().address.body;
+  const lang::MirCfgAnalysis *cachedCfg =
+      revisionedAnalyses.cfg(revisioned, revisionedBody);
+  const lang::MirDominanceInfo *cachedDominance =
+      revisionedAnalyses.dominance(revisioned, revisionedBody);
+  lang::MirEditor revisionedEditor(revisioned, "editor-revision-test");
+  queue(revisionedEditor, candidates.front());
+  const lang::MirEditResult revisionedEdit =
+      revisionedEditor.apply(revisionedAnalyses);
+  expect(revisionedEdit.valid() && revisionedEdit.changed &&
+             revisionedEdit.analysesInvalidated &&
+             revisionedAnalyses.revision(revisionedBody) == 1 &&
+             cachedCfg != nullptr && cachedDominance != nullptr &&
+             revisionedEdit.invalidatedAnalyses ==
+                 std::vector<std::string>{"cfg-reachability", "dominance"},
+         "a semantic MIR edit should advance its body revision and invalidate "
+         "every cached fact through the editor boundary");
 
   const lang::HirFunctionInstance *integerHir =
       findHirFunction(frontend, "grouped_integer");

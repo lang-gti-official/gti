@@ -1,5 +1,7 @@
-#include "gti/mir.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_lowering.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 
 namespace lang {
 

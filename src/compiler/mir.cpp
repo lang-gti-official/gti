@@ -1,6 +1,8 @@
 #include "gti/mir.h"
 #include "gti/mir_dominance.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 
@@ -16034,7 +16036,8 @@ projectedMirType(const MirProgram &program, SemanticType current,
 
 } // namespace
 
-MirVerificationResult verifyMirProgram(const MirProgram &program) {
+static MirVerificationResult
+verifyMirProgramContracts(const MirProgram &program) {
   MirVerificationResult result;
   if (!program.valid()) {
     result.errors.push_back({.bodyKind = MirBodyKind::Module,
@@ -16048,7 +16051,6 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
   }
 
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
-    append(result, verifyMirBody(body, owner));
     append(result,
            verifyMirCheckedIntegerFailureContracts(program, body, owner));
     for (const MirPlace &place : body.places) {
@@ -17562,6 +17564,31 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                                         program.hostedStartupPlan()->entry,
                                         exactActiveCleanup));
   }
+  return result;
+}
+
+MirVerificationResult verifyMirProgram(const MirProgram &program,
+                                       MirVerificationComponents components) {
+  MirVerificationResult result;
+  if (components != requiredMirVerificationComponents) {
+    result.errors.push_back(
+        {.bodyKind = MirBodyKind::Module,
+         .message = "MIR verification component set is incomplete or invalid"});
+    return result;
+  }
+
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      result.errors.push_back(
+          {.bodyKind = address.kind,
+           .owner = address.owner,
+           .message = "MIR body inventory contains an unresolved address"});
+      continue;
+    }
+    append(result, verifyMirBody(*body, address.owner));
+  }
+  append(result, verifyMirProgramContracts(program));
   append(result, verifyMirEffectSummaries(program));
   return result;
 }

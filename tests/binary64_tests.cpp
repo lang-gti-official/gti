@@ -3,7 +3,7 @@
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
-#include "gti/optimization/rewrite.h"
+#include "gti/mir_editor.h"
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
@@ -229,7 +229,7 @@ void testLanguagePipeline() {
          "verified MIR shadow rewriting");
 
   lang::MirProgram malformed = result.mir;
-  lang::MirProgramEditor editor(malformed, "binary64-editor-test");
+  lang::MirEditor editor(malformed, "binary64-editor-test");
   bool queuedMalformedFloat = false;
   for (const lang::MirBodyAddress bodyAddress :
        lang::enumerateMirBodyAddresses(malformed)) {
