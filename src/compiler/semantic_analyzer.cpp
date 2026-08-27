@@ -85,61 +85,21 @@ public:
   // fact, diagnostic, or identity counter survives this operation.
   void resetRequestState(const Program *program) {
     diagnostics.clear();
-    scopes.clear();
-    namespaces.clear();
-    namespaceToolingSymbols.clear();
-    namespaceAliases.clear();
-    reportedCompilerPrivateAccess.clear();
-    compilerPrivateNamespaceSymbol = 0;
-    typeAliasIds.clear();
-    typeAliases.clear();
-    conceptIds.clear();
-    concepts.clear();
-    namespaceSymbols.clear();
-    classIds.clear();
-    enumIds.clear();
-    visibleNamespaces.clear();
-    visibleNamespaceAliases.clear();
-    visibleTypeAliasIds.clear();
-    visibleConceptIds.clear();
-    visibleNamespaceSymbols.clear();
-    internalNamespaceSymbols.clear();
-    visibleClassIds.clear();
-    visibleEnumIds.clear();
-    classDeclIds.clear();
-    conceptDeclIds.clear();
-    functionGenericParameters.clear();
-    constructorGenericParameters.clear();
+    catalog.clear();
+    valueFlow.clear();
     constexprDefinitionsAnalyzed.clear();
     constexprConstructorsAnalyzed.clear();
-    defaultArgumentSyntax.clear();
-    defaultArgumentDependencies.clear();
-    reportedDefaultArgumentCycles.clear();
-    externCSymbols.clear();
-    rootNativeStorageSymbols.clear();
-    globalBorrowStorage.clear();
-    genericConstraints.clear();
     requirementScopes.clear();
-    classes.clear();
-    exactClassSpecializations.clear();
-    enums.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
     typePackScopes.clear();
     instanceTypeSubstitution.clear();
     instanceValueSubstitution.clear();
-    nextGenericParameterId = 1;
-    nextFunctionId = 1;
     nextLambdaId = 1;
-    nextConstructorId = 1;
-    nextDefaultArgumentEffectOwner = 1;
     nextSemanticLoanId = 1;
     nextPlaceSelectionId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
-    predeclaredVariables.clear();
-    mutableFieldGroupOrigins.clear();
-    recursiveLayoutFields.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
@@ -165,7 +125,6 @@ public:
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
-    valueControlFlow.clear();
     instanceClassContextActive = false;
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
@@ -223,6 +182,7 @@ public:
     validateInterfaceCapabilities();
     recordClassTypes();
     recordClassLifecycles();
+    catalog.seal();
     if (workMetrics != nullptr) {
       workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
           std::chrono::duration_cast<std::chrono::microseconds>(
@@ -734,7 +694,7 @@ public:
       return;
     }
 
-    ConstexprExecutionContext context = constexprContext();
+    ConstexprInterpreter context = makeConstexprInterpreter();
     ConstexprEvaluation evaluated =
         evaluateConstexprExpression(stmt.condition(), context);
     const bool *value =
@@ -870,7 +830,7 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
-    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    LoanFlowState enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
     currentReturnType = SemanticType::Void;
@@ -1188,7 +1148,7 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
-    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    LoanFlowState enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
     currentReturnType = SemanticType::Void;
@@ -1804,7 +1764,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    LoanFlowState enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
     const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
@@ -1894,7 +1854,7 @@ public:
         return;
       }
 
-      ConstexprExecutionContext context = constexprContext();
+      ConstexprInterpreter context = makeConstexprInterpreter();
       ConstexprEvaluation evaluated =
           evaluateConstexprExpression(stmt.condition(), context);
       const bool *selected =
@@ -3094,7 +3054,7 @@ public:
       }
       const ExpressionInfo receiverInfo =
           classifyExpression(*receiver, targetType);
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *mutationOperator, receiver, targetType, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -3119,7 +3079,7 @@ public:
         }
         const ExpressionInfo receiverInfo =
             classifyExpression(*receiver, targetType);
-        const std::optional<FunctionCandidate> selected = resolveOperator(
+        const std::optional<CallableDeclaration> selected = resolveOperator(
             expr, OverloadedOperator::Assignment, receiver, targetType,
             expr.oper(), std::span<const SemanticType>(&valueType, 1),
             std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -3394,7 +3354,7 @@ public:
             std::span<const SemanticType>(&rightType, 1));
     if ((leftType.kind == SemanticType::Class || constrainedOperator) &&
         sourceOperator) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *sourceOperator, expr.left(), leftType, expr.oper(),
           std::span<const SemanticType>(&rightType, 1),
           std::span<const ExprPtr>(&expr.right(), 1));
@@ -3497,7 +3457,7 @@ public:
       analyzePayloadConstruction(expr, *enumerator);
       return;
     }
-    if (const std::optional<FunctionCandidate> intrinsic =
+    if (const std::optional<CallableDeclaration> intrinsic =
             intrinsicCandidate(expr.callee())) {
       analyzeIntrinsicCall(expr, *intrinsic);
       return;
@@ -3616,7 +3576,7 @@ public:
       const std::optional<CallableBoundary> boundary =
           contract == nullptr ? std::nullopt
                               : std::optional{contract->boundary};
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, OverloadedOperator::Call, expr.callee(), calleeType,
           expr.paren(), argumentTypes, expr.arguments(), false, boundary);
       const bool valid =
@@ -3715,7 +3675,7 @@ public:
 
     if (hasPackExpansion(argumentTypes) &&
         std::none_of(callee->overloads.begin(), callee->overloads.end(),
-                     [](const FunctionCandidate &candidate) {
+                     [](const CallableDeclaration &candidate) {
                        return candidate.parameterPack;
                      })) {
       report(expressionToken(expr.arguments().back()),
@@ -3727,14 +3687,14 @@ public:
     }
 
     if (callee->overloads.size() == 1) {
-      const FunctionCandidate &candidate = callee->overloads.front();
-      FunctionCandidate resolved = candidate;
+      const CallableDeclaration &candidate = callee->overloads.front();
+      CallableDeclaration resolved = candidate;
       bool valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                               argumentTypes, expr.arguments(),
                                               expr.paren());
       std::vector<SemanticType> resolvedTypeArguments;
       std::vector<CompileTimeValue> resolvedValueArguments;
-      FunctionCandidate trial;
+      CallableDeclaration trial;
       ConstraintFailure constraintFailure;
       if (tryInstantiateFunction(candidate, explicitTypeArguments,
                                  argumentTypes, expr.arguments(), trial,
@@ -3845,8 +3805,8 @@ public:
     }
 
     struct ViableOverload {
-      const FunctionCandidate *source = nullptr;
-      FunctionCandidate function;
+      const CallableDeclaration *source = nullptr;
+      CallableDeclaration function;
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
       std::vector<std::size_t> ephemeralBorrowArguments;
@@ -3855,13 +3815,13 @@ public:
     std::vector<ViableOverload> viable;
     std::vector<ConstraintFailure> constraintFailures;
     bool rejectedMutableReceiver = false;
-    std::optional<FunctionCandidate> rejectedMutableFunction;
+    std::optional<CallableDeclaration> rejectedMutableFunction;
     bool rejectedCompilerPrivate = false;
-    for (const FunctionCandidate &candidate : callee->overloads) {
+    for (const CallableDeclaration &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
       }
-      FunctionCandidate resolved;
+      CallableDeclaration resolved;
       std::vector<SemanticType> resolvedTypeArguments;
       std::vector<CompileTimeValue> resolvedValueArguments;
       std::vector<std::size_t> resolvedEphemeralBorrowArguments;
@@ -3971,7 +3931,7 @@ public:
           currentType = SemanticType::Unknown;
           return;
         }
-        std::vector<const FunctionCandidate *> exactMatches;
+        std::vector<const CallableDeclaration *> exactMatches;
         exactMatches.reserve(viable.size());
         for (const ViableOverload &match : viable) {
           exactMatches.emplace_back(&match.function);
@@ -4372,7 +4332,7 @@ public:
                       expr.dereference(), "Raw pointer dereference");
       }
     } else if (ownerType.kind == SemanticType::Class) {
-      const std::optional<FunctionCandidate> selected =
+      const std::optional<CallableDeclaration> selected =
           resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
                           ownerType, expr.dereference(), {}, {}, false,
                           std::nullopt, std::nullopt, !simpleAssignment);
@@ -4426,7 +4386,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && mutableTarget) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), valueTarget, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -4591,7 +4551,7 @@ public:
           contextualInitializerType &&
           contextualInitializerType->kind == SemanticType::Reference &&
           contextualInitializerType->referenceAccess == AccessMode::Mutable;
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
           std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
@@ -4660,7 +4620,7 @@ public:
                       "Raw pointer indexing");
       }
     } else if (objectType.kind == SemanticType::Class) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
           std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
@@ -4776,7 +4736,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && mutableElement) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), elementType, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -5053,7 +5013,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    LoanFlowState enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
     const std::size_t enclosingLoopDepth = loopDepth;
@@ -5455,7 +5415,7 @@ public:
     const SemanticType leftType =
         analyzeExpectedCallableResult(expr.left(), SemanticType::Bool);
     const ScopeStack afterLeft = scopes;
-    const LoanFlowContext loanFlowAfterLeft = loanFlow;
+    const LoanFlowState loanFlowAfterLeft = loanFlow;
     const std::size_t rightOwnershipStart = semanticModel.ownershipEventCount();
     const SemanticType rightType =
         analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
@@ -5582,7 +5542,7 @@ public:
       return;
     }
 
-    const FunctionCandidate &candidate = callee->overloads.front();
+    const CallableDeclaration &candidate = callee->overloads.front();
     const bool exactGenericShape =
         candidate.genericParameters.size() == 1 &&
         !candidate.genericParameters.front().pack &&
@@ -5644,7 +5604,7 @@ public:
       for (const SemanticType &element : packSymbol->type.arguments) {
         std::vector<SemanticType> concreteArguments = argumentTypes;
         concreteArguments.back() = element;
-        FunctionCandidate resolved;
+        CallableDeclaration resolved;
         std::vector<SemanticType> typeArguments;
         std::vector<CompileTimeValue> valueArguments;
         ConstraintFailure failure;
@@ -6032,7 +5992,7 @@ public:
              "GTI-S2003");
     }
     if (overloadedMutation && resolvedMember.assignable && mutableReceiver) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *mutationOperator, expr.object(), resolvedMember.type,
           expr.oper(), std::span<const SemanticType>(&valueType, 1),
           std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
@@ -6312,7 +6272,7 @@ public:
         (rightType.kind == SemanticType::Class ||
          (rightType.kind == SemanticType::TypeParameter &&
           hasSymbolicOperatorRequirement(*mutationOperator, rightType)))) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *mutationOperator, expr.right(), rightType, expr.oper());
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
@@ -6339,7 +6299,7 @@ public:
                  (rightType.kind == SemanticType::TypeParameter &&
                   hasSymbolicOperatorRequirement(
                       OverloadedOperator::Dereference, rightType))) {
-        const std::optional<FunctionCandidate> selected =
+        const std::optional<CallableDeclaration> selected =
             resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
                             rightType, expr.oper());
         currentType = selected ? callExpressionType(selected->returnType)
@@ -6358,7 +6318,7 @@ public:
         (rightType.kind == SemanticType::Class ||
          (rightType.kind == SemanticType::TypeParameter &&
           hasSymbolicOperatorRequirement(*valueOperator, rightType)))) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           expr, *valueOperator, expr.right(), rightType, expr.oper());
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
@@ -6649,7 +6609,7 @@ private:
     ValueState state = ValueState::Available;
   };
 
-  struct FunctionCandidate {
+  struct CallableDeclaration {
     FunctionId id = 0;
     SourceUnitId sourceUnit = 0;
     const FunctionDecl *declaration = nullptr;
@@ -7129,7 +7089,7 @@ private:
     LoanFlowArmEndpoint endpoint;
   };
 
-  struct LoanFlowContext {
+  struct LoanFlowState {
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
@@ -7157,7 +7117,7 @@ private:
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
-    std::vector<FunctionCandidate> overloads;
+    std::vector<CallableDeclaration> overloads;
     ClassId ownerClass = 0;
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
@@ -7380,7 +7340,7 @@ private:
 
   using ConstexprLocalValue = std::optional<ConstantValue>;
 
-  struct ConstexprExecutionContext {
+  struct ConstexprInterpreter {
     std::size_t steps = 0;
     std::size_t callDepth = 0;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
@@ -7405,8 +7365,8 @@ private:
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
 
-  [[nodiscard]] ConstexprExecutionContext constexprContext() const {
-    ConstexprExecutionContext context;
+  [[nodiscard]] ConstexprInterpreter makeConstexprInterpreter() const {
+    ConstexprInterpreter context;
     if (!instanceTypeSubstitution.empty() ||
         !instanceValueSubstitution.empty()) {
       context.substitutions.push_back({.types = instanceTypeSubstitution,
@@ -7417,7 +7377,7 @@ private:
 
   [[nodiscard]] SemanticType
   constexprType(SemanticType type,
-                const ConstexprExecutionContext &context) const {
+                const ConstexprInterpreter &context) const {
     for (const GenericSubstitution &substitution : context.substitutions) {
       type = substituteType(type, substitution);
     }
@@ -7426,7 +7386,7 @@ private:
 
   [[nodiscard]] CompileTimeValue
   constexprValue(CompileTimeValue value,
-                 const ConstexprExecutionContext &context) const {
+                 const ConstexprInterpreter &context) const {
     if (value.kind != CompileTimeValue::Parameter) {
       return value;
     }
@@ -7701,7 +7661,7 @@ private:
 
   [[nodiscard]] ConstexprEvaluation
   constexprSuccess(const Expr &expression, ConstantValue value,
-                   ConstexprExecutionContext &context) {
+                   ConstexprInterpreter &context) {
     // Function-body expressions can produce a different value per invocation.
     // Only cache constants belonging to the source expression being evaluated
     // outside a call frame.
@@ -7725,7 +7685,7 @@ private:
   }
 
   [[nodiscard]] static const ConstexprLocalValue *
-  findConstexprLocal(const ConstexprExecutionContext &context,
+  findConstexprLocal(const ConstexprInterpreter &context,
                      SymbolId symbol) {
     for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
          ++scope) {
@@ -7737,7 +7697,7 @@ private:
   }
 
   [[nodiscard]] static ConstexprLocalValue *
-  findMutableConstexprLocal(ConstexprExecutionContext &context,
+  findMutableConstexprLocal(ConstexprInterpreter &context,
                             SymbolId symbol) {
     for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
          ++scope) {
@@ -7779,7 +7739,7 @@ private:
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprMutation(const Expr &source, const ExprPtr &target,
                             const Token &operation, bool postfix,
-                            ConstexprExecutionContext &context) {
+                            ConstexprInterpreter &context) {
     const SymbolId symbol =
         target ? semanticModel.findResolvedSymbol(*target) : SymbolId{0};
     ConstexprLocalValue *local = findMutableConstexprLocal(context, symbol);
@@ -7825,7 +7785,7 @@ private:
 
   [[nodiscard]] ConstantEvaluation
   defaultConstexprValue(const SemanticType &type,
-                        ConstexprExecutionContext &context) const {
+                        ConstexprInterpreter &context) const {
     if (context.steps++ >= constexprExpressionStepLimit) {
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
     }
@@ -7898,7 +7858,7 @@ private:
   [[nodiscard]] ConstexprEvaluation evaluateConstexprConstruction(
       const Expr &source, const ResolvedConstructionInfo &resolved,
       const ExprList &explicitArguments, const Token &callSite,
-      ConstexprExecutionContext &context) {
+      ConstexprInterpreter &context) {
     const ConstructorDecl *declaration = resolved.declaration;
     if (resolved.generatedDefault || declaration == nullptr ||
         !declaration->isConstexpr() ||
@@ -8107,7 +8067,7 @@ private:
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const ExprPtr &expression,
-                              ConstexprExecutionContext &context) {
+                              ConstexprInterpreter &context) {
     if (!expression) {
       return constexprFailure({},
                               ConstantEvaluationFailure::UnsupportedExpression);
@@ -8117,7 +8077,7 @@ private:
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const Expr &source,
-                              ConstexprExecutionContext &context) {
+                              ConstexprInterpreter &context) {
     if (context.steps++ >= constexprExpressionStepLimit) {
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::ResourceLimit);
@@ -8774,7 +8734,7 @@ private:
 
   [[nodiscard]] ConstexprStatementEvaluation
   executeConstexprStatements(const StmtList &statements,
-                             ConstexprExecutionContext &context) {
+                             ConstexprInterpreter &context) {
     for (const StmtPtr &statement : statements) {
       ConstexprStatementEvaluation evaluated =
           executeConstexprStatement(statement.get(), context);
@@ -8787,7 +8747,7 @@ private:
 
   [[nodiscard]] ConstexprStatementEvaluation
   executeConstexprStatement(const Stmt *statement,
-                            ConstexprExecutionContext &context) {
+                            ConstexprInterpreter &context) {
     if (statement == nullptr) {
       return {};
     }
@@ -9070,7 +9030,7 @@ private:
       const std::vector<ConstantValue> &arguments,
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
-      ConstexprExecutionContext &context) {
+      ConstexprInterpreter &context) {
     if (context.callDepth >= constexprCallDepthLimit) {
       return constexprFailure(
           callSite, ConstantEvaluationFailure::ResourceLimit,
@@ -9246,7 +9206,7 @@ private:
       return std::nullopt;
     }
 
-    ConstexprExecutionContext context = constexprContext();
+    ConstexprInterpreter context = makeConstexprInterpreter();
     ConstexprEvaluation evaluated =
         evaluateConstexprExpression(declaration.initializer(), context);
     if (!evaluated) {
@@ -10569,7 +10529,7 @@ private:
     return summary;
   }
 
-  void applyFunctionReturnBorrowSummary(FunctionCandidate &function) const {
+  void applyFunctionReturnBorrowSummary(CallableDeclaration &function) const {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         function.returnType, function.parameterTypes, function.ownerClass,
         function.staticMember, function.intrinsic);
@@ -10822,14 +10782,14 @@ private:
     return IntrinsicKind::None;
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate>
+  [[nodiscard]] std::optional<CallableDeclaration>
   intrinsicCandidate(const ExprPtr &callee) const {
     const std::optional<Symbol> symbol = resolveExpressionSymbol(callee);
     if (!symbol || symbol->type != SemanticType::Function) {
       return std::nullopt;
     }
-    const FunctionCandidate *result = nullptr;
-    for (const FunctionCandidate &candidate : symbol->overloads) {
+    const CallableDeclaration *result = nullptr;
+    for (const CallableDeclaration &candidate : symbol->overloads) {
       if (candidate.intrinsic == IntrinsicKind::None) {
         continue;
       }
@@ -10839,7 +10799,7 @@ private:
       result = &candidate;
     }
     return result == nullptr ? std::nullopt
-                             : std::optional<FunctionCandidate>(*result);
+                             : std::optional<CallableDeclaration>(*result);
   }
 
   [[nodiscard]] IntrinsicKind resolvedIntrinsicKind(const Call &call) const {
@@ -13160,8 +13120,8 @@ private:
     }
 
     const Symbol overloads = substituteSymbol(found->second.symbol, type);
-    std::vector<const FunctionCandidate *> viable;
-    for (const FunctionCandidate &candidate : overloads.overloads) {
+    std::vector<const CallableDeclaration *> viable;
+    for (const CallableDeclaration &candidate : overloads.overloads) {
       if (candidate.id == 0 || candidate.declaration == nullptr ||
           candidate.access != AccessModifier::Public ||
           candidate.compilerPrivate || candidate.pureVirtual ||
@@ -13189,17 +13149,17 @@ private:
       return -1;
     };
     int selectedRank = -1;
-    for (const FunctionCandidate *candidate : viable) {
+    for (const CallableDeclaration *candidate : viable) {
       selectedRank =
           std::max(selectedRank, capabilityRank(candidate->receiverMutability));
     }
-    std::erase_if(viable, [&](const FunctionCandidate *candidate) {
+    std::erase_if(viable, [&](const CallableDeclaration *candidate) {
       return capabilityRank(candidate->receiverMutability) != selectedRank;
     });
     if (viable.size() != 1) {
       return std::nullopt;
     }
-    const FunctionCandidate &selected = *viable.front();
+    const CallableDeclaration &selected = *viable.front();
     return ResolvedThreadTaskEntry{.function = selected.id,
                                    .capability = callableInvocationCapability(
                                        selected.receiverMutability)};
@@ -13212,7 +13172,7 @@ private:
   }
 
   void analyzeThreadIntrinsicCall(const Call &expr,
-                                  const FunctionCandidate &declaration) {
+                                  const CallableDeclaration &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
     std::vector<SemanticType> explicitTypeArguments;
     explicitTypeArguments.reserve(expr.typeArguments().size());
@@ -13382,7 +13342,7 @@ private:
   }
 
   void analyzeIntrinsicCall(const Call &expr,
-                            const FunctionCandidate &declaration) {
+                            const CallableDeclaration &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
     if (integerArithmeticIntrinsic(intrinsic)) {
       analyzeIntegerArithmeticIntrinsicCall(expr, declaration);
@@ -13684,7 +13644,7 @@ private:
 
   void
   analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
-                                        const FunctionCandidate &declaration) {
+                                        const CallableDeclaration &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
     const std::optional<IntegerArithmeticIntrinsic> arithmetic =
         integerArithmeticIntrinsic(intrinsic);
@@ -15032,7 +14992,7 @@ private:
   }
 
   [[nodiscard]] static const GenericParameterInfo *
-  packGenericParameter(const FunctionCandidate &function) {
+  packGenericParameter(const CallableDeclaration &function) {
     const auto found = std::find_if(
         function.genericParameters.begin(), function.genericParameters.end(),
         [](const GenericParameterInfo &parameter) { return parameter.pack; });
@@ -15040,7 +15000,7 @@ private:
   }
 
   [[nodiscard]] static std::size_t
-  fixedParameterCount(const FunctionCandidate &function) {
+  fixedParameterCount(const CallableDeclaration &function) {
     return function.parameterPack && !function.parameterTypes.empty()
                ? function.parameterTypes.size() - 1
                : function.parameterTypes.size();
@@ -15094,7 +15054,7 @@ private:
   }
 
   [[nodiscard]] static bool
-  acceptsArgumentShape(const FunctionCandidate &function,
+  acceptsArgumentShape(const CallableDeclaration &function,
                        const std::vector<SemanticType> &arguments) {
     if (!function.parameterPack) {
       return !hasPackExpansion(arguments) &&
@@ -15126,7 +15086,7 @@ private:
     const Symbol overloadSet = substituteSymbol(member->second.symbol, type);
     return std::any_of(
         overloadSet.overloads.begin(), overloadSet.overloads.end(),
-        [&](const FunctionCandidate &candidate) {
+        [&](const CallableDeclaration &candidate) {
           return !candidate.staticMember &&
                  candidate.access == AccessModifier::Public &&
                  candidate.requirements.empty() &&
@@ -15425,11 +15385,11 @@ private:
   }
 
   bool applyVariadicFunctionTypeArguments(
-      FunctionCandidate &function,
+      CallableDeclaration &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren) {
-    FunctionCandidate resolved;
+    CallableDeclaration resolved;
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     ConstraintFailure constraintFailure;
@@ -15631,7 +15591,7 @@ private:
   }
 
   bool applyFunctionTypeArguments(
-      FunctionCandidate &function,
+      CallableDeclaration &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren) {
@@ -15844,11 +15804,11 @@ private:
   }
 
   [[nodiscard]] bool
-  tryInstantiateFunction(const FunctionCandidate &candidate,
+  tryInstantiateFunction(const CallableDeclaration &candidate,
                          const std::vector<SemanticType> &explicitTypeArguments,
                          const std::vector<SemanticType> &argumentTypes,
                          const ExprList &expressions,
-                         FunctionCandidate &resolved,
+                         CallableDeclaration &resolved,
                          std::vector<SemanticType> &resolvedTypeArguments,
                          std::vector<CompileTimeValue> &resolvedValueArguments,
                          ConstraintFailure *constraintFailure = nullptr) {
@@ -17001,7 +16961,7 @@ private:
   }
 
   bool validateConfinedCallableArguments(
-      const FunctionCandidate &candidate, const FunctionCandidate &,
+      const CallableDeclaration &candidate, const CallableDeclaration &,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments) {
     bool valid = true;
@@ -17077,7 +17037,7 @@ private:
   }
 
   [[nodiscard]] static std::string
-  functionSignatureSpelling(const FunctionCandidate &function) {
+  functionSignatureSpelling(const CallableDeclaration &function) {
     if (function.declaration == nullptr) {
       return "function";
     }
@@ -17231,7 +17191,7 @@ private:
   }
 
   [[nodiscard]] bool
-  validateSelectedFunction(const FunctionCandidate &function,
+  validateSelectedFunction(const CallableDeclaration &function,
                            const ExprPtr &callee, const Token &paren,
                            std::span<const ExprPtr> arguments,
                            CallReceiverMode receiverMode) {
@@ -17360,7 +17320,7 @@ private:
     return true;
   }
 
-  [[nodiscard]] std::vector<FunctionCandidate>
+  [[nodiscard]] std::vector<CallableDeclaration>
   structuralOperatorCandidates(const SemanticType &receiver,
                                OverloadedOperator kind) const {
     const ClassInfo *owner = classInfo(receiver);
@@ -17374,8 +17334,8 @@ private:
       return {};
     }
     const Symbol overloadSet = substituteSymbol(found->second.symbol, receiver);
-    std::vector<FunctionCandidate> result;
-    for (const FunctionCandidate &candidate : overloadSet.overloads) {
+    std::vector<CallableDeclaration> result;
+    for (const CallableDeclaration &candidate : overloadSet.overloads) {
       if (!candidate.staticMember &&
           candidate.access == AccessModifier::Public &&
           !candidate.compilerPrivate && candidate.requirements.empty()) {
@@ -17385,28 +17345,28 @@ private:
     return result;
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate>
+  [[nodiscard]] std::optional<CallableDeclaration>
   selectStructuralOperator(const SemanticType &receiver,
                            OverloadedOperator kind,
                            std::span<const SemanticType> parameterTypes,
                            bool mutableReceiver) const {
-    std::vector<FunctionCandidate> candidates =
+    std::vector<CallableDeclaration> candidates =
         structuralOperatorCandidates(receiver, kind);
-    std::erase_if(candidates, [&](const FunctionCandidate &candidate) {
+    std::erase_if(candidates, [&](const CallableDeclaration &candidate) {
       return !std::equal(candidate.parameterTypes.begin(),
                          candidate.parameterTypes.end(), parameterTypes.begin(),
                          parameterTypes.end());
     });
     if (!mutableReceiver) {
-      std::erase_if(candidates, [](const FunctionCandidate &candidate) {
+      std::erase_if(candidates, [](const CallableDeclaration &candidate) {
         return candidate.receiverMutability == ReceiverMutability::Mutable;
       });
     } else if (std::any_of(candidates.begin(), candidates.end(),
-                           [](const FunctionCandidate &candidate) {
+                           [](const CallableDeclaration &candidate) {
                              return candidate.receiverMutability ==
                                     ReceiverMutability::Mutable;
                            })) {
-      std::erase_if(candidates, [](const FunctionCandidate &candidate) {
+      std::erase_if(candidates, [](const CallableDeclaration &candidate) {
         return candidate.receiverMutability == ReceiverMutability::ReadOnly;
       });
     }
@@ -17439,7 +17399,7 @@ private:
     };
     const auto hasDereference = [&](const SemanticType &iterator,
                                     const SemanticType *referent) {
-      const std::optional<FunctionCandidate> candidate =
+      const std::optional<CallableDeclaration> candidate =
           selectedDereference(iterator);
       if (!candidate || candidate->returnType.kind != SemanticType::Reference ||
           candidate->returnType.arguments.size() != 1) {
@@ -17458,7 +17418,7 @@ private:
       if (!hasDereference(iterator, nullptr)) {
         return false;
       }
-      const std::optional<FunctionCandidate> increment =
+      const std::optional<CallableDeclaration> increment =
           selectStructuralOperator(iterator, OverloadedOperator::PreIncrement,
                                    {}, true);
       return increment && increment->returnType == SemanticType::Void &&
@@ -17472,7 +17432,7 @@ private:
       const SemanticType &iterator = arguments[1];
       const SemanticType parameter =
           SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
-      const std::optional<FunctionCandidate> comparison =
+      const std::optional<CallableDeclaration> comparison =
           selectStructuralOperator(iterator, OverloadedOperator::NotEqual,
                                    std::span<const SemanticType>(&parameter, 1),
                                    false);
@@ -17488,13 +17448,13 @@ private:
     return false;
   }
 
-  [[nodiscard]] std::vector<FunctionCandidate> symbolicOperatorRequirements(
+  [[nodiscard]] std::vector<CallableDeclaration> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const {
-    std::vector<FunctionCandidate> result;
+    std::vector<CallableDeclaration> result;
     for (const ExpandedStructuralRequirement &requirement :
          activeStructuralRequirements()) {
-      FunctionCandidate candidate;
+      CallableDeclaration candidate;
       bool matches = false;
       switch (requirement.kind) {
       case StructuralConstraintKind::InputIterator:
@@ -17557,16 +17517,16 @@ private:
                      SemanticType::Unknown;
         });
     if (hasKnownDereference) {
-      std::erase_if(result, [](const FunctionCandidate &candidate) {
+      std::erase_if(result, [](const CallableDeclaration &candidate) {
         return candidate.returnType.kind == SemanticType::Reference &&
                !candidate.returnType.arguments.empty() &&
                candidate.returnType.arguments.front() == SemanticType::Unknown;
       });
     }
-    std::vector<FunctionCandidate> unique;
-    for (FunctionCandidate &candidate : result) {
+    std::vector<CallableDeclaration> unique;
+    for (CallableDeclaration &candidate : result) {
       const bool duplicate = std::any_of(
-          unique.begin(), unique.end(), [&](const FunctionCandidate &existing) {
+          unique.begin(), unique.end(), [&](const CallableDeclaration &existing) {
             return existing.returnType == candidate.returnType &&
                    existing.parameterTypes == candidate.parameterTypes &&
                    existing.receiverMutability == candidate.receiverMutability;
@@ -17585,7 +17545,7 @@ private:
                 .empty();
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate> resolveSymbolicOperator(
+  [[nodiscard]] std::optional<CallableDeclaration> resolveSymbolicOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
       std::span<const SemanticType> argumentTypes,
@@ -17593,11 +17553,11 @@ private:
       std::optional<CallableBoundary> boundary,
       const std::optional<OperatorReceiverState> &receiverState,
       bool projection) {
-    std::vector<FunctionCandidate> viable =
+    std::vector<CallableDeclaration> viable =
         symbolicOperatorRequirements(kind, receiverType, argumentTypes);
     const bool mutableReceiver = receiverState ? receiverState->mutableReceiver
                                                : isMutableObject(receiver);
-    std::erase_if(viable, [&](const FunctionCandidate &candidate) {
+    std::erase_if(viable, [&](const CallableDeclaration &candidate) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
         return true;
@@ -17625,7 +17585,7 @@ private:
       return std::nullopt;
     }
 
-    const FunctionCandidate &selected = viable.front();
+    const CallableDeclaration &selected = viable.front();
     const AccessMode receiverAccess =
         receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
@@ -17693,7 +17653,7 @@ private:
         substituteSymbol(found->second.symbol, receiverType);
     return std::any_of(
         overloadSet.overloads.begin(), overloadSet.overloads.end(),
-        [&](const FunctionCandidate &candidate) {
+        [&](const CallableDeclaration &candidate) {
           return candidate.parameterTypes.size() == 1 &&
                  candidate.parameterTypes.front() == argumentType;
         });
@@ -17718,7 +17678,7 @@ private:
     return callArgumentMatches(parameterType, argumentType, argument);
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
+  [[nodiscard]] std::optional<CallableDeclaration> resolveOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
       std::span<const SemanticType> argumentTypes = {},
@@ -17768,16 +17728,16 @@ private:
     const bool consumingReceiver =
         kind == OverloadedOperator::Call && isExplicitMoveReceiver(receiver);
     bool rejectedMutableReceiver = false;
-    std::optional<FunctionCandidate> rejectedMutableFunction;
+    std::optional<CallableDeclaration> rejectedMutableFunction;
     bool rejectedConsumingReceiver = false;
     bool rejectedCompilerPrivate = false;
     bool rejectedRequirements = false;
     struct ViableOperator {
-      FunctionCandidate function;
+      CallableDeclaration function;
       CallReceiverMode receiverMode = CallReceiverMode::None;
     };
     std::vector<ViableOperator> viable;
-    for (const FunctionCandidate &candidate : overloadSet.overloads) {
+    for (const CallableDeclaration &candidate : overloadSet.overloads) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
         continue;
@@ -17925,7 +17885,7 @@ private:
             "GTI operator calls do not perform implicit conversions, rank "
             "candidates, reverse operands, or use ADL; convert the operand "
             "explicitly when that conversion is intentional.");
-        for (const FunctionCandidate &candidate : overloadSet.overloads) {
+        for (const CallableDeclaration &candidate : overloadSet.overloads) {
           if (candidate.declaration != nullptr &&
               (isCompilerTrustedRequester(token) ||
                !candidate.compilerPrivate)) {
@@ -17944,7 +17904,7 @@ private:
       return std::nullopt;
     }
 
-    const FunctionCandidate &selected = viable.front().function;
+    const CallableDeclaration &selected = viable.front().function;
     const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
     if (consumingReceiver &&
         rejectConsumingActiveCleanup(token, receiverType, boundary)) {
@@ -18068,7 +18028,7 @@ private:
       return receiverType.arguments.front();
     }
     if (receiverType.kind == SemanticType::Class) {
-      const std::optional<FunctionCandidate> selected = resolveOperator(
+      const std::optional<CallableDeclaration> selected = resolveOperator(
           site, OverloadedOperator::Arrow, receiver, receiverType, token, {},
           {}, false, std::nullopt, std::nullopt, projection);
       if (!selected || selected->returnType.kind != SemanticType::Reference ||
@@ -18085,7 +18045,7 @@ private:
   }
 
   void recordCallableForwardings(const Call &call,
-                                 const FunctionCandidate &target) {
+                                 const CallableDeclaration &target) {
     if (instanceAnalysisActive || currentFunctionDeclaration == nullptr ||
         target.id == 0) {
       return;
@@ -18190,7 +18150,7 @@ private:
   }
 
   void bindIntrinsicCallDeclaration(const Call &call,
-                                    const FunctionCandidate &function) {
+                                    const CallableDeclaration &function) {
     const ResolvedCallInfo *existing = semanticModel.findCall(call);
     if (existing == nullptr) {
       return;
@@ -18203,7 +18163,7 @@ private:
   }
 
   void recordDefaultArgumentEffects(const Call &call,
-                                    const FunctionCandidate &function) {
+                                    const CallableDeclaration &function) {
     if (function.declaration == nullptr ||
         call.arguments().size() >= function.parameterTypes.size()) {
       return;
@@ -18255,7 +18215,7 @@ private:
   }
 
   void
-  recordResolvedCall(const Call &call, const FunctionCandidate &function,
+  recordResolvedCall(const Call &call, const CallableDeclaration &function,
                      std::vector<SemanticType> typeArguments,
                      std::vector<CompileTimeValue> valueArguments,
                      std::vector<std::size_t> ephemeralBorrowArguments,
@@ -18360,7 +18320,7 @@ private:
   void reportOverloadResolutionFailure(
       const Call &call, const Symbol &overloadSet,
       const std::vector<SemanticType> &argumentTypes,
-      const std::vector<const FunctionCandidate *> &exactMatches) {
+      const std::vector<const CallableDeclaration *> &exactMatches) {
     const std::string name = callableSpelling(call.callee());
     Diagnostic diagnostic;
     if (exactMatches.empty()) {
@@ -18378,7 +18338,7 @@ private:
       diagnostic.hints.emplace_back(
           "Function calls do not perform implicit conversions; convert an "
           "argument explicitly with syntax such as 'uint64_t(value)'.");
-      for (const FunctionCandidate &candidate : overloadSet.overloads) {
+      for (const CallableDeclaration &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr &&
             (isCompilerTrustedRequester(call.paren()) ||
              !candidate.compilerPrivate)) {
@@ -18393,7 +18353,7 @@ private:
                          "Call to '" + name + "' is ambiguous; " +
                              std::to_string(exactMatches.size()) +
                              " overloads exactly match.");
-      for (const FunctionCandidate *candidate : exactMatches) {
+      for (const CallableDeclaration *candidate : exactMatches) {
         if (candidate != nullptr && candidate->declaration != nullptr) {
           diagnostic.related.push_back(
               {tokenSpan(candidate->declaration->name()),
@@ -18492,7 +18452,7 @@ private:
   }
 
   [[nodiscard]] static bool
-  nativeFunctionCandidateIsEligible(const FunctionCandidate &candidate) {
+  nativeFunctionCandidateIsEligible(const CallableDeclaration &candidate) {
     if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
         candidate.id == 0 || !candidate.genericParameters.empty() ||
         candidate.parameterPack || !candidate.requirements.empty() ||
@@ -18507,7 +18467,7 @@ private:
   }
 
   [[nodiscard]] bool
-  nativeFunctionCandidateMatches(const FunctionCandidate &candidate,
+  nativeFunctionCandidateMatches(const CallableDeclaration &candidate,
                                  const SemanticType &expectedType) const {
     if (!nativeFunctionCandidateIsEligible(candidate) ||
         !expectedType.hasNativeFunctionShape()) {
@@ -18530,11 +18490,11 @@ private:
                       candidate.parameterTypes.end(), parameterTypes.begin());
   }
 
-  [[nodiscard]] std::vector<const FunctionCandidate *>
+  [[nodiscard]] std::vector<const CallableDeclaration *>
   matchingNativeFunctionCandidates(const Symbol &symbol,
                                    const SemanticType &expectedType) const {
-    std::vector<const FunctionCandidate *> matches;
-    for (const FunctionCandidate &candidate : symbol.overloads) {
+    std::vector<const CallableDeclaration *> matches;
+    for (const CallableDeclaration &candidate : symbol.overloads) {
       if (nativeFunctionCandidateMatches(candidate, expectedType)) {
         matches.push_back(&candidate);
       }
@@ -18558,7 +18518,7 @@ private:
       return SemanticType::Unknown;
     }
 
-    const std::vector<const FunctionCandidate *> matches =
+    const std::vector<const CallableDeclaration *> matches =
         matchingNativeFunctionCandidates(symbol, expectedType);
     if (matches.size() != 1) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -18575,7 +18535,7 @@ private:
           "Callback targets must be non-generic namespace-scope GTI "
           "functions with bodies and an exact parameter and return type "
           "match.");
-      for (const FunctionCandidate &candidate : symbol.overloads) {
+      for (const CallableDeclaration &candidate : symbol.overloads) {
         if (candidate.declaration != nullptr) {
           diagnostic.related.push_back(
               {tokenSpan(candidate.declaration->name()),
@@ -18586,7 +18546,7 @@ private:
       return SemanticType::Unknown;
     }
 
-    const FunctionCandidate &selected = *matches.front();
+    const CallableDeclaration &selected = *matches.front();
     semanticModel.recordNativeFunctionConversion(
         expression,
         NativeFunctionConversionInfo{.function = selected.id,
@@ -18806,7 +18766,7 @@ private:
   };
 
   [[nodiscard]] bool
-  ephemeralBorrowResultSupported(const FunctionCandidate &function) const {
+  ephemeralBorrowResultSupported(const CallableDeclaration &function) const {
     if (function.returnBorrowOrigin != BorrowOriginKind::None ||
         typeTraits(function.returnType).containsBorrowedState) {
       return false;
@@ -18824,7 +18784,7 @@ private:
   }
 
   [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(const FunctionCandidate &function) const {
+  ephemeralBorrowTargetSupported(const CallableDeclaration &function) const {
     if (function.id == 0 || function.declaration == nullptr ||
         function.declaration->body() == nullptr ||
         function.declaration->runtimeBinding() ||
@@ -18844,7 +18804,7 @@ private:
   }
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
-      const FunctionCandidate &function, const SemanticType &parameter,
+      const CallableDeclaration &function, const SemanticType &parameter,
       const SemanticType &argument, const ExprPtr &expression) const {
     if (parameter.kind != SemanticType::Reference ||
         parameter.referenceAccess != AccessMode::ReadOnly ||
@@ -18860,7 +18820,7 @@ private:
   }
 
   [[nodiscard]] CallArgumentMatchKind
-  functionCallArgumentMatch(const FunctionCandidate &function,
+  functionCallArgumentMatch(const CallableDeclaration &function,
                             std::size_t index, const SemanticType &argument,
                             const ExprPtr &expression, bool deferred) const {
     if (index >= function.parameterTypes.size()) {
@@ -18883,7 +18843,7 @@ private:
                                   const SemanticType &argument,
                                   const ExprPtr &expression,
                                   std::string_view callable,
-                                  const FunctionCandidate *function = nullptr) {
+                                  const CallableDeclaration *function = nullptr) {
     const std::string argumentLabel =
         callable == "Function" ? "Argument "
                                : std::string(callable) + " argument ";
@@ -22241,7 +22201,7 @@ private:
     Symbol result = symbol;
     const GenericSubstitution substitution = classSubstitution(objectType);
     result.type = substituteType(result.type, substitution);
-    for (FunctionCandidate &overload : result.overloads) {
+    for (CallableDeclaration &overload : result.overloads) {
       overload.returnType = substituteType(overload.returnType, substitution);
       for (SemanticType &parameter : overload.parameterTypes) {
         parameter = substituteType(parameter, substitution);
@@ -22266,7 +22226,7 @@ private:
       result.compilerPrivate =
           !result.overloads.empty() &&
           std::all_of(result.overloads.begin(), result.overloads.end(),
-                      [](const FunctionCandidate &overload) {
+                      [](const CallableDeclaration &overload) {
                         return overload.compilerPrivate;
                       });
     } else {
@@ -22282,7 +22242,7 @@ private:
         genericParametersFor(function);
     const FunctionInfo *registered = semanticModel.findFunction(function);
     beginTypeParameterScope(genericParameters);
-    FunctionCandidate candidate{
+    CallableDeclaration candidate{
         .sourceUnit = currentSourceUnit,
         .declaration = &function,
         .returnType =
@@ -23329,7 +23289,7 @@ private:
           if (!isCompilerTrustedUnit(consumer) &&
               published.type == SemanticType::Function) {
             std::erase_if(published.overloads,
-                          [](const FunctionCandidate &overload) {
+                          [](const CallableDeclaration &overload) {
                             return overload.compilerPrivate;
                           });
             if (published.overloads.empty()) {
@@ -23354,7 +23314,7 @@ private:
               !existing->second.overloads.empty() &&
               std::all_of(existing->second.overloads.begin(),
                           existing->second.overloads.end(),
-                          [](const FunctionCandidate &overload) {
+                          [](const CallableDeclaration &overload) {
                             return overload.compilerPrivate;
                           });
         });
@@ -25490,7 +25450,7 @@ private:
     }
   }
 
-  void refreshFunctionPolymorphism(const FunctionCandidate &candidate) {
+  void refreshFunctionPolymorphism(const CallableDeclaration &candidate) {
     if (candidate.declaration == nullptr) {
       return;
     }
@@ -25512,7 +25472,7 @@ private:
       symbol.compilerPrivate =
           !symbol.overloads.empty() &&
           std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
-                      [](const FunctionCandidate &overload) {
+                      [](const CallableDeclaration &overload) {
                         return overload.compilerPrivate;
                       });
     }
@@ -25539,10 +25499,10 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
-    for (FunctionCandidate &candidate : incoming.symbol.overloads) {
+    for (CallableDeclaration &candidate : incoming.symbol.overloads) {
       const bool duplicateIdentity = std::any_of(
           existing.symbol.overloads.begin(), existing.symbol.overloads.end(),
-          [&](const FunctionCandidate &previous) {
+          [&](const CallableDeclaration &previous) {
             return previous.id != 0 && previous.id == candidate.id;
           });
       if (!duplicateIdentity) {
@@ -25556,7 +25516,7 @@ private:
                            MemberInfo local) {
     const auto found = owner.members.find(name);
     if (found == owner.members.end()) {
-      for (const FunctionCandidate &candidate : local.symbol.overloads) {
+      for (const CallableDeclaration &candidate : local.symbol.overloads) {
         if (candidate.overrideMethod) {
           report(candidate.declaration->overrideKeyword().value(),
                  "Method marked 'override' has no inherited virtual method "
@@ -25583,7 +25543,7 @@ private:
       return;
     }
 
-    for (FunctionCandidate &candidate : local.symbol.overloads) {
+    for (CallableDeclaration &candidate : local.symbol.overloads) {
       std::vector<std::size_t> matches;
       for (std::size_t index = 0; index < inherited.symbol.overloads.size();
            ++index) {
@@ -25608,7 +25568,7 @@ private:
       bool validOverride = true;
       std::vector<FunctionId> roots;
       for (std::size_t index : matches) {
-        const FunctionCandidate &base = inherited.symbol.overloads[index];
+        const CallableDeclaration &base = inherited.symbol.overloads[index];
         if (!base.virtualMethod || base.staticMember) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2042", DiagnosticPhase::Semantics,
@@ -25657,7 +25617,7 @@ private:
       }
 
       std::erase_if(inherited.symbol.overloads,
-                    [&](const FunctionCandidate &base) {
+                    [&](const CallableDeclaration &base) {
                       return sameFunctionSignature(base, candidate);
                     });
       inherited.symbol.overloads.emplace_back(std::move(candidate));
@@ -25702,7 +25662,7 @@ private:
       if (member.symbol.type != SemanticType::Function) {
         continue;
       }
-      for (const FunctionCandidate &candidate : member.symbol.overloads) {
+      for (const CallableDeclaration &candidate : member.symbol.overloads) {
         owner.polymorphic = owner.polymorphic || candidate.virtualMethod;
         owner.abstract = owner.abstract || candidate.pureVirtual;
       }
@@ -25710,8 +25670,8 @@ private:
            ++left) {
         for (std::size_t right = left + 1;
              right < member.symbol.overloads.size(); ++right) {
-          const FunctionCandidate &first = member.symbol.overloads[left];
-          const FunctionCandidate &second = member.symbol.overloads[right];
+          const CallableDeclaration &first = member.symbol.overloads[left];
+          const CallableDeclaration &second = member.symbol.overloads[right];
           if (!sameFunctionSignature(first, second)) {
             continue;
           }
@@ -26430,7 +26390,7 @@ private:
       if (member.symbol.type != SemanticType::Function) {
         continue;
       }
-      for (const FunctionCandidate &function : member.symbol.overloads) {
+      for (const CallableDeclaration &function : member.symbol.overloads) {
         if (function.declaration != nullptr) {
           reportCAbiRecord(function.declaration->name(),
                            "C ABI record '" + owner.name.lexeme +
@@ -27143,12 +27103,12 @@ private:
   }
 
   using BorrowSummaryCandidateIndex =
-      std::unordered_map<FunctionId, std::vector<FunctionCandidate *>>;
+      std::unordered_map<FunctionId, std::vector<CallableDeclaration *>>;
 
   void
   indexFunctionCandidateBorrowSummaries(Symbol &symbol,
                                         BorrowSummaryCandidateIndex &index) {
-    for (FunctionCandidate &candidate : symbol.overloads) {
+    for (CallableDeclaration &candidate : symbol.overloads) {
       index[candidate.id].emplace_back(&candidate);
       if (workMetrics != nullptr) {
         ++workMetrics->semanticBorrowSummaryCandidateInspections;
@@ -27187,7 +27147,7 @@ private:
     if (found == candidateIndex.end()) {
       return;
     }
-    for (FunctionCandidate *candidate : found->second) {
+    for (CallableDeclaration *candidate : found->second) {
       if (workMetrics != nullptr) {
         ++workMetrics->semanticBorrowSummaryCandidateInspections;
       }
@@ -27304,7 +27264,7 @@ private:
     if (call == nullptr) {
       return {};
     }
-    const std::optional<FunctionCandidate> intrinsic =
+    const std::optional<CallableDeclaration> intrinsic =
         intrinsicCandidate(call->callee());
     if (!intrinsic || call->arguments().size() != 1 ||
         (intrinsic->intrinsic != IntrinsicKind::PrefixStorageTextView &&
@@ -28009,7 +27969,7 @@ private:
                  "GTI-S2039");
         }
       }
-      for (FunctionCandidate &overload : symbol.overloads) {
+      for (CallableDeclaration &overload : symbol.overloads) {
         overload.ownerClass = owner.id;
         overload.dispatchOwner = openClassType(owner.id);
         overload.compilerPrivate =
@@ -28068,7 +28028,7 @@ private:
   }
 
   void recordFunctionSignature(const FunctionDecl &function,
-                               const FunctionCandidate &candidate,
+                               const CallableDeclaration &candidate,
                                const std::vector<std::string> &namespaceScope,
                                ClassId ownerClass) {
     const FunctionInfo *registered = semanticModel.findFunction(function);
@@ -29320,7 +29280,7 @@ private:
     bool reachable = true;
     bool hasUnreachableTail = false;
     ScopeStack reachableScopes;
-    LoanFlowContext reachableLoanFlow;
+    LoanFlowState reachableLoanFlow;
     std::vector<ValueControlFlowContext> reachableValueControlFlow;
     SemanticType reachableType = currentType;
     const bool measureStatements = measureTopLevelStatements;
@@ -30572,7 +30532,7 @@ private:
     const auto overload =
         std::find_if(member->second.symbol.overloads.begin(),
                      member->second.symbol.overloads.end(),
-                     [function](const FunctionCandidate &candidate) {
+                     [function](const CallableDeclaration &candidate) {
                        return candidate.declaration == function->declaration;
                      });
     return overload == member->second.symbol.overloads.end()
@@ -31120,8 +31080,8 @@ private:
   }
 
   [[nodiscard]] static bool
-  sameFunctionSignature(const FunctionCandidate &left,
-                        const FunctionCandidate &right) {
+  sameFunctionSignature(const CallableDeclaration &left,
+                        const CallableDeclaration &right) {
     const bool receiverQualified =
         left.ownerClass != 0 && right.ownerClass != 0;
     if ((receiverQualified &&
@@ -31196,7 +31156,7 @@ private:
       return true;
     }
 
-    FunctionCandidate candidate = std::move(incoming.overloads.front());
+    CallableDeclaration candidate = std::move(incoming.overloads.front());
     const FunctionInfo *candidateInfo =
         candidate.declaration == nullptr
             ? nullptr
@@ -31212,7 +31172,7 @@ private:
       return true;
     }
 
-    for (const FunctionCandidate &previous : existing.overloads) {
+    for (const CallableDeclaration &previous : existing.overloads) {
       const bool previousC = previous.declaration != nullptr &&
                              previous.declaration->hasCLinkage();
       const bool candidateC = candidate.declaration != nullptr &&
@@ -31321,7 +31281,7 @@ private:
         compilerPrivateDeclaration(symbol.sourceUnit, scope);
     symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
                              semanticModel.isCompilerPrivateType(symbol.type);
-    for (FunctionCandidate &overload : symbol.overloads) {
+    for (CallableDeclaration &overload : symbol.overloads) {
       overload.compilerPrivate =
           overload.compilerPrivate || symbol.compilerPrivate ||
           semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -31336,7 +31296,7 @@ private:
           scopePrivate ||
           (!symbol.overloads.empty() &&
            std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
-                       [](const FunctionCandidate &overload) {
+                       [](const CallableDeclaration &overload) {
                          return overload.compilerPrivate;
                        }));
     }
@@ -31489,7 +31449,7 @@ private:
       return;
     }
     if (symbol.type == SemanticType::Function) {
-      for (const FunctionCandidate &overload : symbol.overloads) {
+      for (const CallableDeclaration &overload : symbol.overloads) {
         if (!isCompilerTrustedUnit(currentSourceUnit) &&
             (overload.compilerPrivate ||
              semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -32942,7 +32902,7 @@ private:
   }
 
   [[nodiscard]] bool
-  freshTemporaryMethodSupported(const FunctionCandidate &function) const {
+  freshTemporaryMethodSupported(const CallableDeclaration &function) const {
     return function.ownerClass != 0 && !function.staticMember &&
            !function.virtualMethod && function.declaration != nullptr &&
            function.returnType.kind != SemanticType::Reference &&
@@ -32951,7 +32911,7 @@ private:
   }
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
-      const ExprPtr &receiver, const FunctionCandidate &function,
+      const ExprPtr &receiver, const CallableDeclaration &function,
       bool allowFreshTemporary, bool consumingReceiver = false) const {
     if (function.staticMember) {
       return CallReceiverMode::None;
@@ -32986,7 +32946,7 @@ private:
 
   [[nodiscard]] CallReceiverMode
   callReceiverMode(const ExprPtr &callee,
-                   const FunctionCandidate &function) const {
+                   const CallableDeclaration &function) const {
     if (function.ownerClass == 0 || function.staticMember) {
       return CallReceiverMode::None;
     }
@@ -33012,7 +32972,7 @@ private:
 
   void reportMutableReceiverFailure(const ExprPtr &receiver,
                                     const Token &location,
-                                    const FunctionCandidate &function,
+                                    const CallableDeclaration &function,
                                     std::string_view operation) {
     const FreshTemporaryValueAssessment assessment =
         freshTemporaryValue(receiver);
@@ -33119,7 +33079,7 @@ private:
       return std::nullopt;
     }
     const Symbol member = substituteSymbol(found->second.symbol, arguments);
-    for (const FunctionCandidate &candidate : member.overloads) {
+    for (const CallableDeclaration &candidate : member.overloads) {
       if (!candidate.staticMember && candidate.genericParameters.empty() &&
           candidate.returnType == SemanticType::Void &&
           candidate.parameterTypes.size() == 1 &&
@@ -33253,7 +33213,7 @@ private:
       std::optional<ConstantValue> evaluated =
           semanticModel.findConstant(*index);
       if (!evaluated) {
-        ConstexprExecutionContext context = constexprContext();
+        ConstexprInterpreter context = makeConstexprInterpreter();
         ConstexprEvaluation result =
             evaluateConstexprExpression(index, context);
         if (result) {
@@ -33904,7 +33864,7 @@ private:
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message) {
     if (type.kind == SemanticType::Class && expression) {
-      const std::optional<FunctionCandidate> selected =
+      const std::optional<CallableDeclaration> selected =
           resolveOperator(*expression, OverloadedOperator::ContextualBool,
                           expression, type, token, {}, {}, true);
       (void)selected;
@@ -34906,19 +34866,11 @@ private:
     return expressionToken(callee);
   }
 
-  // One public check() owns one complete request session. The references below
-  // are a migration seam that keeps the analyzer algorithms readable while
-  // R-STRUCT-02 moves catalog and flow algorithms behind narrower services.
-  // They do not introduce another owner: every binding refers into this one
-  // object, and resetRequestState() is its only public-entry reset operation.
-  struct RequestSessionState {
-    std::vector<SemanticDiagnostic> diagnostics;
-    SemanticModel semanticModel;
-    // Diagnostic construction lives in its own translation unit
-    // (semantic_diagnostics.cpp); the reporter binds this session's sink and
-    // model, and analysis facts arrive as call parameters.
-    SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
-    ScopeStack scopes;
+  // Registration owns declaration identities and lookup indexes. Body and
+  // concrete-instance analysis share this one request-local catalog; they do
+  // not rebuild declaration authority in a second table. The catalog is
+  // sealed after the ordered registration prepasses complete.
+  struct SemanticCatalog {
     std::unordered_set<std::string> namespaces;
     std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
     std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
@@ -34957,8 +34909,6 @@ private:
     std::unordered_map<const ConstructorDecl *,
                        std::vector<GenericParameterInfo>>
         constructorGenericParameters;
-    std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
-    std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     std::unordered_map<const Expr *, const ParameterDefault *>
         defaultArgumentSyntax;
     std::unordered_map<const Expr *, std::vector<const Expr *>>
@@ -34974,6 +34924,48 @@ private:
     std::vector<ClassInfo> classes;
     std::vector<ExactClassSpecialization> exactClassSpecializations;
     std::vector<EnumInfo> enums;
+    std::unordered_set<const VariableDecl *> predeclaredVariables;
+    std::unordered_map<const VariableDecl *, const Token *>
+        mutableFieldGroupOrigins;
+    std::unordered_set<const VariableDecl *> recursiveLayoutFields;
+    GenericParameterId nextGenericParameterId = 1;
+    ConstructorId nextConstructorId = 1;
+    std::size_t nextDefaultArgumentEffectOwner = 1;
+    FunctionId nextFunctionId = 1;
+    bool sealed = false;
+
+    void clear() { *this = SemanticCatalog{}; }
+    void seal() { sealed = true; }
+  };
+
+  // Initialization/move state lives in lexical scopes; loop/switch snapshots
+  // and their joins are part of the same body-scoped value-flow owner.
+  struct ValueFlowState {
+    ScopeStack scopes;
+    std::vector<ValueControlFlowContext> controlFlow;
+
+    void clear() {
+      scopes.clear();
+      controlFlow.clear();
+    }
+  };
+
+  // One public check() owns one complete request session. The references below
+  // are a migration seam that keeps the analyzer algorithms readable while
+  // R-STRUCT-02 moves catalog and flow algorithms behind narrower services.
+  // They do not introduce another owner: every binding refers into this one
+  // object, and resetRequestState() is its only public-entry reset operation.
+  struct RequestSessionState {
+    std::vector<SemanticDiagnostic> diagnostics;
+    SemanticModel semanticModel;
+    // Diagnostic construction lives in its own translation unit
+    // (semantic_diagnostics.cpp); the reporter binds this session's sink and
+    // model, and analysis facts arrive as call parameters.
+    SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
+    SemanticCatalog catalog;
+    ValueFlowState valueFlow;
+    std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
+    std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     std::vector<std::unordered_map<std::string, SemanticType>>
         typeParameterScopes;
     std::vector<std::unordered_map<std::string, CompileTimeValue>>
@@ -34984,10 +34976,6 @@ private:
     ValueSubstitution instanceValueSubstitution;
     std::vector<std::string> currentNamespace;
     SourceUnitId currentSourceUnit = 0;
-    std::unordered_set<const VariableDecl *> predeclaredVariables;
-    std::unordered_map<const VariableDecl *, const Token *>
-        mutableFieldGroupOrigins;
-    std::unordered_set<const VariableDecl *> recursiveLayoutFields;
     std::unordered_set<const VariableDecl *> structuredBindingElements;
     std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
     bool measureTopLevelStatements = false;
@@ -35006,8 +34994,7 @@ private:
     bool allowPayloadEnumeratorReference = false;
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
-    LoanFlowContext loanFlow;
-    std::vector<ValueControlFlowContext> valueControlFlow;
+    LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
     const SemanticModel *instanceBaseModel = nullptr;
@@ -35034,10 +35021,6 @@ private:
                        ProgramEffectOwnerHash>
         programEffects;
     std::size_t programStoragePlaceUseDepth = 0;
-    GenericParameterId nextGenericParameterId = 1;
-    ConstructorId nextConstructorId = 1;
-    std::size_t nextDefaultArgumentEffectOwner = 1;
-    FunctionId nextFunctionId = 1;
     LambdaId nextLambdaId = 1;
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;
@@ -35046,75 +35029,77 @@ private:
   std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;
   SemanticModel &semanticModel = requestSession.semanticModel;
   SemanticDiagnosticReporter &reporter = requestSession.reporter;
-  ScopeStack &scopes = requestSession.scopes;
-  std::unordered_set<std::string> &namespaces = requestSession.namespaces;
+  SemanticCatalog &catalog = requestSession.catalog;
+  ValueFlowState &valueFlow = requestSession.valueFlow;
+  ScopeStack &scopes = requestSession.valueFlow.scopes;
+  std::unordered_set<std::string> &namespaces = requestSession.catalog.namespaces;
   std::unordered_map<std::string, SymbolId> &namespaceToolingSymbols =
-      requestSession.namespaceToolingSymbols;
+      requestSession.catalog.namespaceToolingSymbols;
   std::unordered_map<std::string, NamespaceAliasInfo> &namespaceAliases =
-      requestSession.namespaceAliases;
+      requestSession.catalog.namespaceAliases;
   std::unordered_set<std::string> &reportedCompilerPrivateAccess =
-      requestSession.reportedCompilerPrivateAccess;
+      requestSession.catalog.reportedCompilerPrivateAccess;
   SymbolId &compilerPrivateNamespaceSymbol =
-      requestSession.compilerPrivateNamespaceSymbol;
+      requestSession.catalog.compilerPrivateNamespaceSymbol;
   std::unordered_map<std::string, TypeAliasId> &typeAliasIds =
-      requestSession.typeAliasIds;
-  std::vector<RegisteredTypeAlias> &typeAliases = requestSession.typeAliases;
+      requestSession.catalog.typeAliasIds;
+  std::vector<RegisteredTypeAlias> &typeAliases = requestSession.catalog.typeAliases;
   std::unordered_map<std::string, ConceptId> &conceptIds =
-      requestSession.conceptIds;
-  std::vector<RegisteredConcept> &concepts = requestSession.concepts;
+      requestSession.catalog.conceptIds;
+  std::vector<RegisteredConcept> &concepts = requestSession.catalog.concepts;
   std::unordered_map<std::string, Symbol> &namespaceSymbols =
-      requestSession.namespaceSymbols;
+      requestSession.catalog.namespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      &internalNamespaceSymbols = requestSession.internalNamespaceSymbols;
-  std::unordered_map<std::string, ClassId> &classIds = requestSession.classIds;
-  std::unordered_map<std::string, EnumId> &enumIds = requestSession.enumIds;
+      &internalNamespaceSymbols = requestSession.catalog.internalNamespaceSymbols;
+  std::unordered_map<std::string, ClassId> &classIds = requestSession.catalog.classIds;
+  std::unordered_map<std::string, EnumId> &enumIds = requestSession.catalog.enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
-      &visibleNamespaces = requestSession.visibleNamespaces;
+      &visibleNamespaces = requestSession.catalog.visibleNamespaces;
   std::unordered_map<SourceUnitId,
                      std::unordered_map<std::string, NamespaceAliasInfo>>
-      &visibleNamespaceAliases = requestSession.visibleNamespaceAliases;
+      &visibleNamespaceAliases = requestSession.catalog.visibleNamespaceAliases;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, TypeAliasId>>
-      &visibleTypeAliasIds = requestSession.visibleTypeAliasIds;
+      &visibleTypeAliasIds = requestSession.catalog.visibleTypeAliasIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
-      &visibleConceptIds = requestSession.visibleConceptIds;
+      &visibleConceptIds = requestSession.catalog.visibleConceptIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      &visibleNamespaceSymbols = requestSession.visibleNamespaceSymbols;
+      &visibleNamespaceSymbols = requestSession.catalog.visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
-      &visibleClassIds = requestSession.visibleClassIds;
+      &visibleClassIds = requestSession.catalog.visibleClassIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
-      &visibleEnumIds = requestSession.visibleEnumIds;
+      &visibleEnumIds = requestSession.catalog.visibleEnumIds;
   std::unordered_map<const ClassDecl *, ClassId> &classDeclIds =
-      requestSession.classDeclIds;
+      requestSession.catalog.classDeclIds;
   std::unordered_map<const ConceptDecl *, ConceptId> &conceptDeclIds =
-      requestSession.conceptDeclIds;
+      requestSession.catalog.conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
-      &functionGenericParameters = requestSession.functionGenericParameters;
+      &functionGenericParameters = requestSession.catalog.functionGenericParameters;
   std::unordered_map<const ConstructorDecl *,
                      std::vector<GenericParameterInfo>>
       &constructorGenericParameters =
-          requestSession.constructorGenericParameters;
+          requestSession.catalog.constructorGenericParameters;
   std::unordered_set<const FunctionDecl *> &constexprDefinitionsAnalyzed =
       requestSession.constexprDefinitionsAnalyzed;
   std::unordered_set<const ConstructorDecl *> &constexprConstructorsAnalyzed =
       requestSession.constexprConstructorsAnalyzed;
   std::unordered_map<const Expr *, const ParameterDefault *>
-      &defaultArgumentSyntax = requestSession.defaultArgumentSyntax;
+      &defaultArgumentSyntax = requestSession.catalog.defaultArgumentSyntax;
   std::unordered_map<const Expr *, std::vector<const Expr *>>
-      &defaultArgumentDependencies = requestSession.defaultArgumentDependencies;
+      &defaultArgumentDependencies = requestSession.catalog.defaultArgumentDependencies;
   std::unordered_set<const Expr *> &reportedDefaultArgumentCycles =
-      requestSession.reportedDefaultArgumentCycles;
+      requestSession.catalog.reportedDefaultArgumentCycles;
   std::unordered_map<std::string, const FunctionDecl *> &externCSymbols =
-      requestSession.externCSymbols;
+      requestSession.catalog.externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
-      &rootNativeStorageSymbols = requestSession.rootNativeStorageSymbols;
+      &rootNativeStorageSymbols = requestSession.catalog.rootNativeStorageSymbols;
   std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
-      &globalBorrowStorage = requestSession.globalBorrowStorage;
+      &globalBorrowStorage = requestSession.catalog.globalBorrowStorage;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
-      &genericConstraints = requestSession.genericConstraints;
-  std::vector<ClassInfo> &classes = requestSession.classes;
+      &genericConstraints = requestSession.catalog.genericConstraints;
+  std::vector<ClassInfo> &classes = requestSession.catalog.classes;
   std::vector<ExactClassSpecialization> &exactClassSpecializations =
-      requestSession.exactClassSpecializations;
-  std::vector<EnumInfo> &enums = requestSession.enums;
+      requestSession.catalog.exactClassSpecializations;
+  std::vector<EnumInfo> &enums = requestSession.catalog.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       &typeParameterScopes = requestSession.typeParameterScopes;
   std::vector<std::unordered_map<std::string, CompileTimeValue>>
@@ -35130,11 +35115,11 @@ private:
   std::vector<std::string> &currentNamespace = requestSession.currentNamespace;
   SourceUnitId &currentSourceUnit = requestSession.currentSourceUnit;
   std::unordered_set<const VariableDecl *> &predeclaredVariables =
-      requestSession.predeclaredVariables;
+      requestSession.catalog.predeclaredVariables;
   std::unordered_map<const VariableDecl *, const Token *>
-      &mutableFieldGroupOrigins = requestSession.mutableFieldGroupOrigins;
+      &mutableFieldGroupOrigins = requestSession.catalog.mutableFieldGroupOrigins;
   std::unordered_set<const VariableDecl *> &recursiveLayoutFields =
-      requestSession.recursiveLayoutFields;
+      requestSession.catalog.recursiveLayoutFields;
   std::unordered_set<const VariableDecl *> &structuredBindingElements =
       requestSession.structuredBindingElements;
   std::vector<std::unordered_map<std::string, Token>> &lambdaUncapturedLocals =
@@ -35161,9 +35146,9 @@ private:
       requestSession.allowPayloadEnumeratorReference;
   bool &currentStaticMemberFunction = requestSession.currentStaticMemberFunction;
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
-  LoanFlowContext &loanFlow = requestSession.loanFlow;
+  LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
-      requestSession.valueControlFlow;
+      requestSession.valueFlow.controlFlow;
   bool &instanceClassContextActive = requestSession.instanceClassContextActive;
   bool &instanceAnalysisActive = requestSession.instanceAnalysisActive;
   const SemanticModel *&instanceBaseModel = requestSession.instanceBaseModel;
@@ -35202,11 +35187,11 @@ private:
   std::size_t &programStoragePlaceUseDepth =
       requestSession.programStoragePlaceUseDepth;
   GenericParameterId &nextGenericParameterId =
-      requestSession.nextGenericParameterId;
-  ConstructorId &nextConstructorId = requestSession.nextConstructorId;
+      requestSession.catalog.nextGenericParameterId;
+  ConstructorId &nextConstructorId = requestSession.catalog.nextConstructorId;
   std::size_t &nextDefaultArgumentEffectOwner =
-      requestSession.nextDefaultArgumentEffectOwner;
-  FunctionId &nextFunctionId = requestSession.nextFunctionId;
+      requestSession.catalog.nextDefaultArgumentEffectOwner;
+  FunctionId &nextFunctionId = requestSession.catalog.nextFunctionId;
   LambdaId &nextLambdaId = requestSession.nextLambdaId;
   SemanticLoanId &nextSemanticLoanId = requestSession.nextSemanticLoanId;
   std::size_t &nextPlaceSelectionId = requestSession.nextPlaceSelectionId;

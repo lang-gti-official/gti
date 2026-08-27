@@ -2298,7 +2298,42 @@ struct SemanticInstanceAnalysis {
   [[nodiscard]] bool valid() const { return diagnostics.empty(); }
 };
 
-class SemanticVisitor {
+// Narrow mutable capability used only by HIR's concrete-instance discovery.
+// Consumers receive the immutable base SemanticModel separately and cannot
+// initiate a fresh program/expression analysis through this interface.
+class SemanticInstanceProvider {
+public:
+  virtual ~SemanticInstanceProvider() = default;
+
+  [[nodiscard]] virtual SemanticTypeTraits
+  traitsFor(const SemanticType &type) const = 0;
+  [[nodiscard]] virtual bool
+  requiresActiveCleanupFor(const SemanticType &type) const = 0;
+
+  [[nodiscard]] virtual SemanticInstanceAnalysis analyzeFunctionInstance(
+      FunctionId functionId,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments,
+      const std::vector<SemanticType> &functionTypeArguments,
+      const std::vector<CompileTimeValue> &functionValueArguments) = 0;
+  [[nodiscard]] virtual SemanticInstanceAnalysis analyzeConstructorInstance(
+      ConstructorId constructorId,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments,
+      const std::vector<SemanticType> &constructorTypeArguments,
+      const std::vector<CompileTimeValue> &constructorValueArguments) = 0;
+  [[nodiscard]] virtual SemanticInstanceAnalysis analyzeDestructorInstance(
+      ClassId classId,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) = 0;
+  [[nodiscard]] virtual SemanticInstanceAnalysis
+  analyzeClassFieldInitializers(
+      ClassId classId,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) = 0;
+};
+
+class SemanticVisitor final : public SemanticInstanceProvider {
 public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
                            const SourceGraph *sourceGraph = nullptr,
@@ -2319,27 +2354,29 @@ public:
   [[nodiscard]] SemanticType expressionType() const;
   [[nodiscard]] const SemanticModel &model() const;
   [[nodiscard]] SemanticModel takeModel();
-  [[nodiscard]] SemanticTypeTraits traitsFor(const SemanticType &type) const;
-  [[nodiscard]] bool requiresActiveCleanupFor(const SemanticType &type) const;
+  [[nodiscard]] SemanticTypeTraits
+  traitsFor(const SemanticType &type) const override;
+  [[nodiscard]] bool
+  requiresActiveCleanupFor(const SemanticType &type) const override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &functionTypeArguments,
-      const std::vector<CompileTimeValue> &functionValueArguments);
+      const std::vector<CompileTimeValue> &functionValueArguments) override;
   [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId constructorId,
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &constructorTypeArguments,
-      const std::vector<CompileTimeValue> &constructorValueArguments);
+      const std::vector<CompileTimeValue> &constructorValueArguments) override;
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
 
 private:
   class Impl;
