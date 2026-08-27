@@ -1057,13 +1057,16 @@ its hidden loop owner. Reserve, push, clear, movement, and every other
 overlapping owner operation are rejected while the mutable range is active.
 This is conservative whole-owner invalidation exclusion, not a
 container-specific invalidation trait. Iterator categories, iterator-position
-insertion/erasure, allocator policy, and owner-tied `span` remain future work.
+insertion/erasure, allocator policy, and mutable or multi-owner spans remain
+future work. The bounded read-only single-owner span is described below.
 
 ## Owning Text
 
-`std::string_view` is a trivial counted view over static literal storage in the
-current lifetime model. It supports `size()`, `empty()`, and checked read-only
-indexing, but cannot be formed from dynamically owned storage yet.
+`std::string_view` is a counted read-only view. A literal-backed view is an
+independent trivial value over static storage. `std::string::view()` produces
+a dynamic view carrying one compiler-tracked read-only dependency on that
+string's character storage. Both forms support `size()`, `empty()`, and checked
+read-only indexing.
 
 `std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
 class over `gti_internal::prefix_storage<char>`. It supports construction and
@@ -1075,8 +1078,12 @@ string. Because its storage field is a unique owner, the compiler derives a
 move-only lifecycle for the class. This avoids a hidden allocation on
 assignment; duplication is visible at the call site as `value.clone()`.
 
-Returning a dynamic `std::string_view` from `std::string` is intentionally
-deferred. The single-origin read-only dependency now provides the necessary
-compiler foundation, but the public view representation and invalidation tests
-have not yet adopted it. Treating the current trivial view as an independent
-value would still permit it to outlive the owner.
+Dynamic views may be copied among local bindings and relayed from one exact
+read-only parameter or receiver. Their retained loan prevents mutation,
+movement, or destruction of the owner until the last local carrier ends. A
+dynamic view cannot escape a local owner, originate from temporary storage, be
+assigned into existing storage, or be nested in a field, global, static,
+array, or dynamic container. Mutable, multiple-origin, nested, and
+reassignable view graphs remain deliberately unsupported. These restrictions
+are semantic and survive through HIR and verified MIR; emitted C++ does not
+decide the lifetime.

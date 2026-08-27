@@ -4879,6 +4879,9 @@ int main() {
   char text_front = text.front();
   char text_back = text.back();
   bool text_state = text_at == text_front || text_at == text_back;
+  std::string_view text_view = text.view();
+  std::string_view text_view_copy = text_view;
+  bool text_view_state = text_view_copy.size() == text.size();
 
   mut std::list<int> linked{};
   mut std::list<int> linked_other{};
@@ -4903,15 +4906,16 @@ int main() {
   forward.reverse();
   int forward_count = count_range(forward.begin(), forward.end());
 
-  std::span<int> view{};
+  std::span<int> view = dynamic.as_span();
   std::span<int> prefix = view.first(std::size_t(0));
+  std::span<int> copied_view = view;
   bool view_state = view.empty() && prefix.empty();
 
   return fixed_ends + dynamic_ends + linked_count +
          forward_count + int(linked_removed + linked_unique +
                              forward_removed + forward_unique) +
          int(dynamic_copy.size()) + (text_state ? 0 : 1) +
-         (view_state ? 0 : 1);
+         (text_view_state ? 0 : 1) + (view_state ? 0 : 1);
 }
 )";
 
@@ -4928,25 +4932,142 @@ int main() {
          "container scaffolds should expose current constrained modifiers, "
          "move-only traversal, and read-only view shapes");
 
-  const lang::FrontendResult copiedSpan = lang::Frontend().analyze(
-      "copied-span.gti",
+  const lang::FrontendResult invalidatedSpan = lang::Frontend().analyze(
+      "invalidated-span.gti",
+      "#include <std/vector>\n"
       "#include <std/span>\n"
-      "int main() { std::span<int> original{}; "
-      "std::span<int> copied = std::span<int>(original); return 0; }\n",
+      "int main() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  std::span<int> view = values.as_span();\n"
+      "  values.push_back(3);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  if (copiedSpan.canGenerateCode() ||
-      !hasDiagnostic(copiedSpan.diagnostics,
-                     "Copy construction of 'span' is deleted")) {
-    for (const lang::Diagnostic &diagnostic : copiedSpan.diagnostics) {
-      std::cerr << "Unexpected copied span diagnostic: " << diagnostic.message
-                << '\n';
-    }
-  }
-  expect(!copiedSpan.canGenerateCode() &&
-             hasDiagnostic(copiedSpan.diagnostics,
-                           "Copy construction of 'span' is deleted"),
-         "the initial span scaffold should not promise a duplicable owner "
-         "loan before shared view lifetime semantics exist");
+  expect(!invalidatedSpan.canGenerateCode() &&
+             hasDiagnosticCode(invalidatedSpan.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(invalidatedSpan.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "mutating an owner while a copied read-only span is live should be "
+         "rejected by the ordinary retained-loan rule");
+
+  const lang::FrontendResult movedOwner = lang::Frontend().analyze(
+      "moved-span-owner.gti",
+      "#include <std/vector>\n"
+      "#include <std/span>\n"
+      "int main() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  std::span<int> view = values.as_span();\n"
+      "  std::vector<int> moved = std::move(values);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedOwner.canGenerateCode() &&
+             hasDiagnosticCode(movedOwner.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(movedOwner.diagnostics,
+                           "Cannot move storage while an overlapping borrow "
+                           "may still be live"),
+         "moving an owner while one of its spans is live should be rejected");
+
+  const lang::FrontendResult escapedSpan = lang::Frontend().analyze(
+      "escaped-span.gti",
+      "#include <std/vector>\n"
+      "#include <std/span>\n"
+      "std::span<int> escape() {\n"
+      "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
+      "  return values.as_span();\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!escapedSpan.canGenerateCode() &&
+             hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(escapedSpan.diagnostics,
+                           "borrowed return requires either one exact "
+                           "global/static storage origin"),
+         "a span must not escape the local owner that supplies its retained "
+         "loan");
+
+  const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
+      "invalidated-string-view.gti",
+      "#include <std/string>\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  std::string_view view = text.view();\n"
+      "  text.push_back('d');\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidatedTextView.canGenerateCode() &&
+             hasDiagnosticCode(invalidatedTextView.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(invalidatedTextView.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "mutating a string while its dynamic string_view is live should be "
+         "rejected");
+
+  const lang::FrontendResult movedTextOwner = lang::Frontend().analyze(
+      "moved-string-view-owner.gti",
+      "#include <std/string>\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  std::string_view view = text.view();\n"
+      "  std::string moved = std::move(text);\n"
+      "  return view.empty() ? 0 : 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedTextOwner.canGenerateCode() &&
+             hasDiagnosticCode(movedTextOwner.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(movedTextOwner.diagnostics,
+                           "Cannot move storage while an overlapping borrow "
+                           "may still be live"),
+         "moving a string while its dynamic string_view is live should be "
+         "rejected");
+
+  const lang::FrontendResult escapedTextView = lang::Frontend().analyze(
+      "escaped-string-view.gti",
+      "#include <std/string>\n"
+      "std::string_view escape() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  return text.view();\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!escapedTextView.canGenerateCode() &&
+             hasDiagnosticCode(escapedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(escapedTextView.diagnostics,
+                           "dynamic std::string_view cannot escape without "
+                           "one exact owner dependency"),
+         "a dynamic string_view must not escape the local string that owns "
+         "its bytes");
+
+  const lang::FrontendResult storedTextView = lang::Frontend().analyze(
+      "stored-string-view.gti",
+      "#include <std/string>\n"
+      "mut std::string_view saved = \"\";\n"
+      "void retain(std::string_view value) { saved = value; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!storedTextView.canGenerateCode() &&
+             hasDiagnosticCode(storedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(storedTextView.diagnostics,
+                           "cannot be assigned into an existing binding"),
+         "an opaque string_view parameter must not be retained in global "
+         "storage without an expressible dependency graph");
+
+  const lang::FrontendResult nestedTextView =
+      analyzeTrustedPreludeFixture("nested-string-view-storage.gti", R"(
+#include <std/string>
+int main() {
+  mut std::string text = std::string("abc");
+  mut gti_internal::storage<std::string_view> stored =
+      gti_internal::allocate_storage<std::string_view>(uint64_t(1));
+  gti_internal::storage_construct(stored, uint64_t(0), text.view());
+  return 0;
+}
+)");
+  expect(!nestedTextView.canGenerateCode() &&
+             hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
+             hasDiagnostic(nestedTextView.diagnostics,
+                           "cannot be nested in dynamic storage"),
+         "a dynamic string_view must not be hidden in compiler-private "
+         "storage without a nested dependency representation");
 }
 
 void testOwnershipSemanticFoundation() {
@@ -10205,6 +10326,8 @@ public:
   int& referent;
   mut int shell = 0;
   ReadCarrier(int& source) : referent(source) {}
+  int& identity() { return this.referent; }
+  int& relay_call() { return this.identity(); }
 };
 
 int& relay_reference(int& source) { return source; }
@@ -10225,8 +10348,9 @@ int main() {
   ReadCarrier copied = first;
   ReadCarrier moved = std::move(copied);
   int& exact = relay_external(moved);
+  int& relayed_exact = moved.relay_call();
   ReadCarrier relayed = relay_carrier(std::move(moved));
-  return exact + relayed.referent - 14;
+  return exact + relayed_exact + relayed.referent - 21;
 }
 )";
   const lang::FrontendResult valid =
@@ -10244,12 +10368,16 @@ int main() {
          "exact external referent");
 
   const lang::HirFunctionInstance *relayHir = nullptr;
+  const lang::HirFunctionInstance *relayCallHir = nullptr;
   const lang::HirFunctionInstance *relayCarrierHir = nullptr;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
     if (instance.source != nullptr &&
         instance.source->name().lexeme == "relay_external") {
       relayHir = &instance;
+    } else if (instance.source != nullptr &&
+               instance.source->name().lexeme == "relay_call") {
+      relayCallHir = &instance;
     } else if (instance.source != nullptr &&
                instance.source->name().lexeme == "relay_carrier") {
       relayCarrierHir = &instance;
@@ -10291,6 +10419,88 @@ int main() {
           returnTransfer->operands.front().place != 0,
       "a reference relay should publish an exact runtime place from its "
       "stored entry dependency");
+
+  const lang::MirFunctionInstance *relayCallMir =
+      relayCallHir == nullptr
+          ? nullptr
+          : valid.mir.findFunctionInstance(relayCallHir->id);
+  const lang::MirLoan *callResultLoan = nullptr;
+  const lang::MirLoan *callReturnLoan = nullptr;
+  const lang::MirInstruction *callReturnTransfer = nullptr;
+  const lang::MirInstruction *callResultRetire = nullptr;
+  if (relayCallMir != nullptr) {
+    for (const lang::MirLoan &loan : relayCallMir->body.loans) {
+      if (loan.kind == lang::MirLoanKind::CallResult) {
+        callResultLoan = &loan;
+      } else if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        callReturnLoan = &loan;
+      }
+    }
+    if (callReturnLoan != nullptr && callResultLoan != nullptr) {
+      for (const lang::MirBlock &block : relayCallMir->body.blocks) {
+        for (std::size_t index = 0; index < block.instructions.size();
+             ++index) {
+          const lang::MirInstruction &instruction = block.instructions[index];
+          if (instruction.kind == lang::MirInstructionKind::Borrow &&
+              instruction.loan == callReturnLoan->id) {
+            callReturnTransfer = &instruction;
+            if (index + 1 < block.instructions.size()) {
+              callResultRetire = &block.instructions[index + 1];
+            }
+          }
+        }
+      }
+    }
+  }
+  expect(
+      relayCallMir != nullptr && callResultLoan != nullptr &&
+          callReturnLoan != nullptr && callReturnTransfer != nullptr &&
+          callReturnTransfer->operands.size() == 1 &&
+          callReturnTransfer->operands.front().kind ==
+              lang::MirOperandKind::Loan &&
+          callReturnTransfer->operands.front().loan == callResultLoan->id &&
+          callReturnTransfer->operands.front().place == 0 &&
+          callReturnTransfer->operands.front().value == 0 &&
+          callReturnLoan->source == callResultLoan->source &&
+          callReturnLoan->access == callResultLoan->access &&
+          callReturnLoan->producedBy == callResultLoan->producedBy &&
+          callResultRetire != nullptr &&
+          callResultRetire->kind == lang::MirInstructionKind::EndBorrow &&
+          callResultRetire->loan == callResultLoan->id,
+      "a reference-returning call relay should preserve the summarized owner "
+      "origin while transferring the exact call-result pointer");
+
+  lang::MirProgram forgedCallRelay = valid.mir;
+  auto &callRelayFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forgedCallRelay.functionInstances());
+  bool forgedCallResultTransfer = false;
+  if (relayCallHir != nullptr) {
+    const auto candidate =
+        std::find_if(callRelayFunctions.begin(), callRelayFunctions.end(),
+                     [&](const lang::MirFunctionInstance &instance) {
+                       return instance.id == relayCallHir->id;
+                     });
+    if (candidate != callRelayFunctions.end()) {
+      const auto retained = std::find_if(
+          candidate->body.loans.begin(), candidate->body.loans.end(),
+          [](const lang::MirLoan &loan) {
+            return loan.kind == lang::MirLoanKind::CallResult;
+          });
+      if (retained != candidate->body.loans.end()) {
+        retained->escapes = true;
+        forgedCallResultTransfer = true;
+      }
+    }
+  }
+  const lang::MirVerificationResult forgedCallResult =
+      lang::verifyMirProgram(forgedCallRelay);
+  expect(forgedCallResultTransfer && !forgedCallResult.valid() &&
+             hasMirVerificationError(forgedCallResult,
+                                     "borrow instruction does not match the "
+                                     "loan's parent"),
+         "MIR verification should reject a return transfer whose retained "
+         "call-result loan has been forged to escape independently");
 
   const auto mutateRelay = [&](const auto &mutation) {
     lang::MirProgram forged = valid.mir;
@@ -32755,6 +32965,10 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "constexpr") {
     testConstexprBindings();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc == 2 && std::string(argv[1]) == "owner-dependent-views") {
+    testContainerScaffoldSurfaces();
     return failures == 0 ? 0 : 1;
   }
   testConstructorPartialRollbackRepresentation();

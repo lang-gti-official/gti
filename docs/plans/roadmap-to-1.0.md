@@ -493,13 +493,15 @@ The remaining first-wave work is:
   construction, iterator-position mutation, and the remaining reviewed
   foundational surface. Indexed insert/erase and mutable range iteration are
   implemented.
-- Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
-  `.data()` or pointer-and-length pairs.
+- The bounded owner-tied `std::span<T>` borrowed view is implemented for
+  vector and string owners without exposing `.data()` or pointer-and-length
+  pairs. Mutable and multi-owner views remain.
 - Add read-only iteration to `std::string_view` and mutable iteration to
   `std::string`. Read-only `std::string` iteration is implemented through the
   structural protocol and an owner-tied source-defined iterator.
-- Add dynamic `std::string_view` construction only when the view retains the
-  owning string's lifetime.
+- Dynamic `std::string_view` construction is implemented through
+  `std::string::view()` and retains the owning string's lifetime through local
+  copies and exact relays. Nested, reseatable, and multi-owner forms remain.
 
 ### Deliberate improvements over C++
 

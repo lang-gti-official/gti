@@ -6873,7 +6873,7 @@ private:
           if (retained == 0 || retained > output.loans.size()) {
             valid = false;
           } else {
-            // A borrow-carrying class value owns two temporally distinct
+            // A borrow-carrying value owns two temporally distinct
             // capabilities at a return: its live body-local/entry loan, then
             // the dependency exported by the returned object.  Reclassifying
             // the original loan globally would make it a Return loan from the
@@ -6891,15 +6891,23 @@ private:
             const bool exactStoredCarrierEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && retainedLoan.designatedField != 0;
-            if (exactStoredCarrierEntry && returnedValue == 0) {
+            const bool exactStringViewEntry =
+                retainedLoan.kind == MirLoanKind::Stored &&
+                retainedLoan.entry && retainedLoan.designatedField == 0 &&
+                value->info.type.kind == SemanticType::StringView &&
+                output.returnType.kind == SemanticType::StringView;
+            if ((exactStoredCarrierEntry || exactStringViewEntry) &&
+                returnedValue == 0) {
               valid = false;
             }
             (void)appendInstruction(
                 {.kind = MirInstructionKind::Borrow,
                  .hirValue = *statement.value,
                  .operands = {{.kind = MirOperandKind::Loan,
-                               .value =
-                                   exactStoredCarrierEntry ? returnedValue : 0,
+                               .value = exactStoredCarrierEntry ||
+                                                exactStringViewEntry
+                                            ? returnedValue
+                                            : 0,
                                .loan = retained,
                                .type = value->info.type}},
                  .loan = published,

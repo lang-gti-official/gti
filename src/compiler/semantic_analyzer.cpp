@@ -897,6 +897,9 @@ public:
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly);
+      if (parameterType.kind == SemanticType::StringView) {
+        parameterInfo.traits = ownerDependentStringViewInfo().traits;
+      }
       parameterInfo.symbol = parameterSymbol;
       semanticModel.record(parameter, std::move(parameterInfo));
       if (parameterType == SemanticType::Void) {
@@ -1774,6 +1777,9 @@ public:
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly);
+      if (parameterType.kind == SemanticType::StringView) {
+        parameterInfo.traits = ownerDependentStringViewInfo().traits;
+      }
       parameterInfo.symbol = parameterSymbol;
       semanticModel.record(parameter, std::move(parameterInfo));
       if (declaredType == SemanticType::Void) {
@@ -2201,6 +2207,9 @@ public:
         analyzeInitializer(stmt.value(), currentReturnType);
     if (typeTraits(currentReturnType).containsBorrowedState) {
       validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
+    }
+    if (currentReturnType.kind == SemanticType::StringView) {
+      validateOwnerDependentStringViewReturn(valueType, stmt.value());
     }
     if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
       report(expressionToken(stmt.value()),
@@ -2923,6 +2932,30 @@ public:
       currentProgramEffectOwner = enclosingEffectOwner;
     }
 
+    const ExpressionInfo *initializerInfo =
+        stmt.initializer() ? semanticModel.findExpression(*stmt.initializer())
+                           : nullptr;
+    const bool ownerDependentStringView =
+        declaredType.kind == SemanticType::StringView &&
+        initializerInfo != nullptr &&
+        initializerInfo->traits.containsBorrowedState;
+    if (ownerDependentStringView) {
+      if (globalStorage) {
+        report(stmt.name(),
+               "A dynamic std::string_view cannot have global or static "
+               "storage duration because its owner dependency is local.",
+               "GTI-S2045");
+      } else if (instanceField) {
+        report(stmt.name(),
+               "A dynamic std::string_view cannot be stored in a field in "
+               "the single-owner view model.",
+               "GTI-S2045");
+      }
+      BindingInfo updated = *semanticModel.findBinding(stmt);
+      updated.traits = initializerInfo->traits;
+      semanticModel.record(stmt, std::move(updated));
+    }
+
     const bool initializerAssignable =
         !stmt.initializer() ||
         isOwnershipAssignable(declaredType, initializerType,
@@ -2966,7 +2999,8 @@ public:
         recordRetainedBorrow(stmt, stmt.initializer());
       }
     } else if (stmt.initializer()) {
-      if (typeTraits(declaredType).containsBorrowedState) {
+      if (typeTraits(declaredType).containsBorrowedState ||
+          ownerDependentStringView) {
         validateStoredBorrowInitialization(declaredType, stmt.initializer());
         recordRetainedBorrow(stmt, stmt.initializer());
       }
@@ -3170,6 +3204,11 @@ public:
                       ? analyzeInitializer(expr.value(), targetType)
                       : analyze(expr.value());
     }
+    if (simpleAssignment && targetType.kind == SemanticType::StringView &&
+        isOwnerDependentStringViewExpression(expr.value())) {
+      reportDynamicStringViewStorage(expr.value(),
+                                     "assigned into an existing binding");
+    }
     // Recursive RHS analysis can merge short-circuit branch scopes and move
     // their Symbol storage. Re-resolve the assignment place before retaining
     // or comparing any pointer-backed SemanticPlace state.
@@ -3343,6 +3382,10 @@ public:
 
     for (const ExprPtr &element : expr.elements()) {
       const SemanticType valueType = analyzeInitializer(element, elementType);
+      if (elementType.kind == SemanticType::StringView &&
+          isOwnerDependentStringViewExpression(element)) {
+        reportDynamicStringViewStorage(element, "nested in a fixed array");
+      }
       if (!isAssignable(elementType, valueType, element.get())) {
         report(expressionToken(element),
                "Cannot initialize array element of type '" +
@@ -6005,6 +6048,11 @@ public:
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), resolvedMember.type)
                          : analyze(expr.value());
+    if (simpleAssignment &&
+        resolvedMember.type.kind == SemanticType::StringView &&
+        isOwnerDependentStringViewExpression(expr.value())) {
+      reportDynamicStringViewStorage(expr.value(), "stored in a field");
+    }
     const bool directSelfMove =
         samePlace(targetPlace, movedSourcePlace(expr.value()));
     if (directSelfMove) {
@@ -9484,6 +9532,10 @@ private:
         declaration.isRangeOwner() && initializerInfo != nullptr &&
         initializerInfo->category == ValueCategory::Place &&
         initializerType != SemanticType::Unknown;
+    const bool ownerDependentStringView =
+        initializerType.kind == SemanticType::StringView &&
+        initializerInfo != nullptr &&
+        initializerInfo->traits.containsBorrowedState;
     if (rangeOwnerReference) {
       inferredType = SemanticType::referenceTo(
           initializerType,
@@ -9542,7 +9594,8 @@ private:
           "with std::move(owner).");
     }
     if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
-        typeTraits(inferredType).containsBorrowedState) {
+        (typeTraits(inferredType).containsBorrowedState ||
+         ownerDependentStringView)) {
       validateStoredBorrowInitialization(inferredType,
                                          declaration.initializer());
     }
@@ -9559,6 +9612,9 @@ private:
         diagnostics.size() == declarationDiagnosticStart &&
             initializerAssignable);
     BindingInfo info = bindingInfo(inferredType, access);
+    if (ownerDependentStringView) {
+      info.traits = initializerInfo->traits;
+    }
     info.symbol = symbol;
     info.constant = constant;
     semanticModel.record(declaration, std::move(info));
@@ -9569,7 +9625,8 @@ private:
            .kind = SemanticOccurrenceKind::InferredType,
            .name = type.name.last().lexeme,
            .type = inferredType,
-           .traits = typeTraits(inferredType),
+           .traits = ownerDependentStringView ? initializerInfo->traits
+                                              : typeTraits(inferredType),
            .access = access,
            .mutableBinding = declaration.isMutable()});
     }
@@ -9590,7 +9647,8 @@ private:
                                    !isDirectOwnerType(initializerType);
     const bool retainedStoredValue =
         !type.reference && !rangeOwnerReference &&
-        typeTraits(inferredType).containsBorrowedState;
+        (typeTraits(inferredType).containsBorrowedState ||
+         ownerDependentStringView);
     if (local && declaration.initializer() &&
         (retainedReference || retainedStoredValue)) {
       recordRetainedBorrow(declaration, declaration.initializer());
@@ -10413,6 +10471,40 @@ private:
                           .traits = traits};
   }
 
+  [[nodiscard]] ExpressionInfo
+  ownerDependentStringViewInfo(ValueCategory category = ValueCategory::Value,
+                               AccessMode access = AccessMode::ReadOnly) const {
+    ExpressionInfo info =
+        expressionInfo(SemanticType::StringView, category, access);
+    info.traits.ownership = OwnershipKind::Borrowed;
+    info.traits.copyAssignable = false;
+    info.traits.moveAssignable = false;
+    info.traits.containsBorrowedState = true;
+    info.traits.transferCapable = false;
+    info.traits.shareCapable = false;
+    return info;
+  }
+
+  [[nodiscard]] bool
+  isOwnerDependentStringViewExpression(const ExprPtr &expression) const {
+    const ExpressionInfo *info =
+        expression ? semanticModel.findExpression(*expression) : nullptr;
+    return info != nullptr && info->type.kind == SemanticType::StringView &&
+           info->traits.containsBorrowedState;
+  }
+
+  void reportDynamicStringViewStorage(const ExprPtr &expression,
+                                      std::string_view destination) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(expression),
+        "A dynamic std::string_view cannot be " + std::string(destination) +
+            " in the single-owner view model.");
+    diagnostic.hints.emplace_back(
+        "Initialize a new local view binding in a narrow lexical scope; "
+        "stored and reassignable dependency graphs are not supported yet.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
               AccessMode access = AccessMode::ReadOnly) const {
@@ -10729,6 +10821,9 @@ private:
     }
     if (name == "prefix_storage_erase") {
       return IntrinsicKind::PrefixStorageErase;
+    }
+    if (name == "prefix_storage_text_view") {
+      return IntrinsicKind::PrefixStorageTextView;
     }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
@@ -11983,20 +12078,25 @@ private:
     const bool referenceCarrier =
         carrier->type.kind == SemanticType::Reference &&
         carrier->type.arguments.size() == 1;
-    const bool storedValueCarrier = isDirectStoredReferenceType(carrier->type);
-    if (!referenceCarrier && !storedValueCarrier) {
-      return;
-    }
     const FunctionInfo *function = currentFunctionInfo();
-    const bool summarizedReadOnlySource =
-        referenceCarrier &&
-        carrier->type.referenceAccess == AccessMode::ReadOnly &&
+    const bool summarizedParameterSource =
         function != nullptr && function->declaration != nullptr &&
         function->returnBorrowOrigin == BorrowOriginKind::Argument &&
         function->returnBorrowParameter <
             function->declaration->parameters().size() &&
         &function->declaration->parameters()[function->returnBorrowParameter] ==
             &parameter;
+    const bool dynamicStringViewCarrier =
+        carrier->type.kind == SemanticType::StringView;
+    const bool storedValueCarrier =
+        isDirectStoredReferenceType(carrier->type) || dynamicStringViewCarrier;
+    if (!referenceCarrier && !storedValueCarrier) {
+      return;
+    }
+    const bool summarizedReadOnlySource =
+        referenceCarrier &&
+        carrier->type.referenceAccess == AccessMode::ReadOnly &&
+        summarizedParameterSource;
     if (referenceCarrier &&
         carrier->type.referenceAccess != AccessMode::Mutable &&
         !summarizedReadOnlySource) {
@@ -12007,7 +12107,7 @@ private:
     const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
                                                : borrowAccess(carrier->type);
     SymbolId designatedField = 0;
-    if (storedValueCarrier) {
+    if (storedValueCarrier && !dynamicStringViewCarrier) {
       const ClassInfo *owner = classInfo(carrier->type);
       if (owner != nullptr && owner->storedReference) {
         const auto member =
@@ -13353,7 +13453,8 @@ private:
         intrinsic == IntrinsicKind::PrefixStorageLength ||
         intrinsic == IntrinsicKind::PrefixStorageRelocate ||
         intrinsic == IntrinsicKind::PrefixStorageInsert ||
-        intrinsic == IntrinsicKind::PrefixStorageErase) {
+        intrinsic == IntrinsicKind::PrefixStorageErase ||
+        intrinsic == IntrinsicKind::PrefixStorageTextView) {
       analyzePrefixStorageIntrinsicCall(expr, intrinsic);
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
@@ -13940,6 +14041,15 @@ private:
       if (argumentTypes.size() < argumentOffset) {
         return;
       }
+      if (elementType.kind == SemanticType::StringView) {
+        for (std::size_t index = argumentOffset; index < argumentTypes.size();
+             ++index) {
+          if (isOwnerDependentStringViewExpression(expr.arguments()[index])) {
+            reportDynamicStringViewStorage(expr.arguments()[index],
+                                           "nested in dynamic storage");
+          }
+        }
+      }
       std::vector<AnalyzedCallArgument> constructorArguments;
       bool concreteArguments = true;
       for (std::size_t index = argumentOffset; index < argumentTypes.size();
@@ -14056,22 +14166,35 @@ private:
       }
       currentType = SemanticType::Void;
       break;
+    case IntrinsicKind::PrefixStorageTextView:
+      if (argumentTypes.size() != 1 || elementType != SemanticType::Char) {
+        report(expr.paren(),
+               "prefix_storage_text_view requires exactly one read-only "
+               "gti_internal::prefix_storage<char> argument.",
+               "GTI-S2019");
+      }
+      currentType = SemanticType::StringView;
+      break;
     default:
       currentType = SemanticType::Unknown;
       break;
     }
     const bool borrows = intrinsic == IntrinsicKind::PrefixStorageRead ||
-                         intrinsic == IntrinsicKind::PrefixStorageReadMut;
+                         intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+                         intrinsic == IntrinsicKind::PrefixStorageTextView;
     semanticModel.record(
         expr,
         ResolvedCallInfo{
             .returnType =
-                borrows ? SemanticType::referenceTo(
-                              elementType,
-                              intrinsic == IntrinsicKind::PrefixStorageReadMut
-                                  ? AccessMode::Mutable
-                                  : AccessMode::ReadOnly)
-                        : currentType,
+                intrinsic == IntrinsicKind::PrefixStorageTextView
+                    ? SemanticType::StringView
+                    : (borrows ? SemanticType::referenceTo(
+                                     elementType,
+                                     intrinsic ==
+                                             IntrinsicKind::PrefixStorageReadMut
+                                         ? AccessMode::Mutable
+                                         : AccessMode::ReadOnly)
+                               : currentType),
             .parameterTypes = std::move(argumentTypes),
             .typeArguments = {elementType},
             .intrinsic = intrinsic,
@@ -14180,6 +14303,14 @@ private:
     if (intrinsic == IntrinsicKind::StorageConstruct) {
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
+      }
+      if (elementType.kind == SemanticType::StringView) {
+        for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
+          if (isOwnerDependentStringViewExpression(expr.arguments()[index])) {
+            reportDynamicStringViewStorage(expr.arguments()[index],
+                                           "nested in dynamic storage");
+          }
+        }
       }
       if (argumentTypes.size() >= 2) {
         std::vector<AnalyzedCallArgument> constructorArguments;
@@ -20736,7 +20867,8 @@ private:
 
   void validateStoredBorrowInitialization(const SemanticType &type,
                                           const ExprPtr &initializer) {
-    if (!isDirectStoredReferenceType(type)) {
+    if (!isDirectStoredReferenceType(type) &&
+        type.kind != SemanticType::StringView) {
       report(expressionToken(initializer),
              "Borrowed state cannot be nested inside another stored value in "
              "the current lifetime model.",
@@ -20794,6 +20926,37 @@ private:
       return;
     }
     validateCurrentReturnBorrowSource(value, "stored-reference value",
+                                      "GTI-S2045");
+  }
+
+  void validateOwnerDependentStringViewReturn(const SemanticType &valueType,
+                                              const ExprPtr &value) {
+    if (valueType == SemanticType::Unknown) {
+      return;
+    }
+    const ExpressionInfo *info =
+        value ? semanticModel.findExpression(*value) : nullptr;
+    if (info == nullptr || !info->traits.containsBorrowedState) {
+      return;
+    }
+    const FunctionInfo *function = currentFunctionInfo();
+    if (function == nullptr ||
+        function->returnBorrowOrigin == BorrowOriginKind::None) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(value),
+          "A dynamic std::string_view cannot escape without one exact owner "
+          "dependency.");
+      diagnostic.hints.emplace_back(
+          "Return a literal-backed view, or relay a view tied to this "
+          "method's receiver or one exact read-only parameter.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+    if (rejectEscapingLocalChildLoan(value,
+                                     "a dynamic std::string_view return")) {
+      return;
+    }
+    validateCurrentReturnBorrowSource(value, "dynamic std::string_view",
                                       "GTI-S2045");
   }
 
@@ -27042,6 +27205,124 @@ private:
     }
   }
 
+  struct PredeclaredStringViewBorrowSource {
+    bool known = false;
+    bool ownerDependent = false;
+    BorrowOriginKind origin = BorrowOriginKind::None;
+    std::size_t parameter = 0;
+  };
+
+  [[nodiscard]] PredeclaredStringViewBorrowSource
+  predeclaredStringViewBorrowSource(const ExprPtr &expression,
+                                    const FunctionInfo &function) const {
+    if (!expression) {
+      return {};
+    }
+    if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
+      return {.known = literal->token().kind == TokenKind::STRING_LITERAL};
+    }
+    if (exprAs<This>(expression.get()) != nullptr) {
+      return {.known = true,
+              .ownerDependent = true,
+              .origin = BorrowOriginKind::Receiver};
+    }
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
+      if (function.declaration == nullptr) {
+        return {};
+      }
+      for (std::size_t index = 0;
+           index < function.declaration->parameters().size(); ++index) {
+        if (function.declaration->parameters()[index].name.lexeme ==
+            variable->name().lexeme) {
+          return {.known = true,
+                  .ownerDependent = true,
+                  .origin = BorrowOriginKind::Argument,
+                  .parameter = index};
+        }
+      }
+      return {};
+    }
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+      return predeclaredStringViewBorrowSource(grouping->expression(),
+                                               function);
+    }
+    if (const auto *binary = exprAs<Binary>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return predeclaredStringViewBorrowSource(binary->right(), function);
+    }
+    if (const auto *member = exprAs<Get>(expression.get())) {
+      return predeclaredStringViewBorrowSource(member->object(), function);
+    }
+    const auto *call = exprAs<Call>(expression.get());
+    if (call == nullptr) {
+      return {};
+    }
+    const std::optional<FunctionCandidate> intrinsic =
+        intrinsicCandidate(call->callee());
+    if (!intrinsic || call->arguments().size() != 1 ||
+        (intrinsic->intrinsic != IntrinsicKind::PrefixStorageTextView &&
+         intrinsic->intrinsic != IntrinsicKind::Move)) {
+      return {};
+    }
+    return predeclaredStringViewBorrowSource(call->arguments().front(),
+                                             function);
+  }
+
+  [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
+  dynamicStringViewReturnBorrowSummary(const FunctionInfo &function) {
+    if (function.returnType.kind != SemanticType::StringView ||
+        function.intrinsic != IntrinsicKind::None ||
+        function.declaration == nullptr ||
+        function.declaration->body() == nullptr) {
+      return std::nullopt;
+    }
+
+    std::vector<const ExprPtr *> returns;
+    collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+    if (returns.empty()) {
+      return std::nullopt;
+    }
+
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+    const std::optional<ClassId> enclosingClass = currentClass;
+    currentNamespace = function.namespaceScope;
+    currentSourceUnit = function.sourceUnit;
+    currentClass = function.ownerClass == 0
+                       ? std::nullopt
+                       : std::optional<ClassId>{function.ownerClass};
+
+    std::optional<FunctionReturnBorrowSummary> result;
+    bool valid = true;
+    for (const ExprPtr *returned : returns) {
+      const PredeclaredStringViewBorrowSource source =
+          returned == nullptr
+              ? PredeclaredStringViewBorrowSource{}
+              : predeclaredStringViewBorrowSource(*returned, function);
+      if (!source.known) {
+        valid = false;
+        break;
+      }
+      if (!source.ownerDependent) {
+        continue;
+      }
+      FunctionReturnBorrowSummary candidate{.origin = source.origin,
+                                            .parameter = source.parameter,
+                                            .access = AccessMode::ReadOnly};
+      if (result && (result->origin != candidate.origin ||
+                     result->parameter != candidate.parameter)) {
+        valid = false;
+        break;
+      }
+      result = candidate;
+    }
+
+    currentNamespace = enclosingNamespace;
+    currentSourceUnit = enclosingSourceUnit;
+    currentClass = enclosingClass;
+    return valid ? result : std::nullopt;
+  }
+
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function) {
     if (function.declaration == nullptr ||
@@ -27119,6 +27400,10 @@ private:
       FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
           updated.returnType, updated.parameterTypes, updated.ownerClass,
           updated.staticMember, updated.intrinsic);
+      if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
+              dynamicStringViewReturnBorrowSummary(updated)) {
+        summary = *dynamicView;
+      }
       if (isBorrowReturningType(updated.returnType) &&
           updated.intrinsic == IntrinsicKind::None) {
         if (std::optional<BorrowOriginPlace> place =
@@ -29138,6 +29423,11 @@ private:
     const ExprKind kind = expr.exprKind();
     const auto preserveCategory = [&](const Expr &source) {
       const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
+      if (type.kind == SemanticType::StringView && sourceInfo != nullptr &&
+          sourceInfo->traits.containsBorrowedState) {
+        return ownerDependentStringViewInfo(sourceInfo->category,
+                                            sourceInfo->access);
+      }
       return sourceInfo == nullptr
                  ? expressionInfo(std::move(type))
                  : expressionInfo(std::move(type), sourceInfo->category,
@@ -29171,6 +29461,12 @@ private:
                : symbol->assignable &&
                      (symbol->ownerClass == 0 || symbol->staticMember ||
                       receiverAllowsMutation(currentReceiverMutability)));
+      if (type.kind == SemanticType::StringView && symbol != nullptr &&
+          symbol->retainedLoan != 0) {
+        return ownerDependentStringViewInfo(
+            ValueCategory::Place,
+            mutableAccess ? AccessMode::Mutable : AccessMode::ReadOnly);
+      }
       return expressionInfo(std::move(type), ValueCategory::Place,
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
@@ -29338,6 +29634,10 @@ private:
           resolved->returnType.arguments.size() == 1) {
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
+      }
+      if (type.kind == SemanticType::StringView && resolved != nullptr &&
+          resolved->borrowOrigin != BorrowOriginKind::None) {
+        return ownerDependentStringViewInfo();
       }
     }
     return expressionInfo(std::move(type));
@@ -29690,6 +29990,7 @@ private:
                               DefinedFailureDetail::PrivateStorage);
             break;
           case IntrinsicKind::PrefixStorageLength:
+          case IntrinsicKind::PrefixStorageTextView:
           case IntrinsicKind::StringViewSize:
           case IntrinsicKind::StringViewEmpty:
           // The expected extractions' defined-failure outcomes anchor in

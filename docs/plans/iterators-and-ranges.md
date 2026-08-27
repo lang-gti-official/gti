@@ -40,10 +40,14 @@ whole-owner conflicts reject invalidation, movement, overlap, and escape while
 the exclusive range loan is active. A single read-only owner dependency can
 also pass through calls, concrete generic carrier relays, moves, returns, and
 drops; free and static factories may return a cursor or view derived from one
-eligible read-only parameter. Broader dynamic views, public invalidation
-effects, multiple origins, and user-retainable mutable borrowed-state carriers
-remain proposal work. A separate bounded generic-algorithm slice is also
-implemented:
+eligible read-only parameter. The bounded L-RANGE-03 release adds executable
+source-defined `std::span<T>` factories for vector and string owners plus
+dynamic `std::string_view` ownership from `std::string::view()`. Both retain one
+read-only origin through local copies and exact relays; owner invalidation,
+movement, destruction, and escape are rejected. Public invalidation effects,
+multiple origins, nested or reseatable stored views, and user-retainable
+mutable borrowed-state carriers remain proposal work. A separate bounded
+generic-algorithm slice is also implemented:
 multi-parameter concepts, validity-only trailing `requires`, public
 `std::input_iterator`/`std::sentinel_for`/`std::dereferences_to`, the distinct
 `std::copy_constructible` lifecycle fact, source-composed

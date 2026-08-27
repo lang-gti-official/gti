@@ -965,6 +965,16 @@ inline std::uint64_t prefix_storage_length(const prefix_storage<T> &value) {
   return value.length();
 }
 
+inline std::string_view
+prefix_storage_text_view(const prefix_storage<std::uint8_t> &value) noexcept {
+  if (value.length() == 0) {
+    return {};
+  }
+  return {reinterpret_cast<const char *>(
+              std::addressof(value.read_unchecked(0))),
+          static_cast<std::size_t>(value.length())};
+}
+
 template <typename T>
 inline void prefix_storage_relocate(prefix_storage<T> &source,
                                     prefix_storage<T> &destination) {
