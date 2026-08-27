@@ -615,9 +615,21 @@ public:
         }
       }
       break;
-    case SemanticOccurrenceKind::Binding:
-      result.signature = signatures.binding(*occurrence);
+    case SemanticOccurrenceKind::Binding: {
+      const SymbolRecord *symbol =
+          semantics.database().findSymbol(occurrence->symbol);
+      if (occurrence->type == SemanticType::Unknown && symbol != nullptr &&
+          symbol->instanceDependentType) {
+        result.signature = occurrence->mutableBinding ? "mut auto " : "auto ";
+        result.signature += occurrence->name;
+        result.notes.emplace_back(
+            "type is resolved independently for each concrete generic "
+            "instance");
+      } else {
+        result.signature = signatures.binding(*occurrence);
+      }
       break;
+    }
     case SemanticOccurrenceKind::Symbol: {
       const SymbolRecord *symbol =
           snapshot.semantics.database().findSymbol(occurrence->symbol);
@@ -672,7 +684,20 @@ public:
       }
       break;
     }
-    case SemanticOccurrenceKind::InferredType:
+    case SemanticOccurrenceKind::InferredType: {
+      const SymbolRecord *symbol =
+          semantics.database().findSymbol(occurrence->symbol);
+      if (occurrence->type == SemanticType::Unknown && symbol != nullptr &&
+          symbol->instanceDependentType) {
+        result.signature = "auto";
+        result.notes.emplace_back(
+            "type is resolved independently for each concrete generic "
+            "instance");
+      } else {
+        result.signature = types.print(occurrence->type);
+      }
+      break;
+    }
     case SemanticOccurrenceKind::Expression:
       result.signature = types.print(occurrence->type);
       break;

@@ -3172,10 +3172,16 @@ public:
         receiver =
             std::make_unique<QualifiedName>(NamePath(expr.path().segments));
       }
+      const ExpressionInfo receiverInfo =
+          classifyExpression(*receiver, targetType);
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, *mutationOperator, receiver, targetType, expr.oper(),
           std::span<const SemanticType>(&valueType, 1),
-          std::span<const ExprPtr>(&expr.value(), 1));
+          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+          OperatorReceiverState{.place = targetPlace,
+                                .mutableReceiver =
+                                    receiverInfo.access == AccessMode::Mutable,
+                                .info = receiverInfo});
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -3191,10 +3197,16 @@ public:
           receiver =
               std::make_unique<QualifiedName>(NamePath(expr.path().segments));
         }
+        const ExpressionInfo receiverInfo =
+            classifyExpression(*receiver, targetType);
         const std::optional<FunctionCandidate> selected = resolveOperator(
             expr, OverloadedOperator::Assignment, receiver, targetType,
             expr.oper(), std::span<const SemanticType>(&valueType, 1),
-            std::span<const ExprPtr>(&expr.value(), 1));
+            std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+            OperatorReceiverState{.place = targetPlace,
+                                  .mutableReceiver = receiverInfo.access ==
+                                                     AccessMode::Mutable,
+                                  .info = receiverInfo});
         currentType = selected ? callExpressionType(selected->returnType)
                                : SemanticType::Unknown;
         return;
@@ -7236,6 +7248,7 @@ private:
   struct OperatorReceiverState {
     SemanticPlace place;
     bool mutableReceiver = false;
+    std::optional<ExpressionInfo> info;
   };
 
   struct ResolvedFieldUse {
@@ -9602,10 +9615,17 @@ private:
 
     const AccessMode access =
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
+    const bool instanceDependentType =
+        local && !instanceAnalysisActive &&
+        currentFunctionDeclaration != nullptr &&
+        !genericParametersFor(*currentFunctionDeclaration).empty() &&
+        declaration.initializer() && inferredType == SemanticType::Unknown &&
+        diagnostics.size() == declarationDiagnosticStart;
     const SymbolId symbol = recordBindingOccurrence(
         declaration.name(), inferredType, declaration.isMutable(),
         local ? SemanticBindingKind::LocalVariable
-              : SemanticBindingKind::GlobalVariable);
+              : SemanticBindingKind::GlobalVariable,
+        false, false, instanceDependentType);
     attachDeclarationDocumentation(symbol, declaration);
     const std::optional<ConstantValue> constant = constexprBindingValue(
         declaration, inferredType,
@@ -9623,6 +9643,7 @@ private:
           {.sourceUnit = currentSourceUnit,
            .span = tokenSpan(type.name.last()),
            .kind = SemanticOccurrenceKind::InferredType,
+           .symbol = symbol,
            .name = type.name.last().lexeme,
            .type = inferredType,
            .traits = ownerDependentStringView ? initializerInfo->traits
@@ -17643,7 +17664,13 @@ private:
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
         .capability = callableInvocationCapability(selected.receiverMutability),
-        .boundary = boundary};
+        .boundary = boundary,
+        .receiverInfo =
+            receiverState && receiverState->info
+                ? *receiverState->info
+                : expressionInfo(receiverType, ValueCategory::Place,
+                                 mutableReceiver ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly)};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else if (projection) {
@@ -17986,7 +18013,23 @@ private:
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
         .capability = callableInvocationCapability(selected.receiverMutability),
-        .boundary = boundary};
+        .boundary = boundary,
+        .receiverInfo = [&]() {
+          if (receiverState && receiverState->info) {
+            return *receiverState->info;
+          }
+          if (receiver) {
+            if (const ExpressionInfo *recorded =
+                    semanticModel.findExpression(*receiver)) {
+              return *recorded;
+            }
+            return classifyExpression(*receiver, receiverType);
+          }
+          return expressionInfo(receiverType, ValueCategory::Place,
+                                receiverModeAllowsMutation(selectedReceiverMode)
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly);
+        }()};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else if (projection) {
@@ -30542,14 +30585,12 @@ private:
     return AccessModifier::Public;
   }
 
-  SymbolId recordToolingSymbol(const Token &name, SymbolKind kind,
-                               std::string qualified, const SemanticType &type,
-                               bool mutableBinding = false,
-                               bool definition = true,
-                               AccessModifier access = AccessModifier::Public,
-                               bool staticMember = false,
-                               bool internalLinkage = false,
-                               bool compilerPrivate = false) {
+  SymbolId recordToolingSymbol(
+      const Token &name, SymbolKind kind, std::string qualified,
+      const SemanticType &type, bool mutableBinding = false,
+      bool definition = true, AccessModifier access = AccessModifier::Public,
+      bool staticMember = false, bool internalLinkage = false,
+      bool compilerPrivate = false, bool instanceDependentType = false) {
     const SourceUnitId sourceUnit = sourceUnitFor(name);
     const SourceSpan span = tokenSpan(name);
     const std::string resolvedQualified = qualified;
@@ -30572,7 +30613,8 @@ private:
          .generated = name.generated,
          .compilerPrivate = compilerPrivate ||
                             isCompilerPrivateQualifiedName(resolvedQualified) ||
-                            semanticModel.isCompilerPrivateType(type)});
+                            semanticModel.isCompilerPrivateType(type),
+         .instanceDependentType = instanceDependentType});
   }
 
   [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const {
@@ -30601,13 +30643,11 @@ private:
     return SymbolKind::LocalVariable;
   }
 
-  SymbolId recordBindingSymbol(const Token &name, const SemanticType &type,
-                               bool mutableBinding,
-                               SemanticBindingKind bindingKind,
-                               ClassId ownerClass = 0,
-                               std::string_view resolvedQualifiedName = {},
-                               bool staticMember = false,
-                               bool internalLinkage = false) {
+  SymbolId recordBindingSymbol(
+      const Token &name, const SemanticType &type, bool mutableBinding,
+      SemanticBindingKind bindingKind, ClassId ownerClass = 0,
+      std::string_view resolvedQualifiedName = {}, bool staticMember = false,
+      bool internalLinkage = false, bool instanceDependentType = false) {
     std::string qualified = name.lexeme;
     if (bindingKind == SemanticBindingKind::GlobalVariable) {
       qualified = resolvedQualifiedName.empty()
@@ -30630,7 +30670,8 @@ private:
                                 bindingKind == SemanticBindingKind::StaticField)
                                    ? memberAccess(ownerClass, name)
                                    : AccessModifier::Public,
-                               staticMember, internalLinkage);
+                               staticMember, internalLinkage, false,
+                               instanceDependentType);
   }
 
   SymbolId recordFunctionSymbol(const FunctionDecl &declaration) {
@@ -30943,12 +30984,13 @@ private:
                                    bool mutableBinding,
                                    SemanticBindingKind bindingKind,
                                    bool staticMember = false,
-                                   bool internalLinkage = false) {
+                                   bool internalLinkage = false,
+                                   bool instanceDependentType = false) {
     const AccessMode access =
         mutableBinding ? AccessMode::Mutable : AccessMode::ReadOnly;
-    const SymbolId symbol =
-        recordBindingSymbol(name, type, mutableBinding, bindingKind, 0, {},
-                            staticMember, internalLinkage);
+    const SymbolId symbol = recordBindingSymbol(
+        name, type, mutableBinding, bindingKind, 0, {}, staticMember,
+        internalLinkage, instanceDependentType);
     OccurrenceRole roles = OccurrenceRole::Declaration;
     if (bindingKind != SemanticBindingKind::Parameter) {
       roles |= OccurrenceRole::Definition;

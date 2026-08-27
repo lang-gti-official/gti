@@ -1350,6 +1350,10 @@ struct ResolvedOperatorInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
+  // Exact semantic receiver facts used by overload resolution. Synthetic
+  // assignment receivers have no standalone AST occurrence, so downstream
+  // lowering must not reconstruct these facts from a declaration symbol.
+  ExpressionInfo receiverInfo;
 };
 
 enum class SemanticBindingKind {
@@ -1500,6 +1504,9 @@ struct SymbolRecord {
   bool internalLinkage = false;
   bool generated = false;
   bool compilerPrivate = false;
+  // The generic declaration intentionally has no single concrete type. Each
+  // analyzed HIR instance owns the exact inferred type for this local.
+  bool instanceDependentType = false;
   std::optional<std::string> documentationMarkdown;
 };
 

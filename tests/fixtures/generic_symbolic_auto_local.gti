@@ -1,0 +1,54 @@
+#include <std/vector>
+#include <std/iterator>
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() {
+  // Analyze the wider specialization first. Shared declaration state must not
+  // acquire either concrete element type.
+  mut std::vector<int64_t> wide = std::vector<int64_t>();
+  wide.push_back(int64_t(2));
+  wide.push_back(int64_t(9));
+  if (!first_less_than_next(wide.begin(), wide.end())) {
+    return 1;
+  }
+
+  mut std::vector<int32_t> ascending = std::vector<int32_t>();
+  ascending.push_back(3);
+  ascending.push_back(8);
+  if (!first_less_than_next(ascending.begin(), ascending.end())) {
+    return 2;
+  }
+
+  mut std::vector<int32_t> descending = std::vector<int32_t>();
+  descending.push_back(8);
+  descending.push_back(3);
+  if (first_less_than_next(descending.begin(), descending.end())) {
+    return 3;
+  }
+
+  mut std::vector<int32_t> single = std::vector<int32_t>();
+  single.push_back(5);
+  if (first_less_than_next(single.begin(), single.end())) {
+    return 4;
+  }
+
+  mut std::vector<int32_t> empty = std::vector<int32_t>();
+  if (first_less_than_next(empty.begin(), empty.end())) {
+    return 5;
+  }
+
+  return 0;
+}

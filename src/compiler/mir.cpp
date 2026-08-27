@@ -9504,6 +9504,40 @@ borrowSourceForOperand(const MirBody &body, const MirOperand &operand,
   return std::nullopt;
 }
 
+// A Loan operand used as a reference argument may carry a concrete runtime
+// place in addition to its provenance identity. The place must resolve through
+// its binding carrier or projection chain to the same borrow source. This
+// keeps a forged same-typed place from borrowing one object while passing
+// another, while admitting owner-tied class values whose binding has no
+// sourceValue of its own.
+[[nodiscard]] bool
+exactLoanArgumentRuntimePlace(const MirBody &body, const MirOperand &operand,
+                              const PlaceKey *expectedPlace = nullptr) {
+  if (operand.kind != MirOperandKind::Loan || operand.loan == 0) {
+    return false;
+  }
+  const MirLoan *loan = body.findLoan(operand.loan);
+  if (loan == nullptr) {
+    return false;
+  }
+  if (operand.place == 0) {
+    return true;
+  }
+  const MirPlace *place = body.findPlace(operand.place);
+  if (place == nullptr || operand.type.kind != SemanticType::Reference ||
+      operand.type.arguments.size() != 1 ||
+      place->type != operand.type.arguments.front()) {
+    return false;
+  }
+  if (expectedPlace != nullptr &&
+      (!place->key || *place->key != *expectedPlace)) {
+    return false;
+  }
+  const std::optional<MirPlaceId> source =
+      borrowSourceForPlace(body, place->id, 0);
+  return source && *source == loan->source;
+}
+
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForValue(const MirBody &body, MirValueId valueId,
                      std::size_t depth) {
@@ -10011,6 +10045,31 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.callInputRole == MirCallInputRole::Argument &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Loan &&
+          !exactLoanArgumentRuntimePlace(body, instruction.operands.front(),
+                                         instruction.ownership
+                                             ? &instruction.ownership->place
+                                             : nullptr)) {
+        return failure(body, owner,
+                       "reference call-input place is not the exact runtime "
+                       "carrier for its loan",
+                       block.id, instruction.id);
+      }
+      if (instruction.kind == MirInstructionKind::Call ||
+          instruction.kind == MirInstructionKind::Construct) {
+        for (const MirOperand &operand : instruction.operands) {
+          if (operand.kind == MirOperandKind::Loan &&
+              !exactLoanArgumentRuntimePlace(body, operand)) {
+            return failure(body, owner,
+                           "reference call argument place is not the exact "
+                           "runtime carrier for its loan",
+                           block.id, instruction.id);
+          }
+        }
+      }
       if (instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct) {
         if (instruction.kind == MirInstructionKind::Compute &&
@@ -16813,26 +16872,25 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     if (constructorOwner != nullptr) {
       for (const MirDropObligation &rollback :
            constructorOwner->fieldInitializers.dropObligations) {
-        if (rollback.kind !=
-            MirDropObligationKind::ConstructionRollback) {
+        if (rollback.kind != MirDropObligationKind::ConstructionRollback) {
           continue;
         }
         const MirPlace *place =
             constructorOwner->fieldInitializers.findPlace(rollback.place);
-        const auto field = std::find_if(
-            constructorOwner->declaredFields.begin(),
-            constructorOwner->declaredFields.end(),
-            [&](const MirClassFieldInfo &candidate) {
-              return place != nullptr && candidate.field == place->binding &&
-                     candidate.symbol == place->symbol;
-            });
+        const auto field =
+            std::find_if(constructorOwner->declaredFields.begin(),
+                         constructorOwner->declaredFields.end(),
+                         [&](const MirClassFieldInfo &candidate) {
+                           return place != nullptr &&
+                                  candidate.field == place->binding &&
+                                  candidate.symbol == place->symbol;
+                         });
         if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
             !place->projections.empty() || rollback.initiallyActive ||
             field == constructorOwner->declaredFields.end() ||
             place->type != field->type ||
             rollback.dropType.type != field->type ||
-            !defaultFieldRollbackSources
-                 .emplace(field->symbol, &rollback)
+            !defaultFieldRollbackSources.emplace(field->symbol, &rollback)
                  .second) {
           exactDefaultFieldRollbackEntry = false;
         }
@@ -16840,8 +16898,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
 
     std::unordered_set<SymbolId> explicitlyInitializedFields;
-    for (const MirConstructorInitializer &initializer :
-         instance.initializers) {
+    for (const MirConstructorInitializer &initializer : instance.initializers) {
       if (initializer.kind == ConstructorInitializerTargetKind::Field &&
           initializer.field != 0) {
         explicitlyInitializedFields.insert(initializer.field);
@@ -16863,8 +16920,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
 
     std::vector<SymbolId> actualDefaultRollbackOrder;
     std::unordered_set<SymbolId> actualDefaultRollbackFields;
-    for (const MirDropObligation &rollback :
-         instance.body.dropObligations) {
+    for (const MirDropObligation &rollback : instance.body.dropObligations) {
       if (rollback.kind != MirDropObligationKind::ConstructionRollback ||
           !rollback.initiallyActive) {
         continue;
@@ -16874,20 +16930,19 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
       if (constructorOwner != nullptr && place != nullptr &&
           place->projections.size() == 1) {
         const SymbolId symbol = place->projections.front().field;
-        const auto found = std::find_if(
-            constructorOwner->declaredFields.begin(),
-            constructorOwner->declaredFields.end(),
-            [&](const MirClassFieldInfo &candidate) {
-              return candidate.symbol == symbol;
-            });
+        const auto found =
+            std::find_if(constructorOwner->declaredFields.begin(),
+                         constructorOwner->declaredFields.end(),
+                         [&](const MirClassFieldInfo &candidate) {
+                           return candidate.symbol == symbol;
+                         });
         if (found != constructorOwner->declaredFields.end()) {
           field = &*found;
         }
       }
-      const auto source =
-          field == nullptr
-              ? defaultFieldRollbackSources.end()
-              : defaultFieldRollbackSources.find(field->symbol);
+      const auto source = field == nullptr
+                              ? defaultFieldRollbackSources.end()
+                              : defaultFieldRollbackSources.find(field->symbol);
       if (place == nullptr || place->root != MirPlaceRootKind::This ||
           place->projections.size() != 1 ||
           place->projections.front().kind != MirProjectionKind::Field ||

@@ -1832,6 +1832,33 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
+  std::size_t syntheticReceivers = 0;
+  std::size_t exactSyntheticReceivers = 0;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      const auto *assignment = dynamic_cast<const lang::Assign *>(value.source);
+      const lang::ResolvedOperatorInfo *operation =
+          assignment == nullptr ? nullptr
+                                : frontend.semantics.findOperator(*assignment);
+      const lang::HirValue *receiver =
+          value.receiver ? function.body.findValue(*value.receiver) : nullptr;
+      if (operation == nullptr || receiver == nullptr ||
+          (operation->kind != lang::OverloadedOperator::AddAssign &&
+           operation->kind != lang::OverloadedOperator::SubtractAssign)) {
+        continue;
+      }
+      ++syntheticReceivers;
+      exactSyntheticReceivers +=
+          receiver->info == operation->receiverInfo &&
+                  receiver->info.category == lang::ValueCategory::Place
+              ? 1
+              : 0;
+    }
+  }
+  expect(syntheticReceivers == 2 && exactSyntheticReceivers == 2,
+         "HIR should copy both compound-assignment receiver classifications "
+         "exactly from semantic operator resolution");
   lang::OptimizedProgram optimized =
       lang::OptimizationPipeline().run({.hir = frontend.hir,
                                         .mir = frontend.mir,

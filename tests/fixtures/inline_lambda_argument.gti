@@ -1,0 +1,45 @@
+#include <std/vector>
+#include <std/algorithm>
+
+class threshold {
+  int32_t value;
+
+public:
+  threshold(int32_t value) : value(value) {}
+  threshold(threshold& other) = delete;
+  threshold(threshold&& other) = default;
+  ~threshold() {}
+
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  mut int32_t index = 0;
+  while (index < 32) {
+    values.push_back(index);
+    index = index + 1;
+  }
+
+  int32_t limit = 10;
+  std::ptrdiff_t below = std::count_if(
+      values.begin(), values.end(),
+      [limit](int32_t& value) -> bool { return value < limit; });
+
+  threshold floor = threshold(24);
+  bool any_high = std::any_of(
+      values.begin(), values.end(),
+      [moved = std::move(floor)](int32_t& value) -> bool {
+        return value >= moved.read();
+      });
+
+  bool bounded = std::all_of(
+      values.begin(), values.end(),
+      [limit](int32_t& value) -> bool { return value < limit * 4; });
+
+  if (below == 10 && any_high && bounded) {
+    std::println("inline lambda arguments ok");
+    return 0;
+  }
+  return 1;
+}

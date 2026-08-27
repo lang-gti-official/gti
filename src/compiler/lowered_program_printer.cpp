@@ -816,7 +816,8 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
     output << " access=" << static_cast<std::size_t>(symbol.access)
            << " flags=" << symbol.mutableBinding << ':' << symbol.defaultLibrary
            << ':' << symbol.staticMember << ':' << symbol.internalLinkage << ':'
-           << symbol.generated << ':' << symbol.compilerPrivate << '\n';
+           << symbol.generated << ':' << symbol.compilerPrivate << ':'
+           << symbol.instanceDependentType << '\n';
   }
 
   output << "class-instances " << program.classInstances().size() << '\n';

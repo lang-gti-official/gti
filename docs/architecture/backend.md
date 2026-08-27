@@ -285,7 +285,11 @@ example) records its owner loan on the staged operand, and that loan may be
 representation-erased. Whenever the operand records a place, the body emitter
 spells that place at the call site; only a place-less loan operand spells the
 dereferenced loan pointer carrier, which must therefore name a declared
-carrier such as a reference-parameter entry loan.
+carrier such as a reference-parameter entry loan. MIR verification also
+requires a staged call-input place to equal the ownership event's exact
+semantic place key, in addition to resolving to the loan's provenance source.
+Two same-typed iterator values over one owner are therefore not interchangeable
+runtime carriers merely because they share owner provenance.
 
 For an exact cleanup-owning class value consumed by an ordinary by-value call,
 the body emitter uses the caller-owned `PreparedParameter` slot named by MIR.

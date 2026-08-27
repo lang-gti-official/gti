@@ -2000,23 +2000,25 @@ LoweredProgramBuild LoweredProgramBuilder::build(
 
   lowered.symbols_.reserve(semantics.database().symbols().size());
   for (const SymbolRecord &symbol : semantics.database().symbols()) {
-    lowered.symbols_.push_back({.id = symbol.id,
-                                .kind = symbol.kind,
-                                .name = symbol.name,
-                                .qualifiedName = symbol.qualifiedName,
-                                .sourceUnit = symbol.sourceUnit,
-                                .nameSource = symbol.nameSpan,
-                                .declarationSource = symbol.declarationSpan,
-                                .definitionSource = symbol.definitionSpan,
-                                .type = symbol.type,
-                                .traits = symbol.traits,
-                                .access = symbol.access,
-                                .mutableBinding = symbol.mutableBinding,
-                                .defaultLibrary = symbol.defaultLibrary,
-                                .staticMember = symbol.staticMember,
-                                .internalLinkage = symbol.internalLinkage,
-                                .generated = symbol.generated,
-                                .compilerPrivate = symbol.compilerPrivate});
+    lowered.symbols_.push_back(
+        {.id = symbol.id,
+         .kind = symbol.kind,
+         .name = symbol.name,
+         .qualifiedName = symbol.qualifiedName,
+         .sourceUnit = symbol.sourceUnit,
+         .nameSource = symbol.nameSpan,
+         .declarationSource = symbol.declarationSpan,
+         .definitionSource = symbol.definitionSpan,
+         .type = symbol.type,
+         .traits = symbol.traits,
+         .access = symbol.access,
+         .mutableBinding = symbol.mutableBinding,
+         .defaultLibrary = symbol.defaultLibrary,
+         .staticMember = symbol.staticMember,
+         .internalLinkage = symbol.internalLinkage,
+         .generated = symbol.generated,
+         .compilerPrivate = symbol.compilerPrivate,
+         .instanceDependentType = symbol.instanceDependentType});
   }
 
   lowered.classInstances_.reserve(hir.classInstances().size());
@@ -2330,12 +2332,20 @@ verifyLoweredProgram(const LoweredProgram &program) {
   for (std::size_t index = 0; index < program.symbols_.size(); ++index) {
     const LoweredSymbol &symbol = program.symbols_[index];
     const bool unresolvedType =
-        symbolRequiresType(symbol.kind) && !resolvedType(symbol.type);
+        symbolRequiresType(symbol.kind) && !resolvedType(symbol.type) &&
+        !(symbol.kind == SymbolKind::LocalVariable &&
+          symbol.instanceDependentType && symbol.type == SemanticType::Unknown);
+    const bool invalidInstanceDependentType =
+        symbol.instanceDependentType &&
+        (symbol.kind != SymbolKind::LocalVariable ||
+         symbol.type != SemanticType::Unknown);
     if (symbol.id == 0 || symbol.name.empty() || unresolvedType ||
+        invalidInstanceDependentType ||
         !symbolIdentities.emplace(symbol.id, index).second) {
       addIssue(issues, LoweredProgramIssueKind::InvalidSymbolInventory,
                "lowered symbol has an absent/duplicate identity, empty name, "
-               "or unresolved required type");
+               "invalid instance-dependent marker, or unresolved required "
+               "type");
     }
   }
   const auto requireSymbol = [&](SymbolId symbol,

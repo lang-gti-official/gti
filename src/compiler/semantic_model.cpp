@@ -282,6 +282,10 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
         symbol.type != SemanticType::Unknown) {
       existing.type = std::move(symbol.type);
       existing.traits = symbol.traits;
+      existing.instanceDependentType = false;
+    } else if (existing.type == SemanticType::Unknown) {
+      existing.instanceDependentType =
+          existing.instanceDependentType || symbol.instanceDependentType;
     }
     if (symbol.definitionSpan) {
       existing.definitionSpan = std::move(symbol.definitionSpan);

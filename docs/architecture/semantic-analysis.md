@@ -278,6 +278,19 @@ updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
 unchanged from the previous whole-model-copy design.
 
+A generic primary may contain an inferred local whose symbolic initializer is
+valid under the active requirements but has no one declaration-wide concrete
+type. The canonical example is `auto value = *first` under
+`std::input_iterator<Iterator>` when no `std::dereferences_to` requirement
+names the element type. The shared `SymbolRecord` remains `Unknown` and carries
+`instanceDependentType`; each concrete HIR instance owns the exact inferred
+binding type. `LoweredProgram` preserves that declaration marker while its
+concrete bodies remain fully typed. Instance reanalysis never writes a
+specialization's type into shared semantic state, so specialization order,
+failed candidates, and the presence or absence of any instantiation cannot
+change the generic declaration. Tooling presents the source declaration as
+instance-dependent `auto` rather than selecting an arbitrary concrete type.
+
 A lambda type separates physical closure shape from concrete identity. Its
 ordinary type arguments hold the result, parameters, and captures; dedicated
 identity fields retain the lexical declaration plus the enclosing
