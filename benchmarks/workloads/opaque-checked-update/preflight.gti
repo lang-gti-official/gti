@@ -1,0 +1,24 @@
+#include "kernel.gti"
+#include <std/numeric>
+#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int32_t value = argc;
+  if (argc >= -1073741824 && argc <= 1073741823) {
+    for (mut int32_t round = 0; round < 50000000; round++) {
+      value = std::wrapping_add(value, argc) % 1000003;
+      value = std::wrapping_add(value, argc) % 1000003;
+      value = std::wrapping_add(value, argc) % 1000003;
+      value = std::wrapping_add(value, argc) % 1000003;
+    }
+  } else {
+    for (mut int32_t round = 0; round < 50000000; round++) {
+      value = (value + argc) % 1000003;
+      value = (value + argc) % 1000003;
+      value = (value + argc) % 1000003;
+      value = (value + argc) % 1000003;
+    }
+  }
+  return finish(uint64_t(value));
+}

@@ -218,9 +218,8 @@ MirAliasRelation mirPlaceRelation(const MirProgram &program,
       return MirAliasRelation::MayAlias;
     }
   }
-  return left.root == right.root && preciseRoot(left) && preciseRoot(right)
-             ? MirAliasRelation::NoAlias
-             : MirAliasRelation::MayAlias;
+  return preciseRoot(left) && preciseRoot(right) ? MirAliasRelation::NoAlias
+                                                 : MirAliasRelation::MayAlias;
 }
 
 MirPlaceAliasEscapeAnalysis

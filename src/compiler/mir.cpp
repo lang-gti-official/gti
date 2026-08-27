@@ -3693,6 +3693,13 @@ validFailureInstructionShape(const MirInstruction &instruction) {
           return instruction.kind == MirInstructionKind::Load ||
                  instruction.kind == MirInstructionKind::Assign;
         }
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::StorageBoundsCheck) {
+          return discharge.outcome.detail == DefinedFailureDetail::Vector ||
+                 discharge.outcome.detail == DefinedFailureDetail::String ||
+                 discharge.outcome.detail ==
+                     DefinedFailureDetail::PrivateStorage;
+        }
         return discharge.outcome.detail ==
                    DefinedFailureDetail::PrivateStorage &&
                instruction.kind == MirInstructionKind::Call &&
@@ -17607,8 +17614,15 @@ verifyMirOptimizationCoherence(const MirProgram &source,
   // the candidate after value/branch folds and before destructive cleanup.
   // Attaching a discharge changes metadata only, so every record can be
   // checked against the same independently derived whole-program snapshot.
-  const MirClosedCallSafetyAnalysis replaySafety =
-      analyzeMirClosedCallSafetyChecks(candidate);
+  // O0/O1 snapshots carry no such records and do not pay for an analysis that
+  // could not authorize any replay step.
+  std::optional<MirClosedCallSafetyAnalysis> replaySafety;
+  if (std::any_of(
+          records.begin(), records.end(), [](const MirTransformRecord &record) {
+            return record.kind == MirTransformKind::DischargeSafetyCheck;
+          })) {
+    replaySafety = analyzeMirClosedCallSafetyChecks(candidate);
+  }
   for (std::size_t index = 0; index < records.size(); ++index) {
     const MirTransformRecord &record = records[index];
     if (consumed[index] ||
@@ -17619,7 +17633,8 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     const InstructionLocation location =
         body == nullptr ? InstructionLocation{}
                         : findInstruction(*body, record.instruction);
-    const MirClosedCallBodyAnalysis *analysis = replaySafety.find(record.body);
+    const MirClosedCallBodyAnalysis *analysis =
+        replaySafety ? replaySafety->find(record.body) : nullptr;
     const MirSafetyProof *proof =
         record.safetyDischarge && analysis != nullptr
             ? analysis->safety.find(record.instruction, *record.safetyDischarge)

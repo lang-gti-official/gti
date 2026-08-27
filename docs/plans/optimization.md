@@ -6,8 +6,8 @@
 
 Status: accepted; Milestones 1 through 5 are implemented for their bounded
 local families. Milestone 6 has verified per-instance effects and exact closed
-call-summary queries, but no interprocedural transformation. The current
-exclusive runtime-performance work and every follow-on optimizer row are
+call-summary queries, but no interprocedural transformation. The completed
+exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
@@ -43,13 +43,13 @@ and preserves switch-default flow in the migrated safety client. Loop analysis
 rejects repeated-edge block-argument ambiguity. Alias analysis treats union
 fields as overlapping and analysis caches reject cross-program snapshot reuse.
 O-MIR-08 (loop-derived bounds proof) and O-MIR-09 (one measured alias-safe
-memory family) remain measured-defer, while the active interprocedural client
-is subsumed by `O-PERF-02`; standalone O-MIR-10 is parked. None is implied
-complete by the analysis foundations.
+memory family) remain measured-defer, while the bounded interprocedural
+campaign client was subsumed by `O-PERF-02`; standalone O-MIR-10 is parked.
+None is implied complete by the analysis foundations.
 
-Performance-priority update (2026-08-27): `O-PERF-00` closed on exact clean
-commit `a2bd29dc`, `O-PERF-01` closed on exact clean commit `f1a4075f`, and
-`O-PERF-02` closed on exact clean commit `d6374eb9`.
+Performance-priority update (2026-08-27): `O-PERF-00` through `O-PERF-03`,
+`O-PERF-05`, and `O-GAME-01` are complete, and `O-PERF-04` is measured-defer
+on exact clean commit `4dbb50bd`. The exclusive compiler gate is released.
 The fixed-array bounds control remained a measured no-op. The admitted
 complete-state fixed-array overflow workload originally measured 283.568 ms in
 GTI versus 60.253 ms in idiomatic C++; exact remainder/mask transfer,
@@ -59,21 +59,35 @@ bounds outcomes. The clean implementation measured 61.807 versus 61.111 ms at
 O2 and 61.055 versus 61.113 ms at O3. No campaign control regressed by more
 than 0.4% relative to its semantic C++ twin. Bounded contextual summaries then
 transported exact scalar and container-element facts through the closed vector
-call family. The O2 vector median fell from 1,213.192 ms to 558.336 ms while
-native, virtual, recursive, owning-transfer, conflicting-context, and
-non-convergent boundaries remained conservative. `O-PERF-03` is now the sole
-active row and owns duplicate prefix-storage checking and vector length
-authority. Exact report identities, raw samples, profiles, MIR/report counters,
-and emitted-code hashes live in
+call family, then established one prefix-storage length authority and removed
+only independently replayed private rechecks. A bounded follow-up carries the
+same scalar envelope through exact indexed return borrows and finite closed-call
+loop bounds; vector medians are now 1.042x idiomatic at O2 and 1.049x at O3.
+The genuinely opaque scalar-loop preflight exposed only 0.34% value, so no
+versioning transform was admitted. The residual backend audit then measured
+the scalar-FP client at 1.005x semantic C++ and the closed-call vector client
+at 0.109x semantic and 1.044x idiomatic; their native hot loops contain no
+surviving call or failure-ABI boundary, so no speculative representation
+change was admitted. Native, virtual, recursive,
+owning-transfer, conflicting-context, mutating-call, and non-convergent
+boundaries remain conservative. Exact report identities, raw samples,
+profiles, MIR/report counters, and emitted-code hashes live in
 [`performance-tooling.md`](performance-tooling.md).
+
+The final game update on clean implementation commit `c5bbfaa8` measured
+58.503 ms in GTI, 208.126 ms in semantic-equivalent C++, and 58.454 ms in
+idiomatic C++, with an identical complete-state record. Fifty-three of 85
+source safety operations are discharged through independently replayed MIR
+proofs. Fixed-array, vector, scalar, managed-thread, compile-time, code-size,
+and memory controls are recorded and accounted for in the performance plan.
 
 The audit proposal is not adopted verbatim. The live safety analysis already
 has a loop fixpoint and widening; prefix storage has no unchecked-read
 vocabulary; the flagship vector inputs are statically bounded across difficult
 closed call/container boundaries; and wrapping block speculation does not by
 itself preserve GTI's first failure, left-to-right recurrence, or partial
-effects. The corrected exclusive sequence is `O-PERF-00` through
-`O-GAME-01` in
+effects. The completed exclusive sequence is `O-PERF-00` through `O-GAME-01`
+in
 [`implementation-sequence.md`](implementation-sequence.md). This architecture
 plan does not own or duplicate that order.
 
@@ -82,8 +96,8 @@ Operational ordering is maintained in
 continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
-and alias facts remain available for the active performance rows, but they do
-not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
+and alias facts remain available for later measured performance rows, but they
+do not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
 LLVM backend, and broad optimizer frameworks remain deferred until a measured
 bottleneck and the sole operational sequence require them.
 

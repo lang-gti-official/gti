@@ -5,10 +5,12 @@
 
 Status: Milestone 1 remains in progress; the deterministic GTI optimization
 reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
-`O-PERF-00` through `O-PERF-03` are complete: the runtime workload set,
+`O-PERF-00` through `O-PERF-03`, `O-PERF-05`, and `O-GAME-01` are complete and
+`O-PERF-04` is measured defer: the runtime workload set,
 fixed-native attribution mode, loop and closed-call safety clients, single-bound
 prefix access, threshold-free CI smoke gate, and clean exact-head closure
-evidence are recorded below. `O-PERF-04` is the active campaign row.
+evidence are recorded below. The exclusive runtime-performance campaign is
+closed.
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
@@ -625,6 +627,211 @@ O3 GTI: [387557000,372402166,417194084,389907375,402385542,405820750,386567667,4
 O3 semantic: [534503334,542765833,534360083,549700500,546734500,532643375,512302042,500785166,536804875,514728375,491687584,501061708,494330833,544394917,533826375,480370625,534747167,543372334,515153458,534886917]
 O3 idiomatic: [52883834,53352208,52312083,51922708,51723958,52630375,51592333,52788459,52491333,51873625,52469750,52938834,52591417,51864125,52523375,52810375,52411792,52226041,52263709,52585000]
 ```
+
+#### O-PERF-03 bounded indexed-loop follow-up
+
+Exact clean commit `4dbb50bdaa0525df7ee29205fa54402a15109a4c`
+extends the existing scalar safety domain rather than adding another pass. It
+admits finite loop bounds proved through exact non-mutating closed calls,
+retains mutating/native/raw/unsafe barriers, constrains prefix length to its
+capacity invariant, and transports one scalar element fact through an exact
+receiver-owned indexed return borrow. The compiler SHA-256 is
+`e4cdf6de5288c1bfa0679f9dbee980ec500dcfa0a409efe0ac9090a56b567b70`.
+Both schema-3 reports are exact-head and conclusive under the same Apple Clang
+21, C++23, strict-FP, seed-3108, five-warmup, twenty-run protocol. Their
+SHA-256 values are
+`8987f0a2a4fb6e60cf87eb3ab4f694689ef73b0d953860af9a511e17c9f259b6`
+for O2 and
+`c2d47aefef190378181c87c368c90e31e65fa3ec8a4053ed1aa3047deb36d208`
+for O3.
+
+| GTI/native level | GTI median / MAD (ms) | Semantic C++ median (ms) | Idiomatic C++ median (ms) | GTI / idiomatic |
+| --- | ---: | ---: | ---: | ---: |
+| O2 / O3 | 53.268 / 0.268 | 516.854 | 51.108 | 1.042x |
+| O3 / O3 | 53.531 / 0.369 | 520.815 | 51.039 | 1.049x |
+
+The deterministic O2 optimization report has SHA-256
+`4b998fbef9ce5db8cc9e59e5eb7e2bef4c56b0fbc6183e4bee563d36650135b4`;
+its emitted C++ has SHA-256
+`59de58633c23a23c112ff7a32ff1365d57009034de3ae6b953b6554b9cd02fc3`.
+It records 44 source, 30 emitted, and 14 statically discharged safety
+outcomes: bounds 4/2/2, storage state 1/1/0, arithmetic overflow 15/7/8, and
+arithmetic domain 6/2/4. Focused negative evidence retains dynamic bounds,
+native calls, exact mutable-reference calls, repeated writes, unknown indexed
+contexts, aliases, and unsupported storage paths.
+
+```text
+O2 GTI: [52990208,53101334,54292958,54027375,54489875,54478000,53228625,54300791,53107792,53179750,52958417,53307000,53182083,53743166,54302542,53052541,54102500,53176417,53065500,53527000]
+O2 semantic: [516745083,511526042,500896041,528249334,533713209,526237166,490783792,539721917,521617417,510762167,521780292,498157167,517489208,534703458,516963125,538706833,490674584,473041084,482350500,496538458]
+O2 idiomatic: [50525917,51635375,50543958,51904917,50711000,50678917,50724625,50775417,50669166,51402584,51124083,51091125,51625209,51781792,51521833,50621542,50571333,51985875,51619916,51623625]
+O3 GTI: [53352875,53345250,54508209,53807916,54938583,54042375,53281708,54333291,53326250,53367166,53100083,53090500,53388542,54057500,54415417,53223834,55012042,53367458,54090542,53673000]
+O3 semantic: [526203125,522031750,513319166,515966875,519598375,539216750,473213500,494973500,532583000,530424750,492747791,540015334,536128750,527919333,530415750,506622625,489351500,512898500,492389291,540015791]
+O3 idiomatic: [51012000,51463458,50575958,52024291,51065167,50826334,50600000,50767125,50710542,51243500,51836666,51299208,51410083,51470333,50932250,50718416,50683000,50909000,51618375,51361541]
+```
+
+### O-PERF-04 exact-head measured defer
+
+The admitted `opaque-checked-update` recurrence executes 200 million checked
+additions with hosted `argc` as the genuinely opaque invariant. Its exact
+source preflight admits only `[-1073741824, 1073741823]`, which proves the
+initial `value + argc`; positive-constant remainder then confines every later
+carried value to `[-1000002, 1000002]`. The admitted lane uses public wrapping
+arithmetic with identical values. Every other input runs the original checked
+loop, so the proxy changes no failure site, order, partial effect, or cleanup.
+
+The schema-3 report is exact-head on clean commit `4dbb50bd`, conclusive, and
+has SHA-256
+`cb97be1c093fa9dff71a9d4261408ed4f45a01c10eb67282a6a659f726daadbe`.
+It uses the same compiler and measurement protocol as the follow-up above and
+retains `GTI-BENCH-1 digest:00000000000f3fec work-units:200000000` in all four
+variants.
+
+| Variant | Median / MAD (ms) | Relative to checked GTI |
+| --- | ---: | ---: |
+| checked GTI | 540.055 / 0.562 | 1.0000x |
+| exact source preflight | 538.225 / 0.497 | 0.9966x |
+| semantic C++ | 539.767 / 0.375 | 0.9995x |
+| idiomatic C++ | 538.246 / 0.600 | 0.9967x |
+
+The source proxy exposes only 0.34% available value, below the row's mandatory
+30% entry gate. Checked GTI is already 1.003x idiomatic and 1.001x semantic
+C++, so O-PERF-04 closes measured-defer without loop cloning or versioning.
+The optimization report has SHA-256
+`9bad3e0dca76671f41d14498a82d2277479f692de20688e96e7db70f53d62088`;
+its emitted C++ has SHA-256
+`ac47e819858de4236b80f153eb42c77f86da3126eaea5ca8e8682cc15c08b0f1`.
+
+```text
+checked GTI: [540022625,544103458,539789458,541255875,541966416,539874167,540720208,540287250,538988625,539337541,540531583,539457375,540086708,540727542,539470334,539514375,538788083,539644375,540236666,540117792]
+preflight GTI: [545063416,538007541,538255667,537991917,538679125,538940250,538244000,539211458,537815500,537012250,537267583,538049625,539675292,537139416,537550042,538764791,538169875,538215834,539034875,538234416]
+semantic C++: [544178667,539802167,540155833,539501084,538935709,544209833,540842500,539780250,539786459,538835917,540161792,539753584,539672084,539361459,539703375,539405292,539013250,539813750,540115500,539211750]
+idiomatic C++: [544912542,538126417,538645625,538849084,537420292,539335917,540899792,537981542,538996000,538161417,538202917,537649708,538560666,538034959,537685167,538997958,538289000,537310166,538873417,537562458]
+```
+
+### O-PERF-05 exact-head measured no-op
+
+The row compared the admitted `scalar-fp-update` and `vector-checked-loop`
+clients under one schema-3 run on clean commit `9da44477`. The report has
+SHA-256
+`8175044a73798dc8af516c1d7e8b4526b599be7359b2fb96c3b3a038246ee704`;
+the selected `gti 0.317.0` executable has SHA-256
+`e0c976f6d56a4b91ff2d3dcdd2f96faca88961e9d1abde5236bde447c6771092`.
+It used Apple Clang 21, native O3, strict floating-point flags, seed 3108,
+five warmups, and twenty interleaved samples. Every variant exceeded its 50 ms
+floor and retained its exact `GTI-BENCH-1` record.
+
+| Workload/variant | Median / MAD (ms) | GTI ratio |
+| --- | ---: | ---: |
+| scalar GTI | 80.297 / 0.472 | 1.000x |
+| scalar semantic C++ | 79.885 / 0.474 | 1.005x GTI/semantic |
+| scalar idiomatic C++ | 79.680 / 0.485 | 1.008x GTI/idiomatic |
+| vector GTI | 53.650 / 0.279 | 1.000x |
+| vector semantic C++ | 491.655 / 21.902 | 0.109x GTI/semantic |
+| vector idiomatic C++ | 51.400 / 0.535 | 1.044x GTI/idiomatic |
+
+Native inspection found no residual timed call or failure-ABI boundary in the
+scalar loop: Apple Clang inlined the read-only `dot` call and produced nine
+loop instructions for both GTI and semantic C++, with two vector multiplies,
+four scalar/vector adds or moves, one decrement, and one back edge. The GTI
+vector loops likewise contain direct SIMD loads, arithmetic, stores, and back
+edges; source-level vector and failure helpers do not survive in their hot
+paths. The scalar client is already 1.005x semantic C++, and the closed-call
+client is faster than semantic C++ and 1.044x idiomatic. Both meet the 1.15x
+exit gate, and less than 5% measured value remains, so no `noexcept`, ABI,
+representation, or backend spelling change is justified. O-PERF-05 closes as
+a measured no-op rather than adding speculative backend policy.
+
+```text
+scalar GTI: [80400750,81967875,80932834,80706625,80775333,80762875,81275541,80795292,80252291,80030625,80341250,80228125,80678208,80154333,79780625,79598792,79801250,79770541,79640042,80154542]
+scalar semantic C++: [79787542,80043417,80231792,80411375,79935125,79835500,80462708,80082167,79984792,79587583,79287916,80352208,80186375,80527416,78975458,79403625,79005583,78869541,79232375,79327125]
+scalar idiomatic C++: [80482916,79525250,80971792,80177584,79575541,79652375,80047917,80896208,80184375,79512083,79611542,80385334,80599625,80008166,79207042,79210208,79065833,78976916,79708541,79063125]
+vector GTI: [53159250,53920625,53578542,53644708,53598917,53731458,53128750,54704500,53280083,53565959,53515041,53672500,53655625,54107500,54614416,53937458,54211708,53982584,53182834,53410625]
+vector semantic C++: [462786500,499926291,508878042,511390500,517263667,489585916,527702542,538989084,521212083,524048958,540993500,493723542,472992000,469581417,469924917,468439167,480747250,489514166,486531834,464289500]
+vector idiomatic C++: [50731500,52167584,50687375,51736625,50819709,50746583,50909166,50737291,50917875,51598792,52459708,52020625,52652875,52071334,51188750,51370125,51491333,51429000,51247291,51729000]
+```
+
+### O-GAME-01 exact-head closure
+
+The exclusive campaign closed on clean implementation commit
+`c5bbfaa85e8adddfe3597cdde33ec00732bfd5b4`. The schema-1 game report has
+SHA-256
+`2a08b55739264c9a6b2828a0e0a0443869e07e095d7eaaac6d6067d6bc8b71d8`;
+the selected `gti 0.317.0` executable has SHA-256
+`241d381750a58035af6e4d4d02962157726f7f7441eaee9154c122949999109c`.
+The runner and Apple Clang hashes remained
+`9e268397c0c8841ad90e3befa5336d07fdc1271e106f2bc7c7e3f4fd54f58818`
+and
+`179301dcb41ea78accc3fa0048a7e6f6710d891945a751a34addd622020c1818`.
+The arm64 Darwin 25.5.0 campaign used Apple Clang 21, GTI/native O3, C++23,
+strict floating-point flags, seed 3108, five warmups, and twenty interleaved
+samples. Every variant produced
+`GTI-BENCH-1 digest:0000000012e84ad4 work-units:61440000` and was conclusive.
+
+| Variant | Median / MAD / maximum (ms) | GTI ratio |
+| --- | ---: | ---: |
+| GTI | 58.503 / 0.424 / 59.677 | 1.000x |
+| semantic C++ | 208.126 / 0.705 / 211.868 | 0.281x GTI/semantic |
+| idiomatic C++ | 58.454 / 0.454 / 60.091 | 1.0008x GTI/idiomatic |
+
+The exact optimization report and MIR have SHA-256
+`132be3836f01f143794bc267a2dbdd890e23927743bf22a94c37638609e2fe82`
+and
+`9541253559d1ebd9c89aaa19c20398bd97ef3fd815604b68534625b2aca0710a`.
+Of 85 source safety operations, 53 are statically discharged and 32 remain:
+bounds 2/0/2 source/emitted/discharged, storage state 1/1/0, arithmetic
+overflow 36/0/36, and arithmetic domain 15/0/15. Native symbol inspection
+found no surviving public/private indexed-read or bounds-failure helper in the
+timed binary. Emitted C++ is 320,030 bytes with SHA-256
+`cfe4308b7bae8df545671f7ac9be35f404b677c1027af9b882e3dc826d62aec5`;
+the executable remains 115,200 bytes with SHA-256
+`22d208199487dd436da2e2e4d0ea2f818c6e78d22420a167e2bc79288701a0be`.
+The generated C++ is 3,427 bytes smaller than the pre-context implementation
+record and executable size is unchanged.
+
+The final clean build took 2.189 seconds end to end, down from the unexplained
+5.765-second intermediate result after the aggregate-context slice and below
+the 2.763-second pre-slice record. The fix reuses the manager-owned canonical
+safety snapshot for metadata-only editor replay. Coherence verification still
+derives an independent snapshot whenever a safety-discharge record exists, but
+O0/O1 no longer run that analysis when no record could consume it. On the same
+source, pre-game commit `9da44477` used 62,586,880 bytes maximum RSS and
+37,749,288 bytes peak footprint at O0; `c5bbfaa8` used 56,262,656 and
+31,736,384 bytes. O3 used 87,556,096 bytes RSS and 64,324,184 bytes footprint;
+the bounded increase is isolated to the closed-call aggregate analysis that
+produces the 53 proofs, with 32 global rounds and eight context updates per body
+as hard fail-closed limits.
+
+Exact clean control reports on implementation commit `ffea858c` remained
+conclusive and are unaffected by the later O0/O1-only coherence gate:
+
+| Control | GTI median (ms) | Comparison | Report SHA-256 |
+| --- | ---: | --- | --- |
+| fixed-array loop proof | 105.201 | 1.001x idiomatic | `a7e42ff11ce5005bdf30c7c773c2b41ca18d3899f9e5923db37b8fcdf3ae8ddb` |
+| fixed-array overflow | 53.179 | 1.003x idiomatic | `3171ffe893cd065769b0438e6ab4f828bdb74dfd15fd654a7075985838293847` |
+| checked vector | 53.722 | 1.044x idiomatic | `d2103bf3bc4f4f295a53488b16033c1f076814dc1355f20e5721db16f773541d` |
+| scalar FP | 80.302 | 1.008x idiomatic | `acb4919593d4b4cb7c838b7ea3eeee4dc3beca56914c7f37ab2df53cea845631` |
+| managed thread | 169.160 | 3.509x faster than 593.592 ms sequential | `d00300f109dcec3dd3c0514bd87a377d89e661421263001ca9e818b77a630f51` |
+
+```text
+fixed-array loop GTI: [105192542,105489000,105341625,105328209,105324917,105209417,105926542,106916458,105101958,104757542,104834833,105549375,104926834,105505834,104707042,105084500,106497917,105152875,105088792,104863667]
+fixed-array loop idiomatic C++: [105177375,105266292,105075208,105079208,105447375,107416083,107435333,106250500,105595583,105045666,104830209,105035375,104534083,105251334,105731125,104953209,104870792,105611208,104718708,104591417]
+fixed-array overflow GTI: [53053000,53161375,54265417,54540084,53452833,55901292,52739750,53803500,53035334,52998542,53323750,53143459,53024250,52900542,54429000,53257916,53530750,53195667,52869333,52921291]
+fixed-array overflow idiomatic C++: [52875083,53409250,52811500,52889334,53044542,52871125,52898084,52724750,52751875,53626875,53539375,53237667,53407917,53742542,52672333,52975833,52787417,53293166,53990625,53392167]
+vector GTI: [53630875,53081708,55729166,53992917,54529750,53980625,53858375,54250833,53581875,53531416,53459000,53341583,53265042,53589375,55051208,53711542,55242458,53732875,53763500,53496334]
+vector idiomatic C++: [51988666,51803208,50965291,51809834,53263375,51476292,51341667,51047791,50914875,51679292,51181209,52040042,51434084,51481708,51072625,50948708,51103000,52323959,51974459,52583125]
+scalar FP GTI: [80150792,80303500,80336333,80127750,80278333,80146750,80488250,80626250,80658875,80319875,80278084,80207708,80310834,80157292,80862208,80040417,80315208,80014000,80299667,80553958]
+scalar FP idiomatic C++: [79626708,79929875,79655084,79239167,79803750,79980125,79593958,79684041,79645958,79471834,79714125,79534125,79621625,79562583,80134292,79366708,79382917,79740958,79697125,79428208]
+managed thread sequential: [593145333,599712125,592756375,593211167,595179750,590490584,593973458,591508666,589302625,592444583,596532083,603743834,599384791,596523667,591936958,590280125,589802792,594227500,595907666,595482625]
+managed thread four joined: [170504750,169716458,169200666,169593250,168903166,171015666,170015416,168762416,169979417,170210417,169119000,168933083,167428500,166657292,168901666,170607042,167791333,168037459,167458333,170516833]
+game GTI: [57957917,57785125,58827333,58533291,58472792,58988250,58285708,59326875,59677291,59350750,58175667,58269875,58683791,57972542,58533916,58554917,59243167,58066500,58090917,57753375]
+game semantic C++: [207224459,210484000,211867792,209159084,206912708,208619750,207268083,207817667,208244209,208440000,208373958,206422833,208677500,207697458,208008208,206651084,208374250,207232959,207238333,208501708]
+game idiomatic C++: [57640459,58574708,59068833,60091459,59433042,58023709,58706625,58333333,58280500,58574666,58592583,59290750,59246708,59058292,57950875,58304833,57975709,58066459,58029584,57906500]
+```
+
+Every core constituent is below 1.5x idiomatic C++; the combined update is
+below both its 1.5x semantic and 2x idiomatic gates. Runtime, compile-time,
+code-size, memory, and joined-thread controls are accounted for, so
+`O-GAME-01` closes and releases the exclusive compiler gate.
 
 ### Independent reproduction of PR #164
 
@@ -1406,19 +1613,19 @@ The local production slice includes proof-carrying scalar SCCP, exact
 fixed-array reads, exact-slot sparse-storage reads, and proved non-overflowing
 checked add/subtract/multiply/negate. Natural-loop/range and place
 alias/escape facts are implemented analysis prerequisites but do not yet claim
-a runtime improvement. Structural reports and O0/O2/O3 native-`-O0`
-differential tests establish semantic preservation; representative benchmark
-remeasurement remains required before making performance claims or widening a
-family.
+a runtime improvement by themselves. Structural reports, O0/O2/O3
+native-`-O0` differential tests, and the completed campaign evidence establish
+the admitted families; any later widening still requires representative
+benchmark remeasurement.
 
-- The exact compiler order, current row, prerequisites, stop conditions, and
-  implementation exit gates live only under `O-PERF-00` through
+- The exact completed order, row dispositions, prerequisites, stop conditions,
+  and implementation exit gates live only under `O-PERF-00` through
   `O-GAME-01` in
   [`implementation-sequence.md`](implementation-sequence.md). This measurement
   plan must not grow a competing milestone queue.
 - The first bounded `O-MIR-08` fixed-array bounds client remains measured-
-  defer. The reconciled overflow evidence is consumed by the distinct active
-  performance rows rather than being relabeled as that no-op bounds client.
+  defer. The reconciled overflow evidence was consumed by the now-complete
+  performance campaign rather than being relabeled as that no-op bounds client.
 - Add benchmark coverage for each optimization before implementing it.
 - Report when a check is discharged and the proof that allowed it.
 - Compare GTI against semantic C++ before and after each pass.

@@ -879,7 +879,7 @@ public:
       outcome.preserved = MirPreservedAnalyses::all();
       return outcome;
     }
-    const MirEditResult edited = editor.apply();
+    const MirEditResult edited = editor.apply(analyses);
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;

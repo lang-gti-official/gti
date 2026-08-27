@@ -21,7 +21,7 @@ int main() {
     entity.velocity_y = static_cast<std::int32_t>(index % 7) - 3;
   }
 
-  for (std::int32_t tick = 0; tick < 50000; ++tick) {
+  for (std::int32_t tick = 0; tick < 60000; ++tick) {
     const std::int32_t phase = tick % 17;
     for (std::size_t index = 0; index < entity_count; ++index) {
       EntityState &entity = entities[index];
@@ -47,11 +47,11 @@ int main() {
       digest = (digest * 131 + static_cast<std::uint64_t>(value)) % 1000000007;
     }
   }
-  if (digest != 0x39624947) {
+  if (digest != 0x12e84ad4) {
     return 1;
   }
   std::cout << "GTI-BENCH-1 digest:" << std::hex << std::nouppercase
             << std::setw(16) << std::setfill('0') << digest << std::dec
-            << " work-units:51200000\n";
+            << " work-units:61440000\n";
   return 0;
 }

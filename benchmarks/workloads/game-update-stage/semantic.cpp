@@ -89,7 +89,7 @@ EntityState &checked_at(std::vector<EntityState> &entities, std::size_t index) {
 void print_record(std::uint64_t digest) {
   std::cout << "GTI-BENCH-1 digest:" << std::hex << std::nouppercase
             << std::setw(16) << std::setfill('0') << digest << std::dec
-            << " work-units:51200000\n";
+            << " work-units:61440000\n";
 }
 
 } // namespace
@@ -106,7 +106,7 @@ int main() {
     entity.velocity_y = static_cast<std::int32_t>(index % 7) - 3;
   }
 
-  for (std::int32_t tick = 0; tick < 50000; tick = checked_add_i32(tick, 1)) {
+  for (std::int32_t tick = 0; tick < 60000; tick = checked_add_i32(tick, 1)) {
     const std::int32_t phase = checked_rem_i32(tick, 17);
     for (std::size_t index = 0; index < entity_count;
          index = checked_add_size(index, 1)) {
@@ -157,7 +157,7 @@ int main() {
                1000000007;
     }
   }
-  if (digest != 0x39624947) {
+  if (digest != 0x12e84ad4) {
     return 1;
   }
   print_record(digest);
