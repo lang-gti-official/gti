@@ -310,6 +310,9 @@ add_library(
   "src/compiler/lexer.cpp"
   "src/compiler/loaded_lexical_unit.cpp"
   "src/compiler/lowered_program.cpp"
+  "src/compiler/lowered_program_builder.cpp"
+  "src/compiler/lowered_program_closure.cpp"
+  "src/compiler/lowered_program_verifier.cpp"
   "src/compiler/lowered_program_printer.cpp"
   "src/compiler/mir.cpp"
   "src/compiler/mir_body_lowering.cpp"
@@ -1117,6 +1120,12 @@ if(BUILD_TESTING)
       NAME backend_lowered_program_boundary
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_boundary_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
+      NAME lowered_program_source_boundary
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/lowered_program_boundary_test.py"
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(
