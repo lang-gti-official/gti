@@ -1,0 +1,13 @@
+---
+title: std::string::end
+description: Creates the sentinel marking the end of a read-only character range.
+kind: member
+since: 0.60.3
+api:
+  - std/string|method|std::string::end
+examples:
+  - stop-at-sentinel
+---
+
+The sentinel stores the logical end position. It is intentionally a different
+type from the cursor, matching GTI's structural iterator/sentinel protocol.

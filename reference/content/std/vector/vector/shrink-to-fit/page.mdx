@@ -1,0 +1,18 @@
+---
+title: std::vector::shrink_to_fit
+description: Relocates the vector into storage whose capacity matches its current size.
+kind: member
+since: 0.120.0
+api:
+  - std/vector|method|std::vector::shrink_to_fit
+examples:
+  - release-spare-capacity
+---
+
+Reduces `capacity()` to `size()`. If those values already match, the operation
+does nothing. Otherwise the live elements are relocated in order and the spare
+allocation is released.
+
+Unlike C++'s non-binding request, the current GTI operation guarantees the
+postcondition `capacity() == size()` when it returns. Relocation requires that
+incompatible element and iterator loans have ended.

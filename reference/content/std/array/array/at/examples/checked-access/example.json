@@ -1,0 +1,6 @@
+{
+  "title": "Mutate through at",
+  "description": "Uses the mutable overload to update a checked element borrow.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

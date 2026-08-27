@@ -39,10 +39,22 @@ repository's general `examples/` corpus may inspire a page, but is not the
 site's content model; each reference page owns purpose-built examples beside
 its MDX.
 
-The current end-to-end slice includes the standard-library and `<std/vector>`
-landing pages plus `/std/vector/vector/`. That entity page renders current
-compiler signatures and traits, authored usage guidance, and a dedicated
-vector program that CI compiles and runs with GTI.
+The current end-to-end coverage includes complete member-page families for
+`std::array`, `std::string`, and `std::vector`, plus the owning-string
+`print`/`println` overloads and `to_string`. Every constructor or member shown
+on those type pages has one canonical child route. A detail route renders its
+exact compiler signature, authored operation-specific guidance, an
+availability tag drawn from repository history, and a dedicated example where
+the operation is callable. Declaration-only `swap` scaffolds are documented
+without misleading examples.
+
+The standard-library landing page also distinguishes implemented, partial, and
+scaffolded shipped units. A separate tooling section documents direct
+compilation, project manifests and commands, C bindgen, formatting, and the
+language server. Tooling prose is authored against the canonical driver and
+tooling documentation; source API signatures continue to come only from the
+compiler index. CI currently validates 70 authored pages and compiles or runs
+55 displayed GTI programs.
 
 ## Local workflow
 

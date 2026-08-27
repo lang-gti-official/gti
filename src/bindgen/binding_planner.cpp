@@ -2,8 +2,11 @@
 
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
+#include <set>
 #include <string_view>
 #include <unordered_map>
 
@@ -71,10 +74,19 @@ identifierProblem(std::string_view name, bool fileScope) {
     return "'" + std::string(name) +
            "' is reserved at C file scope by the generated native surface";
   }
+  if (fileScope && name.find("__") != std::string_view::npos) {
+    // GTI-S2064 rejects the C++-reserved '__' spelling anywhere in a
+    // native-facing name, not only at the front.
+    return "'" + std::string(name) +
+           "' contains an implementation-reserved '__' spelling";
+  }
   return std::nullopt;
 }
 
-enum class RecordBinding { CAbi, Opaque };
+// `Unavailable` marks a record whose name the generated surface cannot
+// spell at all (a reserved spelling); neither by-value nor pointer uses of
+// it can import.
+enum class RecordBinding { CAbi, Opaque, Unavailable };
 
 // GTI's bounded ABI is position-aware: `c_string` crosses only function and
 // callback boundaries, and the `Handle**` out-parameter form exists only as
@@ -102,7 +114,23 @@ public:
       : model_(model), options_(std::move(options)) {}
 
   [[nodiscard]] BindingPlan run() {
+    // Every header-provided name is reserved before any callback alias is
+    // synthesized, so a generated name can never shadow a declaration that
+    // appears later in the file.
+    for (const NativeDeclarationId id : model_.order) {
+      const NativeDeclaration *declaration = model_.findDeclaration(id);
+      if (declaration == nullptr) {
+        continue;
+      }
+      if (!declaration->name.empty()) {
+        usedNames_.insert(declaration->name);
+      }
+      for (const NativeEnumerator &enumerator : declaration->enumerators) {
+        usedNames_.insert(enumerator.name);
+      }
+    }
     classifyRecords();
+    commitSynthesis_ = true;
     BindingPlan plan;
     plan.options = options_;
     for (const NativeDeclarationId id : model_.order) {
@@ -110,20 +138,54 @@ public:
       if (declaration == nullptr) {
         continue;
       }
+      if (declaration->kind == NativeDeclarationKind::Record &&
+          duplicateRecords_.count(id) != 0) {
+        // The first declaration of this name already produced the binding;
+        // every use of this entity spells the same name.
+        continue;
+      }
+      synthesisOrigin_ = declaration->origin;
+      BindingItem planned;
       switch (declaration->kind) {
       case NativeDeclarationKind::Record:
-        plan.items.push_back(planRecord(id, *declaration));
+        planned = planRecord(id, *declaration);
         break;
       case NativeDeclarationKind::Enum:
-        plan.items.push_back(planEnum(*declaration));
+        planned = planEnum(*declaration);
         break;
       case NativeDeclarationKind::Typedef:
-        plan.items.push_back(planTypedef(*declaration));
+        planned = planTypedef(*declaration);
         break;
       case NativeDeclarationKind::Function:
-        plan.items.push_back(planFunction(*declaration));
+        planned = planFunction(*declaration);
+        break;
+      case NativeDeclarationKind::Constant:
+        planned = planConstant(*declaration);
         break;
       }
+      if (planned.kind == BindingItemKind::Skipped) {
+        // Aliases synthesized while this declaration was being planned have
+        // no surviving use; releasing their names keeps the emitted file
+        // free of orphans and lets a later use claim the shape again.
+        for (const BindingItem &callback : pendingCallbacks_) {
+          usedNames_.erase(callback.name);
+          for (auto shape = callbackNameByShape_.begin();
+               shape != callbackNameByShape_.end();) {
+            shape = shape->second == callback.name
+                        ? callbackNameByShape_.erase(shape)
+                        : std::next(shape);
+          }
+        }
+        pendingCallbacks_.clear();
+      }
+      if (declaration->kind == NativeDeclarationKind::Typedef) {
+        typedefImported_.emplace(id, planned.kind != BindingItemKind::Skipped);
+      }
+      for (BindingItem &callback : pendingCallbacks_) {
+        plan.items.push_back(std::move(callback));
+      }
+      pendingCallbacks_.clear();
+      plan.items.push_back(std::move(planned));
     }
     return plan;
   }
@@ -133,6 +195,28 @@ private:
   BindingOptions options_;
   std::unordered_map<NativeDeclarationId, RecordBinding> recordBindings_;
   std::unordered_map<NativeDeclarationId, std::string> recordReasons_;
+  // Inline function-pointer uses bind through synthesized named aliases —
+  // the language's own admitted callback form. Record classification only
+  // asks whether a shape is admissible; names allocate exclusively during
+  // the emission pass (`commitSynthesis_`), one alias per distinct shape, so
+  // generated names are deterministic in plan order. The caches are mutable
+  // because allocation happens inside the const type-mapping walk.
+  bool commitSynthesis_ = false;
+  std::string synthesisHint_;
+  SourceOrigin synthesisOrigin_;
+  mutable std::map<std::string, std::string> callbackNameByShape_;
+  mutable std::vector<BindingItem> pendingCallbacks_;
+  mutable std::set<std::string> usedNames_;
+  // Typedef outcomes: a use of a skipped typedef must spell the canonical
+  // type, because the alias name never reaches the generated file.
+  std::unordered_map<NativeDeclarationId, bool> typedefImported_;
+  // C prototype-scoped forward references ('struct sockaddr *' inside a
+  // parameter list with no visible tag) are distinct native entities per
+  // prototype but one GTI handle: the first record classification of a name
+  // answers for every later declaration of the same name, and later
+  // duplicates leave the plan.
+  std::unordered_map<std::string, NativeDeclarationId> recordIdByName_;
+  std::set<NativeDeclarationId> duplicateRecords_;
 
   [[nodiscard]] static BindingItem skipped(const NativeDeclaration &declaration,
                                            std::string reason) {
@@ -208,6 +292,12 @@ private:
       if (!canonicalMapping.supported) {
         return canonicalMapping;
       }
+      // A skipped typedef never reaches the generated file, so a use that is
+      // valid through the canonical type spells that type directly.
+      if (const auto outcome = typedefImported_.find(direct->declaration);
+          outcome != typedefImported_.end() && !outcome->second) {
+        return canonicalMapping;
+      }
       return supportedType(alias->name);
     }
     switch (direct->kind) {
@@ -240,6 +330,11 @@ private:
         return unsupportedType("the record reference is invalid");
       }
       const auto binding = recordBindings_.find(direct->declaration);
+      if (binding != recordBindings_.end() &&
+          binding->second == RecordBinding::Unavailable) {
+        return unsupportedType("record " +
+                               recordReasons_.at(direct->declaration));
+      }
       if (binding == recordBindings_.end() ||
           binding->second == RecordBinding::Opaque) {
         return unsupportedType(
@@ -281,22 +376,27 @@ private:
     if (pointee == nullptr) {
       return unsupportedType("the pointee type is invalid");
     }
+    if (pointee->kind == NativeTypeKind::Function) {
+      return mapFunctionPointer(*pointee);
+    }
     if (pointee->kind == NativeTypeKind::Pointer) {
       if (use == TypeUse::RecordField) {
         return unsupportedType("a nested pointer has no GTI [[c_abi]] field "
                                "representation");
-      }
-      if (pointer.constPointee) {
-        return unsupportedType(
-            "a const-qualified inner pointer has no bounded GTI C ABI "
-            "out-parameter spelling");
       }
       const NativeType *innerPointee = canonical(pointee->pointee);
       if (innerPointee == nullptr) {
         return unsupportedType("the nested pointee type is invalid");
       }
       if (innerPointee->kind == NativeTypeKind::Char && pointee->constPointee) {
+        // `const char**` out parameters and `const char* const*` string
+        // arrays share the language's c_string* spelling.
         return supportedType("c_string*");
+      }
+      if (pointer.constPointee) {
+        return unsupportedType(
+            "a const-qualified inner pointer has no bounded GTI C ABI "
+            "out-parameter spelling");
       }
       if (use == TypeUse::DirectFunctionParameter && !pointee->constPointee &&
           innerPointee->kind == NativeTypeKind::Record) {
@@ -338,6 +438,12 @@ private:
       if (record == nullptr) {
         return unsupportedType("the pointee record reference is invalid");
       }
+      if (const auto binding = recordBindings_.find(pointee->declaration);
+          binding != recordBindings_.end() &&
+          binding->second == RecordBinding::Unavailable) {
+        return unsupportedType("record " +
+                               recordReasons_.at(pointee->declaration));
+      }
       // Both [[c_abi]] records and [[c_opaque]] handles admit one-level
       // pointers; degradation to opaque keeps exactly these uses alive.
       return supportedType(qualifier + record->name + "*");
@@ -368,6 +474,54 @@ private:
       }
     }
     return mapType(function.result, true);
+  }
+
+  // An inline function-pointer use (a parameter, field, or result declared
+  // as `ret (*)(params)` without a typedef) binds through a synthesized
+  // named alias — the language's own admitted callback form. One alias
+  // serves every use of the same shape; its name derives from the first
+  // declaration that commits it, so output stays deterministic.
+  [[nodiscard]] MappedType
+  mapFunctionPointer(const NativeType &function) const {
+    const MappedType shape = mapCallbackShape(function);
+    if (!shape.supported) {
+      return unsupportedType("inline function pointer: " + shape.reason);
+    }
+    std::string rendered = "(";
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      const MappedType parameter = mapType(function.parameters[index], false);
+      rendered += (index != 0 ? ", " : "") + parameter.spelling;
+    }
+    rendered += ") -> " + mapType(function.result, true).spelling;
+    if (const auto existing = callbackNameByShape_.find(rendered);
+        existing != callbackNameByShape_.end()) {
+      return supportedType(existing->second);
+    }
+    if (!commitSynthesis_) {
+      // Record classification only asks admissibility; the alias itself is
+      // allocated when the emission pass reaches a committed use.
+      return supportedType(rendered);
+    }
+    const std::string base =
+        (synthesisHint_.empty() ? "callback" : synthesisHint_) + "_fn";
+    std::string name = base;
+    for (int ordinal = 2; usedNames_.count(name) != 0; ++ordinal) {
+      name = base + "_" + std::to_string(ordinal);
+    }
+    usedNames_.insert(name);
+    callbackNameByShape_.emplace(rendered, name);
+    BindingItem alias;
+    alias.kind = BindingItemKind::Callback;
+    alias.name = name;
+    alias.origin = synthesisOrigin_;
+    alias.synthesized = true;
+    alias.resultSpelling = mapType(function.result, true).spelling;
+    for (const NativeTypeId parameter : function.parameters) {
+      alias.parameters.push_back(
+          {std::string(), mapType(parameter, false).spelling});
+    }
+    pendingCallbacks_.push_back(std::move(alias));
+    return supportedType(name);
   }
 
   // -- Record classification ------------------------------------------------
@@ -426,6 +580,14 @@ private:
           declaration->kind != NativeDeclarationKind::Record) {
         continue;
       }
+      if (const std::optional<std::string> problem =
+              identifierProblem(declaration->name, true);
+          problem.has_value() && !declaration->name.empty()) {
+        recordBindings_.emplace(id, RecordBinding::Unavailable);
+        recordReasons_.emplace(id, *problem);
+        recordIdByName_.emplace(declaration->name, id);
+        continue;
+      }
       std::string reason;
       if (!declaration->complete) {
         // A genuinely opaque handle; no degradation note.
@@ -442,6 +604,19 @@ private:
             break;
           }
         }
+      }
+      if (!declaration->name.empty()) {
+        if (const auto first = recordIdByName_.find(declaration->name);
+            first != recordIdByName_.end()) {
+          recordBindings_.emplace(id, recordBindings_.at(first->second));
+          if (const auto firstReason = recordReasons_.find(first->second);
+              firstReason != recordReasons_.end()) {
+            recordReasons_.emplace(id, firstReason->second);
+          }
+          duplicateRecords_.insert(id);
+          continue;
+        }
+        recordIdByName_.emplace(declaration->name, id);
       }
       if (declaration->complete && reason.empty()) {
         recordBindings_.emplace(id, RecordBinding::CAbi);
@@ -475,6 +650,7 @@ private:
     }
     item.kind = BindingItemKind::Record;
     for (const NativeRecordField &field : declaration.fields) {
+      synthesisHint_ = declaration.name + "_" + field.name;
       const NativeType *type = model_.findType(field.type);
       if (type->kind == NativeTypeKind::Array) {
         const ArrayShape shape = arrayShape(*type);
@@ -528,6 +704,7 @@ private:
     BindingItem item;
     item.name = declaration.name;
     item.origin = declaration.origin;
+    synthesisHint_ = declaration.name;
     if (const std::optional<std::string> problem =
             identifierProblem(declaration.name, false)) {
       return skipped(declaration, *problem);
@@ -575,18 +752,13 @@ private:
       return skipped(declaration,
                      "variadic C calls are outside the bounded GTI C ABI");
     }
+    synthesisHint_ = declaration.name + "_result";
     const MappedType result = mapType(type->result, true);
     if (!result.supported) {
       return skipped(declaration, "result: " + result.reason);
     }
     item.resultSpelling = result.spelling;
     for (std::size_t index = 0; index < type->parameters.size(); ++index) {
-      const MappedType parameter = mapType(type->parameters[index], false,
-                                           TypeUse::DirectFunctionParameter);
-      if (!parameter.supported) {
-        return skipped(declaration, "parameter " + std::to_string(index + 1) +
-                                        ": " + parameter.reason);
-      }
       std::string name;
       if (index < declaration.parameterNames.size()) {
         name = declaration.parameterNames[index].name;
@@ -594,9 +766,41 @@ private:
       if (name.empty() || identifierProblem(name, false).has_value()) {
         name = "argument" + std::to_string(index);
       }
+      synthesisHint_ = declaration.name + "_" + name;
+      const MappedType parameter = mapType(type->parameters[index], false,
+                                           TypeUse::DirectFunctionParameter);
+      if (!parameter.supported) {
+        return skipped(declaration, "parameter " + std::to_string(index + 1) +
+                                        ": " + parameter.reason);
+      }
       item.parameters.push_back({std::move(name), parameter.spelling});
     }
     item.kind = BindingItemKind::Function;
+    return item;
+  }
+
+  // The GTI type of an imported macro constant follows its value: int32_t
+  // when the value fits, int64_t otherwise. Both are ordinary constexpr
+  // scalars on the GTI side.
+  [[nodiscard]] BindingItem planConstant(const NativeDeclaration &declaration) {
+    BindingItem item;
+    item.name = declaration.name;
+    item.origin = declaration.origin;
+    if (const std::optional<std::string> problem =
+            identifierProblem(declaration.name, false)) {
+      return skipped(declaration, *problem);
+    }
+    if (declaration.constantValue == std::numeric_limits<std::int64_t>::min()) {
+      // The one int64 value whose literal cannot be spelled directly.
+      return skipped(declaration,
+                     "the constant is outside the bounded int64 range");
+    }
+    item.kind = BindingItemKind::Constant;
+    item.constantValue = declaration.constantValue;
+    const bool fits32 =
+        declaration.constantValue >= std::numeric_limits<std::int32_t>::min() &&
+        declaration.constantValue <= std::numeric_limits<std::int32_t>::max();
+    item.aliasSpelling = fits32 ? "int32_t" : "int64_t";
     return item;
   }
 };

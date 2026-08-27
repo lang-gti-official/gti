@@ -1,0 +1,6 @@
+{
+  "title": "Observe reserved capacity",
+  "description": "Reserves a lower bound without changing the string's logical size.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

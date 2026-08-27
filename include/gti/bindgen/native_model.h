@@ -96,6 +96,9 @@ enum class NativeDeclarationKind {
   Enum,
   Typedef,
   Function,
+  // An object-like macro whose body is a bounded integer constant
+  // expression, imported with its evaluated value (the C-06 macro slice).
+  Constant,
 };
 
 struct NativeDeclaration {
@@ -118,6 +121,9 @@ struct NativeDeclaration {
   // Function: a NativeTypeKind::Function node carrying the signature.
   NativeTypeId type = 0;
   std::vector<NativeParameter> parameterNames;
+  // Constant: the evaluated macro value. C macro redefinition keeps the
+  // declaration at its first position with its latest value.
+  std::int64_t constantValue = 0;
 };
 
 // Ids are one-based; zero is the invalid id everywhere.

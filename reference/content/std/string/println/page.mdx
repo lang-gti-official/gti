@@ -1,0 +1,16 @@
+---
+title: std::println (std::string)
+description: Writes a named or freshly constructed owning string followed by a newline.
+kind: function
+since: 0.294.1
+api:
+  - std/string|function|std::println
+examples:
+  - println-owned-text
+---
+
+The borrowed overload reads a named owner. The owning overload consumes a
+fresh result, which supports calls such as `std::println(path.string())`
+without extending the temporary's lifetime.
+
+Native stdout failures are not yet recoverable through this convenience API.

@@ -63,6 +63,7 @@ struct BindgenCliOptions {
   std::filesystem::path output;
   std::optional<std::string> targetTriple;
   std::optional<std::string> clang;
+  std::optional<std::string> sysroot;
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> macroArguments;
   lang::bindgen::BindingOptions bindings;
@@ -148,7 +149,8 @@ void printUsage(std::ostream &stream) {
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
          "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] "
-         "[--target <triple>] [-I <dir>] [-D <macro>] [-U <macro>]\n"
+         "[--target <triple>] [--sysroot <path>] [-I <dir>] [-D <macro>] "
+         "[-U <macro>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -222,6 +224,9 @@ void printUsage(std::ostream &stream) {
          "      --target <triple>\n"
          "                       Select the C ABI target (default: host).\n"
          "      --clang <path>   Select the Clang preprocessor executable.\n"
+         "      --sysroot <path>\n"
+         "                       Select the platform SDK the preprocessor\n"
+         "                       resolves system includes against.\n"
          "  -I <dir>             Add a C header search directory.\n"
          "  -D <macro[=value]>   Define a C preprocessor macro.\n"
          "  -U <macro>           Undefine a C preprocessor macro.\n"
@@ -2250,6 +2255,14 @@ int runBindgen(int argc, char *argv[]) {
       options.clang = argv[++index];
       continue;
     }
+    if (argument == "--sysroot") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --sysroot requires a directory\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.sysroot = argv[++index];
+      continue;
+    }
     if (argument == "-I") {
       if (index + 1 >= argc) {
         std::cerr << "gti: -I requires a directory\n";
@@ -2341,10 +2354,17 @@ int runBindgen(int argc, char *argv[]) {
   lang::driver::TemporaryArtifact preprocessedCleanup(preprocessed, true);
   lang::driver::TemporaryArtifact dependencyCleanup(dependencies, true);
 
-  std::vector<std::string> preprocessorArguments{"-x", "c", "-P",
-                                                 "-fkeep-system-includes"};
+  // `-dD` keeps user-header macro definitions in the preprocessed text so
+  // the reader can import bounded integer constants; system-header macros
+  // stay out with their suppressed content.
+  std::vector<std::string> preprocessorArguments{
+      "-x", "c", "-P", "-fkeep-system-includes", "-dD"};
   if (options.targetTriple) {
     preprocessorArguments.emplace_back("--target=" + *options.targetTriple);
+  }
+  if (options.sysroot) {
+    preprocessorArguments.emplace_back("-isysroot");
+    preprocessorArguments.emplace_back(*options.sysroot);
   }
   preprocessorArguments.insert(preprocessorArguments.end(),
                                options.macroArguments.begin(),

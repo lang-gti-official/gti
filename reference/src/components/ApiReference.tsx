@@ -1,7 +1,10 @@
+import Link from "next/link";
+
 import type {
   CompilerDocumentationDeclaration,
   CompilerDocumentationKind,
 } from "@/content/types";
+import { HighlightedCode } from "@/highlighting/HighlightedCode";
 
 const primaryKinds = new Set<CompilerDocumentationKind>([
   "class",
@@ -54,9 +57,13 @@ function DocumentationSummary({ text }: { text: string }) {
 function DeclarationList({
   groups,
   title,
+  detailRoutes,
+  currentRoute,
 }: {
   groups: DeclarationGroup[];
   title: string;
+  detailRoutes: ReadonlyMap<string, string>;
+  currentRoute: string;
 }) {
   if (groups.length === 0) {
     return null;
@@ -67,20 +74,44 @@ function DeclarationList({
       <div className="member-list">
         {groups.map(({ key, declarations }) => {
           const first = declarations[0];
+          const detailPageRoute = detailRoutes.get(key);
+          const detailRoute =
+            detailPageRoute === undefined || detailPageRoute === currentRoute
+              ? undefined
+              : detailPageRoute;
           const documentation = declarations.find(
             (declaration) => declaration.documentationMarkdown !== null,
           )?.documentationMarkdown;
           return (
             <article className="member-row" key={key}>
-              <div className="member-name">
-                <code>{first.name}</code>
-                <span>{first.kind.replaceAll("-", " ")}</span>
+              <div
+                className={`member-name${detailRoute ? " has-detail" : ""}`}
+              >
+                {detailRoute ? (
+                  <Link
+                    className="member-detail-link"
+                    href={`/${detailRoute}/`}
+                    aria-label={`Read the ${first.qualifiedName} reference`}
+                  >
+                    <code>{first.name}</code>
+                    <span>
+                      {first.kind.replaceAll("-", " ")} · details →
+                    </span>
+                  </Link>
+                ) : (
+                  <>
+                    <code>{first.name}</code>
+                    <span>{first.kind.replaceAll("-", " ")}</span>
+                  </>
+                )}
               </div>
               <div className="member-signatures">
                 {declarations.map((declaration) => (
-                  <pre key={declaration.key}>
-                    <code>{declaration.signature ?? declaration.qualifiedName}</code>
-                  </pre>
+                  <HighlightedCode
+                    code={declaration.signature ?? declaration.qualifiedName}
+                    language="gti"
+                    key={declaration.key}
+                  />
                 ))}
                 {documentation ? (
                   <p>
@@ -98,8 +129,12 @@ function DeclarationList({
 
 export function ApiReference({
   declarations,
+  detailRoutes,
+  currentRoute,
 }: {
   declarations: CompilerDocumentationDeclaration[];
+  detailRoutes: ReadonlyMap<string, string>;
+  currentRoute: string;
 }) {
   if (declarations.length === 0) {
     return null;
@@ -120,20 +155,23 @@ export function ApiReference({
     (group) => !constructors.includes(group) && !members.includes(group),
   );
   const primaryDeclaration = primary?.declarations[0];
-  const traits = primaryDeclaration?.traits;
+  const traits = primaryDeclaration?.signature?.includes("<")
+    ? undefined
+    : primaryDeclaration?.traits;
 
   return (
     <section className="api-reference" aria-labelledby="synopsis-heading">
       <div className="section-heading">
-        <p className="section-kicker">Compiler-projected API</p>
         <h2 id="synopsis-heading">Synopsis</h2>
       </div>
       {primary ? (
         <div className="primary-declaration">
           {primary.declarations.map((declaration) => (
-            <pre key={declaration.key}>
-              <code>{declaration.signature ?? declaration.qualifiedName}</code>
-            </pre>
+            <HighlightedCode
+              code={declaration.signature ?? declaration.qualifiedName}
+              language="gti"
+              key={declaration.key}
+            />
           ))}
           {primaryDeclaration?.documentationMarkdown ? (
             <p>
@@ -170,9 +208,24 @@ export function ApiReference({
           </div>
         </dl>
       ) : null}
-      <DeclarationList groups={constructors} title="Constructors" />
-      <DeclarationList groups={members} title="Member functions" />
-      <DeclarationList groups={related} title="Related declarations" />
+      <DeclarationList
+        groups={constructors}
+        title="Constructors"
+        detailRoutes={detailRoutes}
+        currentRoute={currentRoute}
+      />
+      <DeclarationList
+        groups={members}
+        title="Member functions"
+        detailRoutes={detailRoutes}
+        currentRoute={currentRoute}
+      />
+      <DeclarationList
+        groups={related}
+        title="Related declarations"
+        detailRoutes={detailRoutes}
+        currentRoute={currentRoute}
+      />
     </section>
   );
 }

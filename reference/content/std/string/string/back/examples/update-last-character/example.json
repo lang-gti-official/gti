@@ -1,0 +1,6 @@
+{
+  "title": "Update the final character",
+  "description": "Mutates the character returned by back and then prints the owner.",
+  "mode": "run",
+  "stdout": "stdout.txt"
+}

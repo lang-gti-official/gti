@@ -1,0 +1,35 @@
+---
+title: <std/string>
+description: Move-only owning strings, integer conversion, output overloads, and string hashing.
+kind: library-header
+since: 0.36.0
+api:
+  - std/string|class|std::string
+  - std/string|function|std::print
+  - std/string|function|std::println
+  - std/string|function|std::to_string
+  - std/string|class|std::hash<std::string>
+examples: []
+---
+
+```gti
+#include <std/string>
+```
+
+## Types
+
+| Type | Description |
+| --- | --- |
+| [`std::string`](/std/string/string/) | A move-only owner of a dynamic character sequence. |
+| `std::hash<std::string>` | FNV-1a hashing for a borrowed owning string. |
+
+## Functions
+
+| Function | Description |
+| --- | --- |
+| [`std::print`](/std/string/print/) | Writes a named or fresh owning string without adding a newline. |
+| [`std::println`](/std/string/println/) | Writes a named or fresh owning string followed by a newline. |
+| [`std::to_string`](/std/string/to-string/) | Converts a fixed-width integer to an owning decimal string. |
+
+String literals remain `std::string_view`; construct `std::string` when
+dynamic ownership or mutation is required.

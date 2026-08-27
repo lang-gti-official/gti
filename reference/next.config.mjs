@@ -3,7 +3,7 @@ import createMDX from "@next/mdx";
 const withMDX = createMDX({
   options: {
     // String plugin names keep Turbopack's loader options serializable.
-    remarkPlugins: ["remark-frontmatter"],
+    remarkPlugins: ["remark-frontmatter", "remark-gfm"],
   },
 });
 
