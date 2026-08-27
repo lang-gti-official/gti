@@ -154,19 +154,6 @@ then commits one write. Built-in prefix and postfix increment/decrement form
 and read their target once before performing the checked update; postfix
 retains the prior value as its result and prefix retains the updated value.
 
-For a target reached through a checked nominal subscript or dereference
-(a selected mutable `operator[]` or `operator*`), forming the place evaluates
-the receiver and index constituents in the same target-first order, but the
-selected checked access call itself belongs to the plain assignment's commit:
-it runs after the right operand has completed and the right operand's
-transient element loans have ended, and the exclusive receiver-tied element
-loan it begins spans only the commit. A right operand may therefore read the
-same element or container, exactly as a fixed-array element store permits, and
-the checked access failure of the target (for example `index_out_of_bounds`)
-follows right-operand effects the same way a fixed array's commit-time bounds
-check does. A compound assignment still reads its stabilized prior value
-through the once-formed target before the right operand.
-
 ### 4.2.2 Initialization And Materialization
 
 Initialization reserves a destination without beginning the destination
