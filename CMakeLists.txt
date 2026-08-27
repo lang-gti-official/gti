@@ -1430,6 +1430,14 @@ if(BUILD_TESTING)
     set_tests_properties(subscript_store_read_order_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME nested_reference_return_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/nested_reference_return_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(nested_reference_return_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
       NAME temporary_argument_borrow_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
@@ -1607,6 +1615,7 @@ if(BUILD_TESTING)
         reference_receiver_compound_assign_runtime
         owner_tied_reference_argument_runtime
         mutable_temporary_receiver_runtime
+        nested_reference_return_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
         mir_backend_scalar_failure_callgraph_runtime_2of3

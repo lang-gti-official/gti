@@ -10966,6 +10966,160 @@ int use() {
          "another carrier remains live");
 }
 
+void testNestedMemberReferenceReturnForwarding() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("nested-member-reference-return.gti", R"(
+class Inner {
+  mut int elements[2] = {2, 3};
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+};
+
+class Outer {
+  mut Inner data = Inner();
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.data[index]; }
+};
+
+int main() {
+  mut Outer outer = Outer();
+  outer[uint64_t(1)] = 11;
+  return outer[uint64_t(1)] - 11;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected nested-return diagnostic: " << diagnostic.code
+                << ' ' << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "a member returning another class's borrowed subscript result "
+         "should lower and verify");
+
+  // The outer subscript summarizes the transient call-result chain into a
+  // fresh Return loan; the publishing Borrow must forward the runtime
+  // pointer through a Loan operand naming the call-result loan and retire
+  // that loan at the same boundary — never re-borrow the provenance place.
+  const lang::MirFunctionInstance *forwardingInstance = nullptr;
+  const lang::MirLoan *forwardedLoan = nullptr;
+  const lang::MirLoan *publishedLoan = nullptr;
+  const lang::MirInstruction *forwardingBorrow = nullptr;
+  bool retiredAtBoundary = false;
+  bool publishedAtReturn = false;
+  for (const lang::MirFunctionInstance &function :
+       valid.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const lang::MirInstruction &instruction = block.instructions[index];
+        if (instruction.kind != lang::MirInstructionKind::Borrow ||
+            !instruction.loan || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan) {
+          continue;
+        }
+        const lang::MirLoan *produced =
+            function.body.findLoan(*instruction.loan);
+        const lang::MirLoan *retained =
+            function.body.findLoan(instruction.operands.front().loan);
+        if (produced == nullptr || retained == nullptr ||
+            produced->kind != lang::MirLoanKind::Return ||
+            retained->kind != lang::MirLoanKind::CallResult) {
+          continue;
+        }
+        expect(forwardingInstance == nullptr,
+               "exactly one body should publish a forwarded call-result "
+               "return loan in the nested-subscript fixture");
+        forwardingInstance = &function;
+        forwardedLoan = retained;
+        publishedLoan = produced;
+        forwardingBorrow = &instruction;
+        retiredAtBoundary = index + 1 < block.instructions.size() &&
+                            block.instructions[index + 1].kind ==
+                                lang::MirInstructionKind::EndBorrow &&
+                            block.instructions[index + 1].loan == retained->id;
+      }
+    }
+  }
+  if (forwardingInstance != nullptr && publishedLoan != nullptr) {
+    for (const lang::MirBlock &block : forwardingInstance->body.blocks) {
+      publishedAtReturn =
+          publishedAtReturn ||
+          (block.terminator.kind == lang::MirTerminatorKind::Return &&
+           block.terminator.returnLoan == publishedLoan->id);
+    }
+  }
+  expect(forwardingInstance != nullptr && forwardedLoan != nullptr &&
+             publishedLoan != nullptr && forwardingBorrow != nullptr &&
+             retiredAtBoundary && publishedAtReturn && publishedLoan->escapes &&
+             publishedLoan->parent == 0 &&
+             publishedLoan->source == forwardedLoan->source &&
+             publishedLoan->access == forwardedLoan->access,
+         "the summarized reference return should forward the call-result "
+         "loan's runtime pointer and retire it at the same boundary");
+
+  const auto mutateForward = [&](const auto &mutation) {
+    lang::MirProgram forged = valid.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    lang::MirFunctionInstance *candidate = nullptr;
+    if (forwardingInstance != nullptr) {
+      const auto found =
+          std::find_if(functions.begin(), functions.end(),
+                       [&](const lang::MirFunctionInstance &instance) {
+                         return instance.id == forwardingInstance->id;
+                       });
+      if (found != functions.end()) {
+        candidate = &*found;
+      }
+    }
+    if (candidate != nullptr) {
+      mutation(*candidate);
+    }
+    return std::pair{candidate != nullptr, lang::verifyMirProgram(forged)};
+  };
+
+  const lang::MirLoanId publishedId =
+      publishedLoan == nullptr ? 0 : publishedLoan->id;
+  const auto forgedOperandLoan =
+      mutateForward([publishedId](lang::MirFunctionInstance &fn) {
+        for (lang::MirBlock &block : fn.body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == publishedId &&
+                !instruction.operands.empty()) {
+              instruction.operands.front().loan = publishedId;
+            }
+          }
+        }
+      });
+  expect(forgedOperandLoan.first && !forgedOperandLoan.second.valid() &&
+             hasMirVerificationError(forgedOperandLoan.second,
+                                     "does not match the loan's parent"),
+         "MIR verification should reject a forwarded return transfer whose "
+         "operand does not name the transient call-result loan");
+
+  const auto forgedProvenance =
+      mutateForward([publishedId](lang::MirFunctionInstance &fn) {
+        for (lang::MirLoan &loan : fn.body.loans) {
+          if (loan.id == publishedId) {
+            for (const lang::MirPlace &place : fn.body.places) {
+              if (place.id != loan.source &&
+                  place.root == lang::MirPlaceRootKind::This &&
+                  place.projections.empty()) {
+                loan.source = place.id;
+              }
+            }
+          }
+        }
+      });
+  expect(forgedProvenance.first && !forgedProvenance.second.valid(),
+         "MIR verification should reject a forwarded return transfer whose "
+         "published provenance diverges from the transient chain");
+}
+
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
@@ -33009,6 +33163,7 @@ int main(int argc, char **argv) {
   testStoredCarrierReturnProvenance();
   testForwardIteratorContractsAndBinarySearch();
   testGeneralOwnerDependentReturns();
+  testNestedMemberReferenceReturnForwarding();
   testSwitchAndBreakLoanFlow();
   testSharedReadOnlyLoanAliases();
   testUniqueOwnershipAndAllocation();

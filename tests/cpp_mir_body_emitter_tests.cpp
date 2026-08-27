@@ -9331,6 +9331,102 @@ int main() {
          "compound operation instead of degrading it to assignment");
 }
 
+void testNestedReferenceReturnForwardsCallResultPointer() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-nested-reference-return.gti", R"(
+class inner {
+  mut int elements[2] = {2, 3};
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+};
+
+class outer {
+  mut inner data = inner();
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.data[index]; }
+};
+
+int main() {
+  mut outer o = outer();
+  o[uint64_t(1)] = 11;
+  return o[uint64_t(1)] - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the nested reference-return fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *selected = nullptr;
+  lang::MirLoanId published = 0;
+  lang::MirLoanId forwarded = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Borrow ||
+            !instruction.loan || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan) {
+          continue;
+        }
+        const lang::MirLoan *produced =
+            function.body.findLoan(*instruction.loan);
+        const lang::MirLoan *retained =
+            function.body.findLoan(instruction.operands.front().loan);
+        if (produced != nullptr && retained != nullptr &&
+            produced->kind == lang::MirLoanKind::Return &&
+            retained->kind == lang::MirLoanKind::CallResult) {
+          selected = &function;
+          published = produced->id;
+          forwarded = retained->id;
+        }
+      }
+    }
+  }
+  expect(selected != nullptr && published != 0 && forwarded != 0,
+         "the outer subscript should forward its call-result loan into the "
+         "published return loan");
+  if (selected == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = selected->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the forwarding subscript should support transformed MIR emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "nested-reference-return-test-v0", 1)
+          .text;
+  const std::string publishedLocal =
+      "__gti_mir_loan_" + std::to_string(published);
+  const std::string forwardedLocal =
+      "__gti_mir_loan_" + std::to_string(forwarded);
+  expect(text.find("std::int32_t *" + publishedLocal + "{}") !=
+             std::string::npos,
+         "the forwarded return loan should declare the element-typed pointer "
+         "local, not the provenance class type");
+  expect(text.find(publishedLocal + " = " + forwardedLocal + ";") !=
+             std::string::npos,
+         "the publishing borrow should copy the callee-published element "
+         "pointer");
+  expect(text.find(publishedLocal + " = &") == std::string::npos,
+         "the publishing borrow must not re-borrow the provenance place");
+  expect(text.find("*__gti_mir_out_result = " + publishedLocal + ";") !=
+             std::string::npos,
+         "the forwarded pointer should publish through the out-parameter");
+}
+
 void testNativeCallbackFactoryBody() {
   lang::FrontendResult frontend =
       analyzeWithStandardLibrary("native_callback_factory.gti", R"(
@@ -9746,6 +9842,8 @@ constexpr NamedTest kTests[] = {
      testAdjacentClassCopyAssignmentFusion},
     {"testFailureFormSubscriptCompatibilityBoundary",
      testFailureFormSubscriptCompatibilityBoundary},
+    {"testNestedReferenceReturnForwardsCallResultPointer",
+     testNestedReferenceReturnForwardsCallResultPointer},
     {"testNativeCallbackFactoryBody", testNativeCallbackFactoryBody},
     {"testInvokePublishesScalarEdgeArguments",
      testInvokePublishesScalarEdgeArguments},

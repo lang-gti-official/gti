@@ -270,6 +270,22 @@ result place, a reused or multiply produced return loan, a wrong payload or
 referent type, or a terminator that does not carry the same loan and exact
 runtime value/place.
 
+Version 49 makes a summarized reference return runtime-exact. When a body
+returns the borrowed result of a reference-returning call (a transient
+`CallResult` chain whose tail matches the declared receiver, argument, or
+global return origin), lowering publishes the fresh escaping `Return` loan
+through one `Borrow` whose single `Loan` operand names the immediate
+call-result loan, then retires that chain and any summarized entry loan at
+the same instruction boundary. The `Return` loan renames only provenance for
+the caller; the operand carries the exact runtime address the callee
+published. The verifier admits exactly this forward — matching source place,
+non-widened access, and an immediately following `EndBorrow` of the forwarded
+loan — and continues to reject any other parentless `Borrow` from a `Loan`
+operand. Backends copy the forwarded call-result pointer into the return
+loan's pointer local; re-borrowing the provenance place would re-point the
+published reference at the receiver's storage instead of the returned
+element.
+
 The C++ representation snapshot keeps `copyConstructible` distinct from
 `copyable`. The former permits initialization of a fresh lifetime slot from a
 copy and is sufficient for read-only forward-iterator carriers. The latter

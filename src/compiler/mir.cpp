@@ -6933,6 +6933,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        // A summarized reference return forwards the runtime address held by
+        // its transient call-result chain into the published Return loan (the
+        // loan renames only provenance) and retires that chain at this exact
+        // instruction boundary.
         const bool callResultReturnTransfer = [&] {
           if (produced.kind != MirLoanKind::Return || produced.entry ||
               !produced.escapes || produced.parent != 0 ||
@@ -6948,7 +6952,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->escapes || retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
               retained->source != produced.source ||
-              retained->access != produced.access) {
+              (retained->access != produced.access &&
+               retained->access != AccessMode::Mutable)) {
             return false;
           }
           const auto current =
