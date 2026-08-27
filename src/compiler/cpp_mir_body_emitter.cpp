@@ -14084,6 +14084,238 @@ inlineUnexpectedClassConstruction(const MirBody &body, MirValueId valueId) {
           .returnBlock = returnBlock};
 }
 
+// A class prvalue moved directly into a variant alternative has no MIR
+// storage or drop obligation of its own: its constructor and the enclosing
+// PayloadConstruct form one source full expression, so the constructor
+// spells inline inside the variant braces. The producer must immediately
+// precede the payload construction (allowing only the sibling payload
+// operand producers between them) so class construction never moves across
+// an observable instruction.
+[[nodiscard]] const MirInstruction *
+inlinePayloadClassConstruction(const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const std::vector<MirValueUse> valueUses = body.usesOf(valueId);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      value->info.category != ValueCategory::Value || producer == nullptr ||
+      producer->kind != MirInstructionKind::Construct || !producer->result ||
+      *producer->result != valueId || producer->destination ||
+      producer->receiver ||
+      producer->constructorKind != ConstructorKind::Ordinary ||
+      !producer->constructorTarget || !producer->localFailureSites.empty() ||
+      !producer->definedFailure.empty() || !producer->lifecycle.empty() ||
+      producer->successResultDrop || producer->successResultDestination ||
+      producer->info.type != value->info.type || valueUses.size() != 1) {
+    return nullptr;
+  }
+  const MirValueUse &valueUse = valueUses.front();
+  const MirInstruction *payload =
+      valueUse.kind == MirValueUseKind::InstructionOperand
+          ? findInstruction(body, valueUse.instruction)
+          : nullptr;
+  if (payload == nullptr || payload->kind != MirInstructionKind::Compute ||
+      payload->operation != MirOperation::PayloadConstruct ||
+      !payload->result || payload->destination || payload->receiver ||
+      !payload->localFailureSites.empty() || !payload->definedFailure.empty() ||
+      valueUse.operandIndex >= payload->operands.size() ||
+      payload->operands[valueUse.operandIndex].kind != MirOperandKind::Value ||
+      payload->operands[valueUse.operandIndex].value != valueId ||
+      payload->operands[valueUse.operandIndex].type != value->info.type) {
+    return nullptr;
+  }
+  if (std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    const MirPlace *place = body.findPlace(drop.place);
+                    return drop.value == valueId ||
+                           drop.generatedValue == valueId ||
+                           (place != nullptr &&
+                            place->root == MirPlaceRootKind::Value &&
+                            place->value == valueId);
+                  })) {
+    return nullptr;
+  }
+  const MirBlock *block = body.findBlock(valueUse.block);
+  if (block == nullptr) {
+    return nullptr;
+  }
+  const auto producerPosition =
+      std::find_if(block->instructions.begin(), block->instructions.end(),
+                   [&](const MirInstruction &instruction) {
+                     return instruction.id == producer->id;
+                   });
+  if (producerPosition == block->instructions.end()) {
+    return nullptr;
+  }
+  for (auto current = std::next(producerPosition);
+       current != block->instructions.end(); ++current) {
+    if (current->id == payload->id) {
+      return producer;
+    }
+    // Only sibling payload-operand producers admitted between the fused
+    // constructor and its variant construction.
+    const bool siblingOperandProducer =
+        current->result &&
+        std::any_of(payload->operands.begin(), payload->operands.end(),
+                    [&](const MirOperand &operand) {
+                      return operand.kind == MirOperandKind::Value &&
+                             operand.value == *current->result;
+                    });
+    if (!siblingOperandProducer) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
+// A named class value copied directly into a variant alternative spells its
+// source place inline inside the PayloadConstruct braces: the variant field's
+// copy constructor runs at the construction itself, so the copy-load result
+// never declares a local. The load must immediately precede the payload
+// construction (allowing only sibling payload operand producers between
+// them) so the copy cannot observe a later write to the source binding.
+[[nodiscard]] const MirInstruction *inlinePayloadClassCopy(const MirBody &body,
+                                                           MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const std::vector<MirValueUse> valueUses = body.usesOf(valueId);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      producer == nullptr || producer->kind != MirInstructionKind::Load ||
+      !producer->result || *producer->result != valueId ||
+      producer->destination || producer->receiver ||
+      !producer->localFailureSites.empty() ||
+      !producer->definedFailure.empty() || !producer->lifecycle.empty() ||
+      producer->operands.size() != 1 ||
+      producer->operands.front().kind != MirOperandKind::Copy ||
+      producer->operands.front().place == 0 || valueUses.size() != 1) {
+    return nullptr;
+  }
+  const MirPlace *source = body.findPlace(producer->operands.front().place);
+  if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+      !source->projections.empty() || source->type != value->info.type) {
+    return nullptr;
+  }
+  const MirValueUse &use = valueUses.front();
+  const MirInstruction *payload =
+      use.kind == MirValueUseKind::InstructionOperand
+          ? findInstruction(body, use.instruction)
+          : nullptr;
+  if (payload == nullptr || payload->kind != MirInstructionKind::Compute ||
+      payload->operation != MirOperation::PayloadConstruct ||
+      use.operandIndex >= payload->operands.size() ||
+      payload->operands[use.operandIndex].kind != MirOperandKind::Value ||
+      payload->operands[use.operandIndex].value != valueId) {
+    return nullptr;
+  }
+  if (std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    const MirPlace *place = body.findPlace(drop.place);
+                    return drop.value == valueId ||
+                           drop.generatedValue == valueId ||
+                           (place != nullptr &&
+                            place->root == MirPlaceRootKind::Value &&
+                            place->value == valueId);
+                  })) {
+    return nullptr;
+  }
+  const MirBlock *block = body.findBlock(use.block);
+  if (block == nullptr) {
+    return nullptr;
+  }
+  const auto producerPosition =
+      std::find_if(block->instructions.begin(), block->instructions.end(),
+                   [&](const MirInstruction &instruction) {
+                     return instruction.id == producer->id;
+                   });
+  if (producerPosition == block->instructions.end()) {
+    return nullptr;
+  }
+  // The effect-free copy may sink into the variant braces only while no
+  // intermediate instruction can write the copied binding: the braces still
+  // evaluate the copy before every sibling field expression, so an
+  // unwritten source produces the same copied value.
+  for (auto current = std::next(producerPosition);
+       current != block->instructions.end(); ++current) {
+    if (current->id == payload->id) {
+      return producer;
+    }
+    bool writesSource = false;
+    if (current->destination) {
+      const MirPlace *destination = body.findPlace(*current->destination);
+      writesSource = destination != nullptr &&
+                     destination->root == MirPlaceRootKind::Binding &&
+                     destination->binding == source->binding;
+    }
+    if (!writesSource && current->receiver && current->receiver->place != 0) {
+      const MirPlace *receiver = body.findPlace(current->receiver->place);
+      writesSource = receiver != nullptr &&
+                     receiver->root == MirPlaceRootKind::Binding &&
+                     receiver->binding == source->binding;
+    }
+    for (const MirOperand &operand : current->operands) {
+      if (writesSource) {
+        break;
+      }
+      if (operand.place == 0 || (operand.kind != MirOperandKind::Move &&
+                                 operand.kind != MirOperandKind::BorrowWrite)) {
+        continue;
+      }
+      const MirPlace *place = body.findPlace(operand.place);
+      writesSource = place != nullptr &&
+                     place->root == MirPlaceRootKind::Binding &&
+                     place->binding == source->binding;
+    }
+    if (writesSource) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
+// A class payload copied out of a matched variant alternative spells inline
+// at its consuming binding Initialize: the extract reads the subject's
+// active alternative field and the binding's copy constructor runs at the
+// declaration itself, so the extract result never declares a local.
+[[nodiscard]] const MirInstruction *
+inlinePayloadClassExtract(const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const std::vector<MirValueUse> valueUses = body.usesOf(valueId);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      producer == nullptr || producer->kind != MirInstructionKind::Compute ||
+      producer->operation != MirOperation::PayloadExtract ||
+      !producer->result || *producer->result != valueId ||
+      producer->destination || producer->receiver ||
+      !producer->localFailureSites.empty() ||
+      !producer->definedFailure.empty() || !producer->payloadIndex ||
+      producer->operands.size() != 1 ||
+      producer->operands.front().kind != MirOperandKind::Value ||
+      valueUses.size() != 1) {
+    return nullptr;
+  }
+  const MirValueUse &use = valueUses.front();
+  const MirInstruction *initialize =
+      use.kind == MirValueUseKind::InstructionOperand
+          ? findInstruction(body, use.instruction)
+          : nullptr;
+  const MirPlace *destination = initialize != nullptr && initialize->destination
+                                    ? body.findPlace(*initialize->destination)
+                                    : nullptr;
+  if (initialize == nullptr ||
+      initialize->kind != MirInstructionKind::Initialize ||
+      initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value ||
+      initialize->operands.front().value != valueId || destination == nullptr ||
+      destination->root != MirPlaceRootKind::Binding ||
+      !destination->projections.empty() ||
+      destination->type != value->info.type) {
+    return nullptr;
+  }
+  return producer;
+}
+
 // A call-result loan pairs to its producing call through the shared HIR
 // value; ambiguity declines exactly like the Borrow pairing below.
 [[nodiscard]] const MirLoan *
@@ -17306,6 +17538,99 @@ private:
         "verified MIR scalar-CFG operand is not a proven value");
   }
 
+  // The active-alternative field access shared by the extract statement and
+  // the inline binding-initialization spelling.
+  void emitPayloadExtractExpression(const MirInstruction &extract) {
+    const CppMirEnumRepresentation *enumRow = nullptr;
+    if (extract.enumOwner) {
+      for (const CppMirEnumRepresentation &row : representations.enums()) {
+        if (row.owner == *extract.enumOwner) {
+          enumRow = &row;
+        }
+      }
+    }
+    const CppMirPayloadVariantRepresentation *variant = nullptr;
+    if (enumRow != nullptr && extract.enumVariant) {
+      for (const CppMirPayloadVariantRepresentation &candidate :
+           enumRow->payloadVariants) {
+        if (candidate.index == *extract.enumVariant) {
+          variant = &candidate;
+        }
+      }
+    }
+    if (variant == nullptr || !extract.payloadIndex) {
+      throw std::logic_error(
+          "verified MIR payload extraction lost its variant row");
+    }
+    output << "std::get<" << variant->index << ">(";
+    emitOperand(extract.operands.front());
+    output << ".__gti_value).__gti_field_" << *extract.payloadIndex;
+  }
+
+  // A payload-construct field operand is either a fused inline class
+  // construction, a move chain from a named place, or an ordinary
+  // scalar/copy operand. Class values entering the variant are consumed.
+  void emitPayloadConstructOperand(const ScalarBodyFacts &facts,
+                                   const MirInstruction &instruction,
+                                   const MirOperand &operand) {
+    if (operand.kind == MirOperandKind::Value) {
+      if (const MirInstruction *producer =
+              inlinePayloadClassConstruction(facts.body, operand.value)) {
+        output << typeSpelling(producer->info.type) << '(';
+        for (std::size_t index = 0; index < producer->operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          const MirOperand &argument = producer->operands[index];
+          if (const MirPlace *chainSource =
+                  argument.kind == MirOperandKind::Value
+                      ? movedPlaceChainSource(facts.body, argument.value,
+                                              *producer)
+                      : nullptr) {
+            output << "std::move(";
+            emitStoragePlaceValue(facts, *chainSource);
+            output << ')';
+            continue;
+          }
+          const bool consumed =
+              argument.type.kind == SemanticType::Class ||
+              argument.type.kind == SemanticType::UniqueOwner ||
+              argument.type.kind == SemanticType::Storage ||
+              argument.type.kind == SemanticType::PrefixStorage;
+          if (consumed) {
+            output << "std::move(";
+          }
+          emitOperand(argument);
+          if (consumed) {
+            output << ')';
+          }
+        }
+        output << ')';
+        return;
+      }
+      if (const MirPlace *chainSource =
+              movedPlaceChainSource(facts.body, operand.value, instruction)) {
+        output << "std::move(";
+        emitStoragePlaceValue(facts, *chainSource);
+        output << ')';
+        return;
+      }
+      if (const MirInstruction *copy =
+              inlinePayloadClassCopy(facts.body, operand.value)) {
+        const MirPlace *source =
+            facts.body.findPlace(copy->operands.front().place);
+        if (source == nullptr) {
+          throw std::logic_error(
+              "verified MIR payload copy lost its source place");
+        }
+        emitStoragePlaceValue(facts, *source);
+        return;
+      }
+    }
+    emitOperand(operand);
+  }
+
   void emitUnexpectedOperand(const ScalarBodyFacts &facts,
                              const MirOperand &operand) {
     const InlineUnexpectedClassConstruction inlineConstruction =
@@ -17741,15 +18066,14 @@ private:
           if (index != 0) {
             output << ", ";
           }
-          emitOperand(instruction.operands[index]);
+          emitPayloadConstructOperand(facts, instruction,
+                                      instruction.operands[index]);
         }
         output << "}};\n";
         return;
       }
-      output << "std::get<" << variant->index << ">(";
-      emitOperand(instruction.operands.front());
-      output << ".__gti_value).__gti_field_" << *instruction.payloadIndex
-             << ";\n";
+      emitPayloadExtractExpression(instruction);
+      output << ";\n";
       return;
     }
     if (instruction.operation == MirOperation::Convert) {
@@ -18521,6 +18845,14 @@ private:
              << instruction.lifecycle.front().source << '\n';
       return;
     }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result &&
+        inlinePayloadClassConstruction(facts.body, *instruction.result) ==
+            &instruction) {
+      output << "// payload construction " << *instruction.result
+             << " spells inside the variant braces\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Construct) {
       const MirPlaceId destination = constructDestination(facts, instruction);
       const MirPlace *slot =
@@ -18915,6 +19247,23 @@ private:
     if (instruction.kind == MirInstructionKind::Initialize &&
         instruction.destination) {
       const MirPlace *slot = facts.body.findPlace(*instruction.destination);
+      if (slot != nullptr && instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Value) {
+        if (const MirInstruction *extract = inlinePayloadClassExtract(
+                facts.body, instruction.operands.front().value)) {
+          if (slotPlace(facts.body, *slot)) {
+            output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+                   << ".construct(";
+            emitPayloadExtractExpression(*extract);
+            output << ");\n";
+          } else {
+            output << destinationSpelling(facts, slot->id) << " = ";
+            emitPayloadExtractExpression(*extract);
+            output << ";\n";
+          }
+          return;
+        }
+      }
       if (slot != nullptr && instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
         const ExpectedClassCopyExtraction copy = expectedClassCopyExtraction(
@@ -19685,6 +20034,24 @@ private:
         return;
       }
     }
+    if (instruction.kind == MirInstructionKind::Compute &&
+        instruction.operation == MirOperation::PayloadExtract &&
+        instruction.result &&
+        inlinePayloadClassExtract(facts.body, *instruction.result) ==
+            &instruction) {
+      writeIndent();
+      output << "// payload extract " << *instruction.result
+             << " spells at its binding initialization\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        inlinePayloadClassCopy(facts.body, *instruction.result) ==
+            &instruction) {
+      writeIndent();
+      output << "// class copy load " << *instruction.result
+             << " publishes inside its consuming variant construction\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Load && instruction.result &&
         instruction.operands.size() == 1) {
       if (const MirPlace *source =
@@ -19894,6 +20261,20 @@ private:
                << " spells at its Return\n";
       }
       return;
+    }
+    if (instruction.kind == MirInstructionKind::Move && instruction.result) {
+      const MovedChainTerminal terminal =
+          movedChainTerminal(facts.body, *instruction.result);
+      if (terminal.consumer != nullptr &&
+          terminal.consumer->kind == MirInstructionKind::Compute &&
+          terminal.consumer->operation == MirOperation::PayloadConstruct &&
+          movedPlaceChainSource(facts.body, terminal.top, *terminal.consumer) !=
+              nullptr) {
+        writeIndent();
+        output << "// move " << *instruction.result
+               << " publishes inside its consuming variant construction\n";
+        return;
+      }
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
         instruction.operands.size() == 1) {
@@ -20417,6 +20798,15 @@ private:
       writeIndent();
       output << "// construct " << *instruction.result
              << " publishes inside its consuming unexpected return\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result &&
+        inlinePayloadClassConstruction(facts.body, *instruction.result) ==
+            &instruction) {
+      writeIndent();
+      output << "// construct " << *instruction.result
+             << " publishes inside its consuming variant construction\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Construct &&
@@ -26789,6 +27179,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    movedPlaceChainSource(body, terminal.top,
                                          *terminal.consumer) != nullptr;
           }() ||
+          // A class payload entering a variant alternative spells inline
+          // inside the PayloadConstruct braces exactly like a constructor
+          // argument: either a fused prvalue construction or a moved chain
+          // from a named place. Neither declares a local.
+          inlinePayloadClassConstruction(body, value.id) != nullptr ||
+          // A class payload copied out of a matched alternative spells
+          // inline at its consuming binding Initialize.
+          inlinePayloadClassExtract(body, value.id) != nullptr ||
+          // A named class value copied into a variant alternative spells
+          // its source place inline inside the PayloadConstruct braces.
+          inlinePayloadClassCopy(body, value.id) != nullptr ||
+          [&]() {
+            const MovedChainTerminal terminal =
+                movedChainTerminal(body, value.id);
+            return terminal.consumer != nullptr &&
+                   terminal.consumer->kind == MirInstructionKind::Compute &&
+                   terminal.consumer->operation ==
+                       MirOperation::PayloadConstruct &&
+                   movedPlaceChainSource(body, terminal.top,
+                                         *terminal.consumer) != nullptr;
+          }() ||
           [&]() {
             const MovedChainTerminal terminal =
                 movedChainTerminal(body, value.id);
@@ -27256,6 +27667,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!slotConsumer) {
             continue;
           }
+        }
+        if (instruction.result &&
+            inlinePayloadClassConstruction(body, *instruction.result) ==
+                &instruction) {
+          // The fused payload construction spells inside the variant braces
+          // and never emits as its own statement.
+          continue;
         }
         const MirPlaceId destination = constructSlot(instruction);
         const StagedClassResult staged =

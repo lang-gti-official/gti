@@ -24827,6 +24827,14 @@ private:
     case SemanticType::Enum:
       return type.enumId != owner && type.enumId != 0 &&
              type.enumId <= enums.size() && !enums[type.enumId - 1].payload;
+    case SemanticType::Class:
+      // The cleanup-free class-payload family: an ordinary concrete class
+      // value may live inside an alternative. Active-cleanup and
+      // borrowed-state payloads are rejected at construction, where class
+      // traits are complete; the enum's own traits fold the payload's
+      // copy/move/ownership facts, so a move-only payload makes the enum
+      // value move-only.
+      return type.classId != 0;
     default:
       return false;
     }
@@ -24890,6 +24898,9 @@ private:
                        "' is outside the passive payload family.",
                    "GTI-S2067");
           }
+          // Class payloads with active cleanup or borrowed state are
+          // rejected at construction, where class traits are complete;
+          // enum payload resolution runs before member metadata exists.
           payloadTypes.push_back(type);
         }
         if (found != info.enumerators.end()) {
@@ -32958,6 +32969,27 @@ private:
                    "' requires exact type '" +
                    typeSpelling(enumerator.payloadTypes[index]) + "'.",
                "GTI-S2067");
+      }
+      // The first class-payload family stores classes without active
+      // cleanup or borrowed state; variant-aware drop transport for owning
+      // payloads is a separately proven follow-on slice.
+      if (actual.kind == SemanticType::Class &&
+          (requiresActiveCleanupFor(actual) ||
+           typeTraits(actual).containsBorrowedState)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2067", DiagnosticPhase::Semantics,
+            expressionToken(call.arguments()[index]),
+            "Payload type '" + typeSpelling(actual) +
+                (requiresActiveCleanupFor(actual)
+                     ? "' requires active cleanup; variant-aware drop state "
+                       "is not implemented yet."
+                     : "' carries borrowed state and cannot live inside a "
+                       "variant alternative."));
+        diagnostic.hints.emplace_back(
+            "The first class-payload family stores classes without "
+            "destructor or owning-storage cleanup and without stored "
+            "references.");
+        diagnostics.emplace_back(std::move(diagnostic));
       }
     }
     for (std::size_t index = common; index < call.arguments().size(); ++index) {

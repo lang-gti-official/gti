@@ -2530,15 +2530,25 @@ name recognition.
 - **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
-  formatter, Tree-sitter, and LSP tooling.
+  formatter, Tree-sitter, and LSP tooling. The cleanup-free class-payload
+  family is also implemented: ordinary class values without active cleanup or
+  borrowed state live inside alternatives, constructed from prvalues, named
+  copies, or explicit moves (each an exact fused emission vocabulary), with
+  copied class bindings armed and dropped like ordinary locals, payload-enum
+  struct definitions scheduled after every class definition, and enum
+  copy/move/ownership traits folded from payload components. Active-cleanup
+  or borrowed-state payload constructions are rejected at the construction
+  site with `GTI-S2067`.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add ownership-aware move/borrow matching, partial
-  initialization and drop, generic payloads, and deterministic layout in
-  separately proven families.
+- **Remaining scope:** Add variant-aware drop transport for owning
+  (active-cleanup) payloads, ownership-aware move/borrow matching, partial
+  initialization and drop, generic payloads, deterministic layout, and
+  interleaved enum/class definition scheduling (which would also lift the
+  construction-site-only rejection) in separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
@@ -3373,7 +3383,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **in progress:** passive exact construction, exhaustive copied matching, and the cleanup-free class-payload family complete; owning-payload drop transport, move/borrow patterns, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |

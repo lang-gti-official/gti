@@ -4567,7 +4567,29 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
     }
 
+    // A variant alternative embeds its class payloads by value, so an enum
+    // with class payload fields must follow every class definition. Field
+    // embedding of such enums inside classes is semantically rejected until
+    // layout scheduling interleaves enums with the class dependency walk.
+    std::vector<const LoweredDeclaration *> classPayloadEnumerations;
     for (const LoweredDeclaration *enumeration : enumerations) {
+      const auto *declaration =
+          std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
+      const bool classPayload =
+          declaration != nullptr && declaration->payload &&
+          std::any_of(
+              declaration->enumerators.begin(), declaration->enumerators.end(),
+              [](const LoweredEnumerator &enumerator) {
+                return std::any_of(enumerator.payloadTypes.begin(),
+                                   enumerator.payloadTypes.end(),
+                                   [](const SemanticType &type) {
+                                     return type.kind == SemanticType::Class;
+                                   });
+              });
+      if (classPayload) {
+        classPayloadEnumerations.push_back(enumeration);
+        continue;
+      }
       emitLoweredScheduledTypeDefinition(*enumeration);
     }
 
@@ -4647,6 +4669,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
       emitClass(emitClass, index);
+    }
+
+    for (const LoweredDeclaration *enumeration : classPayloadEnumerations) {
+      emitLoweredScheduledTypeDefinition(*enumeration);
     }
   }
 
