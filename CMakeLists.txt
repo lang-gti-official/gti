@@ -1558,6 +1558,14 @@ if(BUILD_TESTING)
     )
     set_tests_properties(field_subscript_store_runtime
                          PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME disjoint_field_projection_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/disjoint_field_projection_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(disjoint_field_projection_runtime
+                         PROPERTIES TIMEOUT 300)
     # Sharded by (optimization, standard) configuration; three shards of two
     # configurations each, union = the full six-configuration matrix.
     foreach(shard RANGE 1 3)
@@ -1737,6 +1745,7 @@ if(BUILD_TESTING)
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
         temporary_argument_borrow_runtime
+        disjoint_field_projection_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
         mir_backend_scalar_failure_callgraph_runtime_2of3
         mir_backend_scalar_failure_callgraph_runtime_3of3

@@ -3193,11 +3193,21 @@ private:
       composed.access = place->access;
       composed.traits = place->traits;
       composed.sourceValue = place->sourceValue;
-      composed.projections.insert(
-          composed.projections.end(),
-          place->projections.begin() +
-              static_cast<std::ptrdiff_t>(projectionOffset),
-          place->projections.end());
+      const auto remaining = place->projections.begin() +
+                             static_cast<std::ptrdiff_t>(projectionOffset);
+      if (base->type.kind == SemanticType::Reference &&
+          remaining->kind != MirProjectionKind::Dereference) {
+        // The loan is anchored at a reference carrier place (for example a
+        // reference parameter's entry loan), not at a body-local referent
+        // place, so re-rooting does not absorb the indirection. Spell the
+        // dereference explicitly: composing a field or index projection
+        // directly onto the reference-typed carrier would produce a place no
+        // later stage can key to one exact concrete class instance.
+        composed.projections.push_back(
+            {.kind = MirProjectionKind::Dereference});
+      }
+      composed.projections.insert(composed.projections.end(), remaining,
+                                  place->projections.end());
       return appendPlace(std::move(composed));
     };
     return resolve(resolve, placeId, 0);

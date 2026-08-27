@@ -7826,6 +7826,125 @@ int main() {
          "constant element");
 }
 
+void testDisjointFieldReceiverBorrowsThroughReferenceParameters() {
+  // Receiver borrows of disjoint fields reached through a mutable reference
+  // parameter: semantics accepts them, and the lowered receiver-origin loan
+  // places must spell the reference dereference explicitly so the backend
+  // can key each field projection to its exact concrete class. Dropping the
+  // dereference during borrow-source canonicalization previously composed a
+  // field projection directly onto the reference-typed carrier, which the
+  // C++ emitter declined as GTI-B0001.
+  const lang::FrontendResult disjoint =
+      lang::Frontend().analyze("disjoint-field-reference-receivers.gti", R"(
+class Box {
+  mut int value;
+
+public:
+  Box(int initial) : value(initial) {}
+  mut int& write() mut { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Inner {
+public:
+  mut Box first = Box(3);
+  mut Box second = Box(4);
+};
+
+class Outer {
+public:
+  mut Inner left = Inner();
+  mut Inner right = Inner();
+};
+
+int sum(int& left, int& right) { return left + right; }
+
+int disjoint_writes(mut Boxes& parent) {
+  return sum(parent.left.write(), parent.right.write());
+}
+
+int nested_writes(mut Outer& parent) {
+  return sum(parent.left.first.write(), parent.right.second.write());
+}
+
+int main() {
+  mut Boxes pair = Boxes();
+  mut Outer outer = Outer();
+  return disjoint_writes(pair) + nested_writes(outer) - 10;
+}
+)");
+  expect(disjoint.canGenerateCode() &&
+             lang::verifyMirProgram(disjoint.mir).valid(),
+         "mutable receiver borrows of disjoint fields through a reference "
+         "parameter should stay accepted through MIR verification");
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(disjoint.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         disjoint.hir.functionInstances()) {
+      if (candidate.source == function) {
+        const lang::MirFunctionInstance *instance =
+            disjoint.mir.findFunctionInstance(candidate.id);
+        return instance == nullptr ? nullptr : &instance->body;
+      }
+    }
+    return nullptr;
+  };
+  for (const std::string name : {"disjoint_writes", "nested_writes"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    std::vector<const lang::MirPlace *> sources;
+    if (body != nullptr) {
+      for (const lang::MirLoan &loan : body->loans) {
+        if (loan.kind != lang::MirLoanKind::CallResult) {
+          continue;
+        }
+        sources.push_back(body->findPlace(loan.source));
+      }
+    }
+    const bool exactSpelling =
+        sources.size() == 2 &&
+        std::all_of(
+            sources.begin(), sources.end(),
+            [](const lang::MirPlace *place) {
+              return place != nullptr && place->projections.size() >= 2 &&
+                     place->projections.front().kind ==
+                         lang::MirProjectionKind::Dereference &&
+                     std::all_of(place->projections.begin() + 1,
+                                 place->projections.end(),
+                                 [](const lang::MirPlaceProjection &field) {
+                                   return field.kind ==
+                                              lang::MirProjectionKind::Field &&
+                                          field.field != 0;
+                                 });
+            }) &&
+        sources.front() != nullptr && sources.back() != nullptr &&
+        sources.front()->projections.back().field !=
+            sources.back()->projections.back().field;
+    expect(body != nullptr && exactSpelling,
+           "receiver-origin loan places in " + name +
+               " should spell the reference dereference and their exact "
+               "disjoint field projections");
+  }
+
+  if (disjoint.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(disjoint.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        gti_test::emitCpp(disjoint, disjoint.mir, disjoint.mir, optimizations);
+    expect(!artifact.contents.empty(),
+           "the C++ backend should emit disjoint field receiver borrows "
+           "reached through reference parameters");
+  }
+}
+
 void testNonNullReferences() {
   const std::string source = nonNullReferenceSource();
 
@@ -34593,6 +34712,7 @@ int main(int argc, char **argv) {
   testGlobalReferencePlaces();
   testGlobalBorrowReturns();
   testExclusiveReborrowLoanGraph();
+  testDisjointFieldReceiverBorrowsThroughReferenceParameters();
   testPrefixStorageCapability();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
