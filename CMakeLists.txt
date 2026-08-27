@@ -374,6 +374,8 @@ add_library(
   "src/compiler/cpp_mir_control_flow.cpp"
   "src/compiler/cpp_representation.cpp"
   "src/compiler/cpp_mir_body_emitter.cpp"
+  "src/compiler/cpp_mir_body_emission_plan.cpp"
+  "src/compiler/cpp_mir_body_text_writer.cpp"
   "src/compiler/cpp_mir_program_plan.cpp"
   "src/compiler/cpp_mir_representation_snapshot.cpp"
 )

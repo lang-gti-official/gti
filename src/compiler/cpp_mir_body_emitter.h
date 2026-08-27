@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cpp_mir_body_emission_plan.h"
 #include "gti/mir.h"
 
 #include <cstddef>
@@ -301,114 +302,6 @@ classifyCppMirProjectionKind(MirProjectionKind kind);
 classifyCppMirTerminatorKind(MirTerminatorKind kind);
 [[nodiscard]] CppMirEmissionEncoding classifyCppMirBodyKind(MirBodyKind kind);
 
-enum class CppMirBodyEmissionReadiness {
-  Ready,
-  MissingRepresentation,
-  MissingMirAuthority,
-  Incoherent,
-};
-
-enum class CppMirBodyEmissionIssueKind {
-  InvalidMirProgram,
-  InvalidBodyAddress,
-  InvalidRepresentationEnum,
-  InvalidRepresentationRow,
-  DuplicateTypeRepresentation,
-  DuplicateBodyRepresentation,
-  DuplicateSymbolRepresentation,
-  DuplicateEnumRepresentation,
-  DuplicateContainedConstructorRepresentation,
-  DuplicateCapabilityRepresentation,
-  InvalidBodyKind,
-  InvalidInstructionKind,
-  InvalidOperation,
-  InvalidOperandKind,
-  InvalidPlaceRootKind,
-  InvalidProjectionKind,
-  InvalidTerminatorKind,
-  MissingTypeRepresentation,
-  MissingBodyRepresentation,
-  MissingSymbolRepresentation,
-  MissingEnumRepresentation,
-  MissingCapabilityRepresentation,
-  MissingOrderedCompoundMir,
-  MissingCheckedFailureControlFlow,
-  MissingAggregateRollbackMir,
-  MissingCallInputScheduleMir,
-  MissingConstructionScheduleMir,
-  MissingPartialConstructionRollbackMir,
-  MissingFailureCleanupMir,
-  MissingProgramInitializationMir,
-  MissingHostedStartupMir,
-  UnsupportedTextVocabulary,
-  Count,
-};
-
-struct CppMirBodyEmissionIssue {
-  CppMirBodyEmissionIssueKind kind =
-      CppMirBodyEmissionIssueKind::InvalidMirProgram;
-  MirBodyAddress body;
-  MirBlockId block = 0;
-  MirInstructionId instruction = 0;
-  std::string detail;
-};
-
-struct CppMirBodyEmissionAnalysis {
-  MirBodyAddress body;
-  CppMirBodyEmissionReadiness readiness =
-      CppMirBodyEmissionReadiness::Incoherent;
-  std::vector<CppMirBodyEmissionIssue> issues;
-
-  [[nodiscard]] bool ready() const {
-    return readiness == CppMirBodyEmissionReadiness::Ready;
-  }
-};
-
-struct CppMirProgramEmissionAnalysis {
-  CppMirBodyEmissionReadiness readiness =
-      CppMirBodyEmissionReadiness::Incoherent;
-  std::vector<CppMirBodyEmissionAnalysis> bodies;
-  // Program/map validation issues only. Body-local representation and text
-  // issues remain attached to their exact entry in `bodies`, so one declined
-  // specialized surface cannot suppress admission of every unrelated body.
-  std::vector<CppMirBodyEmissionIssue> issues;
-
-  [[nodiscard]] bool ready() const {
-    return readiness == CppMirBodyEmissionReadiness::Ready;
-  }
-};
-
-// One general text emission attempt. `text` is complete exactly when the
-// fail-closed analysis is Ready and every construct in the body is inside the
-// text step's ported vocabulary; there is never partial text.
-struct CppMirBodyEmissionText {
-  CppMirBodyEmissionAnalysis analysis;
-  std::string text;
-
-  [[nodiscard]] bool emitted() const {
-    return analysis.ready() && !text.empty();
-  }
-};
-
-// One field-initializer stage of a passive initializer body: the field's
-// storage symbol and the spelled literal value, or an empty spelling for the
-// bare default (no in-class initializer text).
-struct CppMirFieldInitializerSpelling {
-  SymbolId field = 0;
-  std::string spelling;
-};
-
-// The extracted schedule of a FieldInitializers, StaticFieldInitializers, or
-// Module body: a straight-line schedule whose values can be spelled from MIR
-// literals, exact copied representation rows, and admitted construction
-// stages before their per-field Initialize operations. `supported` is false
-// for every shape the schedule cannot reproduce exactly.
-struct CppMirInitializerScheduleText {
-  CppMirBodyEmissionAnalysis analysis;
-  bool supported = false;
-  std::vector<CppMirFieldInitializerSpelling> fields;
-};
-
 // Fail-closed generic body-emission front gate and general per-instance text
 // step (ADR 016). This class deliberately has no Program, AST, HirBody,
 // SemanticModel, or OptimizationResult input: analysis checks MIR against the
@@ -599,6 +492,8 @@ public:
 
   [[nodiscard]] CppMirBodyEmissionAnalysis
   analyze(MirBodyAddress address) const;
+  [[nodiscard]] CppMirBodyEmissionPlan buildPlan(MirBodyAddress address) const;
+  [[nodiscard]] CppMirProgramEmissionPlan buildProgramPlan() const;
   // Verifies both MIR/representation coherence and complete text coverage for
   // every core body. A Ready result is the backend preflight guarantee that no
   // executable body needs an AST/HIR emission path.
@@ -614,6 +509,9 @@ public:
   // fail-closed behavior.
   [[nodiscard]] CppMirBodyEmissionText
   emitBodyText(MirBodyAddress address, std::string_view familyLabel,
+               std::size_t indentation) const;
+  [[nodiscard]] CppMirBodyEmissionText
+  emitBodyText(const CppMirBodyEmissionPlan &plan, std::string_view familyLabel,
                std::size_t indentation) const;
 
   // Non-throwing vocabulary probe for the general bb-loop text form: true
@@ -656,6 +554,10 @@ public:
   [[nodiscard]] CppMirBodyEmissionText
   emitFailureBodyText(MirBodyAddress address, std::string_view familyLabel,
                       std::size_t indentation) const;
+  [[nodiscard]] CppMirBodyEmissionText
+  emitFailureBodyText(const CppMirBodyEmissionPlan &plan,
+                      std::string_view familyLabel,
+                      std::size_t indentation) const;
 
   // Extracts the passive initializer schedule of a FieldInitializers,
   // StaticFieldInitializers, or Module body so the emission site can spell
@@ -672,6 +574,8 @@ public:
       HirConstructorInstanceId constructor) const;
 
 private:
+  [[nodiscard]] CppMirBodyEmissionPlan
+  buildPlanFromAnalysis(CppMirBodyEmissionAnalysis analysis) const;
   [[nodiscard]] bool supportsBodyTextImpl(MirBodyAddress address,
                                           bool failureForm) const;
 

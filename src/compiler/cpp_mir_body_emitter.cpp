@@ -1,4 +1,5 @@
 #include "cpp_mir_body_emitter.h"
+#include "cpp_mir_body_text_writer.h"
 #include "cpp_mir_control_flow.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
@@ -30118,119 +30119,30 @@ CppMirBodyEmissionText
 CppMirBodyEmitter::emitBodyText(MirBodyAddress address,
                                 std::string_view familyLabel,
                                 std::size_t indentation) const {
-  CppMirBodyEmissionText result;
-  result.analysis = analyze(address);
-  if (!result.analysis.ready()) {
-    return result;
-  }
-  switch (address.kind) {
-  case MirBodyKind::Module:
-    if (address.owner != 0) {
-      throw std::logic_error(
-          "general MIR module text emission received a nonzero owner");
-    }
-    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                      .emitModule(familyLabel);
-    return result;
-  case MirBodyKind::Function: {
-    const MirFunctionInstance *function =
-        program_.findFunctionInstance(address.owner);
-    if (function == nullptr) {
-      throw std::logic_error(
-          "general MIR body text emission lost its exact function instance");
-    }
-    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                      .emit(*function, familyLabel);
-    return result;
-  }
-  case MirBodyKind::Destructor: {
-    const MirDestructorInstance *destructor =
-        program_.findDestructorInstance(address.owner);
-    if (destructor == nullptr) {
-      throw std::logic_error(
-          "general MIR body text emission lost its exact destructor instance");
-    }
-    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                      .emit(*destructor, familyLabel);
-    return result;
-  }
-  case MirBodyKind::Constructor: {
-    const MirConstructorInstance *constructor =
-        program_.findConstructorInstance(address.owner);
-    if (constructor == nullptr) {
-      throw std::logic_error(
-          "general MIR body text emission lost its exact constructor "
-          "instance");
-    }
-    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                      .emit(*constructor, familyLabel);
-    return result;
-  }
-  default:
-    throw std::logic_error(
-        "general MIR body text emission supports module, function, "
-        "constructor, and destructor bodies only");
-  }
+  return emitBodyText(buildPlan(address), familyLabel, indentation);
+}
+
+CppMirBodyEmissionText
+CppMirBodyEmitter::emitBodyText(const CppMirBodyEmissionPlan &plan,
+                                std::string_view familyLabel,
+                                std::size_t indentation) const {
+  return CppMirBodyTextWriter::write(plan, CppMirBodyTextForm::Plain,
+                                     familyLabel, indentation);
 }
 
 CppMirBodyEmissionText
 CppMirBodyEmitter::emitFailureBodyText(MirBodyAddress address,
                                        std::string_view familyLabel,
                                        std::size_t indentation) const {
-  CppMirBodyEmissionText result;
-  result.analysis = analyze(address);
-  if (!result.analysis.ready()) {
-    return result;
-  }
-  if (address.kind == MirBodyKind::Module) {
-    if (address.owner != 0) {
-      throw std::logic_error(
-          "failure-form MIR module text emission received a nonzero owner");
-    }
-    result.text =
-        ScalarBodyTextEmitter(program_, representations_, indentation, true)
-            .emitModule(familyLabel);
-    return result;
-  }
-  if (address.kind == MirBodyKind::Function) {
-    const MirFunctionInstance *function =
-        program_.findFunctionInstance(address.owner);
-    if (function == nullptr) {
-      throw std::logic_error(
-          "failure-form MIR body text emission lost its function instance");
-    }
-    result.text =
-        ScalarBodyTextEmitter(program_, representations_, indentation, true)
-            .emit(*function, familyLabel);
-    return result;
-  }
-  if (address.kind == MirBodyKind::Constructor) {
-    const MirConstructorInstance *constructor =
-        program_.findConstructorInstance(address.owner);
-    if (constructor == nullptr) {
-      throw std::logic_error(
-          "failure-form MIR body text emission lost its constructor instance");
-    }
-    result.text =
-        ScalarBodyTextEmitter(program_, representations_, indentation, true)
-            .emit(*constructor, familyLabel);
-    return result;
-  }
-  if (address.kind == MirBodyKind::Destructor) {
-    const MirDestructorInstance *destructor =
-        program_.findDestructorInstance(address.owner);
-    if (destructor == nullptr) {
-      throw std::logic_error(
-          "failure-form MIR body text emission lost its destructor instance");
-    }
-    result.text =
-        ScalarBodyTextEmitter(program_, representations_, indentation, true)
-            .emit(*destructor, familyLabel);
-    return result;
-  }
-  throw std::logic_error(
-      "failure-form MIR body text emission supports module, function, "
-      "constructor, and destructor bodies only");
+  return emitFailureBodyText(buildPlan(address), familyLabel, indentation);
+}
+
+CppMirBodyEmissionText
+CppMirBodyEmitter::emitFailureBodyText(const CppMirBodyEmissionPlan &plan,
+                                       std::string_view familyLabel,
+                                       std::size_t indentation) const {
+  return CppMirBodyTextWriter::write(plan, CppMirBodyTextForm::Failure,
+                                     familyLabel, indentation);
 }
 
 bool CppMirBodyEmitter::supportsNativeContainedBaseConstruction(
@@ -30866,6 +30778,135 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
 CppMirBodyEmissionAnalysis
 CppMirBodyEmitter::analyze(MirBodyAddress address) const {
   return BodyAnalysisBuilder(program_, representations_, address).run(true);
+}
+
+CppMirBodyEmissionPlan
+CppMirBodyEmitter::buildPlan(MirBodyAddress address) const {
+  return buildPlanFromAnalysis(analyze(address));
+}
+
+CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
+    CppMirBodyEmissionAnalysis analysis) const {
+  CppMirBodyEmissionPlan plan;
+  plan.analysis_ = std::move(analysis);
+  if (!plan.analysis_.ready()) {
+    return plan;
+  }
+  const MirBodyAddress address = plan.analysis_.body;
+
+  const auto emitTemplate = [&](bool failure) -> std::string {
+    ScalarBodyTextEmitter writer(program_, representations_, 0, failure);
+    switch (address.kind) {
+    case MirBodyKind::Module:
+      if (address.owner == 0) {
+        return writer.emitModule(cppMirBodyEmissionFamilyPlaceholder);
+      }
+      break;
+    case MirBodyKind::Function:
+      if (const MirFunctionInstance *instance =
+              program_.findFunctionInstance(address.owner)) {
+        return writer.emit(*instance, cppMirBodyEmissionFamilyPlaceholder);
+      }
+      break;
+    case MirBodyKind::Constructor:
+      if (const MirConstructorInstance *instance =
+              program_.findConstructorInstance(address.owner)) {
+        return writer.emit(*instance, cppMirBodyEmissionFamilyPlaceholder);
+      }
+      break;
+    case MirBodyKind::Destructor:
+      if (const MirDestructorInstance *instance =
+              program_.findDestructorInstance(address.owner)) {
+        return writer.emit(*instance, cppMirBodyEmissionFamilyPlaceholder);
+      }
+      break;
+    case MirBodyKind::Lambda:
+      if (const MirLambdaInstance *instance =
+              program_.findLambda(address.owner)) {
+        return writer.emit(*instance, cppMirBodyEmissionFamilyPlaceholder);
+      }
+      break;
+    case MirBodyKind::FieldInitializers:
+    case MirBodyKind::StaticFieldInitializers:
+    case MirBodyKind::HostedStartup:
+      break;
+    }
+    return {};
+  };
+
+  try {
+    if (supportsBodyTextImpl(address, false)) {
+      plan.plainTextTemplate_ = emitTemplate(false);
+    }
+    if (supportsBodyTextImpl(address, true)) {
+      plan.failureTextTemplate_ = emitTemplate(true);
+    }
+    plan.boundaryDeclaration_ = boundaryDeclarationBody(address);
+    if (address.kind == MirBodyKind::Module ||
+        address.kind == MirBodyKind::FieldInitializers ||
+        address.kind == MirBodyKind::StaticFieldInitializers) {
+      const CppMirInitializerScheduleText schedule =
+          initializerSchedule(address);
+      plan.initializerSchedule_ = schedule.supported;
+      if (schedule.supported) {
+        plan.initializerFields_ = schedule.fields;
+      }
+    }
+    if (address.kind == MirBodyKind::HostedStartup) {
+      if (cppMirHostedStartupNoArgumentsSchedule(program_)) {
+        plan.hostedStartupKind_ =
+            CppMirHostedStartupEmissionKind::NoArgumentsFailure;
+      } else if (cppMirHostedStartupFailureFreeSchedule(program_)) {
+        plan.hostedStartupKind_ =
+            CppMirHostedStartupEmissionKind::NoArgumentsFailureFree;
+      } else if (cppMirHostedStartupOwnedArgumentsSchedule(program_)) {
+        plan.hostedStartupKind_ =
+            CppMirHostedStartupEmissionKind::OwnedArguments;
+      }
+    }
+  } catch (const std::exception &error) {
+    plan.analysis_.readiness = CppMirBodyEmissionReadiness::Incoherent;
+    plan.analysis_.issues.push_back(
+        {.kind = CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary,
+         .body = address,
+         .detail =
+             std::string("body plan construction failed: ") + error.what()});
+    plan.plainTextTemplate_.clear();
+    plan.failureTextTemplate_.clear();
+    plan.boundaryDeclaration_ = false;
+    plan.initializerSchedule_ = false;
+    plan.initializerFields_.clear();
+    plan.hostedStartupKind_ = CppMirHostedStartupEmissionKind::None;
+    return plan;
+  }
+
+  if (!plan.admitted()) {
+    plan.analysis_.readiness =
+        CppMirBodyEmissionReadiness::MissingRepresentation;
+    plan.analysis_.issues.push_back(
+        {.kind = CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary,
+         .body = address,
+         .detail =
+             "verified MIR body is outside the immutable C++ emission plan"});
+  }
+  return plan;
+}
+
+CppMirProgramEmissionPlan CppMirBodyEmitter::buildProgramPlan() const {
+  const CppMirProgramEmissionAnalysis admission = analyzeProgram();
+  CppMirProgramEmissionPlan plan;
+  plan.readiness_ = admission.readiness;
+  plan.issues_ = admission.issues;
+  plan.bodies_.reserve(admission.bodies.size());
+  for (const CppMirBodyEmissionAnalysis &body : admission.bodies) {
+    CppMirBodyEmissionPlan bodyPlan = buildPlanFromAnalysis(body);
+    if (body.ready() && !bodyPlan.ready()) {
+      plan.readiness_ =
+          mergeReadiness(plan.readiness_, bodyPlan.analysis_.readiness);
+    }
+    plan.bodies_.push_back(std::move(bodyPlan));
+  }
+  return plan;
 }
 
 CppMirProgramEmissionAnalysis CppMirBodyEmitter::analyzeProgram() const {
