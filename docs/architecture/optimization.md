@@ -312,6 +312,16 @@ interior MIR pointer survives invalidation. Memory SSA, inlining,
 devirtualization, and loop or memory transformations remain absent until a
 bounded measured client requires them.
 
+Safety-discharge passes hand the controlled MIR editor that same manager-owned
+closed-call snapshot. The editor exact-matches every queued claim against the
+canonical proof and may reuse it for candidate replay only when the complete
+edit batch attaches safety metadata and changes no semantic MIR input. A mixed
+batch independently analyzes the candidate, the standalone editor entry point
+independently analyzes its source, and final optimization-coherence verification
+still derives a fresh whole-program snapshot from canonical source MIR. This
+avoids repeating the bounded interprocedural analysis for each safety family
+without turning cached pass claims into backend authority.
+
 ## Per-Instance Effects
 
 `optimization/effects.h` supplies exhaustive conservative effects for every

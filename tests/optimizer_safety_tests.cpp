@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
+#include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
 #include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
@@ -495,7 +496,25 @@ int32_t main() {
              firstSafetyRecord->requiredAnalyses.safetyChecks,
          "every removed check should carry one typed outcome and canonical "
          "safety-analysis requirement");
-  if (firstSafetyRecord != o2.report.transformations.end()) {
+  if (firstSafetyRecord != o2.report.transformations.end() &&
+      firstSafetyRecord->safetyDischarge) {
+    lang::MirProgram cachedCandidate = frontend.mir;
+    lang::MirBodyAnalysisManager cachedAnalyses;
+    const lang::MirClosedCallSafetyAnalysis *cachedSafety =
+        cachedAnalyses.closedCallSafety(cachedCandidate);
+    lang::MirProgramEditor cachedEditor(cachedCandidate,
+                                        "cached-safety-replay-test");
+    cachedEditor.queueSafetyDischarge(
+        {.body = firstSafetyRecord->body,
+         .instruction = firstSafetyRecord->instruction},
+        *firstSafetyRecord->safetyDischarge);
+    const lang::MirEditResult cachedEdit = cachedEditor.apply(cachedAnalyses);
+    expect(cachedSafety != nullptr && cachedSafety->converged &&
+               cachedEdit.valid() && cachedEdit.changed &&
+               cachedEdit.appliedPatches == 1,
+           "metadata-only safety edits should reuse the manager's canonical "
+           "snapshot without weakening proof replay");
+
     std::vector<lang::MirTransformRecord> forged = o2.report.transformations;
     const std::size_t index = static_cast<std::size_t>(
         std::distance(o2.report.transformations.begin(), firstSafetyRecord));
