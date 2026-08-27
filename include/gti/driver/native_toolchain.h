@@ -37,6 +37,12 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard);
 [[nodiscard]] std::string
 discoverCCompiler(const std::optional<std::string> &selected = std::nullopt);
 
+// The Clang executable bindgen preprocessing uses: an explicit selection,
+// then GTI_CLANG, then `clang`. Bindgen requires Clang specifically
+// (`-fkeep-system-includes`), so the C-compiler convention does not apply.
+[[nodiscard]] std::string
+discoverBindgenClang(const std::optional<std::string> &selected = std::nullopt);
+
 enum class CStandard {
   C11,
   C17,
