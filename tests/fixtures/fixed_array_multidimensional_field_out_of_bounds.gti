@@ -1,0 +1,26 @@
+// The chained access rooted in a class field keeps the same per-dimension
+// bound as the local-array form: an out-of-range first dimension raises
+// index_out_of_bounds rather than projecting past the field.
+
+class grid_owner {
+public:
+  grid_owner() {}
+  mut int32_t cells[2][3] = {};
+};
+
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut grid_owner owner = grid_owner();
+  std::size_t row = counted(std::size_t(9));
+  std::size_t column = counted(std::size_t(1));
+  int32_t read = owner.cells[row][column];
+  std::println(read == 0 ? "unreachable" : "unreachable");
+  return 0;
+}

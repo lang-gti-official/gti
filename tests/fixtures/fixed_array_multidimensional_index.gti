@@ -1,0 +1,66 @@
+// Dynamic indexing of a multidimensional fixed array. Every dimension is a
+// runtime value here, so each subscript carries its own bounds check while the
+// access as a whole stays one checked element read or write. The constant
+// forms are the contrast: they must keep spelling plain subscripts.
+
+class grid_owner {
+public:
+  grid_owner() {}
+  mut int32_t cells[2][3] = {};
+};
+
+// Returns `limit` without letting the reader assume a literal.
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut int32_t matrix[2][3] = {};
+  std::size_t row = counted(std::size_t(1));
+  std::size_t column = counted(std::size_t(2));
+
+  matrix[row][column] = 7;
+  if (matrix[row][column] != 7) {
+    return 1;
+  }
+
+  // The constant-index contrast reaches the same element.
+  if (matrix[std::size_t(1)][std::size_t(2)] != 7 ||
+      matrix[std::size_t(0)][std::size_t(0)] != 0) {
+    return 2;
+  }
+
+  // A dynamic index in one dimension only, in each position.
+  matrix[std::size_t(0)][column] = 3;
+  matrix[row][std::size_t(0)] = 5;
+  if (matrix[std::size_t(0)][std::size_t(2)] != 3 ||
+      matrix[std::size_t(1)][std::size_t(0)] != 5) {
+    return 3;
+  }
+
+  mut int32_t cube[2][3][4] = {};
+  std::size_t plane = counted(std::size_t(1));
+  std::size_t line = counted(std::size_t(2));
+  std::size_t cell = counted(std::size_t(3));
+  cube[plane][line][cell] = 11;
+  if (cube[plane][line][cell] != 11 ||
+      cube[std::size_t(1)][std::size_t(2)][std::size_t(3)] != 11 ||
+      cube[std::size_t(0)][std::size_t(0)][std::size_t(0)] != 0) {
+    return 4;
+  }
+
+  // The same chain rooted in a class field rather than a local.
+  mut grid_owner owner = grid_owner();
+  owner.cells[row][column] = 13;
+  if (owner.cells[row][column] != 13 ||
+      owner.cells[std::size_t(1)][std::size_t(2)] != 13 ||
+      owner.cells[std::size_t(0)][std::size_t(1)] != 0) {
+    return 5;
+  }
+
+  return 0;
+}

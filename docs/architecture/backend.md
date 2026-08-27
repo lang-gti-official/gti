@@ -231,6 +231,18 @@ check, then move-assigns without a second materialization. Projected sources,
 unmatched failure metadata, cleanup-owning temporaries, and every other
 projected destination remain outside this fusion vocabulary.
 
+A fixed-array element place may carry several `Index` projections, and MIR
+describes that whole chained access with one instruction and one bounds site.
+The C++ text therefore owns a bound for every dimension rather than only the
+last. A nonterminal index that is a compile-time in-bounds constant spells an
+ordinary subscript. A dynamic one spells either the routed guard — one
+`mir_checked_array_bound_v1` status assignment opening the success branch the
+terminal checked read or write runs inside, so the first violation reaches the
+instruction's failure record — or, in the plain text form and every other
+element spelling, the contained `array_at` accessor that already carries the
+terminal index's bound there. The fully discharged spelling drops both, which
+is why the safety proof for such an access must cover every dimension.
+
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
 MIR, never as a backend analysis result. When all local overflow outcomes for a
