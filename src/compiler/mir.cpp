@@ -1450,11 +1450,20 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
         if (instruction.kind == MirInstructionKind::Initialize) {
           const MirPlace *destinationPlace =
               body.findPlace(*instruction.destination);
+          // Lexical-drop bindings always spell their scope end as a Drop, so
+          // an Initialize must only ever see storage the flow model already
+          // proved uninitialized. Trivially dropped bindings deliberately
+          // leave scope without any MIR instruction: a block-scoped local
+          // that was moved (or conditionally moved) still carries Moved
+          // state across a loop back edge even though its lifetime ended at
+          // the closing brace. Their re-initialization at the declaration is
+          // the implicit scope end, so it may begin from any prior state.
           if (tracksOwnershipRoot(trackedRoots, *destination) &&
               destinationPlace != nullptr &&
               destinationPlace->root == MirPlaceRootKind::Binding &&
               destinationPlace->projections.empty() &&
               !destinationPlace->initiallyAvailable &&
+              destinationPlace->traits.drop == DropKind::Lexical &&
               !ownershipStateAt(state, *destination)
                    .definitely(OwnershipState::Uninitialized)) {
             return failure(body, owner,

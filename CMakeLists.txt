@@ -1502,6 +1502,14 @@ if(BUILD_TESTING)
     set_tests_properties(owner_tied_by_value_argument_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME moved_loop_local_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/moved_loop_local_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/moved_loop_local.gti"
+    )
+    set_tests_properties(moved_loop_local_runtime PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1699,6 +1707,7 @@ if(BUILD_TESTING)
         owner_tied_reference_argument_runtime
         generic_symbolic_auto_local_runtime
         owner_tied_by_value_argument_runtime
+        moved_loop_local_runtime
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
         temporary_argument_borrow_runtime

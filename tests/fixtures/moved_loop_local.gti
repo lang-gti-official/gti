@@ -1,0 +1,139 @@
+// Regression fixture: a local declared inside a loop body and consumed with
+// std::move must leave its storage re-initializable when the back edge
+// returns to the declaration. Covers trivially dropped locals, the indexed
+// container-element destination, conditional moves, generic instances, and
+// lexically dropped class locals whose scope-end drop stays balanced.
+
+class Tracker {
+public:
+  static mut int32_t balance = 0;
+
+private:
+  int32_t value;
+
+public:
+  Tracker(int32_t initial) : value(initial) {
+    Tracker::balance = Tracker::balance + 1;
+  }
+  Tracker(Tracker&& other) = default;
+  ~Tracker() { Tracker::balance = Tracker::balance - 1; }
+
+  int32_t read() { return this.value; }
+};
+
+int32_t consume(Tracker taken) { return taken.read(); }
+
+int32_t sink(int32_t value) { return value; }
+
+T accumulate<std::numeric T>(T seed, T limit) {
+  mut T total = seed;
+  mut T step = seed;
+  while (step < limit) {
+    T element = step + T(1);
+    total = total + std::move(element);
+    step = step + T(1);
+  }
+  return total;
+}
+
+int32_t moved_trivial_while() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 2) {
+    int32_t element = index + 1;
+    total = total + std::move(element);
+    index++;
+  }
+  return total;
+}
+
+int32_t moved_trivial_for() {
+  mut int32_t total = 0;
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    int32_t local = iteration + 1;
+    total = total + std::move(local);
+  }
+  return total;
+}
+
+int32_t moved_into_elements() {
+  mut int32_t values[4] = {0, 0, 0, 0};
+  mut int32_t position = 0;
+  while (position < 4) {
+    int32_t element = position * 10;
+    values[position] = std::move(element);
+    position++;
+  }
+  return values[0] + values[1] + values[2] + values[3];
+}
+
+int32_t conditionally_moved_trivial() {
+  mut int32_t total = 0;
+  mut int32_t guard = 0;
+  while (guard < 4) {
+    int32_t element = guard + 1;
+    if (guard % 2 == 0) {
+      total = total + sink(std::move(element));
+    }
+    guard++;
+  }
+  return total;
+}
+
+int32_t moved_class_local() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 2) {
+    mut Tracker element{index + 1};
+    total = total + consume(std::move(element));
+    index++;
+  }
+  return total;
+}
+
+int32_t conditionally_moved_class_local() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 4) {
+    mut Tracker element{index + 1};
+    if (index % 2 == 0) {
+      total = total + consume(std::move(element));
+    }
+    index++;
+  }
+  return total;
+}
+
+int main() {
+  if (moved_trivial_while() != 3) {
+    return 1;
+  }
+  if (moved_trivial_for() != 3) {
+    return 2;
+  }
+  if (moved_into_elements() != 60) {
+    return 3;
+  }
+  if (conditionally_moved_trivial() != 4) {
+    return 4;
+  }
+  if (accumulate<int32_t>(0, 2) != 3) {
+    return 5;
+  }
+  if (accumulate<int64_t>(int64_t(0), int64_t(2)) != int64_t(3)) {
+    return 6;
+  }
+  if (moved_class_local() != 3) {
+    return 7;
+  }
+  if (Tracker::balance != 0) {
+    return 8;
+  }
+  if (conditionally_moved_class_local() != 4) {
+    return 9;
+  }
+  if (Tracker::balance != 0) {
+    return 10;
+  }
+  return 0;
+}
