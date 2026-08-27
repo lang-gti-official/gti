@@ -166,6 +166,7 @@ public:
     currentProgramEffectOwner = {};
     programEffects.clear();
     programStoragePlaceUseDepth = 0;
+    preferReadOnlySubscriptReceiverDepth = 0;
     contextualInitializerType.reset();
     contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
@@ -331,6 +332,7 @@ public:
     currentProgramEffectOwner = {};
     programEffects.clear();
     programStoragePlaceUseDepth = 0;
+    preferReadOnlySubscriptReceiverDepth = 0;
     contextualInitializerType.reset();
     contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
@@ -4676,7 +4678,9 @@ public:
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
           std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
-          std::nullopt, false, !mutableReferenceContext);
+          std::nullopt, false,
+          preferReadOnlySubscriptReceiverDepth != 0 &&
+              !mutableReferenceContext);
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -4780,9 +4784,19 @@ public:
         targetStateValid = false;
       }
     }
+    const bool preferReadOnlyRhsSubscripts =
+        simpleAssignment && resolvedOperator != nullptr &&
+        resolvedOperator->returnType.kind == SemanticType::Reference &&
+        resolvedOperator->returnType.referenceAccess == AccessMode::Mutable;
+    if (preferReadOnlyRhsSubscripts) {
+      ++preferReadOnlySubscriptReceiverDepth;
+    }
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), elementType)
                          : analyze(expr.value());
+    if (preferReadOnlyRhsSubscripts) {
+      --preferReadOnlySubscriptReceiverDepth;
+    }
     const SemanticPlace movedSource = movedSourcePlace(expr.value());
     const bool directSelfMove =
         trackedFixedArrayElement && samePlace(targetPlace, movedSource);
@@ -35092,6 +35106,7 @@ private:
   std::size_t lambdaDepth = 0;
   std::size_t unsafeDepth = 0;
   std::size_t suppressLoanPlaceAccessDepth = 0;
+  std::size_t preferReadOnlySubscriptReceiverDepth = 0;
   std::vector<const Expr *> suppressedProjectedPlaceReads;
   ProgramEffectOwner currentProgramEffectOwner;
   std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,

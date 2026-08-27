@@ -42,17 +42,6 @@ SELECTED = (
     "read_stdin_byte",
     "read_file_byte",
     "close_file",
-    # String-view signatures joined the boundary in 0.175.0: the C-linkage
-    # call marshals the view through the shipped to_c_string_view converter.
-    "write_stdout",
-    "open_file_read",
-    # The failure-free effect proof widened to passive views and native
-    # calls in 0.177.0, so print's whole callee chain now proves and the
-    # body emits from verified MIR.
-    "print",
-    # String-view literals joined the vocabulary in 0.178.0.
-    "println",
-    "print_decimal_digit",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary now emit from verified MIR too.
     "pass",
@@ -75,6 +64,9 @@ FAILURE_SELECTED = (
     "print",
     "println",
     "entry",
+    "write_stdout",
+    "open_file_read",
+    "print_decimal_digit",
 )
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)

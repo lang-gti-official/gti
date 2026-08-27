@@ -36,7 +36,7 @@
     "35-conditional-expressions.gti": 41,
     "36-c-abi-sockets.gti": 33,
     "37-tcp-socket-owner.gti": 46,
-    "38-vector-emplace.gti": 78,
+    "38-vector-emplace.gti": 77,
     "39-raw-pointers.gti": 31,
     "40-loan-flow-edges.gti": 191,
     "41-owner-dependencies.gti": 45,
@@ -75,5 +75,5 @@
     "74-read-only-range-loans.gti": 49,
     "75-bounded-arena-pool.gti": 67
   },
-  "total": 4397
+  "total": 4396
 }

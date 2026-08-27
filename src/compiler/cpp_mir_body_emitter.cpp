@@ -18184,6 +18184,24 @@ private:
                << " publishes in the returned class value\n";
         return;
       }
+      if (loan != nullptr &&
+          ownerBorrowLoanProducer(facts.body, *loan) != nullptr) {
+        // The owner borrow's loan has no pointer local; the fused
+        // accessor spelling publishes at the consuming return.
+        writeIndent();
+        output << "// GTI MIR owner-borrow loan " << loan->id
+               << " publishes at its consuming return\n";
+        return;
+      }
+      if (loan != nullptr &&
+          elementBorrowLoanProducer(facts.body, *loan) != nullptr) {
+        // The element borrow's loan has no pointer local; the fused
+        // array_at spelling publishes at the consuming return.
+        writeIndent();
+        output << "// GTI MIR element-borrow loan " << loan->id
+               << " publishes at its consuming return\n";
+        return;
+      }
       if (loan != nullptr && loan->kind == MirLoanKind::Return &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan) {
@@ -18206,24 +18224,6 @@ private:
           output << "__gti_mir_loan_" << retainedLoan->id;
         }
         output << ";\n";
-        return;
-      }
-      if (loan != nullptr &&
-          ownerBorrowLoanProducer(facts.body, *loan) != nullptr) {
-        // The owner borrow's loan has no pointer local; the fused
-        // accessor spelling publishes at the consuming return.
-        writeIndent();
-        output << "// GTI MIR owner-borrow loan " << loan->id
-               << " publishes at its consuming return\n";
-        return;
-      }
-      if (loan != nullptr &&
-          elementBorrowLoanProducer(facts.body, *loan) != nullptr) {
-        // The element borrow's loan has no pointer local; the fused
-        // array_at spelling publishes at the consuming return.
-        writeIndent();
-        output << "// GTI MIR element-borrow loan " << loan->id
-               << " publishes at its consuming return\n";
         return;
       }
       if (loan != nullptr) {

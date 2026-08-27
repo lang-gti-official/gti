@@ -240,7 +240,7 @@ int main() {
   return int(gti_internal::prefix_storage_read(values, uint64_t(1)));
 }
 )",
-     "prefix storage index out of the live prefix"},
+     "index_out_of_bounds in private_storage"},
     {"relocate-occupied",
      R"(
 int main() {

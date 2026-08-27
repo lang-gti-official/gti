@@ -89,7 +89,7 @@ def main() -> int:
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    != 7
+                    != 8
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "
