@@ -379,6 +379,9 @@ add_library(
   "src/compiler/cpp_mir_body_text_writer.cpp"
   "src/compiler/cpp_mir_program_plan.cpp"
   "src/compiler/cpp_mir_representation_snapshot.cpp"
+  "src/compiler/cpp_program_emission_plan.cpp"
+  "src/compiler/cpp_program_emission_planner.cpp"
+  "src/compiler/cpp_program_text_writer.cpp"
   "src/compiler/cpp_support_preamble.cpp"
 )
 target_include_directories(
