@@ -8,13 +8,24 @@ syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 ## Source Loading
 
 `SourceLoader` is declared in `include/gti/source_loader.h`; its canonical path,
-filesystem, include-resolution, cycle, provenance, and source-manager algorithms
-are compiled into `gti_compiler` from `src/compiler/source_loader.cpp`.
+include-resolution, cycle, provenance, package, graph-recursion, and
+source-manager algorithms are compiled into `gti_compiler` from
+`src/compiler/source_loader.cpp`. The private `LoadedLexicalUnitLoader` owns
+one unit's file/overlay byte acquisition, stable digest, lexical cache lookup
+and publication, completion lexing, tokens, and exact lexical diagnostics. It
+has no include or graph authority. The private incremental
+`ConfigurationDirectiveProcessor` owns conditional frames, target/flag
+selection, `#define`/`#undef`, inactive spans, configuration tokens, and their
+existing diagnostics.
 `SourceGraph` traversal/mutation and `SourceManager` location work compile in
 `src/compiler/source_graph.cpp` and `src/compiler/diagnostic.cpp`. The loader
 canonicalizes source identity, lexes each unit, resolves `#include` directives,
 resolves target/configuration conditions in source order, and builds
-`SourceGraph`. The initial valueless flag set comes from `FrontendOptions`.
+`SourceGraph`. `SourceLoader` advances the directive processor one lexical
+step at a time and may recurse for an include between steps. This preserves
+the existing compilation-wide flag ordering without giving the processor
+include resolution or graph ownership. The initial valueless flag set comes
+from `FrontendOptions`.
 Active `#define`/`#undef` directives update that set and are removed before
 parsing; they never substitute tokens. A definition before an include enters
 that unit, and active definitions made there remain visible when loading
