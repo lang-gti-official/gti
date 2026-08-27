@@ -2337,14 +2337,29 @@ name recognition.
 
 ### L-RANGE-03: Spans And Dynamic Views
 
-- **State/role:** ready; prerequisite `L-RANGE-02` is done; systems-readiness
-  implementation.
-- **Scope:** Add a focused single-owner span/view first, then dynamic
-  `string_view` ownership. Add multi-owner, nested, mutable, or stored
-  dependency graphs only when the ownership representation carries them
-  directly.
-- **Exit gate:** owner invalidation, movement, factory/relay calls, empty
-  ranges, and view drop are verified without exposing a pointer-length pair.
+- **State/role:** completed for the bounded initial release; prerequisite
+  `L-RANGE-02` is done; systems-readiness implementation.
+- **Implemented scope:** Source-defined read-only `std::span<T>` values come
+  from `std::vector<T>::as_span()` and `std::string::as_span()`, support checked
+  access, iteration, subviews, empty ranges, local copies/moves, and exact
+  factory/relay calls, and never expose a pointer-length pair. Dynamic
+  `std::string_view` values come from `std::string::view()` while literal views
+  remain ownerless static-storage values. Semantics, HIR, and verified MIR
+  preserve each retained value's one read-only owner dependency through calls,
+  returns, and drops; backend emission consumes that verified representation.
+- **Safety boundary:** owner invalidation, movement, destruction, and local
+  owner escape reject while a view is live. Dynamic text views also reject
+  reassignment/reseating and storage in globals, fields, fixed arrays, or
+  dynamic storage.
+- **Deliberately deferred:** mutable views, multiple owners, nested or general
+  stored dependency graphs, arbitrary pointer ranges, and unchecked public
+  pointer-length construction.
+- **Exit evidence:** focused semantics/HIR/MIR tests cover retained dependency
+  summaries, invalidation, movement, escape, and nested-storage rejection.
+  Runtime coverage exercises complete/sub/empty spans plus dynamic text-view
+  copies, relays, checked access, drop, and owner reuse at O0/O3 under
+  C++20/C++23. Focused LSP coverage publishes and clears the same diagnostics
+  and exposes the source-defined `string::view` contract.
 
 ### L-CALL-01: Foundational Owned Callables And Captures
 
@@ -2375,9 +2390,10 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/role:** partially implemented; blocked for the remaining range-first
-  suite on `L-RANGE-03` and the remaining `L-CALL-01` work. The implemented
-  iterator/sentinel slices include multi-parameter concepts, validity-only
+- **State/role:** partially implemented; `L-RANGE-03` is complete. The
+  remaining range-first suite depends on the remaining `L-CALL-01` work. The
+  implemented iterator/sentinel slices include multi-parameter concepts,
+  validity-only
   trailing `requires`, exact input-iterator/sentinel/dereference/accumulator
   capabilities, distinct copy-construction capability,
   `std::forward_iterator`, source-defined `std::binary_search`, default and
@@ -3260,7 +3276,7 @@ owned by the rows and domain plans above.
 | Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
-| Mutable iteration/views | L-RANGE-01/02 complete; dynamic-view systems-readiness work remains | `L-RANGE-03` |
+| Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |

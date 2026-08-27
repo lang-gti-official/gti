@@ -1202,6 +1202,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
     )
     add_test(
+      NAME span_owner_dependent_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/span_owner_dependent_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/span_owner_dependent.gti"
+    )
+    add_test(
       NAME evaluation_order_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/evaluation_order_runtime_test.py"
@@ -1546,6 +1553,7 @@ if(BUILD_TESTING)
         expected_wrong_state_runtime expected_propagation_runtime
         returned_class_field_runtime
         reference_parameter_range_runtime mutable_range_runtime
+        span_owner_dependent_runtime
         evaluation_order_runtime optimizer_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow

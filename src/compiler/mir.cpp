@@ -6572,13 +6572,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             const MirLoan *published =
                 instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
             const MirLoan *retained = body.findLoan(operand.loan);
+            const bool storedCarrier =
+                retained != nullptr && retained->kind == MirLoanKind::Stored &&
+                retained->entry && retained->designatedField != 0;
+            const bool stringViewCarrier =
+                retained != nullptr && retained->kind == MirLoanKind::Stored &&
+                retained->entry && retained->designatedField == 0 &&
+                operand.type.kind == SemanticType::StringView &&
+                published != nullptr &&
+                published->access == AccessMode::ReadOnly;
+            const bool callResult = retained != nullptr &&
+                                    retained->kind == MirLoanKind::CallResult &&
+                                    !retained->entry && !retained->escapes &&
+                                    retained->producedBy != 0;
             return instruction.kind != MirInstructionKind::Borrow ||
-                   instruction.operands.size() != 1 || operand.place != 0 ||
-                   published == nullptr ||
+                   instruction.operands.size() != 1 || published == nullptr ||
                    published->kind != MirLoanKind::Return ||
-                   retained == nullptr ||
-                   retained->kind != MirLoanKind::Stored || !retained->entry ||
-                   retained->designatedField == 0;
+                   (!storedCarrier && !stringViewCarrier &&
+                    (!callResult || operand.place != 0 || operand.value != 0));
           });
       if (instruction.id == 0 ||
           !instructionIds.insert(instruction.id).second ||
@@ -6834,11 +6845,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
           const bool exactStoredCarrierEntry =
               retained->entry && retained->designatedField != 0;
+          const bool exactStringViewEntry =
+              retained->entry && retained->designatedField == 0 &&
+              source.type.kind == SemanticType::StringView &&
+              instruction.info.type.kind == SemanticType::StringView;
           const MirPlace *runtime = body.findPlace(source.place);
           const bool valueTransfer =
               source.place == 0 &&
-              ((exactStoredCarrierEntry && source.value != 0) ||
-               (!exactStoredCarrierEntry && source.value == 0)) &&
+              (((exactStoredCarrierEntry || exactStringViewEntry) &&
+                source.value != 0) ||
+               (!exactStoredCarrierEntry && !exactStringViewEntry &&
+                source.value == 0)) &&
               instruction.info.traits.containsBorrowedState;
           const bool referenceTransfer =
               source.place != 0 && source.value == 0 && runtime != nullptr &&
@@ -6860,8 +6877,40 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        const bool callResultReturnTransfer = [&] {
+          if (produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              source.type != instruction.info.type) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr ||
+              retained->kind != MirLoanKind::CallResult || retained->entry ||
+              retained->escapes || retained->producedBy == 0 ||
+              retained->producedBy != instruction.hirValue ||
+              retained->source != produced.source ||
+              retained->access != produced.access) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
-             !storedCarrierReturnTransfer) ||
+             !storedCarrierReturnTransfer && !callResultReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,
@@ -10362,6 +10411,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   };
   std::optional<MirStoredCarrierReference> storedCarrierReference;
   const MirLoan *storedCarrierEntryLoan = nullptr;
+  bool dynamicStringViewCarrier = false;
   switch (instance.returnBorrowOrigin) {
   case BorrowOriginKind::None:
     if (instance.returnBorrowParameter != 0 || instance.returnBorrowPlace) {
@@ -10406,15 +10456,23 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
               AccessMode::ReadOnly;
-      if (!exactReadReference && !exactReadCarrier) {
+      dynamicStringViewCarrier =
+          parameter.kind == SemanticType::StringView &&
+          instance.returnType.kind == SemanticType::StringView &&
+          instance.returnBorrowAccess == AccessMode::ReadOnly;
+      if (!exactReadReference && !exactReadCarrier &&
+          !dynamicStringViewCarrier) {
         return invalidSummary(
             "argument return dependency does not identify one exact "
-            "read-only reference or stored-reference carrier parameter");
+            "read-only reference, stored-reference carrier, or dynamic "
+            "string-view parameter");
       }
-      if (exactReadCarrier) {
+      if (exactReadCarrier || dynamicStringViewCarrier) {
         std::optional<SemanticType> resultReferent;
-        if (instance.returnType.kind == SemanticType::Reference &&
-            instance.returnType.arguments.size() == 1) {
+        if (dynamicStringViewCarrier) {
+          resultReferent = SemanticType::StringView;
+        } else if (instance.returnType.kind == SemanticType::Reference &&
+                   instance.returnType.arguments.size() == 1) {
           resultReferent = instance.returnType.arguments.front();
         } else if (const std::optional<SemanticType> returnedCarrier =
                        [&]() -> std::optional<SemanticType> {
@@ -10429,8 +10487,9 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           resultReferent = returnedCarrier->arguments.front();
         }
         if (!resultReferent ||
-            *resultReferent !=
-                storedCarrierReference->reference.arguments.front()) {
+            (!dynamicStringViewCarrier &&
+             *resultReferent !=
+                 storedCarrierReference->reference.arguments.front())) {
           return invalidSummary(
               "stored-carrier return dependency type does not match its "
               "exact external referent type");
@@ -10446,7 +10505,9 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
               source->root == MirPlaceRootKind::Binding &&
               source->projections.empty() &&
               source->binding == parameterBinding &&
-              loan.designatedField == storedCarrierReference->field &&
+              loan.designatedField == (dynamicStringViewCarrier
+                                           ? 0
+                                           : storedCarrierReference->field) &&
               std::find(loan.carriers.begin(), loan.carriers.end(),
                         parameterBinding) != loan.carriers.end();
           if (!exactEntry) {
@@ -10528,7 +10589,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
                      "summarized formal parameter",
                      block.id);
     }
-    if (storedCarrierReference) {
+    if (storedCarrierReference || dynamicStringViewCarrier) {
       const SemanticType expectedPayload =
           instance.returnType.kind == SemanticType::Reference
               ? instance.returnType.arguments.front()

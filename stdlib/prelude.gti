@@ -58,6 +58,7 @@ namespace gti_internal {
   // operation, so no partially initialized slot is ever observable.
   void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
+  gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
 
   T integer_wrapping_add<T>(T left, T right);
   T integer_wrapping_sub<T>(T left, T right);

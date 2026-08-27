@@ -1,7 +1,7 @@
 # Ranges and iterators
 
-Status: current through L-RANGE-02 mutable iteration and the bounded
-iterator/sentinel algorithm cluster
+Status: current through the bounded L-RANGE-03 single-owner view release and
+the iterator/sentinel algorithm cluster
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -144,14 +144,48 @@ write, move, drop, or second traversal of the owner while the loop is active;
 the child is the sole authorized mutation path. This conservatively rejects
 container operations such as `reserve`, `push_back`, and `clear` even when a
 particular execution might not relocate storage. It also rejects moving the
-owner during iteration. Pointer ranges, dynamically sized spans/views, and
-other non-array/non-nominal forms remain unsupported. Moving a named range
+owner during iteration. Pointer ranges and other non-array/non-nominal forms
+remain unsupported. `std::span<T>` is a nominal source-defined range and uses
+the same protocol and owner-loan rules. Moving a named range
 into owned loop storage consumes that owner, so later reuse is rejected by the
 ordinary ownership rules.
 
 `GTI-S2083` diagnoses an immutable owner or a nominal range without the exact
 mutable endpoint. Ordinary retained-loan diagnostics diagnose overlapping
 access and invalidation attempts.
+
+## Single-owner spans and text views
+
+`std::span<T>` is an ordinary source-defined, read-only range over one checked
+prefix-storage owner. `std::vector<T>::as_span()` and
+`std::string::as_span()` construct a complete span without exposing an address
+or pointer-length pair. A span stores an offset and count alongside the trusted
+read-only storage dependency and provides checked indexing, `front()`,
+`back()`, `first()`, `last()`, `subspan()`, and structural iteration. Empty
+spans remain valid. Copy and move construction preserve the same shared owner
+dependency; assignment is unavailable because the current lifetime model does
+not reseat borrowed-state carriers.
+
+`std::string::view()` returns a counted `std::string_view` over the string's
+live character prefix. Literal-backed string views remain independent trivial
+values. A view produced from dynamic storage is instead tagged at the
+expression and binding level with one read-only owner dependency. That
+dependency passes through local copies, direct receiver factories, exact
+single-parameter relay functions, moves, returns, and drops. It ends at the
+proven last use or enclosing scope end of the final retained local view, after
+which the owner may be mutated, moved, or dropped. While it is live, every
+overlapping owner mutation or movement is rejected. Empty dynamic views follow
+the same rules and carry a zero length without requiring an element address.
+
+The bounded release deliberately excludes mutable views, multiple owners,
+nested borrowed-state storage, reassignment, and field/global/static storage.
+A dynamic text view cannot be formed from temporary storage or escape a local
+owner. A `std::string_view` parameter is conservatively treated as potentially
+dynamic inside the callee; it may be inspected or returned through one exact
+read-only parameter summary, but it cannot be retained in another storage
+object. These restrictions keep source validity in semantics and preserve the
+same owner and transfer facts in HIR and verified MIR. The C++ backend only
+represents the already-verified counted view and does not infer its lifetime.
 
 ## Generic iterator contracts
 
@@ -255,8 +289,8 @@ widening, a mutable child detached from its exclusive parent, an escaping
 element loan, an inconsistent array strategy, a mismatched owner/drop, or a
 broken condition/body/increment/cleanup cycle before backend admission.
 
-Multiple-origin stored views, pointer decay, and dynamically sized spans or
-string views remain later lifetime layers. Mutable iteration currently uses
+Multiple-origin or nested stored views, pointer decay, and mutable spans or
+text views remain later lifetime layers. Mutable iteration currently uses
 conservative whole-owner invalidation exclusion rather than a public
 container-specific invalidation trait. Confined generic `void` operations,
 exact `bool`

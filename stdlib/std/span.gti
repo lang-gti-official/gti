@@ -1,28 +1,120 @@
-// C++-familiar API scaffold for <std/span>.
-//
-// The first safe span is a move-only, read-only owner-dependent view. Source
-// constructors, mutable access, iteration, and data() remain omitted until GTI
-// can retain the source owner's lifetime and invalidation state without
-// exposing a pointer-and-length pair. Bodyless members are not implemented.
-
 namespace std {
-class span<T> {
+namespace detail {
+class span_sentinel {
+  size_t final_position;
+
 public:
-  span() {}
+  span_sentinel(size_t position) : final_position(position) {}
 
-  span(span<T>& other) = delete;
-  span(span<T>&& other) = default;
+  size_t position() {
+    return this.final_position;
+  }
+};
 
-  size_t size();
-  bool empty();
+class span_iterator<T> {
+  gti_internal::prefix_storage<T>& data;
+  mut size_t current_position;
 
-  T& front();
-  T& back();
-  T& at(size_t index);
-  T& operator[](size_t index);
+public:
+  span_iterator(gti_internal::prefix_storage<T>& source, size_t position)
+      : data(source), current_position(position) {}
 
-  span<T> first(size_t count);
-  span<T> last(size_t count);
-  span<T> subspan(size_t offset, size_t count);
+  T& operator*() {
+    return gti_internal::prefix_storage_read(this.data,
+                                              this.current_position);
+  }
+
+  void operator++() mut {
+    this.current_position++;
+  }
+
+  bool operator!=(span_sentinel& sentinel) {
+    return this.current_position != sentinel.position();
+  }
+
+  bool operator!=(span_iterator<T>& other) {
+    return this.current_position != other.current_position;
+  }
+};
+}
+
+/// A checked read-only view over one source-defined contiguous owner.
+class span<T> {
+  gti_internal::prefix_storage<T>& data;
+  size_t first_position;
+  size_t element_count;
+
+  void validate_subspan(size_t offset, size_t count) {
+    if (offset > this.element_count) {
+      gti_internal::index_bounds_check(offset, this.element_count);
+    }
+    size_t remaining = this.element_count - offset;
+    if (count > remaining) {
+      gti_internal::index_bounds_check(count, remaining);
+    }
+  }
+
+public:
+  // The parameter type is a compiler-private storage capability, so this
+  // constructor is available to the standard library but not application
+  // lookup. Public owners expose checked as_span() factories instead.
+  span(gti_internal::prefix_storage<T>& source, size_t offset, size_t count)
+      : data(source), first_position(offset), element_count(count) {}
+
+  /// Returns the number of elements in this view.
+  size_t size() {
+    return this.element_count;
+  }
+
+  /// Returns whether this view contains no elements.
+  bool empty() {
+    return this.element_count == 0;
+  }
+
+  T& front() {
+    return this.at(size_t(0));
+  }
+
+  T& back() {
+    mut size_t index = size_t(0);
+    if (this.element_count > 0) {
+      index = this.element_count - 1;
+    }
+    return this.at(index);
+  }
+
+  T& at(size_t index) {
+    gti_internal::index_bounds_check(index, this.element_count);
+    return gti_internal::prefix_storage_read(
+        this.data, this.first_position + index);
+  }
+
+  T& operator[](size_t index) {
+    return this.at(index);
+  }
+
+  span<T> first(size_t count) {
+    this.validate_subspan(size_t(0), count);
+    return span<T>(this.data, this.first_position, count);
+  }
+
+  span<T> last(size_t count) {
+    this.validate_subspan(size_t(0), count);
+    return span<T>(this.data,
+                   this.first_position + (this.element_count - count), count);
+  }
+
+  span<T> subspan(size_t offset, size_t count) {
+    this.validate_subspan(offset, count);
+    return span<T>(this.data, this.first_position + offset, count);
+  }
+
+  detail::span_iterator<T> begin() {
+    return detail::span_iterator<T>(this.data, this.first_position);
+  }
+
+  detail::span_sentinel end() {
+    return detail::span_sentinel(this.first_position + this.element_count);
+  }
 };
 }
