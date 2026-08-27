@@ -7226,6 +7226,21 @@ mir_expected_error_move_v1(Expected &expected, ResultSlot *result) {
   return mir_failure_success_v1;
 }
 
+// One non-terminal dimension of a chained fixed-array element access. The
+// terminal read and write helpers validate only the last index, so a
+// multidimensional dynamic access checks every earlier dimension through this
+// helper before subscripting it. The status carries the same defined
+// index_out_of_bounds outcome the terminal helpers report.
+template <typename Array>
+inline mir_failure_status_v1
+mir_checked_array_bound_v1(const Array &array, std::uint64_t index) noexcept {
+  if (index >= std::size(array)) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  return mir_failure_success_v1;
+}
+
 template <typename Array, typename Value>
 inline mir_failure_status_v1
 mir_checked_array_read_v1(const Array &array, std::uint64_t index,

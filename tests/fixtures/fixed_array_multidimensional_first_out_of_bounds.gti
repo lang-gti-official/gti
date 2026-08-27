@@ -1,0 +1,21 @@
+// An out-of-range FIRST dimension of a chained dynamic read must raise the
+// defined index_out_of_bounds failure. Before the chained spelling existed the
+// emitter declined this body; a spelling that checked only the last index
+// would read past the array instead.
+
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut int32_t matrix[2][3] = {};
+  std::size_t row = counted(std::size_t(9));
+  std::size_t column = counted(std::size_t(1));
+  int32_t read = matrix[row][column];
+  std::println(read == 0 ? "unreachable" : "unreachable");
+  return 0;
+}

@@ -1,0 +1,26 @@
+// The one-dimensional dynamic write with the same violation. This is the
+// baseline the chained write forms are compared against: whatever the single
+// terminal checked write does with an out-of-range index, the chained write
+// must do as well, on every dimension.
+
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut int32_t cells[6] = {};
+  std::size_t index = counted(std::size_t(9));
+  cells[index] = 7;
+  if (cells[std::size_t(0)] != 0 || cells[std::size_t(1)] != 0 ||
+      cells[std::size_t(2)] != 0 || cells[std::size_t(3)] != 0 ||
+      cells[std::size_t(4)] != 0 || cells[std::size_t(5)] != 0) {
+    std::println("corrupt");
+    return 1;
+  }
+  std::println("intact");
+  return 0;
+}

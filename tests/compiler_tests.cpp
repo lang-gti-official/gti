@@ -27391,6 +27391,95 @@ int main() {
          "instead of discarding it");
 }
 
+// A chained fixed-array element access with a dynamic nonterminal index is one
+// checked access with one bounds site. The emitter used to admit a nonterminal
+// index only when it was a compile-time in-bounds constant and declined the
+// body otherwise, so `matrix[row][column]` with a runtime row raised GTI-B0001
+// on the read form as well as the write form. The chained text now owns a
+// bound per dimension: the failure form guards each dynamic nonterminal index
+// before the terminal checked helper runs.
+void testFixedArrayChainedDynamicIndex() {
+  const std::string source = R"(
+int main() {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(9)) {
+    row = row + uint64_t(1);
+  }
+  uint64_t column = uint64_t(1);
+  matrix[row][column] = 7;
+  return int(matrix[row][column]);
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("chained-array-index.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the chained array-index fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  // The emitter reports a declined body by throwing, which is what raises
+  // GTI-B0001 through the driver. Catching it keeps the regression a readable
+  // failure instead of an abort.
+  lang::BackendArtifact artifact;
+  std::string declined;
+  try {
+    artifact =
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  } catch (const std::exception &error) {
+    declined = error.what();
+  }
+  expect(declined.empty(),
+         "a chained dynamic element access should stay inside the complete "
+         "C++ text vocabulary");
+
+  const std::size_t entry =
+      artifact.contents.rfind("bool __gti_entry__gti_mir_failure(");
+  const std::string body = entry == std::string::npos
+                               ? std::string()
+                               : artifact.contents.substr(entry);
+  const auto occurrences = [&](const std::string &needle) {
+    std::size_t count = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++count;
+    }
+    return count;
+  };
+  const std::string guard =
+      " = ::gti_internal::backend::mir_checked_array_bound_v1(";
+  const std::string read =
+      " = ::gti_internal::backend::mir_checked_array_read_v1(";
+  const std::string write =
+      " = ::gti_internal::backend::mir_checked_array_write_v1(";
+  // One guard for the dynamic row of the read and one for the write, each
+  // paired with the terminal helper that carries the column.
+  expect(!body.empty() && occurrences(guard) == 2 && occurrences(read) == 1 &&
+             occurrences(write) == 1,
+         "each chained dynamic access should guard its nonterminal dimension "
+         "alongside the terminal checked helper");
+
+  const std::size_t guardAt = body.find(guard);
+  const std::size_t statusAt =
+      guardAt == std::string::npos
+          ? std::string::npos
+          : body.rfind("__gti_mir_failure_status_", guardAt);
+  const std::string status = statusAt == std::string::npos
+                                 ? std::string()
+                                 : body.substr(statusAt, guardAt - statusAt);
+  const std::size_t writeAt = body.find(write);
+  expect(!status.empty() && writeAt != std::string::npos && guardAt < writeAt &&
+             body.find("if (" + status + ".code == GTI_FAILURE_CODE_NONE_V1) {",
+                       guardAt) < writeAt,
+         "the guard should open the success branch the terminal checked "
+         "helper runs inside");
+}
+
 void testLocalTypeInference() {
   const std::string source = R"(
 class Box {
@@ -35408,6 +35497,7 @@ int main(int argc, char **argv) {
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
   testFixedArrayDynamicWriteFailureEdge();
+  testFixedArrayChainedDynamicIndex();
   testLocalTypeInference();
   testStructuredBindings();
   testLambdas();

@@ -22,11 +22,23 @@ namespace {
 
 [[nodiscard]] bool failureStatusCannotFail(const MirBody &body);
 
+// The index chain of a fixed-array element access together with how its
+// nonterminal dimensions carry their bound: `routed` means the caller emitted
+// the checked guard that reports the instruction's failure site, so the text
+// spells plain subscripts.
+struct ArrayIndexChain {
+  const std::vector<MirPlaceProjection> &indices;
+  bool routed = false;
+};
+
 // A fixed-array element place carries one or more Index projections over its
-// unprojected sibling array place (same binding). Nonterminal projections are
-// admitted only when their constant indices are proven in bounds: the MIR
-// instruction owns one terminal failure edge, so the text step must not hide
-// another potentially failing access in the parent expression.
+// unprojected sibling array place (same binding). A constant nonterminal
+// projection must be proven in bounds here; a dynamic one keeps a runtime
+// bound the text step owns, because the MIR instruction's single failure edge
+// describes the whole chained access rather than its last index alone. Every
+// spelling of such a chain therefore checks each dynamic nonterminal index,
+// either through the routed guard the checked forms emit or through the
+// contained accessor the remaining forms already use for the terminal index.
 struct ArrayElementAccess {
   MirPlaceId array = 0;
   std::vector<MirPlaceProjection> indices;
@@ -89,14 +101,14 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
           valid = false;
           break;
         }
-        if (index + 1 < indices.size()) {
-          const std::optional<std::uint64_t> constant =
-              indices[index].constantIndex;
-          if (!constant || current.arrayLengthParameterId != 0 ||
-              *constant >= current.arrayLength) {
-            valid = false;
-            break;
-          }
+        // A constant nonterminal index must be proven in bounds here; a
+        // dynamic one keeps its bound at run time, so only the concrete
+        // element type matters for the spelling.
+        if (index + 1 < indices.size() && indices[index].constantIndex &&
+            (current.arrayLengthParameterId != 0 ||
+             *indices[index].constantIndex >= current.arrayLength)) {
+          valid = false;
+          break;
         }
         // Copy before assignment: the element lives inside the vector the
         // assignment replaces.
@@ -114,9 +126,9 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
 
 // A fixed-array field element on a binding-rooted record. The sibling field
 // place owns the complete field projection and concrete array type; the
-// element adds one or more Index projections. Nonterminal indices must be
-// compile-time in bounds because one MIR instruction carries only the
-// terminal access's failure edge.
+// element adds one or more Index projections. A constant nonterminal index
+// must be compile-time in bounds; a dynamic one keeps the same runtime bound
+// the chained element spelling gives every dimension.
 struct BindingArrayFieldElementAccess {
   MirPlaceId array = 0;
   std::vector<MirPlaceProjection> indices;
@@ -180,13 +192,11 @@ bindingArrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
         valid = false;
         break;
       }
-      if (index + 1 < indices.size()) {
-        if (!indices[index].constantIndex ||
-            current.arrayLengthParameterId != 0 ||
-            *indices[index].constantIndex >= current.arrayLength) {
-          valid = false;
-          break;
-        }
+      if (index + 1 < indices.size() && indices[index].constantIndex &&
+          (current.arrayLengthParameterId != 0 ||
+           *indices[index].constantIndex >= current.arrayLength)) {
+        valid = false;
+        break;
       }
       SemanticType element = current.arguments.front();
       current = std::move(element);
@@ -18937,17 +18947,22 @@ private:
                 bindingArrayFieldElementAccess(facts.body, *source)) {
           if (allMirLocalFailuresDischarged(instruction)) {
             output << "__gti_mir_v_" << *instruction.result << " = ";
-            emitBindingArrayFieldElement(facts, *access);
+            emitBindingArrayFieldElement(facts, *access, true);
             output << ";\n";
             return;
           }
           if (failureForm && !instruction.localFailureSites.empty()) {
+            const std::size_t chain =
+                openCheckedArrayChain(instruction, access->indices, [&] {
+                  emitBindingArrayFieldBase(facts, *access);
+                });
             output << "__gti_mir_failure_status_" << instruction.id
                    << " = ::gti_internal::backend::mir_checked_array_read_v1(";
-            emitBindingArrayFieldParent(facts, *access);
+            emitBindingArrayFieldParent(facts, *access, true);
             output << ", ";
             emitElementIndexValue(access->terminalIndex());
             output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+            closeCheckedArrayChain(chain);
             return;
           }
           if (!instruction.localFailureSites.empty()) {
@@ -19045,17 +19060,21 @@ private:
                 arrayElementAccess(facts.body, *source)) {
           if (allMirLocalFailuresDischarged(instruction)) {
             output << "__gti_mir_v_" << *instruction.result << " = ";
-            emitArrayElement(facts, *access);
+            emitArrayElement(facts, *access, true);
             output << ";\n";
             return;
           }
           if (failureForm && !instruction.localFailureSites.empty()) {
+            const std::size_t chain =
+                openCheckedArrayChain(instruction, access->indices,
+                                      [&] { emitArrayBase(facts, *access); });
             output << "__gti_mir_failure_status_" << instruction.id
                    << " = ::gti_internal::backend::mir_checked_array_read_v1(";
-            emitArrayParent(facts, *access);
+            emitArrayParent(facts, *access, true);
             output << ", ";
             emitElementIndexValue(*access);
             output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+            closeCheckedArrayChain(chain);
             return;
           }
           if (!instruction.localFailureSites.empty()) {
@@ -19635,16 +19654,22 @@ private:
               bindingArrayFieldElementAccess(facts.body, *destinationPlace)) {
         if (failureForm && !instruction.localFailureSites.empty() &&
             !allMirLocalFailuresDischarged(instruction)) {
+          const std::size_t chain =
+              openCheckedArrayChain(instruction, access->indices, [&] {
+                emitBindingArrayFieldBase(facts, *access);
+              });
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
-          emitBindingArrayFieldParent(facts, *access);
+          emitBindingArrayFieldParent(facts, *access, true);
           output << ", ";
           emitElementIndexValue(access->terminalIndex());
           output << ", ";
           emitOperand(instruction.operands.front());
           output << ");\n";
+          closeCheckedArrayChain(chain);
         } else {
-          emitBindingArrayFieldElement(facts, *access);
+          emitBindingArrayFieldElement(
+              facts, *access, allMirLocalFailuresDischarged(instruction));
           output << " = ";
           emitOperand(instruction.operands.front());
           output << ";\n";
@@ -19767,16 +19792,21 @@ private:
               arrayElementAccess(facts.body, *destinationPlace)) {
         if (failureForm && !instruction.localFailureSites.empty() &&
             !allMirLocalFailuresDischarged(instruction)) {
+          const std::size_t chain =
+              openCheckedArrayChain(instruction, access->indices,
+                                    [&] { emitArrayBase(facts, *access); });
           output << "__gti_mir_failure_status_" << instruction.id
                  << " = ::gti_internal::backend::mir_checked_array_write_v1(";
-          emitArrayParent(facts, *access);
+          emitArrayParent(facts, *access, true);
           output << ", ";
           emitElementIndexValue(*access);
           output << ", ";
           emitOperand(instruction.operands.front());
           output << ");\n";
+          closeCheckedArrayChain(chain);
         } else {
-          emitArrayElement(facts, *access);
+          emitArrayElement(facts, *access,
+                           allMirLocalFailuresDischarged(instruction));
           output << " = ";
           emitOperand(instruction.operands.front());
           output << ";\n";
@@ -23925,8 +23955,41 @@ private:
            << ")";
   }
 
-  void emitArrayParent(const ScalarBodyFacts &facts,
-                       const ArrayElementAccess &access) {
+  // The nonterminal dimensions of a chained element access. A chain whose
+  // nonterminal indices are all compile-time in bounds spells ordinary
+  // subscripts. A dynamic nonterminal index needs a real bound: `routed` says
+  // the caller already emitted the guard that reports the instruction's
+  // failure site, and otherwise the contained accessor carries the bound
+  // exactly as it already does for the terminal index of the same form.
+  void emitElementIndexPrefix(const ArrayIndexChain &chain) {
+    for (std::size_t index = 0; index + 1 < chain.indices.size(); ++index) {
+      if (chain.routed || chain.indices[index].constantIndex) {
+        output << '[';
+        emitElementIndex(chain.indices[index]);
+        output << ']';
+        continue;
+      }
+      output << ", ";
+      emitElementIndex(chain.indices[index]);
+      output << ')';
+    }
+  }
+
+  // Opens the contained-accessor calls that emitElementIndexPrefix() closes.
+  // Emitted before the base so the innermost dimension wraps it first.
+  void emitElementIndexPrefixOpen(const ArrayIndexChain &chain) {
+    if (chain.routed) {
+      return;
+    }
+    for (std::size_t index = 0; index + 1 < chain.indices.size(); ++index) {
+      if (!chain.indices[index].constantIndex) {
+        output << "::gti_internal::backend::array_at(";
+      }
+    }
+  }
+
+  void emitArrayBase(const ScalarBodyFacts &facts,
+                     const ArrayElementAccess &access) {
     const MirPlace *array = facts.body.findPlace(access.array);
     if (array == nullptr) {
       throw std::logic_error(
@@ -23939,44 +24002,96 @@ private:
     if (access.dereferenceArray) {
       output << ')';
     }
-    for (std::size_t index = 0; index + 1 < access.indices.size(); ++index) {
-      output << '[';
-      emitElementIndex(access.indices[index]);
-      output << ']';
-    }
+  }
+
+  void emitArrayParent(const ScalarBodyFacts &facts,
+                       const ArrayElementAccess &access, bool routed = false) {
+    const ArrayIndexChain chain{access.indices, routed};
+    emitElementIndexPrefixOpen(chain);
+    emitArrayBase(facts, access);
+    emitElementIndexPrefix(chain);
   }
 
   void emitArrayElement(const ScalarBodyFacts &facts,
-                        const ArrayElementAccess &access) {
-    emitArrayParent(facts, access);
+                        const ArrayElementAccess &access, bool routed = false) {
+    emitArrayParent(facts, access, routed);
     output << '[';
     emitElementIndex(access.terminalIndex());
     output << ']';
   }
 
-  void
-  emitBindingArrayFieldParent(const ScalarBodyFacts &facts,
-                              const BindingArrayFieldElementAccess &access) {
+  void emitBindingArrayFieldBase(const ScalarBodyFacts &facts,
+                                 const BindingArrayFieldElementAccess &access) {
     const MirPlace *array = facts.body.findPlace(access.array);
     if (array == nullptr) {
       throw std::logic_error(
           "verified native array field access lost its sibling place");
     }
     emitPlaceExpression(facts, *array);
-    for (std::size_t index = 0; index + 1 < access.indices.size(); ++index) {
-      output << '[';
-      emitElementIndex(access.indices[index]);
-      output << ']';
-    }
+  }
+
+  void emitBindingArrayFieldParent(const ScalarBodyFacts &facts,
+                                   const BindingArrayFieldElementAccess &access,
+                                   bool routed = false) {
+    const ArrayIndexChain chain{access.indices, routed};
+    emitElementIndexPrefixOpen(chain);
+    emitBindingArrayFieldBase(facts, access);
+    emitElementIndexPrefix(chain);
   }
 
   void
   emitBindingArrayFieldElement(const ScalarBodyFacts &facts,
-                               const BindingArrayFieldElementAccess &access) {
-    emitBindingArrayFieldParent(facts, access);
+                               const BindingArrayFieldElementAccess &access,
+                               bool routed = false) {
+    emitBindingArrayFieldParent(facts, access, routed);
     output << '[';
     emitElementIndex(access.terminalIndex());
     output << ']';
+  }
+
+  // Emits one routed bounds guard per dynamic nonterminal index of a chained
+  // element access and opens a success branch for each, so the instruction's
+  // failure status carries the first violation instead of the text
+  // subscripting past the array. Returns the branch count for
+  // closeCheckedArrayChain(). The caller has already written the current
+  // indent; this leaves the stream indented for the terminal statement.
+  template <typename EmitBase>
+  [[nodiscard]] std::size_t
+  openCheckedArrayChain(const MirInstruction &instruction,
+                        const std::vector<MirPlaceProjection> &indices,
+                        EmitBase &&emitBase) {
+    std::size_t opened = 0;
+    for (std::size_t index = 0; index + 1 < indices.size(); ++index) {
+      if (indices[index].constantIndex) {
+        continue;
+      }
+      output << "__gti_mir_failure_status_" << instruction.id
+             << " = ::gti_internal::backend::mir_checked_array_bound_v1(";
+      emitBase();
+      for (std::size_t prefix = 0; prefix < index; ++prefix) {
+        output << '[';
+        emitElementIndex(indices[prefix]);
+        output << ']';
+      }
+      output << ", ";
+      emitElementIndexValue(indices[index]);
+      output << ");\n";
+      writeIndent();
+      output << "if (__gti_mir_failure_status_" << instruction.id
+             << ".code == GTI_FAILURE_CODE_NONE_V1) {\n";
+      ++indentation;
+      ++opened;
+      writeIndent();
+    }
+    return opened;
+  }
+
+  void closeCheckedArrayChain(std::size_t opened) {
+    for (std::size_t index = 0; index < opened; ++index) {
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
   }
 
   void emitReceiverArrayParent(const ScalarBodyFacts &facts,

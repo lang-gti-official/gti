@@ -1,0 +1,20 @@
+// A three-dimensional chain: the middle dimension is the one out of range, so
+// neither the outermost nor the terminal check would catch it on its own.
+
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut int32_t cube[2][3][4] = {};
+  std::size_t plane = counted(std::size_t(1));
+  std::size_t line = counted(std::size_t(9));
+  std::size_t cell = counted(std::size_t(3));
+  int32_t read = cube[plane][line][cell];
+  std::println(read == 0 ? "unreachable" : "unreachable");
+  return 0;
+}
