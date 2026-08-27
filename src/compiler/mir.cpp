@@ -4073,6 +4073,20 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();
+  // A checked element write reinitializing an always-available trivially
+  // destroyed place is equally state-preserving: the write helper leaves the
+  // destination untouched when it fails, and the ownership state does not
+  // transition (Available before and after), so the failure edge has nothing
+  // to restore. Without this admission a dynamic fixed-array element write
+  // keeps its failure sites but never receives the Invoke edge that consumes
+  // the checked helper's status, silently dropping the defined
+  // index_out_of_bounds failure that the matching read raises.
+  const bool statePreservingReinitialize =
+      trivialCommitDestination && instruction.ownership &&
+      instruction.ownership->kind == OwnershipEventKind::Reinitialize &&
+      instruction.ownership->before == OwnershipStateSet::Available &&
+      instruction.ownership->after == OwnershipStateSet::Available &&
+      instruction.ownership->reachable;
   const bool borrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
@@ -4099,7 +4113,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       (instruction.destination && !trivialCommitDestination) ||
       (instruction.loan && !borrowedCallResult &&
        !transferredBorrowedCallResult) ||
-      !statePreservingOwnership ||
+      (!statePreservingOwnership && !statePreservingReinitialize) ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }
