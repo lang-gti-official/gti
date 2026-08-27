@@ -903,6 +903,15 @@ inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
 projections; it does not claim indexed, raw, or opaque provenance.
 
+When lowering re-roots a projected place at a loan whose source is a
+reference carrier itself — a reference parameter's entry loan rather than a
+body-local referent place — the composed loan-source place spells the carrier
+dereference explicitly before its remaining field or index projections.
+Disjoint sibling-field receiver borrows reached through one mutable reference
+parameter therefore each name their exact `[dereference, field…]` place, which
+keeps them field-disjoint for verification and lets the backend key every
+field projection to one concrete class instance.
+
 `MirRangeIteration` is the bounded exception for an indexed mutable element.
 It names the exact owner/range/iterator/sentinel bindings, strategy, access
 mode, parent range loan, child element loan, condition/body/increment/cleanup
