@@ -3,6 +3,17 @@
 // prelude. Shared ownership remains declaration-only until its separate
 // compiler-private owner capability and lifetime rules exist.
 
+namespace gti_internal {
+/// Seals adoption of freshly allocated, wholly uninitialized typed storage.
+///
+/// This is ordinary source-defined standard-library policy, not a compiler
+/// intrinsic. Application source cannot name the compiler-private namespace,
+/// so only trusted library factories can establish the adoption precondition.
+enum class empty_storage_adoption {
+  trusted,
+};
+}
+
 namespace std {
 /// Recoverable failures from typed storage allocation.
 enum class alloc_errc {
@@ -146,6 +157,197 @@ public:
     return this.try_storage_impl<T>(count, bytes);
   }
 };
+
+/// Recoverable insertion outcomes for a fixed-capacity arena.
+enum class arena_errc {
+  full,
+};
+
+/// A move-only homogeneous monotonic arena over checked typed storage.
+///
+/// Positions are ordinary indexes, not owning handles. `reset()` invalidates
+/// every prior position and destroys every live value before the positions
+/// may be reused. A retained element reference prevents reset, insertion, or
+/// movement through the normal receiver-borrow rules.
+class arena<std::movable T> {
+  mut storage<T> values;
+  mut size_t next = 0;
+
+public:
+  // The private token makes this constructor available to the source-defined
+  // factory without exposing unchecked storage adoption to applications.
+  arena(gti_internal::empty_storage_adoption token, storage<T> backing)
+      : values(std::move(backing)) {}
+
+  arena(arena<T>& other) = delete;
+  arena(arena<T>&& other) = default;
+
+  /// Returns the fixed allocation extent.
+  size_t capacity() {
+    return this.values.capacity();
+  }
+
+  /// Returns the number of monotonically occupied positions.
+  size_t size() {
+    return this.next;
+  }
+
+  bool empty() {
+    return this.next == size_t(0);
+  }
+
+  bool full() {
+    return this.next == this.values.capacity();
+  }
+
+  /// Moves one completed value into the next position.
+  expected<size_t, arena_errc> try_insert(T value) mut {
+    if (this.full()) {
+      return unexpected(arena_errc::full);
+    }
+    size_t index = this.next;
+    this.values.construct(index, std::move(value));
+    this.next++;
+    return index;
+  }
+
+  /// Returns a checked read-only reference to an occupied position.
+  T& get(size_t index) {
+    gti_internal::index_bounds_check(index, this.next);
+    return this.values.get(index);
+  }
+
+  /// Returns a checked exclusive reference to an occupied position.
+  mut T& get_mut(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.next);
+    return this.values.get_mut(index);
+  }
+
+  /// Destroys every live value and restarts monotonic allocation at zero.
+  void reset() mut {
+    this.values.clear();
+    this.next = size_t(0);
+  }
+};
+
+/// Recoverable insertion outcomes for a fixed-capacity pool.
+enum class pool_errc {
+  full,
+};
+
+/// A move-only homogeneous pool with checked reusable positions.
+///
+/// A returned position identifies a slot, not a particular slot lifetime.
+/// Erasing and then reusing a position can therefore make that same numeric
+/// position name a new value. References remain tied to the pool receiver and
+/// statically prevent overlapping erase, insertion, clearing, or movement.
+class pool<std::movable T> {
+  mut storage<T> values;
+  mut size_t live = 0;
+
+public:
+  // The private token makes this constructor available to the source-defined
+  // factory without exposing unchecked storage adoption to applications.
+  pool(gti_internal::empty_storage_adoption token, storage<T> backing)
+      : values(std::move(backing)) {}
+
+  pool(pool<T>& other) = delete;
+  pool(pool<T>&& other) = default;
+
+  /// Returns the fixed allocation extent.
+  size_t capacity() {
+    return this.values.capacity();
+  }
+
+  /// Returns the number of currently live values.
+  size_t size() {
+    return this.live;
+  }
+
+  bool empty() {
+    return this.live == size_t(0);
+  }
+
+  bool full() {
+    return this.live == this.values.capacity();
+  }
+
+  /// Returns whether an in-bounds position currently contains a live value.
+  bool contains(size_t index) {
+    if (index >= this.values.capacity()) {
+      return false;
+    }
+    return this.values.initialized(index);
+  }
+
+  /// Moves one completed value into the lowest available position.
+  expected<size_t, pool_errc> try_insert(T value) mut {
+    if (this.full()) {
+      return unexpected(pool_errc::full);
+    }
+    mut size_t index = 0;
+    while (this.values.initialized(index)) {
+      index++;
+    }
+    this.values.construct(index, std::move(value));
+    this.live++;
+    return index;
+  }
+
+  /// Destroys one live position and makes it available for reuse.
+  void erase(size_t index) mut {
+    this.values.destroy(index);
+    this.live--;
+  }
+
+  /// Returns a checked read-only reference to a live position.
+  T& get(size_t index) {
+    return this.values.get(index);
+  }
+
+  /// Returns a checked exclusive reference to a live position.
+  mut T& get_mut(size_t index) mut {
+    return this.values.get_mut(index);
+  }
+
+  /// Destroys every live value and makes every position available.
+  void clear() mut {
+    this.values.clear();
+    this.live = size_t(0);
+  }
+};
+
+/// Attempts to allocate one fixed-capacity homogeneous arena.
+expected<arena<T>, alloc_errc>
+try_make_arena<std::movable T>(size_t capacity) {
+  allocator source = allocator();
+  mut expected<storage<T>, alloc_errc> allocated =
+      source.try_storage<T>(capacity);
+  if (!allocated) {
+    return unexpected(allocated.error());
+  }
+  mut storage<T> backing = std::move(allocated).value();
+  gti_internal::empty_storage_adoption token =
+      gti_internal::empty_storage_adoption::trusted;
+  mut arena<T> result = arena<T>(std::move(token), std::move(backing));
+  return std::move(result);
+}
+
+/// Attempts to allocate one fixed-capacity homogeneous pool.
+expected<pool<T>, alloc_errc>
+try_make_pool<std::movable T>(size_t capacity) {
+  allocator source = allocator();
+  mut expected<storage<T>, alloc_errc> allocated =
+      source.try_storage<T>(capacity);
+  if (!allocated) {
+    return unexpected(allocated.error());
+  }
+  mut storage<T> backing = std::move(allocated).value();
+  gti_internal::empty_storage_adoption token =
+      gti_internal::empty_storage_adoption::trusted;
+  mut pool<T> result = pool<T>(std::move(token), std::move(backing));
+  return std::move(result);
+}
 
 class shared_ptr<T> {
 public:

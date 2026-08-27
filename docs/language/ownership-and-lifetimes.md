@@ -974,6 +974,45 @@ failure boundary. The complete rationale, provenance model, and
 C++/Rust/Zig/Swift comparison are in
 [ADR 022](../decisions/022-safe-typed-allocation.md).
 
+## Bounded Arena And Pool Ownership
+
+`<std/memory>` composes the typed storage owner into two ordinary GTI classes:
+
+```gti
+auto created = std::try_make_arena<Widget>(std::size_t(64));
+if (!created) {
+  return 1;
+}
+mut std::arena<Widget> widgets = std::move(created).value();
+auto position = widgets.try_insert(Widget(7));
+```
+
+`std::arena<T>` and `std::pool<T>` require `std::movable T`, are move-only, and
+carry the allocation owner directly. Their factories preserve the exact
+`alloc_errc` result from typed allocation. A zero-capacity value succeeds and
+is immediately full; insertion then returns the policy error `arena_errc::full`
+or `pool_errc::full` rather than raising a runtime failure.
+
+An arena keeps one monotonic `next` position. Successful insertion constructs
+the completed value before incrementing `size`; `reset()` destroys every live
+slot in reverse order and restarts at zero. A pool keeps a live count, chooses
+the lowest uninitialized slot, and makes a checked erased slot reusable.
+`clear()` destroys every live pool value in reverse slot order.
+
+Positions are ordinary `size_t` values and carry no provenance or generation.
+They identify the current slot only. Reset, erase, and destruction end the
+corresponding slot lifetime, and later reuse may return the same number for a
+new value. Checked access still rejects out-of-range and uninitialized slots,
+but this first surface does not claim stale-handle detection. Retained element
+references suspend all mutation and movement of the owning arena or pool under
+the same conservative receiver-wide borrow rule as `std::storage<T>`.
+
+The adopting constructors require a compiler-private, source-defined seal.
+Only trusted standard-library factories can establish that the consumed
+storage is freshly allocated and wholly uninitialized; application code cannot
+forge the token or bypass the factories. The seal has no intrinsic behavior
+and does not make either public class compiler-recognized.
+
 ## Standard-Library Storage
 
 Built-in fixed arrays provide initialized inline storage with compile-time

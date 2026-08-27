@@ -262,13 +262,17 @@ compiler-generated active-state moves, preventing moved-from containers from
 running the cleanup body twice.
 
 Application code may import `<std/memory>` for the direct public
-`std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
-surface. Allocation returns `expected`, and the move-only storage owner provides
-checked capacity, initialization, construct-by-value placement, access,
-destruction, and reverse clear operations for `std::movable T` without borrowed
-state. A successful zero-capacity request is well-defined. Arbitrary in-slot
-constructor forwarding is deferred until it has an explicit MIR failure
-boundary.
+`std::allocator`, `std::storage<T>`, `std::alignment`, `std::alloc_errc`,
+`std::arena<T>`, and `std::pool<T>` surface. Allocation returns `expected`, and
+the move-only storage owner provides checked capacity, initialization,
+construct-by-value placement, access, destruction, and reverse clear operations
+for `std::movable T` without borrowed state. `try_make_arena` and
+`try_make_pool` build fixed-capacity move-only policies over that owner. Arenas
+insert monotonically and reset as one operation; pools reuse the lowest empty
+position after checked erase. Their `size_t` positions are not
+generation-bearing handles. Successful zero capacity is well-defined.
+Arbitrary in-slot constructor forwarding is deferred until it has an explicit
+MIR failure boundary.
 The public types are ordinary GTI wrappers: neither compiler nor backend
 recognizes their names, and no raw address or manual deallocation is exposed.
 
@@ -312,7 +316,7 @@ them repeatedly, and reject consuming once-callables.
 | `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
-| `<std/memory>` | Implemented typed `allocator`, `storage<T>`, `alignment`, and `alloc_errc`; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
+| `<std/memory>` | Implemented typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
