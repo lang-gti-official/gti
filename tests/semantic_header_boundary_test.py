@@ -49,7 +49,7 @@ def main() -> None:
     allowed_analyzer_consumers = {
         "src/compiler/frontend.cpp",
         "src/compiler/hir_lowering.cpp",
-        "src/compiler/semantic_analyzer.cpp",
+        "src/compiler/semantic_analyzer_impl.h",
         "tests/semantic_analyzer_header_smoke.cpp",
         "tests/compiler_test_fixture.h",
     }
@@ -64,6 +64,29 @@ def main() -> None:
         missing = sorted(allowed_analyzer_consumers - actual)
         extra = sorted(actual - allowed_analyzer_consumers)
         fail(f"analyzer consumer allowlist mismatch; missing={missing}, extra={extra}")
+
+    implementation_sources = {
+        "src/compiler/semantic_analyzer.cpp",
+        "src/compiler/semantic_body_analysis.cpp",
+        "src/compiler/semantic_call_resolution.cpp",
+        "src/compiler/semantic_declaration_analysis.cpp",
+        "src/compiler/semantic_flow_analysis.cpp",
+        "src/compiler/semantic_ownership_analysis.cpp",
+        "src/compiler/semantic_type_resolution.cpp",
+    }
+    for relative in implementation_sources:
+        direct = includes(root / relative)
+        if direct != {"semantic_analyzer_impl.h"}:
+            fail(
+                f"{relative} must consume only the private analyzer implementation "
+                f"contract; includes={sorted(direct)}"
+            )
+
+    implementation_header = (
+        root / "src/compiler/semantic_analyzer_impl.h"
+    ).read_text(encoding="utf-8")
+    if implementation_header.count("class SemanticVisitor::Impl final") != 1:
+        fail("the private implementation header must own exactly one analyzer state")
 
 
 if __name__ == "__main__":

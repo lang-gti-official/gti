@@ -14,10 +14,17 @@ queries, and instance-analysis results. `semantic_analyzer.h` is the narrow
 `SemanticVisitor`/`SemanticInstanceProvider` facade. HIR, the frontend result,
 backends, drivers, and LSP state include the model or core contract rather than
 the facade. Declaration registration, lookup, overload selection,
-flow/lifecycle analysis, generic reanalysis, and AST visitor algorithms compile
-in `src/compiler/semantic_analyzer.cpp`. Snapshot/database operations compile
-in `src/compiler/semantic_model.cpp`; canonical type rendering compiles in
-`src/compiler/semantic_type_printer.cpp`.
+flow/lifecycle analysis, generic reanalysis, and AST visitor algorithms remain
+one request-local authority but compile behind a private implementation
+contract. `semantic_analyzer_impl.h` contains the single
+`SemanticVisitor::Impl` state owner, nested records, and method declarations;
+it is not a public or cross-phase header. `semantic_analyzer.cpp` owns only the
+public facade. Body/constexpr visitation, ownership and borrow rules, call
+resolution, type/generic resolution, declaration/catalog processing, and
+program/value-flow finalization compile respectively in the six
+`semantic_*_analysis.cpp`/`semantic_*_resolution.cpp` units. Snapshot/database
+operations compile in `semantic_model.cpp`; canonical type rendering compiles
+in `semantic_type_printer.cpp`.
 
 ## Analysis Order
 
@@ -73,6 +80,15 @@ visitor therefore preserves configuration but cannot preserve names, compiler
 IDs, AST pointers, flow facts, diagnostics, or return/expression context from a
 previous check. Concrete-instance analysis still operates against the current
 snapshot; it does not establish an unrelated public request.
+
+The compiled units do not partition or copy session state. Every method is a
+member of the same `SemanticVisitor::Impl`, and every unit includes only the
+private declaration/state contract. Deduced-return helpers and templates stay
+with that contract because their definitions must remain visible; algorithms
+with a concrete signature compile out of line under their owning
+responsibility. A static boundary keeps the private header as the sole direct
+consumer of `semantic_analyzer.h` inside this implementation and rejects a
+second facade or analyzer-state definition.
 
 Borrow-summary publication builds one `FunctionId`-to-candidate index during
 registration and updates the catalog declaration plus only the candidate views
