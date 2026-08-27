@@ -207,7 +207,8 @@ The embedded `SemanticDatabase` exposes snapshot-scoped `SymbolId`,
 qualified name, source unit, exact name/declaration/definition spans, type,
 traits, access, mutability, static/internal/default-library flags, and generated
 state. Occurrences link a source span and role to the resolved symbol and may
-retain selected call/construction facts.
+retain selected call/construction facts. Declaration documentation comments are
+normalized by the parser and retained on the corresponding `SymbolRecord`.
 
 Occurrence recording is editor-tooling work and is gated by
 `FrontendOptions::toolingOccurrences` (default enabled). The driver's
@@ -216,11 +217,20 @@ occurrence table, and not building it removes about a third of the
 compiler's peak memory on large inputs. Symbol records are always produced,
 because HIR and the C++ emitter resolve member identity through them.
 
-`include/gti/language_queries.h` builds compiler-owned hover, completion, and
-definition results over the immutable frontend snapshot. `SymbolId` is not
-stable across analyses and must not be placed directly in a project index.
-Documentation comments, a durable project symbol identity, references, and
-rename are not implemented semantic facilities yet.
+`include/gti/language_queries.h` builds compiler-owned hover, completion,
+definition, reference, rename, outline, and signature-help results over the
+immutable frontend snapshot. Hover consumes the retained declaration
+documentation.
+
+`include/gti/documentation.h` owns a separate batch projection for reference
+generation. `DocumentationQueries::standardLibraryIndex` accepts only a
+source-, syntax-, and semantics-valid snapshot with tooling occurrences,
+filters to public non-compiler-private standard-library symbols, reuses
+`SignaturePrinter`, and returns presentation records made only of strings,
+booleans, traits, and stable standard-library unit/offset data. The
+deterministic JSON serializer omits physical checkout paths, AST addresses,
+timestamps, and `SymbolId`. `SymbolId` remains snapshot-scoped and must not
+be placed directly in a durable index or URL.
 
 ## Concrete Generic Reanalysis
 

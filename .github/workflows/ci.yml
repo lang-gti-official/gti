@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       compiler: ${{ steps.scope.outputs.compiler }}
+      reference: ${{ steps.scope.outputs.reference }}
     steps:
       - name: Check out GTI
         uses: actions/checkout@v6
@@ -44,6 +45,7 @@ jobs:
              || ! git cat-file -e "${base}" 2>/dev/null; then
             echo "no reliable diff base; running the full matrix"
             echo "compiler=true" >> "${GITHUB_OUTPUT}"
+            echo "reference=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           if [[ "${range}" == "triple" ]]; then
@@ -53,14 +55,20 @@ jobs:
           fi
           printf 'changed files:\n%s\n' "${changed}"
           compiler=false
+          reference=false
           while IFS= read -r file; do
             [[ -z "${file}" ]] && continue
             case "${file}" in
-              docs/*|reference/*|lua/*|plugin/*|.gitea/*|.claude/*|.codex/*|*.md) ;;
+              reference/*) reference=true ;;
+              docs/*|lua/*|plugin/*|.gitea/*|.claude/*|.codex/*|*.md) ;;
               *) compiler=true ;;
             esac
           done <<< "${changed}"
+          if [[ "${compiler}" == true ]]; then
+            reference=true
+          fi
           echo "compiler=${compiler}" >> "${GITHUB_OUTPUT}"
+          echo "reference=${reference}" >> "${GITHUB_OUTPUT}"
 
   formatting:
     name: Formatting
@@ -120,6 +128,66 @@ jobs:
           npm run test:highlights
           npm run test:shipped
           git diff --exit-code -- src
+
+  reference:
+    name: Reference site
+    needs: change-scope
+    if: needs.change-scope.outputs.reference == 'true'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+
+      - name: Install Ninja, LLVM 18, libclang, and Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            clang libclang-18-dev llvm-18-dev ninja-build
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
+
+      - name: Configure reference tools
+        run: >-
+          cmake -S . -B build-reference -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_BUILD_LSP=OFF
+          -DBUILD_TESTING=OFF
+
+      - name: Build compiler-backed reference tools
+        run: >-
+          cmake --build build-reference --config Release --parallel 4
+          --target gti_docgen gti
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v2
+        with:
+          version: 11.23.0
+          runtime: node@24
+          cache: true
+          cache-dependency-path: reference/pnpm-lock.yaml
+          package-json-file: reference/package.json
+          install: false
+
+      - name: Install reference dependencies
+        working-directory: reference
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate compiler API index
+        working-directory: reference
+        run: pnpm api:generate -- --docgen ../build-reference/gti_docgen
+
+      - name: Verify content contract and examples
+        working-directory: reference
+        run: |
+          pnpm test
+          pnpm examples:verify -- --gti ../build-reference/gti
+          pnpm examples:contract-smoke -- --gti ../build-reference/gti
+
+      - name: Build static reference
+        working-directory: reference
+        run: |
+          pnpm typecheck
+          pnpm build
 
   build-and-test:
     name: ${{ matrix.platform }}
