@@ -111,9 +111,28 @@ enum class NativeDeclarationKind {
   Enum,
   Typedef,
   Function,
-  // An object-like macro whose body is a bounded integer constant
-  // expression, imported with its evaluated value (the C-06 macro slice).
+  // An object-like macro whose body is a bounded constant expression,
+  // imported with its evaluated value (C-06).
   Constant,
+};
+
+// What a `Constant` declaration's body evaluated to. C macro bodies carry no
+// type, so the evaluated form is the fact the planner maps.
+enum class NativeConstantKind {
+  Integer,
+  Floating,
+  String,
+};
+
+// Layout facts a record's attributes assert (C-06). GTI's [[c_abi]] surface
+// has no spelling for either, so the planner degrades such a record to an
+// opaque handle; recording them keeps the reason exact instead of generic.
+struct NativeRecordLayout {
+  bool packed = false;
+  // Explicit alignment in bytes, or 0 when unspecified.
+  std::uint32_t alignment = 0;
+
+  [[nodiscard]] bool constrained() const { return packed || alignment != 0; }
 };
 
 struct NativeDeclaration {
@@ -129,6 +148,8 @@ struct NativeDeclaration {
   // surface (bit-fields, inexpressible fields); the planner degrades such a
   // record to an opaque handle carrying this reason.
   std::string layoutReason;
+  // Layout attributes the record declares, when any.
+  NativeRecordLayout layout;
   // Enum.
   std::vector<NativeEnumerator> enumerators;
   // Typedef: the aliased type.
@@ -146,9 +167,14 @@ struct NativeDeclaration {
   // it — but does not emit it; a referenced system record is pulled in as
   // an opaque handle on demand.
   bool inPolicy = true;
-  // Constant: the evaluated macro value. C macro redefinition keeps the
-  // declaration at its first position with its latest value.
+  // Constant: the evaluated macro value, tagged by the form it evaluated
+  // to. C macro redefinition keeps the declaration at its first position
+  // with its latest value.
+  NativeConstantKind constantKind = NativeConstantKind::Integer;
   std::int64_t constantValue = 0;
+  double constantFloating = 0.0;
+  // The exact C spelling of a string macro's body, escapes intact.
+  std::string constantText;
 };
 
 // Ids are one-based; zero is the invalid id everywhere.

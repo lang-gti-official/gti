@@ -1,6 +1,6 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-06 and BUILD-01 implemented (bounded C17 declaration import,
+Status: C-01 through C-07 and BUILD-01 implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
 translation-unit inputs, exact opaque-handle out parameters sufficient for an
 end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
@@ -327,15 +327,18 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    moving into the libclang parse, because the driver executable owns
    correct platform search paths; provenance comes from line markers, so
    include resolution still happens exactly once.
-6. **C-06: constants and C metadata (implemented).** Bounded object-like
-   integer macros import as `constexpr` constants. Assembler labels and
-   non-C calling conventions are model facts (`asmLabel`,
-   `callingConvention`) the planner rejects explicitly with their reasons;
-   record layout attributes remain the recorded degradation reason they
-   were. Making renamed symbols, other conventions, or packed layouts
-   *importable* requires new language surface (a symbol-rename attribute,
-   convention spellings, layout spellings) and is deliberately out of
-   bindgen's scope.
+6. **C-06: constants and C metadata (complete).** Object-like macros import
+   as `constexpr` constants in every bounded form a C body can hold:
+   integers through the exact int64 expression evaluator, floating literals
+   as `double`, and backslash-free string literals (including C adjacent
+   concatenation) as `std::string_view`, which the language's own conversion
+   carries into a `c_string` parameter. Assembler labels, non-C calling
+   conventions, and record layout attributes (`packed`, explicit
+   over-alignment) are all model facts the planner rejects explicitly with
+   reasons that name the specific attribute. Making renamed symbols, other
+   conventions, or packed layouts *importable* requires new language surface
+   (a symbol-rename attribute, convention spellings, layout spellings) and is
+   deliberately out of bindgen's scope.
 7. **BUILD-01: manifest and cache integration (implemented).**
    `[bindgen.<alias>]` manifest tables resolve into immutable
    `BindgenImportPlan` values on every project build plan; the driver owns
@@ -351,6 +354,39 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
 9. **CPP-02: C++ reader/planner extension.** Add only the accepted C++ scope
    and declaration facts to `NativeModel`, then extend planner policy. Revisit
    LibTooling only against a concrete libclang gap from CPP-01.
-10. **C-07: richer opt-in policy.** Add bounded `[[c_array]]` recognition,
-   ownership-transfer annotations, and allow/deny/rename configuration after
-   manifest authority exists.
+10. **C-07: richer opt-in policy (implemented).** Four opt-in controls,
+   available identically on the CLI (`--allow`, `--deny`, `--rename`,
+   `--array-return`) and in `[bindgen.<alias>]` (`allow`, `deny`, `rename`,
+   `array-returns`), all joining the build plan's model identity and the
+   generation reuse key:
+   - **allow/deny** narrow the import by name (an exact name or one trailing
+     `*`). An excluded declaration behaves exactly like an out-of-policy
+     system one: it still resolves uses, and a referenced record still pulls
+     in as an opaque handle.
+   - **rename** gives a type or constant whose C spelling GTI cannot use a
+     usable GTI name, which is what makes reserved-spelling records such as
+     `__sFILE` (and every function taking one) importable. Functions are
+     excluded and report why: a function's GTI name is its link symbol, so
+     renaming one would bind a different function — the same boundary C-06
+     records for assembler labels.
+   - **array-returns** declares the pointer-plus-count contract a C header
+     cannot state, emitting `[[c_array(count)]]`. The planner validates the
+     language's rule (an admitted one-level result, or the exact two-level
+     form; a count parameter pointing to a writable fixed-width integer) and
+     refuses the function with its reason rather than emitting an attribute
+     the frontend would reject. This is the only control that *widens* what
+     imports: the two-level array result form is otherwise refused.
+   - A configured entry matching nothing is reported as a warning, so a typo
+     is visible instead of silently doing nothing.
+
+   The planner also mirrors the frontend's reserved native-name set (C17
+   keywords and the generated bridge's support types such as `FILE`), so a
+   rename to an unusable spelling is a recorded skip rather than generated
+   source the frontend rejects.
+
+   Deliberately not implemented: **ownership-transfer annotations**. GTI has
+   no ownership-transfer surface for native results at all — the interop
+   contract lists it among the unsupported forms — so there is nothing for
+   the tool to emit. Adding it is a language change first, exactly like the
+   symbol-rename attribute C-06 identified, and belongs to that work rather
+   than to bindgen.

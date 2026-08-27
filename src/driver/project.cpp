@@ -527,6 +527,18 @@ ProjectBuildPlan makeBuildPlan(
       for (const std::string &argument : import.macroArguments) {
         modelIdentity += "|macro=" + argument;
       }
+      for (const std::string &pattern : import.allowPatterns) {
+        modelIdentity += "|allow=" + pattern;
+      }
+      for (const std::string &pattern : import.denyPatterns) {
+        modelIdentity += "|deny=" + pattern;
+      }
+      for (const auto &[from, to] : import.renames) {
+        modelIdentity += "|rename=" + from + ">" + to;
+      }
+      for (const auto &[function, count] : import.arrayReturns) {
+        modelIdentity += "|array=" + function + ">" + count;
+      }
       bindgenImports.push_back({.packageName = resolved.manifest.package().name,
                                 .alias = import.alias,
                                 .header = import.header,
@@ -534,6 +546,10 @@ ProjectBuildPlan makeBuildPlan(
                                 .namespaceName = import.namespaceName,
                                 .includeDirectories = import.includeDirectories,
                                 .macroArguments = import.macroArguments,
+                                .allowPatterns = import.allowPatterns,
+                                .denyPatterns = import.denyPatterns,
+                                .renames = import.renames,
+                                .arrayReturns = import.arrayReturns,
                                 .outputDirectory = std::move(importDirectory),
                                 .manifestPath = resolved.manifest.path(),
                                 .declaration = import.declaration});

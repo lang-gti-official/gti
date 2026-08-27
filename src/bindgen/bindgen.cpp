@@ -15,6 +15,11 @@ BindgenResult runCBindgen(std::string_view headerText,
     return result;
   }
   result.plan = planBindings(read.model, std::move(options));
+  // Configuration that matched nothing reports as a warning: the import
+  // still succeeds, but the caller sees that an opt-in entry did not apply.
+  for (const std::string &problem : result.plan.policyProblems) {
+    result.diagnostics.push_back({ReaderSeverity::Warning, {}, problem});
+  }
   result.gtiSource = writeGtiBindings(result.plan, headerName);
   return result;
 }

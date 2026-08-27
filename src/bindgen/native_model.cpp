@@ -1,5 +1,6 @@
 #include "gti/bindgen/native_model.h"
 
+#include <iomanip>
 #include <sstream>
 
 namespace lang::bindgen {
@@ -121,8 +122,15 @@ std::string printNativeModel(const NativeModel &model) {
     switch (declaration->kind) {
     case NativeDeclarationKind::Record: {
       out << (declaration->recordIsUnion ? "union " : "record ")
-          << declaration->name << (declaration->complete ? "" : " (incomplete)")
-          << external << '\n';
+          << declaration->name
+          << (declaration->complete ? "" : " (incomplete)");
+      if (declaration->layout.packed) {
+        out << " [packed]";
+      }
+      if (declaration->layout.alignment != 0) {
+        out << " [align " << declaration->layout.alignment << ']';
+      }
+      out << external << '\n';
       for (const NativeRecordField &field : declaration->fields) {
         out << "  field " << field.name << ": ";
         printType(model, field.type, out);
@@ -175,8 +183,21 @@ std::string printNativeModel(const NativeModel &model) {
       break;
     }
     case NativeDeclarationKind::Constant:
-      out << "constant " << declaration->name << " = "
-          << declaration->constantValue << external << '\n';
+      out << "constant " << declaration->name << " = ";
+      switch (declaration->constantKind) {
+      case NativeConstantKind::Integer:
+        out << declaration->constantValue;
+        break;
+      case NativeConstantKind::Floating:
+        // A fixed precision keeps the golden rendering host-independent.
+        out << std::fixed << std::setprecision(6)
+            << declaration->constantFloating << std::defaultfloat;
+        break;
+      case NativeConstantKind::String:
+        out << '"' << declaration->constantText << '"';
+        break;
+      }
+      out << external << '\n';
       break;
     }
   }

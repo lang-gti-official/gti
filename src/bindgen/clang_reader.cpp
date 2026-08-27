@@ -434,6 +434,76 @@ private:
   }
 };
 
+// A macro body of one or more adjacent string literals is C's own
+// concatenation. Only backslash-free content imports: an escape GTI's lexer
+// spells differently would silently change the constant, so such a body is
+// left unimported instead of approximated.
+[[nodiscard]] std::optional<std::string>
+evaluateStringMacro(const std::vector<std::string> &tokens) {
+  std::string text;
+  for (const std::string &token : tokens) {
+    if (token.size() < 2 || token.front() != '"' || token.back() != '"') {
+      return std::nullopt;
+    }
+    const std::string_view content(token.data() + 1, token.size() - 2);
+    if (content.find('\\') != std::string_view::npos) {
+      return std::nullopt;
+    }
+    text.append(content);
+  }
+  return text.empty() && tokens.empty() ? std::nullopt
+                                        : std::optional<std::string>(text);
+}
+
+// A bounded floating macro body: optional parentheses and unary sign around
+// one floating-point literal. Arithmetic over floating literals is
+// deliberately out of scope — the integer evaluator's exactness argument
+// does not carry to binary floating point, and real headers spell constants
+// like `#define M_PI 3.14159...` directly.
+[[nodiscard]] std::optional<double>
+evaluateFloatingMacro(const std::vector<std::string> &tokens) {
+  std::size_t first = 0;
+  std::size_t last = tokens.size();
+  while (first + 1 < last && tokens[first] == "(" && tokens[last - 1] == ")") {
+    ++first;
+    --last;
+  }
+  bool negative = false;
+  while (first < last && (tokens[first] == "-" || tokens[first] == "+")) {
+    negative = negative != (tokens[first] == "-");
+    ++first;
+  }
+  if (first + 1 != last) {
+    return std::nullopt;
+  }
+  const std::string &token = tokens[first];
+  // Only a genuine floating spelling qualifies; an integer body belongs to
+  // the integer evaluator, which is exact.
+  if (token.find('.') == std::string::npos &&
+      token.find('e') == std::string::npos &&
+      token.find('E') == std::string::npos) {
+    return std::nullopt;
+  }
+  if (token.starts_with("0x") || token.starts_with("0X")) {
+    return std::nullopt;
+  }
+  std::size_t consumed = 0;
+  double value = 0.0;
+  try {
+    value = std::stod(token, &consumed);
+  } catch (...) {
+    return std::nullopt;
+  }
+  for (std::size_t index = consumed; index < token.size(); ++index) {
+    const char suffix = static_cast<char>(
+        std::tolower(static_cast<unsigned char>(token[index])));
+    if (suffix != 'f' && suffix != 'l') {
+      return std::nullopt;
+    }
+  }
+  return negative ? -value : value;
+}
+
 class ModelBuilder {
 public:
   ModelBuilder(CXTranslationUnit unit, ReadResult &result,
@@ -957,14 +1027,20 @@ private:
     if (hasNativeErrorWithin(cursor)) {
       fail("the record definition has native C errors");
     }
+    NativeRecordLayout layout;
+    bool otherAttribute = false;
+    long long naturalAlignment = 1;
     for (const CXCursor child : childrenOf(cursor)) {
       const CXCursorKind childKind = clang_getCursorKind(child);
       if (clang_isAttribute(childKind) != 0) {
-        // Packed/aligned attributes change the layout Clang computed; the
-        // GTI [[c_abi]] surface has no spelling for them, so the record can
-        // only survive as an opaque handle.
-        fail("the record layout uses an attribute outside the bounded "
-             "surface");
+        // Layout attributes change what Clang computed; the GTI [[c_abi]]
+        // surface has no spelling for them, so the record survives only as
+        // an opaque handle — but which attribute it was is a model fact.
+        if (childKind == CXCursor_PackedAttr) {
+          layout.packed = true;
+        } else {
+          otherAttribute = true;
+        }
         continue;
       }
       if (childKind != CXCursor_FieldDecl) {
@@ -997,13 +1073,33 @@ private:
              "' uses an attribute outside the bounded surface");
         continue;
       }
-      const NativeTypeId type = mapType(clang_getCursorType(child));
+      const CXType fieldType = clang_getCursorType(child);
+      naturalAlignment =
+          std::max(naturalAlignment, clang_Type_getAlignOf(fieldType));
+      const NativeTypeId type = mapType(fieldType);
       fields.push_back({name, type, fieldOrigin});
+    }
+    // An explicit over-alignment is Clang's computed record alignment
+    // exceeding the natural one its fields require.
+    const long long recordAlignment =
+        clang_Type_getAlignOf(clang_getCursorType(cursor));
+    if (recordAlignment > naturalAlignment && naturalAlignment > 0) {
+      layout.alignment = static_cast<std::uint32_t>(recordAlignment);
+    }
+    if (layout.packed) {
+      fail("the record is packed, which the GTI [[c_abi]] layout cannot "
+           "express");
+    } else if (layout.alignment != 0) {
+      fail("the record requires " + std::to_string(layout.alignment) +
+           "-byte alignment, which the GTI [[c_abi]] layout cannot express");
+    } else if (otherAttribute) {
+      fail("the record layout uses an attribute outside the bounded surface");
     }
     // Re-find after mapping: type mapping may have grown the declaration
     // arena and moved the record.
     NativeDeclaration *record = result_.model.findDeclaration(id);
     record->complete = true;
+    record->layout = layout;
     if (failureReason.empty()) {
       record->fields = std::move(fields);
     } else {
@@ -1160,22 +1256,38 @@ private:
       return;
     }
     const SourceOrigin at = origin(cursor);
-    const std::optional<std::int64_t> value =
+    NativeDeclaration evaluated;
+    const std::optional<std::int64_t> integer =
         MacroExpressionEvaluator(body, macroValues_).evaluate();
-    if (!value.has_value()) {
+    if (integer.has_value()) {
+      evaluated.constantKind = NativeConstantKind::Integer;
+      evaluated.constantValue = *integer;
+      // Only an integer value can participate in a later macro body.
+      macroValues_[name] = *integer;
+    } else if (const std::optional<double> floating =
+                   evaluateFloatingMacro(body)) {
+      evaluated.constantKind = NativeConstantKind::Floating;
+      evaluated.constantFloating = *floating;
+    } else if (const std::optional<std::string> text =
+                   evaluateStringMacro(body)) {
+      evaluated.constantKind = NativeConstantKind::String;
+      evaluated.constantText = *text;
+    } else {
       if (inPolicy(at)) {
         warn(at, "macro '" + name +
-                     "' is not a bounded integer constant expression and was "
-                     "not imported");
+                     "' is not a bounded constant expression and was not "
+                     "imported");
       }
       return;
     }
-    macroValues_[name] = *value;
     if (const auto existing = macroDeclarations_.find(name);
         existing != macroDeclarations_.end()) {
       if (NativeDeclaration *declaration =
               result_.model.findDeclaration(existing->second)) {
-        declaration->constantValue = *value;
+        declaration->constantKind = evaluated.constantKind;
+        declaration->constantValue = evaluated.constantValue;
+        declaration->constantFloating = evaluated.constantFloating;
+        declaration->constantText = evaluated.constantText;
       }
       return;
     }
@@ -1184,14 +1296,12 @@ private:
       // itself is not part of the import.
       return;
     }
-    NativeDeclaration declaration;
-    declaration.kind = NativeDeclarationKind::Constant;
-    declaration.name = name;
-    declaration.scope = rootScope_;
-    declaration.origin = at;
-    declaration.constantValue = *value;
+    evaluated.kind = NativeDeclarationKind::Constant;
+    evaluated.name = name;
+    evaluated.scope = rootScope_;
+    evaluated.origin = at;
     const NativeDeclarationId id =
-        result_.model.addDeclaration(std::move(declaration));
+        result_.model.addDeclaration(std::move(evaluated));
     result_.model.order.push_back(id);
     macroDeclarations_.emplace(name, id);
   }

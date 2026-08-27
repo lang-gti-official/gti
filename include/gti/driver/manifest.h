@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lang::driver {
@@ -99,6 +100,12 @@ struct ProjectBindgenImport {
   // Validated `-D<name>[=<value>]` / `-U<name>` preprocessor arguments in
   // declaration order.
   std::vector<std::string> macroArguments;
+  // Opt-in import policy (C-07): name selectors, type/constant renames, and
+  // declared pointer-plus-count results. Sorted for deterministic identity.
+  std::vector<std::string> allowPatterns;
+  std::vector<std::string> denyPatterns;
+  std::vector<std::pair<std::string, std::string>> renames;
+  std::vector<std::pair<std::string, std::string>> arrayReturns;
   SourceSpan declaration;
   SourceSpan headerDeclaration;
 };
