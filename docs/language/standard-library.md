@@ -166,8 +166,8 @@ Some implemented units also carry explicitly documented bodyless declarations
 for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
 link until its GTI body is supplied. Array/vector/string swap, forward-list
-iteration and middle-node algorithms, and the list and span scaffolds remain in
-that category.
+iteration and middle-node algorithms, and the list scaffold remain in that
+category.
 
 The owned program-entry form names the canonical installed
 `std::vector<std::string>` specialization. This exact type identity is part of
@@ -214,8 +214,26 @@ stored referent of the same type, never an iterator-position/shell projection.
 `begin_mut()` supplies the separate ephemeral mutable iterator used by range
 `for`; its exclusive parent loan prevents overlapping owner operations and each
 iteration carries one mutable element child loan. The mutable iterator remains
-non-copyable. Container-specific invalidation precision and general
-owner-dependent views remain outside this slice.
+non-copyable. Container-specific invalidation precision remains outside this
+slice.
+
+`std::span<T>` is an ordinary source-defined, checked, read-only view over one
+contiguous owner. `std::vector<T>::as_span()` and
+`std::string::as_span()` are its public owner factories; `first`, `last`, and
+`subspan` preserve the same owner dependency without exposing a pointer-length
+pair. Local copies, moves, exact factory/relay returns, empty views, checked
+indexing, and iteration retain that dependency. Moving, destroying, or
+invalidating the owner while any retained view is live is rejected, and
+dropping the final view releases the owner for later mutation.
+
+`std::string::view()` returns the same bounded single-owner dependency through
+the existing `std::string_view` value type. Literal views remain ownerless
+references to static storage; dynamic views retain their source string through
+local copies and exact factory/relay calls. A dynamic text view cannot escape a
+local owner or be assigned/reseated, placed in a field, global, fixed array, or
+dynamic storage, or used to construct a nested dependency graph. Mutable,
+multi-owner, nested, and generally reseatable views remain deliberately
+unsupported.
 
 `std::forward_list<T>` implements its front operations as ordinary GTI over a
 recursive `std::unique_ptr` node chain. Its declaration-only iterator uses the
@@ -225,12 +243,11 @@ invalidation remain unavailable, so iteration, reverse, resize, merge, remove,
 unique, and sort are still bodyless. The separate list scaffold has no node
 representation because a compliant constant-time back operation requires a
 safe non-owning link that GTI cannot yet retain. The declaration-only span is
-likewise move-only and read-only: construction from an owner, mutable access,
-iteration, and raw address exposure remain absent until the frontend can retain
-the source owner and invalidation state directly.
+replaced by the executable read-only single-owner `std::span<T>` surface above;
+mutable access and raw address exposure remain absent.
 
 The standard library currently has no stable public raw allocator, shared
-owner, weak owner, dynamic borrowed view, or general unsafe memory API.
+owner, weak owner, or general unsafe memory API.
 
 `<std/functional>` declares the generic customization primary `std::hash<T>`.
 A package may provide a complete exact specialization for a nominal type it
@@ -307,7 +324,7 @@ The following component families remain planned or incomplete:
 
 - shared and weak ownership;
 - optional and general sum types;
-- owner-tied spans and dynamic string views;
+- mutable, nested, reseatable, and multi-owner borrowed views;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
 - the remaining callable, complete-range, heterogeneous accumulation, and hash

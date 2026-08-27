@@ -11178,17 +11178,19 @@ loanReferentType(const MirProgram &program, const MirBody &body,
     }
     if (producer != nullptr && producer->operands.size() == 1 &&
         producer->operands.front().kind == MirOperandKind::Loan) {
-      const MirOperand &runtime = producer->operands.front();
-      if (runtime.place != 0) {
-        const MirPlace *place = body.findPlace(runtime.place);
-        return place == nullptr ? std::nullopt
-                                : std::optional<SemanticType>{place->type};
+      const MirOperand &retained = producer->operands.front();
+      if (retained.place != 0) {
+        const MirPlace *referent = body.findPlace(retained.place);
+        if (referent == nullptr) {
+          return std::nullopt;
+        }
+        return referent->type;
       }
-      const MirLoan *retained = body.findLoan(runtime.loan);
-      if (retained == nullptr || retained->id == loan.id) {
+      const MirLoan *retainedLoan = body.findLoan(retained.loan);
+      if (retainedLoan == nullptr || retainedLoan->id == loan.id) {
         return std::nullopt;
       }
-      return loanReferentType(program, body, *retained);
+      return loanReferentType(program, body, *retainedLoan);
     }
   }
   if (loan.kind == MirLoanKind::CallResult) {
@@ -16258,7 +16260,7 @@ public:
             loanReferentType(program, facts.body, loan);
         if (!referent) {
           throw std::logic_error(
-              "verified MIR return loan lost its runtime referent type");
+              "verified MIR return loan lost its exact referent type");
         }
         output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
                << "{};\n";
@@ -18029,23 +18031,23 @@ private:
       if (loan != nullptr && loan->kind == MirLoanKind::Return &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan) {
-        const MirOperand &runtime = instruction.operands.front();
+        const MirOperand &retained = instruction.operands.front();
         output << "__gti_mir_loan_" << loan->id << " = ";
-        if (runtime.place != 0) {
-          const MirPlace *place = facts.body.findPlace(runtime.place);
-          if (place == nullptr) {
-            throw std::logic_error(
-                "verified MIR return loan lost its runtime place");
-          }
+        if (retained.place != 0) {
           output << '&';
-          emitStoragePlaceValue(facts, *place);
-        } else {
-          const MirLoan *retained = facts.body.findLoan(runtime.loan);
-          if (retained == nullptr) {
+          const MirPlace *referent = facts.body.findPlace(retained.place);
+          if (referent == nullptr) {
             throw std::logic_error(
-                "verified MIR return loan lost its runtime source loan");
+                "verified MIR return transfer lost its referent place");
           }
-          output << "__gti_mir_loan_" << retained->id;
+          emitStoragePlaceValue(facts, *referent);
+        } else {
+          const MirLoan *retainedLoan = facts.body.findLoan(retained.loan);
+          if (retainedLoan == nullptr) {
+            throw std::logic_error(
+                "verified MIR return transfer lost its source loan");
+          }
+          output << "__gti_mir_loan_" << retainedLoan->id;
         }
         output << ";\n";
         return;
@@ -20798,6 +20800,23 @@ private:
       }
       output << "__gti_mir_v_" << *instruction.result
              << " = ::gti_internal::backend::prefix_storage_length(";
+      emitStoragePlaceValue(facts, *storage);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::PrefixStorageTextView) {
+      const MirPlace *storage =
+          instruction.operands.size() == 1
+              ? storageStagedPlace(facts.body, instruction.operands.front())
+              : nullptr;
+      if (storage == nullptr || !instruction.result) {
+        throw std::logic_error(
+            "verified MIR text-view construction lost its staged character "
+            "storage place");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::prefix_storage_text_view(";
       emitStoragePlaceValue(facts, *storage);
       output << ");\n";
       return;
@@ -27852,6 +27871,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             {
               return false;
             }
+          }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::PrefixStorageTextView) {
+          // The view captures the staged character prefix by value while its
+          // Return loan retains the exact storage dependency established by
+          // semantics and MIR verification.
+          const MirPlace *storage =
+              instruction.operands.size() == 1
+                  ? storageStagedPlace(body, instruction.operands.front())
+                  : nullptr;
+          if (instruction.functionTarget || !instruction.result ||
+              !instruction.localFailureSites.empty() || storage == nullptr ||
+              storage->type.kind != SemanticType::PrefixStorage ||
+              storage->type.arguments !=
+                  std::vector<SemanticType>{SemanticType::Char} ||
+              instruction.info.type.kind != SemanticType::StringView ||
+              !typeRow(instruction.info.type)) {
+            return false;
           }
           continue;
         }
