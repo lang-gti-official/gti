@@ -130,8 +130,14 @@ std::string writeGtiBindings(const BindingPlan &plan,
       out << "\n// Not imported:\n";
       wroteSkipBanner = true;
     }
-    out << "//   " << (item.name.empty() ? "<unnamed>" : item.name) << " (line "
-        << item.origin.line << "): " << item.reason << '\n';
+    out << "//   " << (item.name.empty() ? "<unnamed>" : item.name) << " (";
+    if (item.origin.file != 0 && item.origin.file <= plan.sourceFiles.size()) {
+      out << plan.sourceFiles[item.origin.file - 1].path << ':'
+          << item.origin.line;
+    } else {
+      out << "line " << item.origin.line;
+    }
+    out << "): " << item.reason << '\n';
   }
   return out.str();
 }

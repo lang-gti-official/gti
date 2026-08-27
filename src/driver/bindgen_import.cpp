@@ -131,13 +131,12 @@ void generateImport(const BindgenImportPlan &import,
   const TemporaryArtifact preprocessedCleanup(preprocessed, true);
   const TemporaryArtifact dependencyCleanup(dependencies, true);
 
-  // `-dD` keeps user-header macro definitions for constant import;
-  // `-fkeep-system-includes` keeps platform declarations out of the
-  // generated surface. The resolved plan target selects the C data model.
+  // System includes expand with line markers preserved (C-05): the reader
+  // maps declarations to their original files and applies the import policy
+  // by provenance. `-dD` keeps macro definitions for constant import; the
+  // resolved plan target selects the C data model.
   std::vector<std::string> preprocessorArguments{
-      "-x",  "c",
-      "-P",  "-fkeep-system-includes",
-      "-dD", "--target=" + std::string(triple)};
+      "-x", "c", "-dD", "--target=" + std::string(triple)};
   preprocessorArguments.insert(preprocessorArguments.end(),
                                import.macroArguments.begin(),
                                import.macroArguments.end());
@@ -193,10 +192,17 @@ void generateImport(const BindgenImportPlan &import,
   const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
       *text, import.header.filename().string(), std::move(options), profile);
   const std::string headerName = import.declaredHeader;
+  const auto originLabel =
+      [&result, &headerName](const lang::bindgen::SourceOrigin &origin) {
+        if (origin.file != 0 && origin.file <= result.plan.sourceFiles.size()) {
+          return result.plan.sourceFiles[origin.file - 1].path + ":" +
+                 std::to_string(origin.line);
+        }
+        return headerName + ":" + std::to_string(origin.line);
+      };
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
     outcome.notes.push_back(
-        headerName + ": preprocessed line " +
-        std::to_string(diagnostic.origin.line) + ": " +
+        originLabel(diagnostic.origin) + ": " +
         (diagnostic.severity == lang::bindgen::ReaderSeverity::Error
              ? "error: "
              : "note: ") +
@@ -204,10 +210,8 @@ void generateImport(const BindgenImportPlan &import,
   }
   for (const lang::bindgen::BindingItem &item : result.plan.items) {
     if (item.kind == lang::bindgen::BindingItemKind::Skipped) {
-      outcome.notes.push_back(headerName + ": preprocessed line " +
-                              std::to_string(item.origin.line) +
-                              ": note: skipped '" + item.name +
-                              "': " + item.reason);
+      outcome.notes.push_back(originLabel(item.origin) + ": note: skipped '" +
+                              item.name + "': " + item.reason);
     }
   }
   if (!result.usable()) {

@@ -83,6 +83,9 @@ struct BindingPlan {
   BindingOptions options;
   // Header declaration order; the writer preserves it.
   std::vector<BindingItem> items;
+  // The model's consumed-file table (C-05): item and diagnostic origins
+  // resolve their `file` ids here; 0 is the root header.
+  std::vector<NativeSourceFile> sourceFiles;
   [[nodiscard]] std::size_t importedCount() const;
   [[nodiscard]] std::size_t skippedCount() const;
 };

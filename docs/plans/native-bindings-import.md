@@ -1,6 +1,6 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-04 and BUILD-01 implemented (bounded C17 declaration import,
+Status: C-01 through C-06 and BUILD-01 implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
 translation-unit inputs, exact opaque-handle out parameters sufficient for an
 end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
@@ -106,25 +106,35 @@ the latest value.
 their widths are Clang facts for the selected data model. The reader receives
 a `CTargetProfile` and selects one canonical 64-bit parse target per data
 model (the CLI selects LP64 for supported macOS/Linux targets and LLP64 for
-supported Windows targets); forwarding the pipeline's real triple through the
-seam is C-05/C-06 work. A declaration Clang marks invalid is skipped with its
-native error surfaced verbatim — Clang's recovery types are never imported,
-because recovery would bind the wrong ABI. The same conservatism covers
-ABI-affecting native facts the bounded surface cannot yet carry: a function
-whose assembler label renames its link symbol or whose calling convention is
-not C skips with its reason, and a record bearing a layout attribute degrades
-to an opaque handle, until C-06 preserves those facts as model data.
+supported Windows targets). A declaration Clang marks invalid is skipped with
+its native error surfaced verbatim — Clang's recovery types are never
+imported, because recovery would bind the wrong ABI. ABI-affecting native
+facts are model data (C-06): an assembler label that renames the link symbol
+and a non-C calling convention are recorded on the function declaration and
+printed by the model printer, and the planner rejects both explicitly with
+their reasons; a record bearing a layout attribute degrades to an opaque
+handle carrying its reason exactly as before.
 
-Direct library callers may pass unpreprocessed text, which now has its full
+Direct library callers may pass unpreprocessed text, which has its full
 native meaning: macros expand, conditionals evaluate, and pragmas apply.
-Includes remain deliberately unresolved at the reader seam — every
-`#include` reports the canonical unresolved-include note — until C-05 owns
-include discovery and source provenance. The CLI additionally runs the C-03
-Clang-driver preprocessing step with ordered `-I`, `-D`, `-U`, and target
-inputs before invoking the reader, so user includes resolve with their
-native meaning while `-fkeep-system-includes` keeps platform implementation
-declarations out of generated GTI; C-05 collapses this double preprocessing
-when the reader owns the include graph.
+Includes remain unresolved for such raw text — every `#include` reports the
+canonical unresolved-include note — because the in-memory reader owns no
+header search paths. The CLI and the driver instead run the C-03
+Clang-driver preprocessing step with ordered `-I`, `-D`, `-U`, target, and
+`-dD` inputs, resolving the complete include graph once with its native
+meaning and preserving line markers. The reader then reads every
+declaration's original (presumed) location from those markers (C-05): the
+model carries the transitive consumed-file table with system classification,
+diagnostics and skip reports name the original `file:line`, and the import
+policy selects by provenance. Root-header and user-include declarations
+emit; system-header declarations are modeled but not emitted, so a system
+typedef such as `time_t` spells canonically at its uses, a system macro's
+value resolves user constants without itself importing, a referenced system
+record is pulled in as one opaque handle carrying its source path, and a
+by-value use of a system record skips with its reason. Predefined-macro
+pseudo-files (`<built-in>`) and compiler-implicit declarations are never
+policy content. Command-line `-D` values parameterize the request; they are
+not header surface and do not import as constants.
 
 Per-declaration failures are diagnostics plus a skip, never an abort: one
 unparseable declaration must not cost the rest of the header.
@@ -254,14 +264,15 @@ gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] \
 `--sysroot` forwards `-isysroot` to the preprocessing step so system
 includes resolve against an explicit platform SDK when the Clang binary's
 own discovery cannot (a bare Command Line Tools clang without `SDKROOT`
-resolves nothing). The preprocessing step passes `-dD` so user-header macro
-definitions survive into the reader; system-header macros stay out with
-their suppressed content.
+resolves nothing). The preprocessing step passes `-dD` so macro definitions
+survive into the reader; system includes expand with line markers preserved,
+and provenance-based policy (C-05) keeps system declarations out of the
+generated surface while letting user declarations resolve through them.
 
 Exit status follows the existing CLI conventions. Native preprocessing
-diagnostics retain Clang's source locations; bootstrap reader/planner notes are
-explicitly labeled as preprocessed-line locations until libclang owns source
-provenance. Without `-o` the generated source prints to stdout. Clang is the
+diagnostics retain Clang's source locations, and reader/planner notes and
+skip reports name each declaration's original `file:line` through the
+model's consumed-file table. Without `-o` the generated source prints to stdout. Clang is the
 default preprocessing executable and `--clang` selects another compatible
 binary. Without `--target`, the host target is selected. `--target` accepts
 the same normalized 64-bit macOS, Linux, and Windows triples as GTI's target
@@ -302,14 +313,29 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    invalid-declaration skips with verbatim native errors, const-preserving
    parameter decay, nested array fields, retained anonymous enums), the
    pipeline switched, and `BoundedCReader` was removed.
-5. **C-05: source provenance and import policy.** Populate model source IDs
-   from Clang, collect the complete transitive dependency set, retain only
-   declarations selected by the requested import policy, and use original
-   source locations for every planner diagnostic.
-6. **C-06: constants and C metadata (macro slice complete).** Bounded
-   object-like integer macros import as `constexpr` constants. Remaining:
-   preserve calling convention and ABI attributes as model facts; reject
-   unsupported ABI-affecting attributes explicitly.
+5. **C-05: source provenance and import policy (implemented).** The one
+   Clang-driver preprocessing pass resolves the full include graph (system
+   includes expand; line markers survive), and the reader maps every
+   declaration to its original file via presumed locations: the model
+   carries the consumed-file table with system classification, origins are
+   original `file:line` in every diagnostic and skip report, and the
+   default import policy retains root-header and user-include declarations
+   while system declarations resolve uses (canonical typedef spelling,
+   macro-value evaluation, demand-pulled opaque handles) without emitting.
+   Deliberate deviation from the original sketch: include search-path
+   authority stays with the external Clang driver invocation rather than
+   moving into the libclang parse, because the driver executable owns
+   correct platform search paths; provenance comes from line markers, so
+   include resolution still happens exactly once.
+6. **C-06: constants and C metadata (implemented).** Bounded object-like
+   integer macros import as `constexpr` constants. Assembler labels and
+   non-C calling conventions are model facts (`asmLabel`,
+   `callingConvention`) the planner rejects explicitly with their reasons;
+   record layout attributes remain the recorded degradation reason they
+   were. Making renamed symbols, other conventions, or packed layouts
+   *importable* requires new language surface (a symbol-rename attribute,
+   convention spellings, layout spellings) and is deliberately out of
+   bindgen's scope.
 7. **BUILD-01: manifest and cache integration (implemented).**
    `[bindgen.<alias>]` manifest tables resolve into immutable
    `BindgenImportPlan` values on every project build plan; the driver owns

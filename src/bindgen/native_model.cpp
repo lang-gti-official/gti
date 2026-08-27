@@ -36,6 +36,10 @@ NativeDeclaration *NativeModel::findDeclaration(NativeDeclarationId id) {
   return id == 0 || id > declarations.size() ? nullptr : &declarations[id - 1];
 }
 
+const NativeSourceFile *NativeModel::findSource(NativeSourceId id) const {
+  return id == 0 || id > sources.size() ? nullptr : &sources[id - 1];
+}
+
 namespace {
 
 void printType(const NativeModel &model, NativeTypeId id, std::ostream &out) {
@@ -113,11 +117,12 @@ std::string printNativeModel(const NativeModel &model) {
     if (declaration == nullptr) {
       continue;
     }
+    const char *external = declaration->inPolicy ? "" : " (external)";
     switch (declaration->kind) {
     case NativeDeclarationKind::Record: {
       out << (declaration->recordIsUnion ? "union " : "record ")
           << declaration->name << (declaration->complete ? "" : " (incomplete)")
-          << '\n';
+          << external << '\n';
       for (const NativeRecordField &field : declaration->fields) {
         out << "  field " << field.name << ": ";
         printType(model, field.type, out);
@@ -126,7 +131,7 @@ std::string printNativeModel(const NativeModel &model) {
       break;
     }
     case NativeDeclarationKind::Enum: {
-      out << "enum " << declaration->name << '\n';
+      out << "enum " << declaration->name << external << '\n';
       for (const NativeEnumerator &enumerator : declaration->enumerators) {
         out << "  " << enumerator.name << " = " << enumerator.value << '\n';
       }
@@ -135,7 +140,7 @@ std::string printNativeModel(const NativeModel &model) {
     case NativeDeclarationKind::Typedef: {
       out << "typedef " << declaration->name << " = ";
       printType(model, declaration->aliased, out);
-      out << '\n';
+      out << external << '\n';
       break;
     }
     case NativeDeclarationKind::Function: {
@@ -160,12 +165,18 @@ std::string printNativeModel(const NativeModel &model) {
       if (type != nullptr) {
         printType(model, type->result, out);
       }
-      out << '\n';
+      if (!declaration->asmLabel.empty()) {
+        out << " [asm \"" << declaration->asmLabel << "\"]";
+      }
+      if (!declaration->callingConvention.empty()) {
+        out << " [callconv " << declaration->callingConvention << ']';
+      }
+      out << external << '\n';
       break;
     }
     case NativeDeclarationKind::Constant:
       out << "constant " << declaration->name << " = "
-          << declaration->constantValue << '\n';
+          << declaration->constantValue << external << '\n';
       break;
     }
   }

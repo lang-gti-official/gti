@@ -277,8 +277,9 @@ undefines = ["COUNTER_TRACE"]     # -U likewise
 
 During `gti build`, `check`, `run`, and `test`, the driver generates GTI
 declarations from the header with the same pipeline as `gti bindgen`
-(Clang preprocessing with kept system includes and retained user macros,
-then the in-process importer) into
+(one Clang preprocessing pass resolving the full include graph with line
+markers preserved, then the in-process importer applying provenance-based
+import policy) into
 `build/gti/bindgen/<package>/<alias>/bindings.gti`, published atomically
 through a staged sibling. The declaring package's sources reach them as
 `#include <alias/bindings>`: the generated directory is a synthetic package
