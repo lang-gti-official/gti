@@ -85,12 +85,22 @@ set(GTI_COMPILER_TEST_SUITES
     constexpr
     diagnostics
     e2e)
+add_library(
+  gti_compiler_test_pch OBJECT
+  "${PROJECT_SOURCE_DIR}/tests/compiler_test_pch.cpp"
+)
+target_link_libraries(gti_compiler_test_pch PRIVATE gti_cpp_backend)
+target_precompile_headers(
+  gti_compiler_test_pch
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests/compiler_test_fixture.h"
+)
 set(GTI_COMPILER_TEST_TARGETS)
 set(GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
 foreach(suite IN LISTS GTI_COMPILER_TEST_SUITES)
   set(target "gti_compiler_${suite}_tests")
   add_executable("${target}" "${PROJECT_SOURCE_DIR}/tests/compiler_${suite}_tests.cpp")
   target_link_libraries("${target}" PRIVATE gti_cpp_backend)
+  target_precompile_headers("${target}" REUSE_FROM gti_compiler_test_pch)
   list(APPEND GTI_COMPILER_TEST_TARGETS "${target}")
   list(APPEND GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS
        "${suite}=$<TARGET_FILE:${target}>")
