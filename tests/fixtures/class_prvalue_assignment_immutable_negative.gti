@@ -1,0 +1,9 @@
+#include <std/string>
+
+// A constructed prvalue cannot be published into an immutable binding; the
+// semantic diagnostic must fire without reaching the backend.
+int main() {
+  std::string target = std::string("first");
+  target = std::string("second");
+  return int(target.size());
+}
