@@ -159,24 +159,57 @@ declarations or HIR use sites.
 
 1. adapts the lowered tables into a C++-private representation snapshot;
 2. seals a complete body, declaration, data, and generated-item inventory;
-3. builds the complete `CppMirProgramPlan`;
-4. builds target-spelled MIR body rows; and
-5. emits only when the whole-program route is complete and `VerifiedMir`.
+3. admits every executable body into a pointer-free
+   `CppMirBodyEmissionPlan`;
+4. resolves all remaining declarations, support features, adapters, and
+   target spellings into an ordered pointer-free `CppProgramEmissionPlan`;
+   and
+5. passes that completed plan to formatting-only writers.
 
 The private snapshot and plan are target-specific derived forms, not compiler
 meaning and not backend API. Their builders accept only `LoweredProgram`.
 Frontend-backed snapshot overloads and comparison oracles were removed with
 the final cutover.
 
+`CppEmitter::Impl` stores only the completed program-emission plan. Lowered
+lookup, representation lookup, feature selection, body admission, and output
+ordering all finish in `CppProgramEmissionPlanner`; the final program writer
+has no `LoweredProgram` or MIR dependency. Its fragments have one explicit
+role: support preamble, failure/lifecycle support, native/thread adapters,
+declaration/type/member lifecycle text, initializer/module adapters, or hosted
+entry adapters. Tests construct plans in an inner scope, destroy every
+frontend and lowered input, and then require repeated output to remain
+identical.
+
+Generated support is likewise a compiled backend component rather than a
+mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
+selected C++ standard and exact Expected, storage, managed-thread,
+defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+failure-support writers receive those explicit values and an output sink;
+they do not query program meaning. Storage and defined-failure support remain
+universal only because that is the current artifact contract, not because the
+writers infer their use.
+
 ### Executable Bodies
 
-`CppMirBodyEmitter` is the text authority for source executable bodies. It
-receives verified optimized MIR plus copied target-representation rows.
+`CppMirBodyEmitter` is the admission and plan-building authority for source
+executable bodies. It receives verified optimized MIR plus copied
+target-representation rows and produces an immutable
+`CppMirBodyEmissionPlan`. `CppMirBodyTextWriter` formats only that admitted
+plan; it cannot inspect MIR or rerun a capability predicate.
 Functions, constructors, destructors, lambdas, field/static initializers,
 module initialization, hosted startup, and boundary shells all use this route.
 Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
+
+Each body plan owns its readiness and issues, canonical plain and failure text
+templates, the deduced-callable variants where target family spelling differs,
+boundary-declaration decision, initializer schedule and field spellings, and
+hosted-startup kind. The plan is pointer-free; it outlives both the MIR program
+and copied representation map used to build it. Placeholder replacement for
+family labels and indentation is therefore formatting, not a second
+admission path.
 
 Before spelling a body, the backend derives a pointer-free
 `CppMirControlFlowPlan` solely from that body's sealed optimized MIR. The plan
