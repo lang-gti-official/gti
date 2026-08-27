@@ -429,6 +429,19 @@ is invalid. A mutation that completes in an earlier argument may be followed
 by a later borrow when no other active loan conflicts. Known-disjoint origin
 places remain valid in either order.
 
+A plain overloaded subscript or dereference store over a local, parameter,
+receiver, or existing loan uses one non-escaping two-phase mutable call-result
+loan. Target evaluation reserves the exact stable place while leaving its
+mutable parent active, so the right operand may create temporary read-only
+children. The reservation itself cannot be used as a reference, stored,
+returned, synchronized across, or exposed to raw memory. After every
+overlapping right-operand child ends, one explicit activation suspends the
+mutable parent and must be followed immediately by the committing assignment.
+Failure cleanup may end an unactivated reservation without ever publishing
+write authority. Ordinary retained references, symbol-rooted globals, and
+calls outside this compiler-generated store schedule do not gain two-phase
+behavior.
+
 The current semantic implementation still rejects the overlapping mutation
 and transient-borrow pair in both written orders because the compatibility
 emitter has not migrated that call family to ordered MIR. M-EXEC-01 and the

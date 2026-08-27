@@ -286,6 +286,21 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+Version 50 adds a bounded two-phase mutable loan for source-defined plain
+subscript and dereference stores rooted in a local, parameter, receiver, or
+existing loan. The target call produces a non-escaping `CallResult` loan in the
+reserved state and preserves target-first defined-failure control flow.
+Read-only right-operand loans may coexist with that reservation; writes, raw-
+memory effects, synchronization, and use through the reserved loan are
+rejected. One explicit `ActivateBorrow` instruction requires all overlapping
+loans to have ended, suspends the mutable parent, and must be followed
+immediately by the one `Assign` through that loan. Failure cleanup may end the
+reservation without activation. Symbol-rooted targets retain the ordinary
+exclusive loan because body-local MIR cannot prove that an intervening call
+does not mutate the same global. The C++ representation consumes the verified
+schedule and erases activation as a no-op; it does not reconstruct evaluation
+order or loan state from source syntax.
+
 The C++ representation snapshot keeps `copyConstructible` distinct from
 `copyable`. The former permits initialization of a fresh lifetime slot from a
 copy and is sufficient for read-only forward-iterator carriers. The latter

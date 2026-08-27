@@ -442,8 +442,7 @@ private:
     }
 
     for (const MirClassFieldInfo &field : constructorOwner->declaredFields) {
-      if (field.dropKind != DropKind::Lexical ||
-          !field.requiresActiveCleanup ||
+      if (field.dropKind != DropKind::Lexical || !field.requiresActiveCleanup ||
           explicitlyInitialized.contains(field.symbol)) {
         continue;
       }
@@ -451,8 +450,7 @@ private:
       const MirDropObligation *initializerRollback = nullptr;
       for (const MirDropObligation &candidate :
            constructorOwner->fieldInitializers.dropObligations) {
-        if (candidate.kind !=
-            MirDropObligationKind::ConstructionRollback) {
+        if (candidate.kind != MirDropObligationKind::ConstructionRollback) {
           continue;
         }
         const MirPlace *place =
@@ -474,15 +472,14 @@ private:
         continue;
       }
 
-      const MirPlaceId destination = appendPlace(
-          {.root = MirPlaceRootKind::This,
-           .projections = {{.kind = MirProjectionKind::Field,
-                            .field = field.symbol}},
-           .type = field.type,
-           .access = AccessMode::Mutable,
-           .traits = resolvedTraits(field.type)});
-      const MirDropObligationId rollback =
-          output.dropObligations.size() + 1;
+      const MirPlaceId destination =
+          appendPlace({.root = MirPlaceRootKind::This,
+                       .projections = {{.kind = MirProjectionKind::Field,
+                                        .field = field.symbol}},
+                       .type = field.type,
+                       .access = AccessMode::Mutable,
+                       .traits = resolvedTraits(field.type)});
+      const MirDropObligationId rollback = output.dropObligations.size() + 1;
       output.dropObligations.push_back(
           {.id = rollback,
            .constructionOrder = rollback,
@@ -2960,6 +2957,11 @@ private:
     }
   }
 
+  [[nodiscard]] static bool plainOverloadedBorrowStore(const HirValue &value) {
+    return value.operation &&
+           assignmentOperation(*value.operation) == MirOperation::Assign;
+  }
+
   [[nodiscard]] static MirOperation
   orderedCompoundArithmetic(MirOperation assignment) {
     switch (assignment) {
@@ -3205,7 +3207,8 @@ private:
   [[nodiscard]] MirLoanId
   createLoan(MirLoanKind kind, MirPlaceId sourcePlace, AccessMode access,
              HirValueId producedBy = 0, HirBindingId binding = 0,
-             SymbolId storedField = 0, MirLoanId parent = 0) {
+             SymbolId storedField = 0, MirLoanId parent = 0,
+             bool twoPhase = false) {
     const MirLoanId id = output.loans.size() + 1;
     output.loans.push_back(
         {.id = id,
@@ -3216,7 +3219,8 @@ private:
          .producedBy = producedBy,
          .carriers = binding == 0 ? std::vector<HirBindingId>{}
                                   : std::vector<HirBindingId>{binding},
-         .storedField = storedField});
+         .storedField = storedField,
+         .twoPhase = twoPhase});
     return id;
   }
 
@@ -3327,12 +3331,13 @@ private:
             .loan = inputLoan};
   }
 
-  void emitCall(const HirValue &value, bool detachedBorrowResult = false) {
+  void emitCall(const HirValue &value, bool detachedBorrowResult = false,
+                bool reserveBorrowResult = false) {
     if (value.intrinsic == IntrinsicKind::ExpectedHasValue) {
       const std::optional<HirValueId> receiver = receiverValue(value);
       const HirValue *source = receiver ? findValue(*receiver) : nullptr;
-      if (detachedBorrowResult || !receiver || source == nullptr ||
-          !callArgumentValues(value).empty() ||
+      if (detachedBorrowResult || reserveBorrowResult || !receiver ||
+          source == nullptr || !callArgumentValues(value).empty() ||
           source->info.type.kind != SemanticType::Expected ||
           source->info.type.arguments.size() != 2 ||
           value.info.type != SemanticType::Bool) {
@@ -3359,6 +3364,10 @@ private:
     if (failure.localOrigins.empty()) {
       failure.propagation = normalizedCallPropagation(
           failure.propagation, value.dispatch, value.functionTarget);
+    }
+    if (reserveBorrowResult && !detachedBorrowResult) {
+      valid = false;
+      return;
     }
     if (detachedBorrowResult &&
         (!value.functionTarget ||
@@ -3790,8 +3799,11 @@ private:
           parent = originLoan;
         }
       }
-      const MirLoanId loan =
-          createLoan(kind, origin, value.borrowAccess, value.id, 0, 0, parent);
+      const MirPlace *originPlace = output.findPlace(origin);
+      const bool twoPhase = reserveBorrowResult && originPlace != nullptr &&
+                            originPlace->root != MirPlaceRootKind::Symbol;
+      const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
+                                        value.id, 0, 0, parent, twoPhase);
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -5038,6 +5050,8 @@ private:
            value->kind == HirValueKind::DereferenceSet) &&
           value->functionTarget &&
           value->borrowOrigin != BorrowOriginKind::None;
+      bool reservedBorrowStore =
+          overloadedBorrowStore && plainOverloadedBorrowStore(*value);
       if (value->kind == HirValueKind::MemberSet && !value->operands.empty()) {
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
@@ -5047,7 +5061,7 @@ private:
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
         if (overloadedBorrowStore) {
-          emitCall(*value, true);
+          emitCall(*value, true, reservedBorrowStore);
         } else if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
           (void)valueOperand(value->operands[0]);
         } else {
@@ -5059,10 +5073,17 @@ private:
       } else if (value->kind == HirValueKind::DereferenceSet &&
                  !value->operands.empty()) {
         if (overloadedBorrowStore) {
-          emitCall(*value, true);
+          emitCall(*value, true, reservedBorrowStore);
         } else {
           (void)valueOperand(value->operands.front());
         }
+      }
+      if (reservedBorrowStore) {
+        const auto reserved = valueLoans.find(value->id);
+        reservedBorrowStore = reserved != valueLoans.end() &&
+                              reserved->second != 0 &&
+                              reserved->second <= output.loans.size() &&
+                              output.loans[reserved->second - 1].twoPhase;
       }
       MirPlaceId destination = 0;
       if (overloadedBorrowStore) {
@@ -5118,6 +5139,16 @@ private:
                                     std::move(operands.front()), false, true,
                                     *compoundSchedule);
         return;
+      }
+      if (reservedBorrowStore) {
+        const auto reserved = valueLoans.find(value->id);
+        if (reserved == valueLoans.end()) {
+          valid = false;
+          return;
+        }
+        (void)appendInstruction({.kind = MirInstructionKind::ActivateBorrow,
+                                 .hirValue = value->id,
+                                 .loan = reserved->second});
       }
       MirInstruction assign{.kind = MirInstructionKind::Assign,
                             .hirValue = value->id,
@@ -8384,11 +8415,10 @@ MirBody MirLowerer::lowerBody(
     const HirProgramInitializationPlan *programInitialization,
     MirProgramInitializationPlan *loweredProgramInitialization,
     bool compilerTrusted, const MirClassInstance *constructorOwner) {
-  MirBodyLowerer lowerer(program, failureMetadata, body, kind,
-                         std::move(returnType), definedFailureEffects,
-                         implicitZeroReturn, function, constructor, lambda,
-                         programInitialization, loweredProgramInitialization,
-                         constructorOwner);
+  MirBodyLowerer lowerer(
+      program, failureMetadata, body, kind, std::move(returnType),
+      definedFailureEffects, implicitZeroReturn, function, constructor, lambda,
+      programInitialization, loweredProgramInitialization, constructorOwner);
   MirBody result = lowerer.lower(prologueValues, initializers);
   result.compilerTrustedSynchronization =
       compilerTrusted &&

@@ -50,6 +50,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{
         .readsPlace = true, .writesPlace = true, .movesValue = true},
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    MirEffectTraits{.startsLoan = true, .dependsOnLoan = true},
     MirEffectTraits{},
     unknownEffects(),
     MirEffectTraits{
@@ -332,6 +333,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "modify",
     "move",
     "borrow",
+    "activate-borrow",
     "call-input",
     "call",
     "construct",

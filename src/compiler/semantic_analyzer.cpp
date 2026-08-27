@@ -4667,10 +4667,15 @@ public:
       return;
     }
     if (objectType.kind == SemanticType::Class) {
+      const bool mutableReferenceContext =
+          contextualInitializerType &&
+          contextualInitializerType->kind == SemanticType::Reference &&
+          contextualInitializerType->referenceAccess == AccessMode::Mutable;
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
-          std::span<const ExprPtr>(&expr.index(), 1));
+          std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
+          std::nullopt, false, !mutableReferenceContext);
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -17731,7 +17736,7 @@ private:
       std::span<const ExprPtr> arguments = {}, bool contextual = false,
       std::optional<CallableBoundary> boundary = std::nullopt,
       std::optional<OperatorReceiverState> receiverState = std::nullopt,
-      bool projection = false) {
+      bool projection = false, bool preferReadOnlyReceiver = false) {
     if (receiverType.kind == SemanticType::TypeParameter) {
       return resolveSymbolicOperator(site, kind, receiver, receiverType, token,
                                      argumentTypes, arguments, contextual,
@@ -17836,12 +17841,22 @@ private:
       viable.push_back({.function = candidate, .receiverMode = receiverMode});
     }
 
-    if (consumingReceiver &&
+    if (preferReadOnlyReceiver &&
         std::any_of(viable.begin(), viable.end(),
                     [](const ViableOperator &candidate) {
                       return candidate.function.receiverMutability ==
-                             ReceiverMutability::Consuming;
+                             ReceiverMutability::ReadOnly;
                     })) {
+      std::erase_if(viable, [](const ViableOperator &candidate) {
+        return candidate.function.receiverMutability !=
+               ReceiverMutability::ReadOnly;
+      });
+    } else if (consumingReceiver &&
+               std::any_of(viable.begin(), viable.end(),
+                           [](const ViableOperator &candidate) {
+                             return candidate.function.receiverMutability ==
+                                    ReceiverMutability::Consuming;
+                           })) {
       std::erase_if(viable, [](const ViableOperator &candidate) {
         return candidate.function.receiverMutability !=
                ReceiverMutability::Consuming;

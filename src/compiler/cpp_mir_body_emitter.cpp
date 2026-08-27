@@ -12558,6 +12558,7 @@ private:
 
     switch (instruction.kind) {
     case MirInstructionKind::Drop:
+    case MirInstructionKind::ActivateBorrow:
     case MirInstructionKind::EndBorrow:
     case MirInstructionKind::Lifecycle:
       if (instruction.info.type != SemanticType::Unknown) {
@@ -12997,6 +12998,7 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::Lifecycle:
     return CppMirEmissionEncoding::RepresentedByMir;
   case MirInstructionKind::Borrow:
+  case MirInstructionKind::ActivateBorrow:
   case MirInstructionKind::CallInput:
   case MirInstructionKind::Call:
   case MirInstructionKind::Construct:
@@ -18123,6 +18125,11 @@ private:
       output << "__gti_mir_loan_" << loan->id << " = &";
       emitStoragePlaceValue(facts, *source);
       output << ";\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::ActivateBorrow) {
+      output << "// GTI MIR activate two-phase loan "
+             << (instruction.loan ? *instruction.loan : 0) << "\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::EndBorrow) {
@@ -26958,6 +26965,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             }
           }
+        }
+        continue;
+      }
+      case MirInstructionKind::ActivateBorrow: {
+        const MirLoan *loan =
+            instruction.loan ? loanById(*instruction.loan) : nullptr;
+        if (loan == nullptr || !loan->twoPhase) {
+          return false;
         }
         continue;
       }
