@@ -510,11 +510,21 @@ shell. A non-raising constructor arms the staging obligation with its own
 unconditional `Initialize` and sits immediately before the publication; a
 raising one arms it on its invoke success edge instead, so the `Construct`
 ends the invoking block and the `Assign` opens that edge's successor. Either
-way the route requires an unconditional `Replace` from the staging drop into
-the destination binding's own obligation, an adjacent single unconditional
-`Drop` of the slot, and exactly one activation. Projected or non-binding
-destinations, failure sites on the publication, extra uses, and any additional
-lifecycle event on the staging obligation fail closed.
+way the route requires an unconditional `Replace` from the staging drop, an
+adjacent single unconditional `Drop` of the slot, and exactly one activation.
+
+The publication has two destination families, distinguished by which
+obligation owns the storage being replaced. A bare mutable binding owns its
+own cleanup obligation, so the `Replace` transfers into that obligation and
+the write carries no failure site. A checked fixed-array element does not:
+the array binding's obligation already covers every element, so the `Replace`
+names no destination obligation and the write carries the element's bounds
+failure site — the same element shape the cleanup-free fusion route admits,
+validated by the same authority. Requiring a destination obligation for an
+element would retire the same storage twice, so an element publication that
+names one fails closed. Every other destination, a bare-binding publication
+with a failure site, extra uses, and any additional lifecycle event on the
+staging obligation also fail closed.
 
 A cleanup-free class prvalue has no staging obligation at all: no place or
 drop obligation owns the constructed value and the discarded assignment result

@@ -108,6 +108,56 @@ int32_t check_passive_prvalue() {
   return 0;
 }
 
+// A checked fixed-array element is the second destination family: the array
+// binding's obligation already covers every element, so the publication
+// names no destination obligation of its own. The replaced element must
+// still drop exactly once at the assignment, and the moved-from temporary
+// shell must never run the destructor body.
+int32_t check_array_element_prvalue() {
+  drops_total = 0;
+  dropped_tag_sum = 0;
+  {
+    mut tracked slots[3] = {tracked(1), tracked(2), tracked(3)};
+    slots[0] = tracked(7);
+    if (slots[0].tag() != 7 || slots[1].tag() != 2) {
+      return 1;
+    }
+    // Only the replaced element (tag 1) dropped.
+    if (drops_total != 1 || dropped_tag_sum != 1) {
+      return 2;
+    }
+    slots[2] = tracked(9);
+    if (slots[2].tag() != 9 || drops_total != 2 || dropped_tag_sum != 4) {
+      return 3;
+    }
+  }
+  // Scope exit dropped the three surviving elements (7, 2, 9) exactly once.
+  if (drops_total != 5 || dropped_tag_sum != 22) {
+    return 4;
+  }
+  return 0;
+}
+
+// The same publication inside a loop repeats without leaking or retiring the
+// array binding's obligation early.
+int32_t check_array_element_loop_prvalue() {
+  drops_total = 0;
+  dropped_tag_sum = 0;
+  {
+    mut tracked slots[2] = {tracked(1), tracked(1)};
+    for (mut int32_t round = 0; round < 3; round++) {
+      slots[0] = tracked(2);
+    }
+    if (slots[0].tag() != 2 || drops_total != 3 || dropped_tag_sum != 5) {
+      return 1;
+    }
+  }
+  if (drops_total != 5 || dropped_tag_sum != 8) {
+    return 2;
+  }
+  return 0;
+}
+
 int main() {
   int32_t string_prvalue = check_string_prvalue();
   if (string_prvalue != 0) {
@@ -128,6 +178,14 @@ int main() {
   int32_t passive_prvalue = check_passive_prvalue();
   if (passive_prvalue != 0) {
     return 40 + passive_prvalue;
+  }
+  int32_t array_element_prvalue = check_array_element_prvalue();
+  if (array_element_prvalue != 0) {
+    return 50 + array_element_prvalue;
+  }
+  int32_t array_element_loop = check_array_element_loop_prvalue();
+  if (array_element_loop != 0) {
+    return 60 + array_element_loop;
   }
   return 0;
 }
