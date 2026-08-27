@@ -4111,6 +4111,26 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                  typeSpelling(enumerator.payloadTypes[index]) + "'.",
              "GTI-S2067");
     }
+    // The first class-payload family stores classes without active cleanup or
+    // borrowed state; variant-aware drop transport for owning payloads is a
+    // separately proven follow-on slice.
+    if (actual.kind == SemanticType::Class &&
+        (requiresActiveCleanupFor(actual) ||
+         typeTraits(actual).containsBorrowedState)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics,
+          expressionToken(call.arguments()[index]),
+          "Payload type '" + typeSpelling(actual) +
+              (requiresActiveCleanupFor(actual)
+                   ? "' requires active cleanup; variant-aware drop state "
+                     "is not implemented yet."
+                   : "' carries borrowed state and cannot live inside a "
+                     "variant alternative."));
+      diagnostic.hints.emplace_back(
+          "The first class-payload family stores classes without destructor "
+          "or owning-storage cleanup and without stored references.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);

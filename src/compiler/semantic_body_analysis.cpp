@@ -2903,31 +2903,41 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     targetStateValid = false;
   }
   SemanticType valueType;
+  bool valueAnalyzed = false;
   const std::optional<OverloadedOperator> mutationOperator =
       compoundOperator(expr.oper().kind);
   if (!simpleAssignment && mutationOperator &&
-      targetType.kind == SemanticType::Class) {
+      (targetType.kind == SemanticType::Class ||
+       targetType.kind == SemanticType::TypeParameter)) {
     valueType = analyze(expr.value());
-    ExprPtr receiver;
-    if (expr.path().segments.size() == 1) {
-      receiver = std::make_unique<Variable>(expr.name());
-    } else {
-      receiver =
-          std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+    valueAnalyzed = true;
+    const bool symbolicMutation =
+        targetType.kind == SemanticType::TypeParameter &&
+        hasSymbolicOperatorRequirement(
+            *mutationOperator, targetType,
+            std::span<const SemanticType>(&valueType, 1));
+    if (targetType.kind == SemanticType::Class || symbolicMutation) {
+      ExprPtr receiver;
+      if (expr.path().segments.size() == 1) {
+        receiver = std::make_unique<Variable>(expr.name());
+      } else {
+        receiver =
+            std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+      }
+      const ExpressionInfo receiverInfo =
+          classifyExpression(*receiver, targetType);
+      const std::optional<CallableCandidate> selected = resolveOperator(
+          expr, *mutationOperator, receiver, targetType, expr.oper(),
+          std::span<const SemanticType>(&valueType, 1),
+          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+          OperatorReceiverState{.place = targetPlace,
+                                .mutableReceiver =
+                                    receiverInfo.access == AccessMode::Mutable,
+                                .info = receiverInfo});
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
     }
-    const ExpressionInfo receiverInfo =
-        classifyExpression(*receiver, targetType);
-    const std::optional<CallableCandidate> selected = resolveOperator(
-        expr, *mutationOperator, receiver, targetType, expr.oper(),
-        std::span<const SemanticType>(&valueType, 1),
-        std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
-        OperatorReceiverState{.place = targetPlace,
-                              .mutableReceiver =
-                                  receiverInfo.access == AccessMode::Mutable,
-                              .info = receiverInfo});
-    currentType = selected ? callExpressionType(selected->returnType)
-                           : SemanticType::Unknown;
-    return;
   }
   if (simpleAssignment && targetType.kind == SemanticType::Class) {
     valueType = analyze(expr.value());
@@ -2954,7 +2964,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                              : SemanticType::Unknown;
       return;
     }
-  } else {
+  } else if (!valueAnalyzed) {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
@@ -4183,7 +4193,10 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
       requireUnsafe(expr, UnsafeOperationKind::RawDereference,
                     expr.dereference(), "Raw pointer dereference");
     }
-  } else if (ownerType.kind == SemanticType::Class) {
+  } else if (ownerType.kind == SemanticType::Class ||
+             (ownerType.kind == SemanticType::TypeParameter &&
+              hasSymbolicOperatorRequirement(OverloadedOperator::Dereference,
+                                             ownerType))) {
     const std::optional<CallableCandidate> selected =
         resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
                         ownerType, expr.dereference(), {}, {}, false,
@@ -4398,7 +4411,11 @@ auto SemanticVisitor::Impl::visitIndexExpr(const Index &expr) -> void {
         expr.object(), expr.index(), indexType, expr.bracket());
     return;
   }
-  if (objectType.kind == SemanticType::Class) {
+  if (objectType.kind == SemanticType::Class ||
+      (objectType.kind == SemanticType::TypeParameter &&
+       hasSymbolicOperatorRequirement(
+           OverloadedOperator::Subscript, objectType,
+           std::span<const SemanticType>(&indexType, 1)))) {
     const bool mutableReferenceContext =
         contextualInitializerType &&
         contextualInitializerType->kind == SemanticType::Reference &&
@@ -4470,7 +4487,11 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
       requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
                     "Raw pointer indexing");
     }
-  } else if (objectType.kind == SemanticType::Class) {
+  } else if (objectType.kind == SemanticType::Class ||
+             (objectType.kind == SemanticType::TypeParameter &&
+              hasSymbolicOperatorRequirement(
+                  OverloadedOperator::Subscript, objectType,
+                  std::span<const SemanticType>(&indexType, 1)))) {
     const std::optional<CallableCandidate> selected = resolveOperator(
         expr, OverloadedOperator::Subscript, expr.object(), objectType,
         expr.bracket(), std::span<const SemanticType>(&indexType, 1),
@@ -4558,7 +4579,8 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
     if (objectType.kind == SemanticType::RawPointer) {
       report(expr.bracket(), "Cannot write through const raw pointer memory.",
              "GTI-S2002");
-    } else if (objectType.kind == SemanticType::Class) {
+    } else if (objectType.kind == SemanticType::Class ||
+               objectType.kind == SemanticType::TypeParameter) {
       report(expr.bracket(),
              "operator[] does not provide mutable element access.",
              "GTI-S2002");

@@ -31,6 +31,27 @@ public:
     this.current_position++;
   }
 
+  // Backward and signed movement keep checked position arithmetic: stepping
+  // or jumping before position zero raises the defined unsigned-range
+  // failure, and every read remains prefix-checked at the access itself.
+  void operator--() mut {
+    this.current_position--;
+  }
+
+  void operator+=(ptrdiff_t distance) mut {
+    this.current_position = size_t(ptrdiff_t(this.current_position) + distance);
+  }
+
+  void operator-=(ptrdiff_t distance) mut {
+    this.current_position = size_t(ptrdiff_t(this.current_position) - distance);
+  }
+
+  // The signed distance from this iterator to the sentinel; positive while
+  // the sentinel is ahead.
+  ptrdiff_t operator-(vector_sentinel& sentinel) {
+    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+  }
+
   bool operator!=(vector_sentinel& sentinel) {
     return this.current_position != sentinel.position();
   }

@@ -1,5 +1,7 @@
 #include "gti/bindgen/gti_writer.h"
 
+#include <iomanip>
+#include <limits>
 #include <sstream>
 
 // Deterministic GTI emission. Non-function bindings keep header declaration
@@ -49,11 +51,36 @@ void writeItem(const BindingItem &item, std::string_view indent,
         << ";\n\n";
     return;
   case BindingItemKind::Constant:
-    // The negative wrapping matches the enum emission: a conversion keeps
-    // the constant's type explicit instead of relying on literal typing.
     out << indent << "constexpr " << item.aliasSpelling << ' ' << item.name
-        << " = " << (item.constantValue < 0 ? item.aliasSpelling + "(" : "")
-        << item.constantValue << (item.constantValue < 0 ? ")" : "") << ";\n\n";
+        << " = ";
+    switch (item.constantKind) {
+    case NativeConstantKind::Integer:
+      // The negative wrapping matches the enum emission: a conversion keeps
+      // the constant's type explicit instead of relying on literal typing.
+      out << (item.constantValue < 0 ? item.aliasSpelling + "(" : "")
+          << item.constantValue << (item.constantValue < 0 ? ")" : "");
+      break;
+    case NativeConstantKind::Floating: {
+      // Round-trip precision keeps the emitted literal equal to the value
+      // Clang's own lexer produced.
+      std::ostringstream literal;
+      literal << std::setprecision(std::numeric_limits<double>::max_digits10)
+              << item.constantFloating;
+      std::string text = std::move(literal).str();
+      if (text.find('.') == std::string::npos &&
+          text.find('e') == std::string::npos &&
+          text.find("inf") == std::string::npos &&
+          text.find("nan") == std::string::npos) {
+        text += ".0";
+      }
+      out << (item.constantFloating < 0 ? "double(" + text + ")" : text);
+      break;
+    }
+    case NativeConstantKind::String:
+      out << '"' << item.constantText << '"';
+      break;
+    }
+    out << ";\n\n";
     return;
   case BindingItemKind::Callback: {
     if (item.synthesized) {
@@ -75,7 +102,11 @@ void writeItem(const BindingItem &item, std::string_view indent,
 
 void writeFunction(const BindingItem &item, std::string_view indent,
                    std::ostream &out) {
-  out << indent << "  " << item.resultSpelling << ' ' << item.name << '(';
+  out << indent << "  ";
+  if (!item.arrayCountParameter.empty()) {
+    out << "[[c_array(" << item.arrayCountParameter << ")]] ";
+  }
+  out << item.resultSpelling << ' ' << item.name << '(';
   for (std::size_t index = 0; index < item.parameters.size(); ++index) {
     const BindingParameter &parameter = item.parameters[index];
     out << (index != 0 ? ", " : "") << parameter.spelling << ' '
@@ -130,8 +161,14 @@ std::string writeGtiBindings(const BindingPlan &plan,
       out << "\n// Not imported:\n";
       wroteSkipBanner = true;
     }
-    out << "//   " << (item.name.empty() ? "<unnamed>" : item.name) << " (line "
-        << item.origin.line << "): " << item.reason << '\n';
+    out << "//   " << (item.name.empty() ? "<unnamed>" : item.name) << " (";
+    if (item.origin.file != 0 && item.origin.file <= plan.sourceFiles.size()) {
+      out << plan.sourceFiles[item.origin.file - 1].path << ':'
+          << item.origin.line;
+    } else {
+      out << "line " << item.origin.line;
+    }
+    out << "): " << item.reason << '\n';
   }
   return out.str();
 }

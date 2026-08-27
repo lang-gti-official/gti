@@ -249,20 +249,28 @@ int main() { return 0; }
 }
 
 void testPayloadEnumDiagnostics() {
-  const lang::FrontendResult classPayload = analyze("payload-class.gti", R"(
+  const lang::FrontendResult cleanupPayload =
+      analyze("payload-cleanup-class.gti", R"(
+mut int32_t drops = 0;
 class leaf {
 public:
   leaf() {}
+  ~leaf() { drops = drops + 1; }
   mut int32_t value = 7;
 };
 enum class holder { one(leaf value), none };
-int main() { return 0; }
+int main() {
+  leaf payload = leaf();
+  holder held = holder::one(payload);
+  return 0;
+}
 )");
-  expect(hasCode(classPayload, "GTI-S2067") &&
-             hasMessage(classPayload, "Payload field type 'leaf'") &&
-             !hasMessage(classPayload, "unknown class"),
-         "payload diagnostics should spell a registered class identity even "
-         "before complete class-member metadata is recorded");
+  expect(hasCode(cleanupPayload, "GTI-S2067") &&
+             hasMessage(cleanupPayload, "Payload type 'leaf'") &&
+             hasMessage(cleanupPayload, "requires active cleanup") &&
+             !hasMessage(cleanupPayload, "unknown class"),
+         "an active-cleanup class payload should be rejected at construction "
+         "with the class identity spelled");
 
   const lang::FrontendResult backing = analyze("payload-backing.gti", R"(
 enum class Result : uint8_t { ok(int32_t value), error };
@@ -346,6 +354,75 @@ int main() {
          "the formatter should preserve C++-familiar union and payload syntax");
 }
 
+void testClassPayloadEnums() {
+  const lang::FrontendResult valid = analyze("payload-class-family.gti", R"(
+class Point {
+public:
+  Point(int32_t x, int32_t y) : x_value(x), y_value(y) {}
+  int32_t x() { return this.x_value; }
+  int32_t y() { return this.y_value; }
+private:
+  int32_t x_value;
+  int32_t y_value;
+};
+
+enum class Shape {
+  empty,
+  dot(Point at),
+  segment(Point from, Point to),
+};
+
+int32_t weight(Shape shape) {
+  switch (shape) {
+  case Shape::empty:
+    return 0;
+  case Shape::dot(at):
+    return at.x() + at.y();
+  case Shape::segment(from, to):
+    return from.x() + from.y() + to.x() + to.y();
+  }
+}
+
+int main() {
+  Shape nothing = Shape::empty;
+  Shape one = Shape::dot(Point(1, 2));
+  Point start = Point(3, 4);
+  Shape line = Shape::segment(start, Point(5, 6));
+  bool weights = weight(nothing) == 0 && weight(one) == 3 &&
+                 weight(line) == 18;
+  return weights ? 0 : 1;
+}
+)");
+  if (!valid.canGenerateCode()) {
+    printDiagnostics(valid);
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "cleanup-free class payloads should construct from prvalues and "
+         "named copies, match with copied bindings, and reach valid MIR");
+
+  const lang::FrontendResult borrowedPayload =
+      analyze("payload-borrowed-class.gti", R"(
+class carrier {
+  int32_t& source;
+
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+
+enum class holder { one(carrier value), none };
+
+int main() {
+  mut int32_t backing = 3;
+  carrier value = carrier(backing);
+  holder held = holder::one(value);
+  return 0;
+}
+)");
+  expect(hasCode(borrowedPayload, "GTI-S2067") &&
+             hasMessage(borrowedPayload, "borrowed state"),
+         "a borrowed-state class payload should be rejected at construction");
+}
+
 } // namespace
 
 int main() {
@@ -353,6 +430,7 @@ int main() {
   testSemanticAndIrModel();
   testUnionSafetyBoundary();
   testPayloadEnumDiagnostics();
+  testClassPayloadEnums();
   testOrdinaryEnumsAndFormatting();
 
   if (failures != 0) {

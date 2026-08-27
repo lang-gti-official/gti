@@ -2456,23 +2456,34 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/role:** partially implemented; `L-RANGE-03` is complete. The
-  remaining range-first suite depends on the remaining `L-CALL-01` work. The
-  implemented iterator/sentinel slices include multi-parameter concepts,
-  validity-only
-  trailing `requires`, exact input-iterator/sentinel/dereference/accumulator
-  capabilities, distinct copy-construction capability,
-  `std::forward_iterator`, source-defined `std::binary_search`, default and
-  operation-based `std::accumulate`, homogeneous `std::inner_product`, unary
-  `std::transform_reduce`, and the predicate algorithms whose callable shapes
-  are already confined. Exact iterator/sentinel `std::find` and `std::count`
-  and repeatable exact-return `std::for_each` are now ordinary GTI source.
-- **Remaining scope:** Add the exact writable-output and
-  bidirectional/random-access concepts needed to implement `copy`, `transform`,
-  `reverse`, and `sort` honestly. Further iterator/sentinel overloads require a
-  demonstrated subrange client. The forward-iterator slice does not authorize
-  random access, iterator assignment, implicit conversions, overload ranking,
-  or a parallel C++ iterator-category hierarchy.
+- **State/role:** substantially implemented; `L-RANGE-03` is complete. The
+  implemented iterator/sentinel slices include
+  multi-parameter concepts, validity-only trailing `requires`, exact
+  input-iterator/sentinel/dereference/accumulator capabilities, distinct
+  copy-construction capability, `std::forward_iterator`, source-defined
+  `std::binary_search`, default and operation-based `std::accumulate`,
+  homogeneous `std::inner_product`, unary `std::transform_reduce`, the
+  confined predicate algorithms, exact iterator/sentinel `std::find` and
+  `std::count`, and repeatable exact-return `std::for_each`. The
+  writable/movement capability family is also implemented:
+  `std::output_iterator`/`writes_to` (mut dereference plus increment),
+  `subscripts_to_mut` (positioned mutable subscript),
+  `bidirectional_iterator` (`--`), `random_access_iterator` (`+=`/`-=`), and
+  `sized_sentinel_for` (iterator-to-sentinel distance) — with symbolic
+  generic-body forms for dereference/subscript/compound assignment, concrete
+  satisfaction checks, read-vector-cursor operator coverage, and the
+  source-defined `std::copy`, whole-container `std::fill`/`std::transform`/
+  `std::reverse`/`std::sort`, signed `std::advance`/`std::next`, and
+  `std::prev` clients.
+- **Remaining scope:** comparator `sort`; complete-range concepts extending
+  the whole-container generic algorithms beyond `std::vector`; indexed
+  element move-out; and further iterator/sentinel overloads behind a
+  demonstrated subrange client. Iterator-pair in-place spellings remain
+  excluded because `begin_mut()` and `end()` from one container overlap by
+  design; semantics now diagnoses that conflict before MIR, while read-only
+  methods on a parameter-held mutable cursor are supported. Iterator
+  assignment, implicit conversions, overload ranking, and a parallel C++
+  iterator-category hierarchy remain unauthorized.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -2518,15 +2529,25 @@ name recognition.
 - **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
-  formatter, Tree-sitter, and LSP tooling.
+  formatter, Tree-sitter, and LSP tooling. The cleanup-free class-payload
+  family is also implemented: ordinary class values without active cleanup or
+  borrowed state live inside alternatives, constructed from prvalues, named
+  copies, or explicit moves (each an exact fused emission vocabulary), with
+  copied class bindings armed and dropped like ordinary locals, payload-enum
+  struct definitions scheduled after every class definition, and enum
+  copy/move/ownership traits folded from payload components. Active-cleanup
+  or borrowed-state payload constructions are rejected at the construction
+  site with `GTI-S2067`.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add ownership-aware move/borrow matching, partial
-  initialization and drop, generic payloads, and deterministic layout in
-  separately proven families.
+- **Remaining scope:** Add variant-aware drop transport for owning
+  (active-cleanup) payloads, ownership-aware move/borrow matching, partial
+  initialization and drop, generic payloads, deterministic layout, and
+  interleaved enum/class definition scheduling (which would also lift the
+  construction-site-only rejection) in separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
@@ -2546,7 +2567,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v50`/`mir-body-v45` carry explicit mutually exclusive
+  transport plan; `mir-v51`/`mir-body-v45` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact
@@ -2563,14 +2584,35 @@ name recognition.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
-- **State/role:** systems-ready, bounded-first; select a demonstrated
-  renderer/math/domain-type client before implementation.
-- **Scope:** Decide which arithmetic operators improve domain types without
-  importing ADL, rewrite rules, or conversion ranking. Add one exact
-  member/capability family with all tooling layers before the next.
-- **Exit gate:** the selected operator family has one lookup/conversion rule,
-  exhaustive diagnostics and tooling coverage, and no native C++ overload
-  behavior is needed to explain accepted source.
+- **State/role:** first family implemented; the demonstrated client is
+  renderer/math domain values (`vec2`/`vec3`-shaped types and a second
+  integer-scalar domain type) driving one generic body.
+- **Implemented family:** four structural capabilities — `adds<T>`,
+  `subtracts<T>`, `negates<T>`, and `scales_by<T, Scalar>` — each proving one
+  exact public read-only member returning an *owned* value of the domain type.
+  They are spelled publicly as `std::addable`, `std::subtractable`,
+  `std::negatable`, and `std::scalable_by`, composing into
+  `std::vector_space<T, Scalar>` with `std::copyable<T>`. Generic bodies gain
+  the matching symbolic candidates for binary `+`/`-`, unary `-`, and scalar
+  `*` on a constrained type parameter; concrete instances re-select the real
+  member declarations. `std::lerp` and `std::negated` in `<std/numeric>` are
+  the source-defined clients, with exact `float`/`double` overloads of
+  `std::lerp` for built-ins.
+- **Deliberate boundary:** the family is member-only, matching the language's
+  member-only user-operator rule. A built-in numeric does not satisfy it —
+  admitting one would resolve its operators as symbolic member calls and drop
+  the canonical local failure outcomes checked integer arithmetic must retain
+  (observed directly while implementing this row). A borrowed operator result
+  is also excluded, since the produced value would be tied to a receiver whose
+  lifetime the requirement cannot name.
+- **Remaining scope:** compound domain operators (`+=` and friends), a
+  matrix/product family with distinct operand and result domains, and any
+  ordering or hashing capability for domain values are separate families under
+  the same one-family-at-a-time rule.
+- **Exit gate (met for this family):** one lookup rule (exact member-only
+  selection, no conversion), focused positive and negative diagnostics for each
+  capability, and O0/O3 × C++20/C++23 runtime evidence over two domain types.
+  No native C++ overload behavior is needed to explain accepted source.
 
 ### L-OWN-01: Shared And Weak Ownership
 
@@ -3359,12 +3401,12 @@ owned by the rows and domain plans above.
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **in progress:** passive exact construction, exhaustive copied matching, and the cleanup-free class-payload family complete; owning-payload drop transport, move/borrow patterns, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward-iterator, sentinel, and exact-dereference relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward/bidirectional/random-access-iterator, sentinel, sized-sentinel, exact-dereference, writable-dereference, and mutable-subscript relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

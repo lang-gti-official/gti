@@ -621,14 +621,27 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(
     arena_pool_runtime
-    PROPERTIES TIMEOUT 600
-               ENVIRONMENT
-                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
-  )
-  add_test(
-    NAME stdlib_surface
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_test.py"
+      PROPERTIES TIMEOUT 600
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
+    add_test(
+      NAME mut_cursor_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mut_cursor_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(
+      mut_cursor_runtime
+      PROPERTIES TIMEOUT 600
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
+    add_test(
+      NAME stdlib_surface
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_test.py"
             "$<TARGET_FILE:gti>"
             "${CMAKE_CXX_COMPILER}"
             "$<TARGET_FILE:gti_runtime>"
@@ -833,14 +846,32 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixed_array_class_lifecycle_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle_negative.gti"
-  )
-  set_tests_properties(fixed_array_class_lifecycle_runtime
-                       PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME issue_143_polymorphic_class_array_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/issue_143_polymorphic_class_array_runtime_test.py"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle_negative.gti"
+    )
+    set_tests_properties(fixed_array_class_lifecycle_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME fixed_array_oob_write_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/fixed_array_oob_write_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(fixed_array_oob_write_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME fixed_array_multidimensional_index_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/fixed_array_multidimensional_index_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(fixed_array_multidimensional_index_runtime
+                         PROPERTIES TIMEOUT 360)
+    add_test(
+      NAME issue_143_polymorphic_class_array_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/issue_143_polymorphic_class_array_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/issue_143_polymorphic_class_array.gti"
   )
@@ -869,14 +900,23 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/issue_127_constructor_temporary_field_runtime_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures"
-  )
-  set_tests_properties(issue_127_constructor_temporary_field_runtime
-                       PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME issues_117_120_regressions
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(issue_127_constructor_temporary_field_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME constructor_constructed_field_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/constructor_constructed_field_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(constructor_constructed_field_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME issues_117_120_regressions
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
@@ -940,14 +980,56 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/generic_symbolic_auto_local.gti"
-  )
-  set_tests_properties(generic_symbolic_auto_local_runtime
-                       PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME mutable_temporary_receiver_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/generic_symbolic_auto_local.gti"
+    )
+    set_tests_properties(generic_symbolic_auto_local_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME owner_tied_by_value_argument_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/owner_tied_by_value_argument_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/owner_tied_by_value_argument.gti"
+    )
+    set_tests_properties(owner_tied_by_value_argument_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME moved_loop_local_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/moved_loop_local_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/moved_loop_local.gti"
+    )
+    set_tests_properties(moved_loop_local_runtime PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME mixed_capture_callable_template_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mixed_capture_callable_template_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(mixed_capture_callable_template_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME class_move_assignment_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/class_move_assignment_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(class_move_assignment_runtime PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME class_prvalue_assignment_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/class_prvalue_assignment_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures"
+    )
+    set_tests_properties(class_prvalue_assignment_runtime PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME mutable_temporary_receiver_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(mutable_temporary_receiver_runtime
@@ -956,22 +1038,78 @@ if(Python3_Interpreter_FOUND)
     NAME nested_reference_return_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/nested_reference_return_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(nested_reference_return_runtime
-                       PROPERTIES TIMEOUT 240)
-  add_test(
-    NAME temporary_argument_borrow_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(temporary_argument_borrow_runtime
-                       PROPERTIES TIMEOUT 300)
-  # Sharded by (optimization, standard) configuration; three shards of two
-  # configurations each, union = the full six-configuration matrix.
-  foreach(shard RANGE 1 3)
-  add_test(
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(nested_reference_return_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME class_payload_enum_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/class_payload_enum_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(class_payload_enum_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME argument_reference_return_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/argument_reference_return_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(argument_reference_return_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME temporary_argument_borrow_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(temporary_argument_borrow_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME field_subscript_store_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/field_subscript_store_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(field_subscript_store_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME disjoint_field_projection_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/disjoint_field_projection_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(disjoint_field_projection_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME retained_borrowed_call_result_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/retained_borrowed_call_result_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(retained_borrowed_call_result_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME nested_borrow_chain_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/nested_borrow_chain_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(nested_borrow_chain_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME mut_reference_retained_chain_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mut_reference_retained_chain_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(mut_reference_retained_chain_runtime
+                         PROPERTIES TIMEOUT 300)
+    # Sharded by (optimization, standard) configuration; three shards of two
+    # configurations each, union = the full six-configuration matrix.
+    foreach(shard RANGE 1 3)
+    add_test(
     NAME mir_backend_scalar_failure_callgraph_runtime_${shard}of3
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"
@@ -1097,14 +1235,21 @@ if(Python3_Interpreter_FOUND)
   add_test(
     NAME managed_thread_end_to_end
     COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/managed_thread_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
+              "${PROJECT_SOURCE_DIR}/tests/managed_thread_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME domain_operator_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/domain_operator_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(domain_operator_runtime PROPERTIES TIMEOUT 300)
 
-  if(GTI_RELEASE_BUILD)
-    # Release binaries deliberately omit source-tree fallback paths so the
-    # installed-toolchain checks exercise relocatable discovery. Build-tree
+    if(GTI_RELEASE_BUILD)
+      # Release binaries deliberately omit source-tree fallback paths so the
+      # installed-toolchain checks exercise relocatable discovery. Build-tree
     # tests still run before installation and therefore need an explicit
     # test-only resource layout.
     set_tests_properties(
@@ -1125,29 +1270,42 @@ if(Python3_Interpreter_FOUND)
       mir_backend_first_family_runtime global_class_storage_runtime
       failure_descriptor_backend_compile
       mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
-      mir_backend_class_default_cleanup_runtime
-      inline_lambda_argument_runtime
-      mir_backend_owned_lifecycle_runtime
-      mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
-      issue_123_cleanup_temporary_argument_runtime
-      issue_126_array_element_assignment_runtime
-      issue_127_constructor_temporary_field_runtime
-      issues_117_120_regressions
-      issue_143_polymorphic_class_array_runtime
-      issue_144_class_array_field_runtime
-      issue_146_class_value_positions_runtime
+        mir_backend_class_default_cleanup_runtime
+        inline_lambda_argument_runtime
+        mir_backend_owned_lifecycle_runtime
+        mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
+        fixed_array_oob_write_runtime
+        fixed_array_multidimensional_index_runtime
+        issue_123_cleanup_temporary_argument_runtime
+        issue_126_array_element_assignment_runtime
+        issue_127_constructor_temporary_field_runtime
+        constructor_constructed_field_runtime
+        issues_117_120_regressions
+        issue_143_polymorphic_class_array_runtime
+        issue_144_class_array_field_runtime
+        issue_146_class_value_positions_runtime
       issue_147_stored_reference_field_read_runtime
-      reference_receiver_compound_assign_runtime
-      subscript_store_read_order_runtime
-      owner_tied_reference_argument_runtime
-      generic_symbolic_auto_local_runtime
-      mutable_temporary_receiver_runtime
-      nested_reference_return_runtime
-      temporary_argument_borrow_runtime
-      mir_backend_scalar_failure_callgraph_runtime_1of3
-      mir_backend_scalar_failure_callgraph_runtime_2of3
-      mir_backend_scalar_failure_callgraph_runtime_3of3
-      random_engine_runtime default_parameters_runtime
+        reference_receiver_compound_assign_runtime
+        subscript_store_read_order_runtime
+        owner_tied_reference_argument_runtime
+        generic_symbolic_auto_local_runtime
+        owner_tied_by_value_argument_runtime
+        moved_loop_local_runtime
+        mixed_capture_callable_template_runtime
+        class_move_assignment_runtime
+        class_prvalue_assignment_runtime
+        mutable_temporary_receiver_runtime
+        nested_reference_return_runtime
+        argument_reference_return_runtime
+        temporary_argument_borrow_runtime
+        disjoint_field_projection_runtime
+        retained_borrowed_call_result_runtime
+        nested_borrow_chain_runtime
+        mut_reference_retained_chain_runtime
+        mir_backend_scalar_failure_callgraph_runtime_1of3
+        mir_backend_scalar_failure_callgraph_runtime_2of3
+        mir_backend_scalar_failure_callgraph_runtime_3of3
+        random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime managed_thread_end_to_end
       PROPERTIES ENVIRONMENT

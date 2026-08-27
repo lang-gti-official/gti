@@ -1,0 +1,183 @@
+// A constructor initializer list that builds class-typed fields from
+// constructed temporaries. Every field below is published through the native
+// C++ member-initializer list from the verified MIR construct-then-publish
+// schedule, so each field must be constructed exactly once and dropped exactly
+// once in reverse construction order.
+
+mut int32_t drop_order = 0;
+mut int32_t drop_count = 0;
+
+// `drop_order` records an ordered trace rather than a count: each destructor
+// appends its own tag, so 1 then 2 then 3 reads back as 123.
+class Probe {
+public:
+  Probe(int32_t value) : tag(value) {}
+
+  ~Probe() {
+    drop_order = drop_order * 10 + this.tag;
+    drop_count = drop_count + 1;
+  }
+
+  int32_t tag;
+};
+
+class Single {
+public:
+  Single(int32_t only) : held(Probe(only)) {}
+
+  Probe held;
+};
+
+class Trio {
+public:
+  Trio(int32_t first, int32_t second, int32_t third)
+      : left(Probe(first)), middle(Probe(second)), right(Probe(third)) {}
+
+  Probe left;
+  Probe middle;
+  Probe right;
+};
+
+// A mixed schedule: one scalar field beside a constructed class field.
+class Tagged {
+public:
+  Tagged(int32_t label, int32_t only) : name(label), held(Probe(only)) {}
+
+  int32_t name;
+  Probe held;
+};
+
+void consume(Trio taken) {}
+
+int32_t single_field() {
+  drop_order = 0;
+  drop_count = 0;
+  {
+    Single single = Single(7);
+    if (single.held.tag != 7) {
+      return 1;
+    }
+  }
+  if (drop_count != 1) {
+    return 2;
+  }
+  if (drop_order != 7) {
+    return 3;
+  }
+  return 0;
+}
+
+int32_t reverse_construction_order() {
+  drop_order = 0;
+  drop_count = 0;
+  mut int32_t observed = 0;
+  {
+    Trio trio = Trio(1, 2, 3);
+    observed = trio.left.tag * 100 + trio.middle.tag * 10 + trio.right.tag;
+  }
+  if (observed != 123) {
+    return 1;
+  }
+  if (drop_count != 3) {
+    return 2;
+  }
+  // Right, then middle, then left.
+  if (drop_order != 321) {
+    return 3;
+  }
+  return 0;
+}
+
+int32_t mixed_scalar_and_class_fields() {
+  drop_order = 0;
+  drop_count = 0;
+  {
+    Tagged tagged = Tagged(9, 8);
+    if (tagged.name != 9 || tagged.held.tag != 8) {
+      return 1;
+    }
+  }
+  if (drop_count != 1) {
+    return 2;
+  }
+  if (drop_order != 8) {
+    return 3;
+  }
+  return 0;
+}
+
+int32_t moved_holder() {
+  drop_order = 0;
+  drop_count = 0;
+  {
+    mut Trio source = Trio(4, 5, 6);
+    consume(std::move(source));
+    // The consuming parameter owns the fields now: they drop exactly once,
+    // still in reverse construction order.
+    if (drop_count != 3) {
+      return 1;
+    }
+    if (drop_order != 654) {
+      return 2;
+    }
+  }
+  // The moved-from binding must not drop a second time.
+  if (drop_count != 3) {
+    return 3;
+  }
+  if (drop_order != 654) {
+    return 4;
+  }
+  return 0;
+}
+
+// A cleanup-free chain: a class holding a class holding a class. The field
+// publication for a cleanup-free field carries no drop obligation, so it uses
+// the initializer-metadata half of the same schedule.
+class Cell {
+public:
+  Cell(int32_t value) : stored(value) {}
+
+  int32_t stored;
+};
+
+class Middle {
+public:
+  Middle(int32_t value) : cell(Cell(value)) {}
+
+  Cell cell;
+};
+
+class Outer {
+public:
+  Outer(int32_t value) : middle(Middle(value)) {}
+
+  Middle middle;
+};
+
+int32_t nested_holder() {
+  Outer outer = Outer(5);
+  if (outer.middle.cell.stored != 5) {
+    return 1;
+  }
+  return 0;
+}
+
+int main() {
+  if (single_field() != 0) {
+    return 1;
+  }
+  if (reverse_construction_order() != 0) {
+    return 2;
+  }
+  if (mixed_scalar_and_class_fields() != 0) {
+    return 3;
+  }
+  if (moved_holder() != 0) {
+    return 4;
+  }
+  if (nested_holder() != 0) {
+    return 5;
+  }
+  return 0;
+}

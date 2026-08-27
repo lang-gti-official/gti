@@ -1,0 +1,45 @@
+#include <std/algorithm>
+#include <std/vector>
+
+mut int cleanup_count = 0;
+
+class threshold {
+  int32_t value;
+
+public:
+  threshold(int32_t value) : value(value) {}
+  threshold(threshold& other) = delete;
+  threshold(threshold&& other) = default;
+  ~threshold() { cleanup_count++; }
+
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  values.push_back(4);
+
+  int32_t limit = 2;
+  auto below = [limit](int32_t& value) -> bool { return value < limit; };
+  std::ptrdiff_t small = std::count_if(values.begin(), values.end(),
+                                       std::move(below));
+
+  threshold bound = threshold(3);
+  auto above = [owned = std::move(bound)](int32_t& value) -> bool {
+    return value > owned.read();
+  };
+  std::ptrdiff_t large = std::count_if(values.begin(), values.end(),
+                                       std::move(above));
+
+  auto exact = [limit](int32_t& value) -> bool { return value == limit; };
+  std::ptrdiff_t matched = std::count_if(values.begin(), values.end(),
+                                         std::move(exact));
+
+  if (cleanup_count != 1) {
+    return 100 + cleanup_count;
+  }
+  return int(small) + int(large) * 10 + int(matched) * 100 - 111;
+}

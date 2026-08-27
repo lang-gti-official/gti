@@ -2396,6 +2396,125 @@ int main() {
          "constant element");
 }
 
+void testDisjointFieldReceiverBorrowsThroughReferenceParameters() {
+  // Receiver borrows of disjoint fields reached through a mutable reference
+  // parameter: semantics accepts them, and the lowered receiver-origin loan
+  // places must spell the reference dereference explicitly so the backend
+  // can key each field projection to its exact concrete class. Dropping the
+  // dereference during borrow-source canonicalization previously composed a
+  // field projection directly onto the reference-typed carrier, which the
+  // C++ emitter declined as GTI-B0001.
+  const lang::FrontendResult disjoint =
+      lang::Frontend().analyze("disjoint-field-reference-receivers.gti", R"(
+class Box {
+  mut int value;
+
+public:
+  Box(int initial) : value(initial) {}
+  mut int& write() mut { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Inner {
+public:
+  mut Box first = Box(3);
+  mut Box second = Box(4);
+};
+
+class Outer {
+public:
+  mut Inner left = Inner();
+  mut Inner right = Inner();
+};
+
+int sum(int& left, int& right) { return left + right; }
+
+int disjoint_writes(mut Boxes& parent) {
+  return sum(parent.left.write(), parent.right.write());
+}
+
+int nested_writes(mut Outer& parent) {
+  return sum(parent.left.first.write(), parent.right.second.write());
+}
+
+int main() {
+  mut Boxes pair = Boxes();
+  mut Outer outer = Outer();
+  return disjoint_writes(pair) + nested_writes(outer) - 10;
+}
+)");
+  expect(disjoint.canGenerateCode() &&
+             lang::verifyMirProgram(disjoint.mir).valid(),
+         "mutable receiver borrows of disjoint fields through a reference "
+         "parameter should stay accepted through MIR verification");
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(disjoint.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         disjoint.hir.functionInstances()) {
+      if (candidate.source == function) {
+        const lang::MirFunctionInstance *instance =
+            disjoint.mir.findFunctionInstance(candidate.id);
+        return instance == nullptr ? nullptr : &instance->body;
+      }
+    }
+    return nullptr;
+  };
+  for (const std::string name : {"disjoint_writes", "nested_writes"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    std::vector<const lang::MirPlace *> sources;
+    if (body != nullptr) {
+      for (const lang::MirLoan &loan : body->loans) {
+        if (loan.kind != lang::MirLoanKind::CallResult) {
+          continue;
+        }
+        sources.push_back(body->findPlace(loan.source));
+      }
+    }
+    const bool exactSpelling =
+        sources.size() == 2 &&
+        std::all_of(
+            sources.begin(), sources.end(),
+            [](const lang::MirPlace *place) {
+              return place != nullptr && place->projections.size() >= 2 &&
+                     place->projections.front().kind ==
+                         lang::MirProjectionKind::Dereference &&
+                     std::all_of(place->projections.begin() + 1,
+                                 place->projections.end(),
+                                 [](const lang::MirPlaceProjection &field) {
+                                   return field.kind ==
+                                              lang::MirProjectionKind::Field &&
+                                          field.field != 0;
+                                 });
+            }) &&
+        sources.front() != nullptr && sources.back() != nullptr &&
+        sources.front()->projections.back().field !=
+            sources.back()->projections.back().field;
+    expect(body != nullptr && exactSpelling,
+           "receiver-origin loan places in " + name +
+               " should spell the reference dereference and their exact "
+               "disjoint field projections");
+  }
+
+  if (disjoint.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(disjoint.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        gti_test::emitCpp(disjoint, disjoint.mir, disjoint.mir, optimizations);
+    expect(!artifact.contents.empty(),
+           "the C++ backend should emit disjoint field receiver borrows "
+           "reached through reference parameters");
+  }
+}
+
 void testNonNullReferences() {
   const std::string source = nonNullReferenceSource();
 
@@ -2830,7 +2949,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v50 ") &&
+  expect(mirDump.starts_with("mir-v51 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -3387,6 +3506,176 @@ int main() {
              hasDiagnostic(invalidated.diagnostics,
                            "Mutable method cannot use move-only storage"),
          "borrow diagnostics should prevent receiver invalidation");
+}
+
+void testArgumentTiedReferenceReturns() {
+  // A free function whose borrowed return derives from its single read-only
+  // reference parameter returns that parameter's seeded entry loan. An entry
+  // loan has no producing instruction, so reclassifying it in place as the
+  // escaping Return loan left a body in which nothing ever named the address
+  // the return published: the emitted callee returned a null pointer and
+  // every caller that read through the result crashed. Lowering publishes a
+  // fresh Return loan from the entry loan and retires the entry loan at the
+  // same instruction boundary instead.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("argument-tied-reference-returns.gti", R"(
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+int32_t& forward(int32_t& candidate) { return pick(candidate); }
+
+int32_t retain_argument_return() {
+  mut int32_t local = 7;
+  int32_t& chosen = pick(local);
+  return chosen;
+}
+
+int32_t retain_forwarded_return() {
+  mut int32_t local = 11;
+  int32_t& chosen = forward(local);
+  return chosen;
+}
+
+int32_t retain_call_result_argument() {
+  mut Box box = Box(13);
+  int32_t& chosen = pick(box.observe());
+  return chosen;
+}
+
+int main() {
+  return retain_argument_return() + retain_forwarded_return() +
+         retain_call_result_argument() - 31;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected argument-tied reference diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a borrowed return derived from a read-only reference parameter "
+         "should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  // No body may record a loan that is simultaneously the body-entry
+  // capability and the escaping return dependency: that is the exact shape
+  // whose address nothing publishes.
+  bool entryReturnLoan = false;
+  for (const lang::MirFunctionInstance &instance :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirLoan &loan : instance.body.loans) {
+      if (loan.entry && loan.kind == lang::MirLoanKind::Return) {
+        entryReturnLoan = true;
+      }
+    }
+  }
+  expect(!entryReturnLoan,
+         "no MIR body should reclassify a seeded entry loan as its escaping "
+         "Return loan");
+
+  const lang::MirBody *picked = mirBodyFor("pick");
+  expect(picked != nullptr,
+         "the argument-tied fixture should retain the MIR body of pick");
+  if (picked == nullptr) {
+    return;
+  }
+
+  const lang::MirLoan *entryLoan = nullptr;
+  const lang::MirLoan *returnLoan = nullptr;
+  for (const lang::MirLoan &loan : picked->loans) {
+    if (loan.entry && loan.kind == lang::MirLoanKind::Parameter) {
+      entryLoan = &loan;
+    } else if (loan.kind == lang::MirLoanKind::Return) {
+      returnLoan = &loan;
+    }
+  }
+  expect(entryLoan != nullptr && returnLoan != nullptr &&
+             returnLoan->parent == 0 && returnLoan->escapes &&
+             !returnLoan->entry && returnLoan->source == entryLoan->source &&
+             returnLoan->access == entryLoan->access,
+         "pick should publish a fresh parentless escaping Return loan from "
+         "its reference parameter's entry loan");
+  if (entryLoan == nullptr || returnLoan == nullptr) {
+    return;
+  }
+
+  // The published Return loan must be produced by a Borrow that names the
+  // entry loan and is immediately followed by that entry loan's retirement:
+  // the transfer, not a second independent root borrow.
+  bool publishedTransfer = false;
+  bool returnsPublishedLoan = false;
+  for (const lang::MirBlock &block : picked->blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      if (instruction.kind != lang::MirInstructionKind::Borrow ||
+          instruction.loan != returnLoan->id ||
+          instruction.operands.size() != 1) {
+        continue;
+      }
+      const lang::MirOperand &source = instruction.operands.front();
+      if (source.kind != lang::MirOperandKind::Loan ||
+          source.loan != entryLoan->id ||
+          index + 1 >= block.instructions.size()) {
+        continue;
+      }
+      const lang::MirInstruction &retire = block.instructions[index + 1];
+      publishedTransfer = retire.kind == lang::MirInstructionKind::EndBorrow &&
+                          retire.loan == entryLoan->id &&
+                          retire.hirValue == instruction.hirValue;
+    }
+    if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+        block.terminator.returnLoan &&
+        *block.terminator.returnLoan == returnLoan->id) {
+      returnsPublishedLoan = true;
+    }
+  }
+  expect(publishedTransfer && returnsPublishedLoan,
+         "pick should forward its entry loan into the published Return loan "
+         "and retire the entry loan at that same instruction boundary");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  // The regression the runtime test catches: without an instruction that
+  // names it, the emitted callee published a default-initialized pointer.
+  expect(
+      !artifact.contents.empty() &&
+          artifact.contents.find("auto *__gti_mir_loan_1 = __gti_mir_p_1;") !=
+              std::string::npos &&
+          artifact.contents.find("__gti_mir_loan_2 = __gti_mir_loan_1;") !=
+              std::string::npos,
+      "the C++ backend should alias the reference parameter's carrier and "
+      "publish it through the returned loan");
 }
 
 void testStoredReferenceGroundwork() {
@@ -6089,6 +6378,225 @@ int main() {
          "iterator place that merely shares owner provenance");
 }
 
+void testCallSiblingArgumentBorrowConflicts() {
+  // f(v.begin_mut(), v.end()): the first argument's exclusive owner loan is
+  // live while the second argument evaluates its receiver read. Semantics
+  // must reject this before MIR construction refuses the overlap.
+  const std::string mutThenReadSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenRead = lang::Frontend().analyze(
+      "sibling-argument-mut-then-read.gti", mutThenReadSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenRead.canGenerateCode() &&
+             countDiagnosticCode(mutThenRead.diagnostics, "GTI-S2017") == 1 &&
+             hasDiagnosticAt(mutThenRead.diagnostics, "GTI-S2017",
+                             "sibling-argument-mut-then-read.gti",
+                             mutThenReadSource.rfind("end()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand") &&
+             hasRelatedDiagnostic(mutThenRead.diagnostics,
+                                  "stays live until the call completes") &&
+             hasDiagnosticHint(mutThenRead.diagnostics,
+                               "Whole-container algorithms take the "
+                               "container itself"),
+         "a sibling read of an owner with a live exclusive argument borrow "
+         "should be a semantic rejection, not a MIR construction failure");
+
+  // The same conflict without any borrow in the read result: size() only
+  // reads the owner ephemerally, but the exclusive loan is still live.
+  const std::string mutThenPlainReadSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.size());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenPlainRead = lang::Frontend().analyze(
+      "sibling-argument-mut-then-plain-read.gti", mutThenPlainReadSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenPlainRead.canGenerateCode() &&
+             countDiagnosticCode(mutThenPlainRead.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnosticAt(mutThenPlainRead.diagnostics, "GTI-S2017",
+                             "sibling-argument-mut-then-plain-read.gti",
+                             mutThenPlainReadSource.rfind("size()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand"),
+         "an ephemeral receiver read after a sibling exclusive argument "
+         "borrow of the same owner should be rejected at semantics");
+
+  // Two exclusive borrows of one owner in a single call stay rejected by the
+  // pairwise overlap check.
+  const std::string mutThenMutSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.begin_mut());
+  return 0;
+}
+)";
+  const lang::FrontendResult mutThenMut = lang::Frontend().analyze(
+      "sibling-argument-mut-then-mut.gti", mutThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutThenMut.canGenerateCode() &&
+             countDiagnosticCode(mutThenMut.diagnostics, "GTI-S2017") == 1 &&
+             hasDiagnostic(mutThenMut.diagnostics,
+                           "overlapping reference accesses"),
+         "two exclusive sibling argument borrows of one owner should stay "
+         "rejected by the call overlap check");
+
+  // Reversed order is sound: end() finishes its ephemeral receiver read
+  // before begin_mut() creates the exclusive loan.
+  const std::string readThenMutSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A last, B first) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.end(), values.begin_mut());
+  return 0;
+}
+)";
+  const lang::FrontendResult readThenMut = lang::Frontend().analyze(
+      "sibling-argument-read-then-mut.gti", readThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(readThenMut.canGenerateCode() &&
+             lang::verifyMirProgram(readThenMut.mir).valid(),
+         "an ephemeral read completed before a sibling exclusive borrow "
+         "begins should stay accepted through MIR verification");
+
+  // An unretained production loan survives a nested consuming call: the
+  // exclusive iterator is consumed inside the first operand, but its owner
+  // loan lasts through the full expression, so the sibling read conflicts.
+  const std::string consumedCarrierSource = R"(
+#include <std/vector>
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin_mut()), values.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult consumedCarrier = lang::Frontend().analyze(
+      "sibling-argument-consumed-carrier.gti", consumedCarrierSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!consumedCarrier.canGenerateCode() &&
+             countDiagnosticCode(consumedCarrier.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnosticAt(consumedCarrier.diagnostics, "GTI-S2017",
+                             "sibling-argument-consumed-carrier.gti",
+                             consumedCarrierSource.rfind("end()"),
+                             "Cannot read storage while an exclusive mutable "
+                             "borrow created by an earlier operand"),
+         "an exclusive borrow consumed by a nested call still holds its "
+         "owner loan through the full expression, so a sibling read is "
+         "rejected at semantics");
+
+  // The mirrored nesting: a read carrier consumed inside the first operand
+  // still holds a read loan, so a later operand mutation conflicts.
+  const std::string nestedReadThenMutSource = R"(
+#include <std/vector>
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B second) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin()), bump(values));
+  return 0;
+}
+)";
+  const lang::FrontendResult nestedReadThenMut = lang::Frontend().analyze(
+      "sibling-argument-nested-read-then-mut.gti", nestedReadThenMutSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedReadThenMut.canGenerateCode() &&
+             countDiagnosticCode(nestedReadThenMut.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnostic(nestedReadThenMut.diagnostics,
+                           "A later call operand mutates storage borrowed by "
+                           "an earlier operand"),
+         "a read borrow consumed by a nested call still holds its owner loan, "
+         "so a later sibling mutation is rejected at semantics");
+
+  // A completed nested mutable-reference call holds no loan afterwards, so
+  // a later sibling read of the same owner stays valid.
+  const std::string completedMutationSource = R"(
+#include <std/vector>
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(bump(values), values.size());
+  return 0;
+}
+)";
+  const lang::FrontendResult completedMutation = lang::Frontend().analyze(
+      "sibling-argument-completed-mutation.gti", completedMutationSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(completedMutation.canGenerateCode() &&
+             lang::verifyMirProgram(completedMutation.mir).valid(),
+         "a nested mutable-reference call completed in an earlier operand "
+         "should not block a later sibling read");
+
+  // Borrows of two different owners in one call never overlap.
+  const std::string twoOwnersSource = R"(
+#include <std/vector>
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> left = std::vector<int32_t>({1});
+  mut std::vector<int32_t> right = std::vector<int32_t>({2});
+  consume(left.begin_mut(), right.end());
+  return 0;
+}
+)";
+  const lang::FrontendResult twoOwners = lang::Frontend().analyze(
+      "sibling-argument-two-owners.gti", twoOwnersSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(twoOwners.canGenerateCode() &&
+             lang::verifyMirProgram(twoOwners.mir).valid(),
+         "sibling argument borrows of two different owners should stay "
+         "accepted through MIR verification");
+}
+
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
@@ -6332,6 +6840,325 @@ int use() {
                  "does not satisfy generic constraint 'std::forward_iterator'"),
          "forward_iterator should reject a mutable owner-loan cursor at the "
          "constrained call");
+
+  const std::string mutCursorReadReceiverSource = R"(
+#include <std/iterator>
+#include <std/vector>
+
+bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(2));
+  auto last = values.end();
+  bool inside = probe(values.begin_mut(), last);
+  return inside ? 0 : 1;
+}
+)";
+  const lang::FrontendResult mutCursorReadReceiver = lang::Frontend().analyze(
+      "mut-cursor-read-receiver.gti", mutCursorReadReceiverSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!mutCursorReadReceiver.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         mutCursorReadReceiver.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(mutCursorReadReceiver.canGenerateCode() &&
+             lang::verifyMirProgram(mutCursorReadReceiver.mir).valid(),
+         "a read-receiver method on a by-value mut cursor parameter must "
+         "pass MIR verification: the entry loan protects the caller's "
+         "storage, not the carrier object itself");
+
+  const std::string mutCursorLoopSource = R"(
+#include <std/iterator>
+#include <std/vector>
+
+int32_t drain<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, int32_t> {
+  mut int32_t total = 0;
+  while (first != last) {
+    total = total + *first;
+    ++first;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({3, 4, 5});
+  auto last = values.end();
+  return drain(values.begin_mut(), last) == 12 ? 0 : 1;
+}
+)";
+  const lang::FrontendResult mutCursorLoop = lang::Frontend().analyze(
+      "mut-cursor-loop.gti", mutCursorLoopSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  if (!mutCursorLoop.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : mutCursorLoop.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(mutCursorLoop.canGenerateCode() &&
+             lang::verifyMirProgram(mutCursorLoop.mir).valid(),
+         "an iterator-pair loop whose condition read-borrows a by-value mut "
+         "cursor parameter must pass MIR verification across the loop "
+         "backedge");
+}
+
+void testWritableAndMovementIteratorCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "writable-movement-iterators.gti", R"(
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(5);
+  source.push_back(1);
+  source.push_back(4);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(3));
+  std::copy(source.begin(), source.end(), destination.begin_mut());
+  int32_t nine = 9;
+  std::fill(destination, nine);
+  mut std::vector<int32_t> doubled = std::vector<int32_t>(std::size_t(3));
+  std::transform(source, doubled,
+                 [](int32_t& value) -> int32_t { return value * 2; });
+  std::sort(source);
+  std::reverse(source);
+  int32_t head = source[std::size_t(0)];
+  mut auto cursor = source.begin();
+  ++cursor;
+  --cursor;
+  cursor += std::ptrdiff_t(2);
+  cursor -= std::ptrdiff_t(1);
+  auto last = source.end();
+  std::ptrdiff_t left = cursor - last;
+  auto stepped = std::prev(std::next(source.begin(), std::ptrdiff_t(2)));
+  return (*cursor == 4 && left == std::ptrdiff_t(2) && *stepped == 4 &&
+          destination[std::size_t(0)] == 9 &&
+          doubled[std::size_t(0)] == 10 && head == 5)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected writable-movement diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "writable, bidirectional, random-access, and sized-sentinel "
+         "capabilities should drive copy/fill/transform/sort/reverse and "
+         "iterator movement to valid MIR");
+
+  const lang::FrontendResult readDestination = lang::Frontend().analyze(
+      "writable-read-destination.gti", R"(
+#include <std/algorithm>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(1);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(1));
+  std::copy(source.begin(), source.end(), destination.begin());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!readDestination.canGenerateCode() &&
+             hasDiagnostic(readDestination.diagnostics,
+                           "do not satisfy concept 'std::output_iterator'"),
+         "a read-only iterator destination should fail std::output_iterator");
+
+  const lang::FrontendResult forwardOnly = lang::Frontend().analyze(
+      "bidirectional-forward-only.gti", R"(
+#include <std/iterator>
+
+class ForwardOnly {
+  mut int32_t value = 0;
+
+public:
+  ForwardOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(ForwardOnly& other) { return false; }
+};
+
+void walk_back<Iterator>(mut Iterator iterator)
+  requires std::bidirectional_iterator<Iterator> {
+  --iterator;
+}
+
+int use() {
+  mut ForwardOnly cursor = ForwardOnly();
+  walk_back(std::move(cursor));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!forwardOnly.canGenerateCode() &&
+             hasDiagnostic(forwardOnly.diagnostics,
+                           "do not satisfy concept "
+                           "'std::bidirectional_iterator'"),
+         "a forward-only cursor should fail std::bidirectional_iterator");
+
+  const lang::FrontendResult noJumps = lang::Frontend().analyze(
+      "random-access-no-jumps.gti", R"(
+#include <std/iterator>
+
+class StepOnly {
+  mut int32_t value = 0;
+
+public:
+  StepOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  void operator--() mut {}
+  bool operator!=(StepOnly& other) { return false; }
+};
+
+void jump<Iterator>(mut Iterator iterator)
+  requires std::random_access_iterator<Iterator> {
+  iterator += std::ptrdiff_t(2);
+}
+
+int use() {
+  mut StepOnly cursor = StepOnly();
+  jump(std::move(cursor));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!noJumps.canGenerateCode() &&
+             hasDiagnostic(noJumps.diagnostics,
+                           "do not satisfy concept "
+                           "'std::random_access_iterator'"),
+         "a step-only cursor should fail std::random_access_iterator");
+
+  const lang::FrontendResult wrongElement = lang::Frontend().analyze(
+      "writes-to-wrong-element.gti", R"(
+#include <std/iterator>
+#include <std/vector>
+
+void stamp<Iterator>(mut Iterator iterator, int16_t value)
+  requires std::writes_to<Iterator, int16_t> {
+  *iterator = value;
+}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(1));
+  stamp(values.begin_mut(), int16_t(3));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!wrongElement.canGenerateCode() &&
+             hasDiagnostic(wrongElement.diagnostics,
+                           "do not satisfy concept 'std::writes_to'"),
+         "writes_to should reject a destination whose element type differs "
+         "from the required referent");
+
+  const lang::FrontendResult unsizedSentinel = lang::Frontend().analyze(
+      "sized-sentinel-missing.gti", R"(
+#include <std/iterator>
+
+class PlainSentinel {};
+
+class PlainIterator {
+  mut int32_t value = 0;
+
+public:
+  PlainIterator() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(PlainSentinel& other) { return false; }
+};
+
+std::ptrdiff_t measure<Iterator, Sentinel>(Iterator first, Sentinel last)
+  requires std::sized_sentinel_for<Sentinel, Iterator> {
+  return first - last;
+}
+
+int use() {
+  std::ptrdiff_t left = measure(PlainIterator(), PlainSentinel());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!unsizedSentinel.canGenerateCode() &&
+             hasDiagnostic(unsizedSentinel.diagnostics,
+                           "do not satisfy concept "
+                           "'std::sized_sentinel_for'"),
+         "sized_sentinel_for should reject an iterator without the signed "
+         "distance operator");
+
+  const lang::FrontendResult userCursor = lang::Frontend().analyze(
+      "user-cursor-symbolic-writes.gti", R"(
+#include <std/iterator>
+
+class grid_cursor {
+  mut int32_t[6] cells = {};
+  mut std::ptrdiff_t position = 0;
+
+public:
+  grid_cursor() {}
+
+  mut int32_t& operator*() mut {
+    return this.cells[std::size_t(this.position)];
+  }
+
+  void operator++() mut { this.position++; }
+
+  mut int32_t& operator[](std::ptrdiff_t offset) mut {
+    return this.cells[std::size_t(this.position + offset)];
+  }
+
+  int32_t read(std::size_t index) { return this.cells[index]; }
+};
+
+void stamp<Cursor, T>(mut Cursor& cursor, T& value)
+  requires std::writes_to<Cursor, T> {
+  *cursor = value;
+}
+
+void poke<Cursor, T>(mut Cursor& cursor, std::ptrdiff_t offset, T& value)
+  requires std::subscripts_to_mut<Cursor, T> {
+  cursor[offset] = value;
+}
+
+int main() {
+  mut grid_cursor cursor = grid_cursor();
+  int32_t five = 5;
+  stamp(cursor, five);
+  int32_t seven = 7;
+  poke(cursor, std::ptrdiff_t(1), seven);
+  return (cursor.read(std::size_t(0)) == 5 &&
+          cursor.read(std::size_t(1)) == 7)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!userCursor.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : userCursor.diagnostics) {
+      std::cerr << "Unexpected user-cursor diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(userCursor.canGenerateCode() &&
+             lang::verifyMirProgram(userCursor.mir).valid(),
+         "symbolic mutable dereference and subscript writes should "
+         "instantiate against a user cursor and reach valid MIR");
 }
 
 void testGeneralOwnerDependentReturns() {
@@ -13775,7 +14602,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v50 ") &&
+             mirDump.starts_with("mir-v51 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -15558,6 +16385,515 @@ int main() { return inspect(Report()); }
          "ephemeral-borrow fallback tier");
 }
 
+void testRetainedBorrowedCallResults() {
+  // A reference binding that retains a borrowed call result keeps the call
+  // result's own loan identity. Recreating a Local loan from the receiver
+  // origin instead produced a source place whose recorded type stated the
+  // returned referent while its projection chain derived the receiver's
+  // subobject, which the C++ emitter's place-coherence scan declined as
+  // GTI-B0001.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("retained-borrowed-call-results.gti", R"(
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Outer {
+public:
+  mut Boxes inner = Boxes();
+};
+
+int32_t retain_through_alias() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.left.write();
+  child = 5;
+  return parent.left.read();
+}
+
+int32_t retain_across_statements() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.right.write();
+  int32_t observed = alias.left.read();
+  child = observed + 40;
+  return parent.right.read();
+}
+
+int32_t retain_nested_field() {
+  mut Outer outer = Outer();
+  mut Outer& alias = outer;
+  mut int32_t& child = alias.inner.right.write();
+  child = 7;
+  return outer.inner.right.read();
+}
+
+int32_t retain_read_only() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  int32_t& observed = alias.left.observe();
+  return observed;
+}
+
+int32_t retain_from_local_receiver() {
+  mut Boxes parent = Boxes();
+  mut int32_t& child = parent.left.write();
+  child = 9;
+  return parent.left.read();
+}
+
+int32_t retain_through_reference_parameter(mut Box& box) {
+  mut int32_t& child = box.write();
+  child = 3;
+  return box.read();
+}
+
+int main() {
+  mut Box box = Box(0);
+  return retain_through_alias() + retain_across_statements() +
+         retain_nested_field() + retain_read_only() +
+         retain_from_local_receiver() +
+         retain_through_reference_parameter(box) - 66;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected retained-borrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "retained borrowed call results should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  // The emitter walks a projected place from its concrete root type; this
+  // mirrors that walk so the structural assertion below fails on exactly the
+  // disagreement the emitter declines, rather than on emission alone.
+  const auto derivedType =
+      [&](const lang::MirBody &body,
+          const lang::MirPlace &place) -> std::optional<lang::SemanticType> {
+    if (place.projections.empty()) {
+      return place.type;
+    }
+    std::optional<lang::SemanticType> current;
+    if (place.root == lang::MirPlaceRootKind::Binding) {
+      const auto root = std::find_if(
+          body.places.begin(), body.places.end(),
+          [&](const lang::MirPlace &candidate) {
+            return candidate.projections.empty() &&
+                   candidate.root == lang::MirPlaceRootKind::Binding &&
+                   candidate.binding == place.binding;
+          });
+      if (root != body.places.end()) {
+        current = root->type;
+      }
+    }
+    for (const lang::MirPlaceProjection &projection : place.projections) {
+      if (!current) {
+        return std::nullopt;
+      }
+      if (projection.kind == lang::MirProjectionKind::Dereference) {
+        if (current->arguments.size() != 1) {
+          return std::nullopt;
+        }
+        lang::SemanticType pointee = current->arguments.front();
+        current = std::move(pointee);
+        continue;
+      }
+      if (projection.kind != lang::MirProjectionKind::Field) {
+        return std::nullopt;
+      }
+      const auto owner =
+          std::find_if(frontend.mir.classInstances().begin(),
+                       frontend.mir.classInstances().end(),
+                       [&](const lang::MirClassInstance &candidate) {
+                         return candidate.type == *current;
+                       });
+      if (owner == frontend.mir.classInstances().end()) {
+        return std::nullopt;
+      }
+      const auto field = std::find_if(
+          owner->declaredFields.begin(), owner->declaredFields.end(),
+          [&](const lang::MirClassFieldInfo &candidate) {
+            return candidate.symbol == projection.field;
+          });
+      if (field == owner->declaredFields.end()) {
+        return std::nullopt;
+      }
+      current = field->type;
+    }
+    return current;
+  };
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  for (const std::string name :
+       {"retain_through_alias", "retain_across_statements",
+        "retain_nested_field", "retain_read_only", "retain_from_local_receiver",
+        "retain_through_reference_parameter"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    expect(body != nullptr,
+           "the retained-borrow fixture should retain the MIR body of " + name);
+    if (body == nullptr) {
+      continue;
+    }
+
+    bool coherent = true;
+    for (const lang::MirPlace &place : body->places) {
+      const std::optional<lang::SemanticType> derived =
+          derivedType(*body, place);
+      if (derived && *derived != place.type) {
+        coherent = false;
+      }
+    }
+    expect(coherent,
+           "every binding-rooted projected place in " + name +
+               " should record the type its own projection chain derives");
+
+    std::vector<lang::HirValueId> callValues;
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          callValues.push_back(instruction.hirValue);
+        }
+      }
+    }
+
+    std::size_t retainedCallResults = 0;
+    bool retainedSourcesAgree = true;
+    for (const lang::MirLoan &loan : body->loans) {
+      if (loan.carriers.empty() ||
+          std::find(callValues.begin(), callValues.end(), loan.producedBy) ==
+              callValues.end()) {
+        continue;
+      }
+      // A carried loan produced by a call is the retained borrow: it must
+      // stay that call result's own loan, and its origin place must record
+      // the type its own projection chain derives.
+      ++retainedCallResults;
+      const lang::MirPlace *source = body->findPlace(loan.source);
+      const std::optional<lang::SemanticType> derived =
+          source == nullptr ? std::nullopt : derivedType(*body, *source);
+      if (loan.kind != lang::MirLoanKind::CallResult || source == nullptr ||
+          !derived || *derived != source->type) {
+        retainedSourcesAgree = false;
+      }
+    }
+    expect(retainedCallResults == 1 && retainedSourcesAgree,
+           "the retained borrow in " + name +
+               " should keep the call result's own loan over an origin place "
+               "whose type agrees with its projection chain");
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the C++ backend should emit retained borrowed call results without "
+         "declining the retained loan's place");
+}
+
+void testNestedBorrowChainLoanOrdering() {
+  // A reference binding may retain the result of a call whose own argument or
+  // receiver is already a borrowed call result. Lowering keeps that outermost
+  // call result's loan, so the links it reborrows must stay live: a parent
+  // loan outlives its child reborrow on every edge, normal and failure alike.
+  // Releasing the transient links by expression extent ended the parent while
+  // the retained child was still active, which MIR verification correctly
+  // rejected as "loan N is ended before its active child reborrow".
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("nested-borrow-chain.gti", R"(
+class Leaf {
+  mut int32_t value = 1;
+  mut int32_t counter = 0;
+
+public:
+  Leaf() {}
+  mut int32_t& write() mut { return this.value; }
+  mut int32_t& overflow() mut {
+    this.counter = 2147483647;
+    this.counter += 1;
+    return this.value;
+  }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Middle {
+  mut Leaf leaf = Leaf();
+
+public:
+  Middle() {}
+  mut Leaf& reach() mut { return this.leaf; }
+  Leaf& look() { return this.leaf; }
+  int32_t read() { return this.leaf.read(); }
+};
+
+class Pair {
+public:
+  mut Middle left = Middle();
+  mut Middle right = Middle();
+};
+
+class Top {
+public:
+  mut Pair pair = Pair();
+};
+
+int32_t& pick(Leaf& candidate) { return candidate.observe(); }
+
+int32_t retained_argument() {
+  mut Pair pair = Pair();
+  int32_t& chosen = pick(pair.right.look());
+  return chosen;
+}
+
+int32_t retained_receiver() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().write();
+  chosen = 8;
+  return pair.right.read();
+}
+
+int32_t two_level_chain() {
+  mut Top top = Top();
+  mut int32_t& chosen = top.pair.left.reach().write();
+  chosen = 6;
+  return top.pair.left.read();
+}
+
+int32_t retained_across_statements() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.left.reach().write();
+  int32_t observed = 30;
+  chosen = observed + 7;
+  return pair.left.read();
+}
+
+int32_t retained_chain_can_fail() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().overflow();
+  chosen = 5;
+  return pair.right.read();
+}
+
+int32_t single_level_contrast() {
+  mut Leaf leaf = Leaf();
+  mut int32_t& chosen = leaf.write();
+  chosen = 9;
+  return leaf.read();
+}
+
+int main() {
+  return retained_argument() + retained_receiver() + two_level_chain() +
+         retained_across_statements() + retained_chain_can_fail() +
+         single_level_contrast() - 66;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected nested-borrow-chain diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "retained borrows built from another borrowed call result should "
+         "lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto mirBodyFor =
+      [&](const std::string &name) -> const lang::MirBody * {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances()) {
+      if (candidate.source != function) {
+        continue;
+      }
+      const lang::MirFunctionInstance *instance =
+          frontend.mir.findFunctionInstance(candidate.id);
+      return instance == nullptr ? nullptr : &instance->body;
+    }
+    return nullptr;
+  };
+
+  const auto isAncestor = [&](const lang::MirBody &body, lang::MirLoanId older,
+                              lang::MirLoanId candidate) {
+    std::unordered_set<lang::MirLoanId> visited;
+    const lang::MirLoan *loan = body.findLoan(candidate);
+    while (loan != nullptr && loan->parent != 0 &&
+           visited.insert(loan->parent).second) {
+      if (loan->parent == older) {
+        return true;
+      }
+      loan = body.findLoan(loan->parent);
+    }
+    return false;
+  };
+
+  for (const std::string name :
+       {"retained_argument", "retained_receiver", "two_level_chain",
+        "retained_across_statements", "retained_chain_can_fail",
+        "single_level_contrast"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    expect(body != nullptr,
+           "the nested-borrow-chain fixture should retain the MIR body of " +
+               name);
+    if (body == nullptr) {
+      continue;
+    }
+
+    // The structural rule the schedule violated: within one block, no
+    // EndBorrow may precede the EndBorrow of a loan that descends from it.
+    // Every block is checked, so the normal route and each defined-failure
+    // cleanup edge are held to the same order.
+    bool parentsOutliveChildren = true;
+    std::size_t checkedEndings = 0;
+    for (const lang::MirBlock &block : body->blocks) {
+      std::vector<lang::MirLoanId> ended;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+            !instruction.loan) {
+          continue;
+        }
+        for (const lang::MirLoanId earlier : ended) {
+          if (isAncestor(*body, earlier, *instruction.loan)) {
+            parentsOutliveChildren = false;
+          }
+        }
+        ended.push_back(*instruction.loan);
+        ++checkedEndings;
+      }
+    }
+    expect(parentsOutliveChildren && checkedEndings > 0,
+           "every block of " + name +
+               " should end each parent loan after the child reborrows that "
+               "hang from it");
+
+    // Every reborrow's parent must still be live where the child is created,
+    // which is what keeping the transient links alive buys.
+    bool reborrowParentsAreLive = true;
+    for (const lang::MirBlock &block : body->blocks) {
+      std::vector<lang::MirLoanId> ended;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.loan) {
+          continue;
+        }
+        if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
+          ended.push_back(*instruction.loan);
+          continue;
+        }
+        const lang::MirLoan *loan = body->findLoan(*instruction.loan);
+        if (loan == nullptr || loan->parent == 0) {
+          continue;
+        }
+        if (std::find(ended.begin(), ended.end(), loan->parent) !=
+            ended.end()) {
+          reborrowParentsAreLive = false;
+        }
+      }
+    }
+    expect(reborrowParentsAreLive,
+           "no reborrow in " + name +
+               " should be created from a loan its own block already ended");
+  }
+
+  // The retained binding keeps the outermost call result's own loan rather
+  // than a Local loan rebuilt from the receiver or argument origin, and that
+  // loan reborrows the link the chain was built from.
+  for (const std::string name :
+       {"retained_argument", "retained_receiver", "two_level_chain",
+        "retained_across_statements", "retained_chain_can_fail"}) {
+    const lang::MirBody *body = mirBodyFor(name);
+    if (body == nullptr) {
+      continue;
+    }
+    std::vector<lang::HirValueId> callValues;
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          callValues.push_back(instruction.hirValue);
+        }
+      }
+    }
+    std::size_t retainedChainResults = 0;
+    for (const lang::MirLoan &loan : body->loans) {
+      if (loan.carriers.empty() ||
+          std::find(callValues.begin(), callValues.end(), loan.producedBy) ==
+              callValues.end()) {
+        continue;
+      }
+      const lang::MirLoan *parent = body->findLoan(loan.parent);
+      if (loan.kind == lang::MirLoanKind::CallResult && parent != nullptr &&
+          parent->kind == lang::MirLoanKind::CallResult) {
+        ++retainedChainResults;
+      }
+    }
+    expect(retainedChainResults == 1,
+           "the retained borrow in " + name +
+               " should keep the outermost call result's own loan as a "
+               "reborrow of the link it was built from");
+  }
+
+  // The single-level contrast keeps the root call-result rule unchanged.
+  const lang::MirBody *contrast = mirBodyFor("single_level_contrast");
+  bool contrastIsRooted = contrast != nullptr;
+  if (contrast != nullptr) {
+    for (const lang::MirLoan &loan : contrast->loans) {
+      if (!loan.carriers.empty() &&
+          (loan.kind != lang::MirLoanKind::CallResult || loan.parent != 0)) {
+        contrastIsRooted = false;
+      }
+    }
+  }
+  expect(contrastIsRooted,
+         "a single-level retained borrow should still keep its root "
+         "call-result loan");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the C++ backend should emit retained borrows built from another "
+         "borrowed call result");
+}
+
 void testCleanupOwningTemporaryArguments() {
   const std::string source = R"(
 class cleanup_t {
@@ -15736,19 +17072,26 @@ constexpr NamedTest kTests[] = {
     {"testIndexedPlaceMovesAndInitialization",
      testIndexedPlaceMovesAndInitialization},
     {"testExclusiveReborrowLoanGraph", testExclusiveReborrowLoanGraph},
+    {"testDisjointFieldReceiverBorrowsThroughReferenceParameters",
+     testDisjointFieldReceiverBorrowsThroughReferenceParameters},
     {"testNonNullReferences", testNonNullReferences},
     {"testGlobalReferencePlaces", testGlobalReferencePlaces},
     {"testGlobalBorrowReturns", testGlobalBorrowReturns},
     {"testPrefixStorageCapability", testPrefixStorageCapability},
     {"testReceiverTiedReferenceReturns", testReceiverTiedReferenceReturns},
+    {"testArgumentTiedReferenceReturns", testArgumentTiedReferenceReturns},
     {"testStoredReferenceGroundwork", testStoredReferenceGroundwork},
     {"testStoredCarrierReturnProvenance", testStoredCarrierReturnProvenance},
     {"testNestedMemberReferenceReturnForwarding",
      testNestedMemberReferenceReturnForwarding},
     {"testReferenceArgumentRuntimePlaceCoherence",
      testReferenceArgumentRuntimePlaceCoherence},
+    {"testCallSiblingArgumentBorrowConflicts",
+     testCallSiblingArgumentBorrowConflicts},
     {"testForwardIteratorContractsAndBinarySearch",
      testForwardIteratorContractsAndBinarySearch},
+    {"testWritableAndMovementIteratorCapabilities",
+     testWritableAndMovementIteratorCapabilities},
     {"testGeneralOwnerDependentReturns", testGeneralOwnerDependentReturns},
     {"testSwitchAndBreakLoanFlow", testSwitchAndBreakLoanFlow},
     {"testSharedReadOnlyLoanAliases", testSharedReadOnlyLoanAliases},
@@ -15783,6 +17126,8 @@ constexpr NamedTest kTests[] = {
      testConstructorPartialRollbackRepresentation},
     {"testMutableTemporaryReceivers", testMutableTemporaryReceivers},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
+    {"testRetainedBorrowedCallResults", testRetainedBorrowedCallResults},
+    {"testNestedBorrowChainLoanOrdering", testNestedBorrowChainLoanOrdering},
     {"testCleanupOwningTemporaryArguments",
      testCleanupOwningTemporaryArguments},
 };

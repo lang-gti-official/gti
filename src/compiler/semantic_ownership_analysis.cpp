@@ -2093,6 +2093,129 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
   }
 }
 
+// Collects the stable places this call operand reads while it is being
+// evaluated (named place reads and the receiver places reached through
+// nested calls) together with every transient borrow production anywhere
+// in the operand. MIR evaluates the reads as instruction-operand reads,
+// and a production's unretained result loan stays live through the
+// enclosing full-expression even when a nested call consumes its carrier,
+// so either side conflicts with a sibling operand on the same owner.
+auto SemanticVisitor::Impl::appendTransientReadPlaces(
+    const ExprPtr &expression, std::vector<SemanticLoanPlace> &places,
+    std::vector<TransientBorrowProduction> &productions) -> void {
+  if (!expression) {
+    return;
+  }
+
+  if (std::optional<TransientBorrowProduction> production =
+          transientBorrowProduction(expression);
+      production &&
+      (production->place.root != 0 || production->place.receiver) &&
+      std::none_of(productions.begin(), productions.end(),
+                   [&](const TransientBorrowProduction &existing) {
+                     return existing.place == production->place &&
+                            existing.access == production->access;
+                   })) {
+    productions.push_back(std::move(*production));
+  }
+
+  // A place chain contributes only its deepest resolved place: reading
+  // `parent.right` is not a whole-`parent` read, so the chain's prefixes
+  // must not be collected while unwinding to the root.
+  const ExprKind kind = expression->exprKind();
+  if (kind == ExprKind::Variable || kind == ExprKind::This) {
+    appendUniquePlace(places, loanPlace(expression));
+    return;
+  }
+  if (kind == ExprKind::Get || kind == ExprKind::Index) {
+    SemanticLoanPlace place = loanPlace(expression);
+    const bool stablePlace = place.root != 0 || place.receiver;
+    if (stablePlace) {
+      appendUniquePlace(places, std::move(place));
+    }
+    if (const auto *member = exprAs<Get>(expression.get())) {
+      if (!stablePlace) {
+        appendTransientReadPlaces(member->object(), places, productions);
+      }
+      return;
+    }
+    if (const auto *index = exprAs<Index>(expression.get())) {
+      if (!stablePlace) {
+        appendTransientReadPlaces(index->object(), places, productions);
+      }
+      appendTransientReadPlaces(index->index(), places, productions);
+      return;
+    }
+  }
+
+  if (const auto *assign = exprAs<Assign>(expression.get())) {
+    appendTransientReadPlaces(assign->value(), places, productions);
+  } else if (const auto *array = exprAs<ArrayInitializer>(expression.get())) {
+    for (const ExprPtr &element : array->elements()) {
+      appendTransientReadPlaces(element, places, productions);
+    }
+  } else if (const auto *binary = exprAs<Binary>(expression.get())) {
+    appendTransientReadPlaces(binary->left(), places, productions);
+    appendTransientReadPlaces(binary->right(), places, productions);
+  } else if (const auto *conditional =
+                 exprAs<ConditionalExpr>(expression.get())) {
+    appendTransientReadPlaces(conditional->condition(), places, productions);
+    appendTransientReadPlaces(conditional->thenExpression(), places,
+                              productions);
+    appendTransientReadPlaces(conditional->elseExpression(), places,
+                              productions);
+  } else if (const auto *call = exprAs<Call>(expression.get())) {
+    if (const auto *member = exprAs<Get>(call->callee().get())) {
+      // A method callee is not itself a place read; the receiver object
+      // carries the operand read.
+      appendTransientReadPlaces(member->object(), places, productions);
+    } else {
+      appendTransientReadPlaces(call->callee(), places, productions);
+      if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+          resolved != nullptr && currentClass &&
+          (resolved->receiverMode == CallReceiverMode::Value ||
+           resolved->receiverMode == CallReceiverMode::ReadOnlyPlace ||
+           resolved->receiverMode == CallReceiverMode::Consuming)) {
+        appendUniquePlace(places,
+                          loanPlace(SemanticPlace{.root = receiverStateSymbol(),
+                                                  .receiver = true}));
+      }
+    }
+    for (const ExprPtr &argument : call->arguments()) {
+      appendTransientReadPlaces(argument, places, productions);
+    }
+  } else if (const auto *conversion = exprAs<Conversion>(expression.get())) {
+    appendTransientReadPlaces(conversion->value(), places, productions);
+  } else if (const auto *initializer =
+                 exprAs<DirectInitializer>(expression.get())) {
+    for (const ExprPtr &argument : initializer->arguments()) {
+      appendTransientReadPlaces(argument, places, productions);
+    }
+  } else if (const auto *dereferenceSet =
+                 exprAs<DereferenceSet>(expression.get())) {
+    appendTransientReadPlaces(dereferenceSet->object(), places, productions);
+    appendTransientReadPlaces(dereferenceSet->value(), places, productions);
+  } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+    appendTransientReadPlaces(grouping->expression(), places, productions);
+  } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
+    appendTransientReadPlaces(indexSet->object(), places, productions);
+    appendTransientReadPlaces(indexSet->index(), places, productions);
+    appendTransientReadPlaces(indexSet->value(), places, productions);
+  } else if (const auto *logical = exprAs<Logical>(expression.get())) {
+    appendTransientReadPlaces(logical->left(), places, productions);
+    appendTransientReadPlaces(logical->right(), places, productions);
+  } else if (const auto *postfix = exprAs<Postfix>(expression.get())) {
+    appendTransientReadPlaces(postfix->expression(), places, productions);
+  } else if (const auto *set = exprAs<Set>(expression.get())) {
+    appendTransientReadPlaces(set->object(), places, productions);
+    appendTransientReadPlaces(set->value(), places, productions);
+  } else if (const auto *unary = exprAs<Unary>(expression.get())) {
+    appendTransientReadPlaces(unary->right(), places, productions);
+  } else if (const auto *unexpected = exprAs<Unexpected>(expression.get())) {
+    appendTransientReadPlaces(unexpected->error(), places, productions);
+  }
+}
+
 auto SemanticVisitor::Impl::reportCommaTransientConflict(
     const ExprPtr &expression, const Token &location) -> bool {
   if (!expression) {
@@ -2245,6 +2368,105 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
         }
         return;
       }
+    }
+  }
+  // A transient borrow production's unretained result loan stays live from
+  // its producing operand through the enclosing full-expression, even when
+  // a nested call consumes the carrier inside its own operand. A later
+  // operand of the same call therefore may not mutate storage under any
+  // such loan, or read storage under an exclusive one. A reference
+  // parameter's loan is instead materialized at the call itself, after
+  // operand evaluation, so plain reference arguments do not participate.
+  const bool transientReceiverProduction =
+      std::any_of(places.begin(), places.end(), [](const CallPlace &place) {
+        return place.receiver && place.transient;
+      });
+  if (count < 2 && !transientReceiverProduction) {
+    return;
+  }
+  struct RetainedProduction {
+    std::size_t sequence = 0;
+    std::optional<std::size_t> argument;
+    SemanticLoanPlace place;
+    AccessMode access = AccessMode::ReadOnly;
+  };
+  std::vector<RetainedProduction> productions;
+  std::vector<std::pair<std::size_t, SemanticLoanPlace>> reads;
+  for (std::size_t index = 0; index < count; ++index) {
+    std::vector<SemanticLoanPlace> argumentReads;
+    std::vector<TransientBorrowProduction> argumentProductions;
+    appendTransientReadPlaces(*arguments[index], argumentReads,
+                              argumentProductions);
+    for (SemanticLoanPlace &place : argumentReads) {
+      reads.emplace_back(index, std::move(place));
+    }
+    for (TransientBorrowProduction &production : argumentProductions) {
+      productions.push_back({.sequence = index + 1,
+                             .argument = index,
+                             .place = std::move(production.place),
+                             .access = production.access});
+    }
+  }
+  for (const CallPlace &retained : places) {
+    if (retained.receiver && retained.transient) {
+      productions.push_back({.sequence = 0,
+                             .argument = std::nullopt,
+                             .place = retained.place,
+                             .access = retained.access});
+    }
+  }
+  for (const RetainedProduction &retained : productions) {
+    for (const auto &[argument, mutation] : mutations) {
+      if ((retained.argument && *retained.argument == argument) ||
+          argument + 1 <= retained.sequence ||
+          !loanPlacesOverlap(retained.place, mutation)) {
+        continue;
+      }
+      report(location,
+             "A later call operand mutates storage borrowed by an "
+             "earlier operand; the transient loan remains active "
+             "through the enclosing full-expression.",
+             "GTI-S2017");
+      return;
+    }
+    if (retained.access != AccessMode::Mutable) {
+      continue;
+    }
+    for (const auto &[argument, read] : reads) {
+      if ((retained.argument && *retained.argument == argument) ||
+          argument + 1 <= retained.sequence ||
+          !loanPlacesOverlap(retained.place, read)) {
+        continue;
+      }
+      const auto argumentAnchor = [](const ExprPtr &expression) {
+        if (const auto *argumentCall = exprAs<Call>(expression.get())) {
+          return callableToken(argumentCall->callee());
+        }
+        return expressionToken(expression);
+      };
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2017", DiagnosticPhase::Semantics,
+          argumentAnchor(*arguments[argument]),
+          "Cannot read storage while an exclusive mutable borrow created "
+          "by an earlier operand of the same call is still live.");
+      if (retained.argument) {
+        diagnostic.related.push_back(
+            {tokenSpan(argumentAnchor(*arguments[*retained.argument])),
+             "The exclusive mutable borrow created here stays live until "
+             "the call completes."});
+      }
+      const auto *borrowCall =
+          retained.argument ? exprAs<Call>(arguments[*retained.argument]->get())
+                            : nullptr;
+      if (borrowCall != nullptr &&
+          exprAs<Get>(borrowCall->callee().get()) != nullptr) {
+        diagnostic.hints.emplace_back(
+            "Whole-container algorithms take the container itself; pass "
+            "the container once instead of borrowing an overlapping "
+            "iterator from it.");
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
     }
   }
 }

@@ -1199,10 +1199,10 @@ parseBindgenImports(const toml::table &document,
               "' must be a table declaring 'header'."));
       continue;
     }
-    validateFields(
-        *importTable,
-        {"header", "namespace", "include-dirs", "defines", "undefines"},
-        "bindgen import", sourceName, source, diagnostics);
+    validateFields(*importTable,
+                   {"header", "namespace", "include-dirs", "defines",
+                    "undefines", "allow", "deny", "rename", "array-returns"},
+                   "bindgen import", sourceName, source, diagnostics);
 
     const std::optional<std::string> header =
         requiredString(*importTable, "header", "bindgen import", sourceName,
@@ -1298,6 +1298,115 @@ parseBindgenImports(const toml::table &document,
     if (!macrosValid) {
       continue;
     }
+
+    // Opt-in policy (C-07). Patterns are exact names or one trailing '*';
+    // renames and array returns are ordinary tables so a typo is a manifest
+    // diagnostic rather than a silent no-op.
+    bool policyValid = true;
+    std::vector<SourceSpan> patternDeclarations;
+    const auto readPatterns = [&](std::string_view field,
+                                  std::vector<std::string> &into) {
+      patternDeclarations.clear();
+      const std::vector<std::string> values =
+          stringArray(*importTable, field, "Bindgen import", sourceName, source,
+                      diagnostics, &patternDeclarations);
+      for (std::size_t index = 0; index < values.size(); ++index) {
+        std::string_view name(values[index]);
+        if (!name.empty() && name.back() == '*') {
+          name.remove_suffix(1);
+        }
+        if (name.empty() || !bindgenMacroName(name)) {
+          diagnostics.push_back(buildDiagnostic(
+              "GTI-B1808", patternDeclarations[index],
+              "Bindgen '" + std::string(field) +
+                  "' entries must be an identifier optionally followed by "
+                  "'*'."));
+          policyValid = false;
+          continue;
+        }
+        into.push_back(values[index]);
+      }
+    };
+    readPatterns("allow", import.allowPatterns);
+    readPatterns("deny", import.denyPatterns);
+
+    if (const toml::node *renameNode = importTable->get("rename")) {
+      const toml::table *renameTable = renameNode->as_table();
+      if (renameTable == nullptr) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1004", sourceSpan(sourceName, source, *renameNode),
+            "Bindgen import field 'rename' must be a table of "
+            "<c-name> = <gti-name> entries."));
+        policyValid = false;
+      } else {
+        for (const auto &[from, toNode] : *renameTable) {
+          const SourceSpan entrySpan = sourceSpan(sourceName, source, from);
+          const std::optional<std::string> to = toNode.value<std::string>();
+          if (!bindgenMacroName(from.str()) || !to || !bindgenMacroName(*to)) {
+            diagnostics.push_back(buildDiagnostic(
+                "GTI-B1808", entrySpan,
+                "Bindgen 'rename' entries must map an identifier to an "
+                "identifier."));
+            policyValid = false;
+            continue;
+          }
+          import.renames.emplace_back(std::string(from.str()), *to);
+        }
+      }
+    }
+
+    if (const toml::node *arrayNode = importTable->get("array-returns")) {
+      const toml::array *arrayEntries = arrayNode->as_array();
+      if (arrayEntries == nullptr) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1004", sourceSpan(sourceName, source, *arrayNode),
+            "Bindgen import field 'array-returns' must be an array of "
+            "{ function, count } tables."));
+        policyValid = false;
+      } else {
+        for (const toml::node &element : *arrayEntries) {
+          const SourceSpan entrySpan = sourceSpan(sourceName, source, element);
+          const toml::table *entry = element.as_table();
+          if (entry == nullptr) {
+            diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", entrySpan,
+                "Each 'array-returns' entry must be a table declaring "
+                "'function' and 'count'."));
+            policyValid = false;
+            continue;
+          }
+          validateFields(*entry, {"function", "count"}, "bindgen array return",
+                         sourceName, source, diagnostics);
+          const toml::node *functionNode = entry->get("function");
+          const toml::node *countNode = entry->get("count");
+          const std::optional<std::string> function =
+              functionNode == nullptr ? std::nullopt
+                                      : functionNode->value<std::string>();
+          const std::optional<std::string> count =
+              countNode == nullptr ? std::nullopt
+                                   : countNode->value<std::string>();
+          if (!function || !count || !bindgenMacroName(*function) ||
+              !bindgenMacroName(*count)) {
+            diagnostics.push_back(buildDiagnostic(
+                "GTI-B1808", entrySpan,
+                "Each 'array-returns' entry must name a 'function' and its "
+                "'count' parameter as identifiers."));
+            policyValid = false;
+            continue;
+          }
+          import.arrayReturns.emplace_back(*function, *count);
+        }
+      }
+    }
+    if (!policyValid) {
+      continue;
+    }
+    // Deterministic identity: the manifest's own table ordering must not
+    // reach the build plan's model identity.
+    std::sort(import.allowPatterns.begin(), import.allowPatterns.end());
+    std::sort(import.denyPatterns.begin(), import.denyPatterns.end());
+    std::sort(import.renames.begin(), import.renames.end());
+    std::sort(import.arrayReturns.begin(), import.arrayReturns.end());
     imports.push_back(std::move(import));
   }
   std::sort(
