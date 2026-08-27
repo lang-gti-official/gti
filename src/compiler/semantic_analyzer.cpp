@@ -80,7 +80,10 @@ public:
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
-  bool check(const Program &program) {
+  // Every public analysis entry point establishes one complete request state.
+  // Constructor configuration remains on Impl; no result, AST pointer, flow
+  // fact, diagnostic, or identity counter survives this operation.
+  void resetRequestState(const Program *program) {
     diagnostics.clear();
     scopes.clear();
     namespaces.clear();
@@ -142,8 +145,12 @@ public:
     semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
     semanticModel.setAnalysisSeal(
-        makeSemanticAnalysisSeal(program, target, sourceGraph));
+        program != nullptr ? makeSemanticAnalysisSeal(*program, target,
+                                                       sourceGraph)
+                           : SemanticAnalysisSeal{.target = target});
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
+    measureTopLevelStatements = false;
+    currentType = SemanticType::Unknown;
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -180,8 +187,14 @@ public:
     loopDepth = 0;
     switchDepth = 0;
     lambdaDepth = 0;
+    unsafeDepth = 0;
+    suppressLoanPlaceAccessDepth = 0;
     lambdaUncapturedLocals.clear();
     currentReturnType = SemanticType::Unknown;
+  }
+
+  bool check(const Program &program) {
+    resetRequestState(&program);
 
     const auto registrationStart = std::chrono::steady_clock::now();
     registerNamespaces(program.declarations(), {});
@@ -250,103 +263,7 @@ public:
   }
 
   bool check(const Expr &expr) {
-    diagnostics.clear();
-    scopes.clear();
-    namespaces.clear();
-    namespaceToolingSymbols.clear();
-    namespaceAliases.clear();
-    reportedCompilerPrivateAccess.clear();
-    compilerPrivateNamespaceSymbol = 0;
-    typeAliasIds.clear();
-    typeAliases.clear();
-    conceptIds.clear();
-    concepts.clear();
-    namespaceSymbols.clear();
-    classIds.clear();
-    enumIds.clear();
-    visibleNamespaces.clear();
-    visibleNamespaceAliases.clear();
-    visibleTypeAliasIds.clear();
-    visibleConceptIds.clear();
-    visibleNamespaceSymbols.clear();
-    visibleClassIds.clear();
-    visibleEnumIds.clear();
-    classDeclIds.clear();
-    conceptDeclIds.clear();
-    functionGenericParameters.clear();
-    constructorGenericParameters.clear();
-    constexprDefinitionsAnalyzed.clear();
-    constexprConstructorsAnalyzed.clear();
-    defaultArgumentSyntax.clear();
-    defaultArgumentDependencies.clear();
-    reportedDefaultArgumentCycles.clear();
-    externCSymbols.clear();
-    rootNativeStorageSymbols.clear();
-    globalBorrowStorage.clear();
-    genericConstraints.clear();
-    requirementScopes.clear();
-    classes.clear();
-    exactClassSpecializations.clear();
-    enums.clear();
-    typeParameterScopes.clear();
-    valueParameterScopes.clear();
-    typePackScopes.clear();
-    instanceTypeSubstitution.clear();
-    instanceValueSubstitution.clear();
-    nextGenericParameterId = 1;
-    nextFunctionId = 1;
-    nextLambdaId = 1;
-    nextConstructorId = 1;
-    nextDefaultArgumentEffectOwner = 1;
-    nextSemanticLoanId = 1;
-    nextPlaceSelectionId = 1;
-    currentNamespace.clear();
-    currentSourceUnit = 0;
-    predeclaredVariables.clear();
-    mutableFieldGroupOrigins.clear();
-    structuredBindingElements.clear();
-    semanticModel.clear();
-    semanticModel.setExecutionProfile(target.executionProfile);
-    semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
-    semanticModel.setAnalysisSeal({.target = target});
-    semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
-    currentClass.reset();
-    analyzingFieldInitializer = false;
-    analyzingConstructorInitializer = false;
-    analyzingDefaultArgument = false;
-    currentDefaultArgumentRoot = nullptr;
-    currentDefaultParameterNames.clear();
-    analyzingCallCallee = false;
-    analyzingPackFoldElement = false;
-    analyzingStaticAssertCondition = false;
-    staticAssertGenericDependency = false;
-    allowPayloadEnumeratorReference = false;
-    currentStaticMemberFunction = false;
-    allowPackTypeReference = false;
-    loanFlow = {};
-    valueControlFlow.clear();
-    instanceClassContextActive = false;
-    instanceAnalysisActive = false;
-    instanceBaseModel = nullptr;
-    currentFunctionDeclaration = nullptr;
-    currentProgramEffectOwner = {};
-    programEffects.clear();
-    programStoragePlaceUseDepth = 0;
-    preferReadOnlySubscriptReceiverDepth = 0;
-    contextualInitializerType.reset();
-    contextualInitializerExpression = nullptr;
-    contextualOperatorIntegerType.reset();
-    contextualCallableResult.reset();
-    contextualNativeOutPointerType.reset();
-    currentReceiverMutability = ReceiverMutability::ReadOnly;
-    suppressedProjectedPlaceReads.clear();
-    constructorDepth = 0;
-    destructorDepth = 0;
-    functionDepth = 0;
-    loopDepth = 0;
-    switchDepth = 0;
-    lambdaDepth = 0;
-    lambdaUncapturedLocals.clear();
+    resetRequestState(nullptr);
     beginScope();
     analyze(expr);
     endScope();
@@ -34989,137 +34906,317 @@ private:
     return expressionToken(callee);
   }
 
-  std::vector<SemanticDiagnostic> diagnostics;
-  ScopeStack scopes;
-  std::unordered_set<std::string> namespaces;
-  std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
-  std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
-  std::unordered_set<std::string> reportedCompilerPrivateAccess;
-  SymbolId compilerPrivateNamespaceSymbol = 0;
-  std::unordered_map<std::string, TypeAliasId> typeAliasIds;
-  std::vector<RegisteredTypeAlias> typeAliases;
-  std::unordered_map<std::string, ConceptId> conceptIds;
-  std::vector<RegisteredConcept> concepts;
-  std::unordered_map<std::string, Symbol> namespaceSymbols;
+  // One public check() owns one complete request session. The references below
+  // are a migration seam that keeps the analyzer algorithms readable while
+  // R-STRUCT-02 moves catalog and flow algorithms behind narrower services.
+  // They do not introduce another owner: every binding refers into this one
+  // object, and resetRequestState() is its only public-entry reset operation.
+  struct RequestSessionState {
+    std::vector<SemanticDiagnostic> diagnostics;
+    SemanticModel semanticModel;
+    // Diagnostic construction lives in its own translation unit
+    // (semantic_diagnostics.cpp); the reporter binds this session's sink and
+    // model, and analysis facts arrive as call parameters.
+    SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
+    ScopeStack scopes;
+    std::unordered_set<std::string> namespaces;
+    std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
+    std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
+    std::unordered_set<std::string> reportedCompilerPrivateAccess;
+    SymbolId compilerPrivateNamespaceSymbol = 0;
+    std::unordered_map<std::string, TypeAliasId> typeAliasIds;
+    std::vector<RegisteredTypeAlias> typeAliases;
+    std::unordered_map<std::string, ConceptId> conceptIds;
+    std::vector<RegisteredConcept> concepts;
+    std::unordered_map<std::string, Symbol> namespaceSymbols;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+        internalNamespaceSymbols;
+    std::unordered_map<std::string, ClassId> classIds;
+    std::unordered_map<std::string, EnumId> enumIds;
+    std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
+        visibleNamespaces;
+    std::unordered_map<SourceUnitId,
+                       std::unordered_map<std::string, NamespaceAliasInfo>>
+        visibleNamespaceAliases;
+    std::unordered_map<SourceUnitId,
+                       std::unordered_map<std::string, TypeAliasId>>
+        visibleTypeAliasIds;
+    std::unordered_map<SourceUnitId,
+                       std::unordered_map<std::string, ConceptId>>
+        visibleConceptIds;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+        visibleNamespaceSymbols;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
+        visibleClassIds;
+    std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
+        visibleEnumIds;
+    std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
+    std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
+    std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
+        functionGenericParameters;
+    std::unordered_map<const ConstructorDecl *,
+                       std::vector<GenericParameterInfo>>
+        constructorGenericParameters;
+    std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
+    std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
+    std::unordered_map<const Expr *, const ParameterDefault *>
+        defaultArgumentSyntax;
+    std::unordered_map<const Expr *, std::vector<const Expr *>>
+        defaultArgumentDependencies;
+    std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
+    std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
+    std::unordered_map<std::string, const VariableDecl *>
+        rootNativeStorageSymbols;
+    std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
+        globalBorrowStorage;
+    std::unordered_map<GenericParameterId, GenericConstraintSet>
+        genericConstraints;
+    std::vector<ClassInfo> classes;
+    std::vector<ExactClassSpecialization> exactClassSpecializations;
+    std::vector<EnumInfo> enums;
+    std::vector<std::unordered_map<std::string, SemanticType>>
+        typeParameterScopes;
+    std::vector<std::unordered_map<std::string, CompileTimeValue>>
+        valueParameterScopes;
+    std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
+    std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
+    TypeSubstitution instanceTypeSubstitution;
+    ValueSubstitution instanceValueSubstitution;
+    std::vector<std::string> currentNamespace;
+    SourceUnitId currentSourceUnit = 0;
+    std::unordered_set<const VariableDecl *> predeclaredVariables;
+    std::unordered_map<const VariableDecl *, const Token *>
+        mutableFieldGroupOrigins;
+    std::unordered_set<const VariableDecl *> recursiveLayoutFields;
+    std::unordered_set<const VariableDecl *> structuredBindingElements;
+    std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
+    bool measureTopLevelStatements = false;
+    SemanticType currentType = SemanticType::Unknown;
+    SemanticType currentReturnType = SemanticType::Unknown;
+    std::optional<ClassId> currentClass;
+    bool analyzingFieldInitializer = false;
+    bool analyzingConstructorInitializer = false;
+    bool analyzingDefaultArgument = false;
+    const Expr *currentDefaultArgumentRoot = nullptr;
+    std::unordered_set<std::string> currentDefaultParameterNames;
+    bool analyzingCallCallee = false;
+    bool analyzingPackFoldElement = false;
+    bool analyzingStaticAssertCondition = false;
+    bool staticAssertGenericDependency = false;
+    bool allowPayloadEnumeratorReference = false;
+    bool currentStaticMemberFunction = false;
+    bool allowPackTypeReference = false;
+    LoanFlowContext loanFlow;
+    std::vector<ValueControlFlowContext> valueControlFlow;
+    bool instanceClassContextActive = false;
+    bool instanceAnalysisActive = false;
+    const SemanticModel *instanceBaseModel = nullptr;
+    const FunctionDecl *currentFunctionDeclaration = nullptr;
+    std::optional<SemanticType> contextualInitializerType;
+    const Expr *contextualInitializerExpression = nullptr;
+    std::optional<SemanticType> contextualOperatorIntegerType;
+    std::optional<ContextualCallableResult> contextualCallableResult;
+    std::optional<SemanticType> contextualNativeOutPointerType;
+    ReceiverMutability currentReceiverMutability =
+        ReceiverMutability::ReadOnly;
+    std::size_t constructorDepth = 0;
+    std::size_t destructorDepth = 0;
+    std::size_t functionDepth = 0;
+    std::size_t loopDepth = 0;
+    std::size_t switchDepth = 0;
+    std::size_t lambdaDepth = 0;
+    std::size_t unsafeDepth = 0;
+    std::size_t suppressLoanPlaceAccessDepth = 0;
+    std::size_t preferReadOnlySubscriptReceiverDepth = 0;
+    std::vector<const Expr *> suppressedProjectedPlaceReads;
+    ProgramEffectOwner currentProgramEffectOwner;
+    std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
+                       ProgramEffectOwnerHash>
+        programEffects;
+    std::size_t programStoragePlaceUseDepth = 0;
+    GenericParameterId nextGenericParameterId = 1;
+    ConstructorId nextConstructorId = 1;
+    std::size_t nextDefaultArgumentEffectOwner = 1;
+    FunctionId nextFunctionId = 1;
+    LambdaId nextLambdaId = 1;
+    SemanticLoanId nextSemanticLoanId = 1;
+    std::size_t nextPlaceSelectionId = 1;
+  } requestSession;
+
+  std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;
+  SemanticModel &semanticModel = requestSession.semanticModel;
+  SemanticDiagnosticReporter &reporter = requestSession.reporter;
+  ScopeStack &scopes = requestSession.scopes;
+  std::unordered_set<std::string> &namespaces = requestSession.namespaces;
+  std::unordered_map<std::string, SymbolId> &namespaceToolingSymbols =
+      requestSession.namespaceToolingSymbols;
+  std::unordered_map<std::string, NamespaceAliasInfo> &namespaceAliases =
+      requestSession.namespaceAliases;
+  std::unordered_set<std::string> &reportedCompilerPrivateAccess =
+      requestSession.reportedCompilerPrivateAccess;
+  SymbolId &compilerPrivateNamespaceSymbol =
+      requestSession.compilerPrivateNamespaceSymbol;
+  std::unordered_map<std::string, TypeAliasId> &typeAliasIds =
+      requestSession.typeAliasIds;
+  std::vector<RegisteredTypeAlias> &typeAliases = requestSession.typeAliases;
+  std::unordered_map<std::string, ConceptId> &conceptIds =
+      requestSession.conceptIds;
+  std::vector<RegisteredConcept> &concepts = requestSession.concepts;
+  std::unordered_map<std::string, Symbol> &namespaceSymbols =
+      requestSession.namespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      internalNamespaceSymbols;
-  std::unordered_map<std::string, ClassId> classIds;
-  std::unordered_map<std::string, EnumId> enumIds;
+      &internalNamespaceSymbols = requestSession.internalNamespaceSymbols;
+  std::unordered_map<std::string, ClassId> &classIds = requestSession.classIds;
+  std::unordered_map<std::string, EnumId> &enumIds = requestSession.enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
-      visibleNamespaces;
+      &visibleNamespaces = requestSession.visibleNamespaces;
   std::unordered_map<SourceUnitId,
                      std::unordered_map<std::string, NamespaceAliasInfo>>
-      visibleNamespaceAliases;
+      &visibleNamespaceAliases = requestSession.visibleNamespaceAliases;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, TypeAliasId>>
-      visibleTypeAliasIds;
+      &visibleTypeAliasIds = requestSession.visibleTypeAliasIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
-      visibleConceptIds;
+      &visibleConceptIds = requestSession.visibleConceptIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
-      visibleNamespaceSymbols;
+      &visibleNamespaceSymbols = requestSession.visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
-      visibleClassIds;
+      &visibleClassIds = requestSession.visibleClassIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
-      visibleEnumIds;
-  std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
-  std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
+      &visibleEnumIds = requestSession.visibleEnumIds;
+  std::unordered_map<const ClassDecl *, ClassId> &classDeclIds =
+      requestSession.classDeclIds;
+  std::unordered_map<const ConceptDecl *, ConceptId> &conceptDeclIds =
+      requestSession.conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
-      functionGenericParameters;
-  std::unordered_map<const ConstructorDecl *, std::vector<GenericParameterInfo>>
-      constructorGenericParameters;
-  std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
-  std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
+      &functionGenericParameters = requestSession.functionGenericParameters;
+  std::unordered_map<const ConstructorDecl *,
+                     std::vector<GenericParameterInfo>>
+      &constructorGenericParameters =
+          requestSession.constructorGenericParameters;
+  std::unordered_set<const FunctionDecl *> &constexprDefinitionsAnalyzed =
+      requestSession.constexprDefinitionsAnalyzed;
+  std::unordered_set<const ConstructorDecl *> &constexprConstructorsAnalyzed =
+      requestSession.constexprConstructorsAnalyzed;
   std::unordered_map<const Expr *, const ParameterDefault *>
-      defaultArgumentSyntax;
+      &defaultArgumentSyntax = requestSession.defaultArgumentSyntax;
   std::unordered_map<const Expr *, std::vector<const Expr *>>
-      defaultArgumentDependencies;
-  std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
-  std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
+      &defaultArgumentDependencies = requestSession.defaultArgumentDependencies;
+  std::unordered_set<const Expr *> &reportedDefaultArgumentCycles =
+      requestSession.reportedDefaultArgumentCycles;
+  std::unordered_map<std::string, const FunctionDecl *> &externCSymbols =
+      requestSession.externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
-      rootNativeStorageSymbols;
+      &rootNativeStorageSymbols = requestSession.rootNativeStorageSymbols;
   std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
-      globalBorrowStorage;
+      &globalBorrowStorage = requestSession.globalBorrowStorage;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
-      genericConstraints;
-  std::vector<ClassInfo> classes;
-  std::vector<ExactClassSpecialization> exactClassSpecializations;
-  std::vector<EnumInfo> enums;
+      &genericConstraints = requestSession.genericConstraints;
+  std::vector<ClassInfo> &classes = requestSession.classes;
+  std::vector<ExactClassSpecialization> &exactClassSpecializations =
+      requestSession.exactClassSpecializations;
+  std::vector<EnumInfo> &enums = requestSession.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
-      typeParameterScopes;
+      &typeParameterScopes = requestSession.typeParameterScopes;
   std::vector<std::unordered_map<std::string, CompileTimeValue>>
-      valueParameterScopes;
-  std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
-  std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
-  TypeSubstitution instanceTypeSubstitution;
-  ValueSubstitution instanceValueSubstitution;
-  SemanticModel semanticModel;
-  // Diagnostic construction lives in its own translation unit
-  // (semantic_diagnostics.cpp); the reporter binds the sink and the
-  // model, and analysis facts arrive as call parameters.
-  SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
-  std::vector<std::string> currentNamespace;
-  SourceUnitId currentSourceUnit = 0;
-  std::unordered_set<const VariableDecl *> predeclaredVariables;
+      &valueParameterScopes = requestSession.valueParameterScopes;
+  std::vector<std::unordered_set<GenericParameterId>> &typePackScopes =
+      requestSession.typePackScopes;
+  std::vector<std::vector<AppliedConceptRequirement>> &requirementScopes =
+      requestSession.requirementScopes;
+  TypeSubstitution &instanceTypeSubstitution =
+      requestSession.instanceTypeSubstitution;
+  ValueSubstitution &instanceValueSubstitution =
+      requestSession.instanceValueSubstitution;
+  std::vector<std::string> &currentNamespace = requestSession.currentNamespace;
+  SourceUnitId &currentSourceUnit = requestSession.currentSourceUnit;
+  std::unordered_set<const VariableDecl *> &predeclaredVariables =
+      requestSession.predeclaredVariables;
   std::unordered_map<const VariableDecl *, const Token *>
-      mutableFieldGroupOrigins;
-  std::unordered_set<const VariableDecl *> recursiveLayoutFields;
-  std::unordered_set<const VariableDecl *> structuredBindingElements;
-  std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
+      &mutableFieldGroupOrigins = requestSession.mutableFieldGroupOrigins;
+  std::unordered_set<const VariableDecl *> &recursiveLayoutFields =
+      requestSession.recursiveLayoutFields;
+  std::unordered_set<const VariableDecl *> &structuredBindingElements =
+      requestSession.structuredBindingElements;
+  std::vector<std::unordered_map<std::string, Token>> &lambdaUncapturedLocals =
+      requestSession.lambdaUncapturedLocals;
+  bool &measureTopLevelStatements = requestSession.measureTopLevelStatements;
+  SemanticType &currentType = requestSession.currentType;
+  SemanticType &currentReturnType = requestSession.currentReturnType;
+  std::optional<ClassId> &currentClass = requestSession.currentClass;
+  bool &analyzingFieldInitializer = requestSession.analyzingFieldInitializer;
+  bool &analyzingConstructorInitializer =
+      requestSession.analyzingConstructorInitializer;
+  bool &analyzingDefaultArgument = requestSession.analyzingDefaultArgument;
+  const Expr *&currentDefaultArgumentRoot =
+      requestSession.currentDefaultArgumentRoot;
+  std::unordered_set<std::string> &currentDefaultParameterNames =
+      requestSession.currentDefaultParameterNames;
+  bool &analyzingCallCallee = requestSession.analyzingCallCallee;
+  bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;
+  bool &analyzingStaticAssertCondition =
+      requestSession.analyzingStaticAssertCondition;
+  bool &staticAssertGenericDependency =
+      requestSession.staticAssertGenericDependency;
+  bool &allowPayloadEnumeratorReference =
+      requestSession.allowPayloadEnumeratorReference;
+  bool &currentStaticMemberFunction = requestSession.currentStaticMemberFunction;
+  bool &allowPackTypeReference = requestSession.allowPackTypeReference;
+  LoanFlowContext &loanFlow = requestSession.loanFlow;
+  std::vector<ValueControlFlowContext> &valueControlFlow =
+      requestSession.valueControlFlow;
+  bool &instanceClassContextActive = requestSession.instanceClassContextActive;
+  bool &instanceAnalysisActive = requestSession.instanceAnalysisActive;
+  const SemanticModel *&instanceBaseModel = requestSession.instanceBaseModel;
+  const FunctionDecl *&currentFunctionDeclaration =
+      requestSession.currentFunctionDeclaration;
+  std::optional<SemanticType> &contextualInitializerType =
+      requestSession.contextualInitializerType;
+  const Expr *&contextualInitializerExpression =
+      requestSession.contextualInitializerExpression;
+  std::optional<SemanticType> &contextualOperatorIntegerType =
+      requestSession.contextualOperatorIntegerType;
+  std::optional<ContextualCallableResult> &contextualCallableResult =
+      requestSession.contextualCallableResult;
+  std::optional<SemanticType> &contextualNativeOutPointerType =
+      requestSession.contextualNativeOutPointerType;
+  ReceiverMutability &currentReceiverMutability =
+      requestSession.currentReceiverMutability;
+  std::size_t &constructorDepth = requestSession.constructorDepth;
+  std::size_t &destructorDepth = requestSession.destructorDepth;
+  std::size_t &functionDepth = requestSession.functionDepth;
+  std::size_t &loopDepth = requestSession.loopDepth;
+  std::size_t &switchDepth = requestSession.switchDepth;
+  std::size_t &lambdaDepth = requestSession.lambdaDepth;
+  std::size_t &unsafeDepth = requestSession.unsafeDepth;
+  std::size_t &suppressLoanPlaceAccessDepth =
+      requestSession.suppressLoanPlaceAccessDepth;
+  std::size_t &preferReadOnlySubscriptReceiverDepth =
+      requestSession.preferReadOnlySubscriptReceiverDepth;
+  std::vector<const Expr *> &suppressedProjectedPlaceReads =
+      requestSession.suppressedProjectedPlaceReads;
+  ProgramEffectOwner &currentProgramEffectOwner =
+      requestSession.currentProgramEffectOwner;
+  std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
+                     ProgramEffectOwnerHash>
+      &programEffects = requestSession.programEffects;
+  std::size_t &programStoragePlaceUseDepth =
+      requestSession.programStoragePlaceUseDepth;
+  GenericParameterId &nextGenericParameterId =
+      requestSession.nextGenericParameterId;
+  ConstructorId &nextConstructorId = requestSession.nextConstructorId;
+  std::size_t &nextDefaultArgumentEffectOwner =
+      requestSession.nextDefaultArgumentEffectOwner;
+  FunctionId &nextFunctionId = requestSession.nextFunctionId;
+  LambdaId &nextLambdaId = requestSession.nextLambdaId;
+  SemanticLoanId &nextSemanticLoanId = requestSession.nextSemanticLoanId;
+  std::size_t &nextPlaceSelectionId = requestSession.nextPlaceSelectionId;
+
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;
   // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
-  bool measureTopLevelStatements = false;
-  SemanticType currentType = SemanticType::Unknown;
-  SemanticType currentReturnType = SemanticType::Unknown;
-  std::optional<ClassId> currentClass;
-  bool analyzingFieldInitializer = false;
-  bool analyzingConstructorInitializer = false;
-  bool analyzingDefaultArgument = false;
-  const Expr *currentDefaultArgumentRoot = nullptr;
-  std::unordered_set<std::string> currentDefaultParameterNames;
-  bool analyzingCallCallee = false;
-  bool analyzingPackFoldElement = false;
-  bool analyzingStaticAssertCondition = false;
-  bool staticAssertGenericDependency = false;
-  bool allowPayloadEnumeratorReference = false;
-  bool currentStaticMemberFunction = false;
-  bool allowPackTypeReference = false;
-  LoanFlowContext loanFlow;
-  std::vector<ValueControlFlowContext> valueControlFlow;
-  bool instanceClassContextActive = false;
-  bool instanceAnalysisActive = false;
-  const SemanticModel *instanceBaseModel = nullptr;
-  const FunctionDecl *currentFunctionDeclaration = nullptr;
-  std::optional<SemanticType> contextualInitializerType;
-  const Expr *contextualInitializerExpression = nullptr;
-  std::optional<SemanticType> contextualOperatorIntegerType;
-  std::optional<ContextualCallableResult> contextualCallableResult;
-  std::optional<SemanticType> contextualNativeOutPointerType;
-  ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
-  std::size_t constructorDepth = 0;
-  std::size_t destructorDepth = 0;
-  std::size_t functionDepth = 0;
-  std::size_t loopDepth = 0;
-  std::size_t switchDepth = 0;
-  std::size_t lambdaDepth = 0;
-  std::size_t unsafeDepth = 0;
-  std::size_t suppressLoanPlaceAccessDepth = 0;
-  std::size_t preferReadOnlySubscriptReceiverDepth = 0;
-  std::vector<const Expr *> suppressedProjectedPlaceReads;
-  ProgramEffectOwner currentProgramEffectOwner;
-  std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
-                     ProgramEffectOwnerHash>
-      programEffects;
-  std::size_t programStoragePlaceUseDepth = 0;
-  GenericParameterId nextGenericParameterId = 1;
-  ConstructorId nextConstructorId = 1;
-  std::size_t nextDefaultArgumentEffectOwner = 1;
-  FunctionId nextFunctionId = 1;
-  LambdaId nextLambdaId = 1;
-  SemanticLoanId nextSemanticLoanId = 1;
-  std::size_t nextPlaceSelectionId = 1;
 };
 
 SemanticVisitor::SemanticVisitor(TargetInfo target,
