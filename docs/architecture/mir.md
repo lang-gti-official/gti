@@ -301,6 +301,18 @@ does not mutate the same global. The C++ representation consumes the verified
 schedule and erases activation as a no-op; it does not reconstruct evaluation
 order or loan state from source syntax.
 
+Because the entry loan is self-sourced at the carrier binding — MIR cannot
+name the caller's owner storage — its canonical protected place collides with
+the carrier object itself. Verification therefore exempts whole-carrier
+accesses from that collision in both access modes: reading the carrier as a
+receiver (`first != last` on a by-value mut cursor parameter), mutating it,
+and moving it are all independent of the protected referent, exactly as they
+are for a local carrier whose loan protects the distinct owner binding. A
+projection that still carries borrowed state receives no exemption, so a read
+or write of the stored reference field outside the loan, and any reseat of
+it, still conflict. Accesses through the stored reference resolve through the
+loan itself and follow the ordinary reborrow rules.
+
 The C++ representation snapshot keeps `copyConstructible` distinct from
 `copyable`. The former permits initialization of a fresh lifetime slot from a
 copy and is sufficient for read-only forward-iterator carriers. The latter
