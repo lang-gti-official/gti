@@ -533,10 +533,14 @@ share an arm. Arms do not fall through implicitly.
 
 A payload enum retains exactly one active alternative. Construction evaluates
 payload arguments in the ordinary call-input order and publishes the tagged
-value only after its admitted passive fields are available. A payload switch
-evaluates its subject once, selects by the active alternative, copies that
-alternative's fields into immutable arm bindings, and executes the selected
-arm. An exhaustive payload switch has no unmatched execution path.
+value only after its admitted fields are available; a class payload enters
+its alternative by copy from a named value, by transfer from an explicit
+`std::move`, or directly from a fresh prvalue construction, before any later
+sibling field expression evaluates. A payload switch evaluates its subject
+once, selects by the active alternative, copies that alternative's fields
+into immutable arm bindings, and executes the selected arm; a class-typed
+arm binding owns its copy and drops at the arm's end. An exhaustive payload
+switch has no unmatched execution path.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the

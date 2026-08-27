@@ -586,11 +586,22 @@ the ordinary unsafe diagnostic owns safe member access.
 
 An `enum class` with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
-Every payload field is named, immutable, non-variadic, and currently limited to
-primitive scalars, `std::string_view`, `nullptr_t`, one-level raw pointers, and
-integral scoped enums. References, arrays, classes, nested payload enums, and
-ownership-bearing values are rejected until move/borrow patterns and
-variant-aware partial lifecycle state are implemented.
+Every payload field is named, immutable, and non-variadic. The admitted field
+types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw
+pointers, integral scoped enums, and ordinary class values without active
+cleanup or borrowed state. A payload construction whose class argument
+requires active cleanup (a destructor or owning storage) or carries borrowed
+state is rejected at the construction site with `GTI-S2067`; variant-aware
+drop transport for owning payloads and move/borrow patterns are separately
+proven follow-on families. References, fixed arrays, and nested payload enums
+remain rejected at the declaration.
+
+A class payload argument may be a fresh prvalue construction, a copy of a
+named value, or an explicit `std::move` of a named value; the payload enters
+the alternative before any later sibling field expression evaluates, matching
+the ordinary left-to-right argument order. An enum whose alternatives carry
+class payloads folds its copyability, movability, and ownership traits from
+those payload types, so a move-only payload makes the enum value move-only.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.
@@ -612,7 +623,9 @@ int32_t coordinate_sum(Message message) {
 }
 ```
 
-Each binding is an immutable copied value scoped to its arm. Every alternative
+Each binding is an immutable copied value scoped to its arm; a class-typed
+binding therefore requires a copyable payload type, and its copy drops at the
+arm's end exactly like an ordinary local. Every alternative
 must be handled exactly once unless a `default` arm is present. A complete
 payload switch is exhaustive for return, ownership-state, loan, HIR, and MIR
 control-flow analysis. `GTI-S2067` owns payload declaration, construction, and

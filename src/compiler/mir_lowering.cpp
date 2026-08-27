@@ -6721,14 +6721,28 @@ private:
           valid = false;
           continue;
         }
-        (void)appendInstruction({.kind = MirInstructionKind::Initialize,
-                                 .hirStatement = statement.id,
-                                 .destination = destination,
-                                 .operands = {valueOperand(payload.value)},
-                                 .info = {.type = binding->info.type,
-                                          .category = ValueCategory::Place,
-                                          .access = binding->info.access,
-                                          .traits = binding->info.traits}});
+        MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                  .hirStatement = statement.id,
+                                  .destination = destination,
+                                  .operands = {valueOperand(payload.value)},
+                                  .info = {.type = binding->info.type,
+                                           .category = ValueCategory::Place,
+                                           .access = binding->info.access,
+                                           .traits = binding->info.traits}};
+        // A copied class payload binding owns its copy: arm the binding's
+        // obligation at this Initialize so the arm-exit Drop ends an
+        // active lifetime, exactly like an ordinary local initialization.
+        if (binding->info.type.kind != SemanticType::Reference &&
+            binding->info.traits.drop == DropKind::Lexical) {
+          const MirDropObligationId obligation =
+              dropObligationForBinding(payload.binding);
+          if (obligation != 0) {
+            appendLifecycle(initialize,
+                            {.kind = MirLifecycleEventKind::Initialize,
+                             .target = obligation});
+          }
+        }
+        (void)appendInstruction(std::move(initialize));
         registerDrop(payload.binding, destination);
       }
       lowerStatements(statement.switchArms[armIndex].statements);

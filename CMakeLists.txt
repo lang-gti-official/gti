@@ -1526,6 +1526,14 @@ if(BUILD_TESTING)
     set_tests_properties(nested_reference_return_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME class_payload_enum_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/class_payload_enum_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(class_payload_enum_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME temporary_argument_borrow_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
