@@ -47,12 +47,22 @@ project-build-root locations so repository scripts and structural evidence do
 not acquire a path-dependent compatibility branch. A static CMake ownership
 gate rejects test registrations or test-source paths returning to the root.
 
-The installed `gti_compiler` and `gti_cpp_backend` archives remain the real
-compiled phase boundary. The refactor does not add object libraries without
-an independent link-graph client: semantic, MIR, lowered-program, and C++
-backend APIs instead enforce direction through self-contained headers and
-repository boundary checks. Formatting-only C++ writers are additionally
-forbidden from including MIR or `LoweredProgram` authority.
+The installed `gti_compiler` and `gti_cpp_backend` archives remain the public
+compiled phase boundary. One private `gti_semantic_analysis` object target has
+exactly one client: its objects enter `gti_compiler`, it exports no target, and
+it cannot link back to the compiler archive it helps construct. This makes the
+already-separated semantic implementation units one real build-DAG node. The
+node precompiles only its private declaration/state contract; that optimization
+was retained after measuring reduced aggregate semantic compile work, not as a
+substitute for the source ownership split.
+
+Other semantic, MIR, lowered-program, and C++ backend APIs enforce direction
+through self-contained headers and repository boundary checks rather than
+additional object targets without independent clients. Formatting-only C++
+writers are additionally forbidden from including MIR or `LoweredProgram`
+authority. The partitioned compiler tests similarly reuse one test-only
+precompiled fixture after a measured reduction; the neutral emitter-fixture
+trial is deliberately absent.
 
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
 seam. The driver runs the same frontend and optimization gates, constructs and

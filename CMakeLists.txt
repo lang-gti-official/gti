@@ -289,7 +289,31 @@ extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *, size_t) { return 0; }
 endif()
 
 add_library(
+  "gti_semantic_analysis" OBJECT
+  "src/compiler/semantic_analyzer.cpp"
+  "src/compiler/semantic_body_analysis.cpp"
+  "src/compiler/semantic_call_resolution.cpp"
+  "src/compiler/semantic_declaration_analysis.cpp"
+  "src/compiler/semantic_flow_analysis.cpp"
+  "src/compiler/semantic_ownership_analysis.cpp"
+  "src/compiler/semantic_type_resolution.cpp"
+)
+target_include_directories(
+  "gti_semantic_analysis"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_include_directories(
+  "gti_semantic_analysis" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS}
+)
+target_compile_features("gti_semantic_analysis" PRIVATE cxx_std_20)
+target_precompile_headers(
+  "gti_semantic_analysis"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/semantic_analyzer_impl.h"
+)
+
+add_library(
   "gti_compiler" STATIC
+  $<TARGET_OBJECTS:gti_semantic_analysis>
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
@@ -336,16 +360,9 @@ add_library(
   "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
-  "src/compiler/semantic_analyzer.cpp"
-  "src/compiler/semantic_body_analysis.cpp"
-  "src/compiler/semantic_call_resolution.cpp"
-  "src/compiler/semantic_declaration_analysis.cpp"
-  "src/compiler/semantic_flow_analysis.cpp"
   "src/compiler/semantic_model.cpp"
-  "src/compiler/semantic_ownership_analysis.cpp"
   "src/compiler/semantic_diagnostics.cpp"
   "src/compiler/semantic_spelling.cpp"
-  "src/compiler/semantic_type_resolution.cpp"
   "src/compiler/semantic_type_printer.cpp"
   "src/compiler/source_graph.cpp"
   "src/compiler/source_loader.cpp"
