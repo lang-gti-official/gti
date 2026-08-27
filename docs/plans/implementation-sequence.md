@@ -2457,23 +2457,34 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/role:** partially implemented; `L-RANGE-03` is complete. The
-  remaining range-first suite depends on the remaining `L-CALL-01` work. The
-  implemented iterator/sentinel slices include multi-parameter concepts,
-  validity-only
-  trailing `requires`, exact input-iterator/sentinel/dereference/accumulator
-  capabilities, distinct copy-construction capability,
-  `std::forward_iterator`, source-defined `std::binary_search`, default and
-  operation-based `std::accumulate`, homogeneous `std::inner_product`, unary
-  `std::transform_reduce`, and the predicate algorithms whose callable shapes
-  are already confined. Exact iterator/sentinel `std::find` and `std::count`
-  and repeatable exact-return `std::for_each` are now ordinary GTI source.
-- **Remaining scope:** Add the exact writable-output and
-  bidirectional/random-access concepts needed to implement `copy`, `transform`,
-  `reverse`, and `sort` honestly. Further iterator/sentinel overloads require a
-  demonstrated subrange client. The forward-iterator slice does not authorize
-  random access, iterator assignment, implicit conversions, overload ranking,
-  or a parallel C++ iterator-category hierarchy.
+- **State/role:** substantially implemented; `L-RANGE-03` is complete. The
+  implemented iterator/sentinel slices include
+  multi-parameter concepts, validity-only trailing `requires`, exact
+  input-iterator/sentinel/dereference/accumulator capabilities, distinct
+  copy-construction capability, `std::forward_iterator`, source-defined
+  `std::binary_search`, default and operation-based `std::accumulate`,
+  homogeneous `std::inner_product`, unary `std::transform_reduce`, the
+  confined predicate algorithms, exact iterator/sentinel `std::find` and
+  `std::count`, and repeatable exact-return `std::for_each`. The
+  writable/movement capability family is also implemented:
+  `std::output_iterator`/`writes_to` (mut dereference plus increment),
+  `subscripts_to_mut` (positioned mutable subscript),
+  `bidirectional_iterator` (`--`), `random_access_iterator` (`+=`/`-=`), and
+  `sized_sentinel_for` (iterator-to-sentinel distance) — with symbolic
+  generic-body forms for dereference/subscript/compound assignment, concrete
+  satisfaction checks, read-vector-cursor operator coverage, and the
+  source-defined `std::copy`, whole-container `std::fill`/`std::transform`/
+  `std::reverse`/`std::sort`, signed `std::advance`/`std::next`, and
+  `std::prev` clients.
+- **Remaining scope:** comparator `sort`; complete-range concepts extending
+  the whole-container generic algorithms beyond `std::vector`; indexed
+  element move-out; and further iterator/sentinel overloads behind a
+  demonstrated subrange client. Iterator-pair in-place spellings remain
+  excluded because `begin_mut()` and `end()` from one container overlap by
+  design; semantics now diagnoses that conflict before MIR, while read-only
+  methods on a parameter-held mutable cursor are supported. Iterator
+  assignment, implicit conversions, overload ranking, and a parallel C++
+  iterator-category hierarchy remain unauthorized.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -3367,7 +3378,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward-iterator, sentinel, and exact-dereference relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward/bidirectional/random-access-iterator, sentinel, sized-sentinel, exact-dereference, writable-dereference, and mutable-subscript relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

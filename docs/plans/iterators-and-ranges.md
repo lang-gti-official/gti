@@ -784,12 +784,11 @@ into storage merely to traverse a range.
 | --- | --- | --- | --- |
 | `<std/algorithm>` | `find`, `count` | Implemented | Exact iterator/sentinel/dereference/equality contracts plus declaration-linked `first` return ownership now suffice. |
 | `<std/algorithm>` | `for_each` | Implemented | Repeated exact `void(T&)` invocation now composes with one exact moved callable return. |
-| `<std/algorithm>` | `copy` | Declaration only | No public writable output-iterator/dereference-assignment relationship exists. |
-| `<std/algorithm>` | `transform` | Declaration only | Needs the writable output relationship plus an exact callable-result-to-output relationship; callable invocation alone is not the blocker. |
-| `<std/algorithm>` | `reverse` | Declaration only | Bidirectional decrement and exact mutable element swap/move-through-reference are both absent. |
-| `<std/algorithm>` | `sort`, `sort(compare)` | Declaration only | Random-access traversal and mutable element swap are absent; the exact comparator contract is already expressible. |
+| `<std/algorithm>` | `copy` | Implemented | `std::output_iterator` (mut dereference plus increment) drives the destination; the advanced mutable cursor is not returned because mutable owner-tied cursors cannot escape returns. |
+| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | Implemented (whole-container forms) | The `std::vector<T>` forms name the element type and hold one exclusive borrow. Iterator-pair in-place forms remain blocked: `begin_mut()` plus `end()` in one call is an ownership conflict, read-receiver methods on parameter-held mutable cursors are miscounted against the carrier's own loan, and elements rewrite by copy because indexed move-out awaits place-aware initialization tracking. |
+| `<std/algorithm>` | `sort(compare)` | Deferred | The default-`<` partition sort landed first; the comparator overload follows once a confined two-reference-argument comparator client is proven. |
 | `<std/utility>` | `swap`, `exchange` | Declaration only | Moving a value out through `mut T&`, then restoring that place on all paths, is not expressible. |
-| `<std/iterator>` | signed `advance`, signed `next`, `prev` | Declaration only | No bidirectional iterator/decrement capability or implemented prefix decrement operation exists. |
+| `<std/iterator>` | signed `advance`, signed `next`, `prev` | Implemented | `std::bidirectional_iterator` steps `advance` in both directions for value-state cursors (owner-tied cursors cannot pass through `mut Iterator&`), and `std::random_access_iterator` jumps the by-value `next`. |
 | `<std/functional>` | primary `hash<T>::operator()` | Declaration only | GTI has no public hashability/customization contract for arbitrary `T`; a generic body would require public-name or backend magic. |
 | `<std/numeric>` | primitive `hash` specializations | Intentionally unsupported | Bodies are latent, but canonical public hash policy and hashability capability are not shipped. Numeric algorithm declarations have no remaining bodyless functions. |
 

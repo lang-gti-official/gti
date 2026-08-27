@@ -12052,6 +12052,255 @@ int main() {
          "backedge");
 }
 
+void testWritableAndMovementIteratorCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "writable-movement-iterators.gti", R"(
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(5);
+  source.push_back(1);
+  source.push_back(4);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(3));
+  std::copy(source.begin(), source.end(), destination.begin_mut());
+  int32_t nine = 9;
+  std::fill(destination, nine);
+  mut std::vector<int32_t> doubled = std::vector<int32_t>(std::size_t(3));
+  std::transform(source, doubled,
+                 [](int32_t& value) -> int32_t { return value * 2; });
+  std::sort(source);
+  std::reverse(source);
+  int32_t head = source[std::size_t(0)];
+  mut auto cursor = source.begin();
+  ++cursor;
+  --cursor;
+  cursor += std::ptrdiff_t(2);
+  cursor -= std::ptrdiff_t(1);
+  auto last = source.end();
+  std::ptrdiff_t left = cursor - last;
+  auto stepped = std::prev(std::next(source.begin(), std::ptrdiff_t(2)));
+  return (*cursor == 4 && left == std::ptrdiff_t(2) && *stepped == 4 &&
+          destination[std::size_t(0)] == 9 &&
+          doubled[std::size_t(0)] == 10 && head == 5)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected writable-movement diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "writable, bidirectional, random-access, and sized-sentinel "
+         "capabilities should drive copy/fill/transform/sort/reverse and "
+         "iterator movement to valid MIR");
+
+  const lang::FrontendResult readDestination = lang::Frontend().analyze(
+      "writable-read-destination.gti", R"(
+#include <std/algorithm>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(1);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(1));
+  std::copy(source.begin(), source.end(), destination.begin());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!readDestination.canGenerateCode() &&
+             hasDiagnostic(readDestination.diagnostics,
+                           "do not satisfy concept 'std::output_iterator'"),
+         "a read-only iterator destination should fail std::output_iterator");
+
+  const lang::FrontendResult forwardOnly = lang::Frontend().analyze(
+      "bidirectional-forward-only.gti", R"(
+#include <std/iterator>
+
+class ForwardOnly {
+  mut int32_t value = 0;
+
+public:
+  ForwardOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(ForwardOnly& other) { return false; }
+};
+
+void walk_back<Iterator>(mut Iterator iterator)
+  requires std::bidirectional_iterator<Iterator> {
+  --iterator;
+}
+
+int use() {
+  mut ForwardOnly cursor = ForwardOnly();
+  walk_back(std::move(cursor));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!forwardOnly.canGenerateCode() &&
+             hasDiagnostic(forwardOnly.diagnostics,
+                           "do not satisfy concept "
+                           "'std::bidirectional_iterator'"),
+         "a forward-only cursor should fail std::bidirectional_iterator");
+
+  const lang::FrontendResult noJumps = lang::Frontend().analyze(
+      "random-access-no-jumps.gti", R"(
+#include <std/iterator>
+
+class StepOnly {
+  mut int32_t value = 0;
+
+public:
+  StepOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  void operator--() mut {}
+  bool operator!=(StepOnly& other) { return false; }
+};
+
+void jump<Iterator>(mut Iterator iterator)
+  requires std::random_access_iterator<Iterator> {
+  iterator += std::ptrdiff_t(2);
+}
+
+int use() {
+  mut StepOnly cursor = StepOnly();
+  jump(std::move(cursor));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!noJumps.canGenerateCode() &&
+             hasDiagnostic(noJumps.diagnostics,
+                           "do not satisfy concept "
+                           "'std::random_access_iterator'"),
+         "a step-only cursor should fail std::random_access_iterator");
+
+  const lang::FrontendResult wrongElement = lang::Frontend().analyze(
+      "writes-to-wrong-element.gti", R"(
+#include <std/iterator>
+#include <std/vector>
+
+void stamp<Iterator>(mut Iterator iterator, int16_t value)
+  requires std::writes_to<Iterator, int16_t> {
+  *iterator = value;
+}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(1));
+  stamp(values.begin_mut(), int16_t(3));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!wrongElement.canGenerateCode() &&
+             hasDiagnostic(wrongElement.diagnostics,
+                           "do not satisfy concept 'std::writes_to'"),
+         "writes_to should reject a destination whose element type differs "
+         "from the required referent");
+
+  const lang::FrontendResult unsizedSentinel = lang::Frontend().analyze(
+      "sized-sentinel-missing.gti", R"(
+#include <std/iterator>
+
+class PlainSentinel {};
+
+class PlainIterator {
+  mut int32_t value = 0;
+
+public:
+  PlainIterator() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(PlainSentinel& other) { return false; }
+};
+
+std::ptrdiff_t measure<Iterator, Sentinel>(Iterator first, Sentinel last)
+  requires std::sized_sentinel_for<Sentinel, Iterator> {
+  return first - last;
+}
+
+int use() {
+  std::ptrdiff_t left = measure(PlainIterator(), PlainSentinel());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!unsizedSentinel.canGenerateCode() &&
+             hasDiagnostic(unsizedSentinel.diagnostics,
+                           "do not satisfy concept "
+                           "'std::sized_sentinel_for'"),
+         "sized_sentinel_for should reject an iterator without the signed "
+         "distance operator");
+
+  const lang::FrontendResult userCursor = lang::Frontend().analyze(
+      "user-cursor-symbolic-writes.gti", R"(
+#include <std/iterator>
+
+class grid_cursor {
+  mut int32_t[6] cells = {};
+  mut std::ptrdiff_t position = 0;
+
+public:
+  grid_cursor() {}
+
+  mut int32_t& operator*() mut {
+    return this.cells[std::size_t(this.position)];
+  }
+
+  void operator++() mut { this.position++; }
+
+  mut int32_t& operator[](std::ptrdiff_t offset) mut {
+    return this.cells[std::size_t(this.position + offset)];
+  }
+
+  int32_t read(std::size_t index) { return this.cells[index]; }
+};
+
+void stamp<Cursor, T>(mut Cursor& cursor, T& value)
+  requires std::writes_to<Cursor, T> {
+  *cursor = value;
+}
+
+void poke<Cursor, T>(mut Cursor& cursor, std::ptrdiff_t offset, T& value)
+  requires std::subscripts_to_mut<Cursor, T> {
+  cursor[offset] = value;
+}
+
+int main() {
+  mut grid_cursor cursor = grid_cursor();
+  int32_t five = 5;
+  stamp(cursor, five);
+  int32_t seven = 7;
+  poke(cursor, std::ptrdiff_t(1), seven);
+  return (cursor.read(std::size_t(0)) == 5 &&
+          cursor.read(std::size_t(1)) == 7)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!userCursor.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : userCursor.diagnostics) {
+      std::cerr << "Unexpected user-cursor diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(userCursor.canGenerateCode() &&
+             lang::verifyMirProgram(userCursor.mir).valid(),
+         "symbolic mutable dereference and subscript writes should "
+         "instantiate against a user cursor and reach valid MIR");
+}
+
 void testGeneralOwnerDependentReturns() {
   const lang::FrontendResult valid =
       lang::Frontend().analyze("owner-dependent-returns.gti", R"(
@@ -34300,6 +34549,7 @@ int main(int argc, char **argv) {
     testReferenceArgumentRuntimePlaceCoherence();
     testCallSiblingArgumentBorrowConflicts();
     testForwardIteratorContractsAndBinarySearch();
+    testWritableAndMovementIteratorCapabilities();
     return failures == 0 ? 0 : 1;
   }
   if (argc == 2 && std::string(argv[1]) == "constexpr") {
@@ -34349,6 +34599,7 @@ int main(int argc, char **argv) {
   testStoredCarrierReturnProvenance();
   testCallSiblingArgumentBorrowConflicts();
   testForwardIteratorContractsAndBinarySearch();
+  testWritableAndMovementIteratorCapabilities();
   testGeneralOwnerDependentReturns();
   testNestedMemberReferenceReturnForwarding();
   testReferenceArgumentRuntimePlaceCoherence();

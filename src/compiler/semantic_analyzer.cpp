@@ -3163,17 +3163,34 @@ public:
       targetStateValid = false;
     }
     SemanticType valueType;
+    bool valueAnalyzed = false;
     const std::optional<OverloadedOperator> mutationOperator =
         compoundOperator(expr.oper().kind);
     if (!simpleAssignment && mutationOperator &&
-        targetType.kind == SemanticType::Class) {
+        (targetType.kind == SemanticType::Class ||
+         targetType.kind == SemanticType::TypeParameter)) {
       valueType = analyze(expr.value());
-      ExprPtr receiver;
-      if (expr.path().segments.size() == 1) {
-        receiver = std::make_unique<Variable>(expr.name());
-      } else {
-        receiver =
-            std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+      valueAnalyzed = true;
+      const bool symbolicMutation =
+          targetType.kind == SemanticType::TypeParameter &&
+          hasSymbolicOperatorRequirement(
+              *mutationOperator, targetType,
+              std::span<const SemanticType>(&valueType, 1));
+      if (targetType.kind == SemanticType::Class || symbolicMutation) {
+        ExprPtr receiver;
+        if (expr.path().segments.size() == 1) {
+          receiver = std::make_unique<Variable>(expr.name());
+        } else {
+          receiver =
+              std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+        }
+        const std::optional<FunctionCandidate> selected = resolveOperator(
+            expr, *mutationOperator, receiver, targetType, expr.oper(),
+            std::span<const SemanticType>(&valueType, 1),
+            std::span<const ExprPtr>(&expr.value(), 1));
+        currentType = selected ? callExpressionType(selected->returnType)
+                               : SemanticType::Unknown;
+        return;
       }
       const ExpressionInfo receiverInfo =
           classifyExpression(*receiver, targetType);
@@ -3214,7 +3231,7 @@ public:
                                : SemanticType::Unknown;
         return;
       }
-    } else {
+    } else if (!valueAnalyzed) {
       valueType = simpleAssignment
                       ? analyzeInitializer(expr.value(), targetType)
                       : analyze(expr.value());
@@ -4454,7 +4471,10 @@ public:
         requireUnsafe(expr, UnsafeOperationKind::RawDereference,
                       expr.dereference(), "Raw pointer dereference");
       }
-    } else if (ownerType.kind == SemanticType::Class) {
+    } else if (ownerType.kind == SemanticType::Class ||
+               (ownerType.kind == SemanticType::TypeParameter &&
+                hasSymbolicOperatorRequirement(OverloadedOperator::Dereference,
+                                               ownerType))) {
       const std::optional<FunctionCandidate> selected =
           resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
                           ownerType, expr.dereference(), {}, {}, false,
@@ -4669,7 +4689,11 @@ public:
           expr.object(), expr.index(), indexType, expr.bracket());
       return;
     }
-    if (objectType.kind == SemanticType::Class) {
+    if (objectType.kind == SemanticType::Class ||
+        (objectType.kind == SemanticType::TypeParameter &&
+         hasSymbolicOperatorRequirement(
+             OverloadedOperator::Subscript, objectType,
+             std::span<const SemanticType>(&indexType, 1)))) {
       const bool mutableReferenceContext =
           contextualInitializerType &&
           contextualInitializerType->kind == SemanticType::Reference &&
@@ -4742,7 +4766,11 @@ public:
         requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
                       "Raw pointer indexing");
       }
-    } else if (objectType.kind == SemanticType::Class) {
+    } else if (objectType.kind == SemanticType::Class ||
+               (objectType.kind == SemanticType::TypeParameter &&
+                hasSymbolicOperatorRequirement(
+                    OverloadedOperator::Subscript, objectType,
+                    std::span<const SemanticType>(&indexType, 1)))) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
@@ -4831,7 +4859,8 @@ public:
       if (objectType.kind == SemanticType::RawPointer) {
         report(expr.bracket(), "Cannot write through const raw pointer memory.",
                "GTI-S2002");
-      } else if (objectType.kind == SemanticType::Class) {
+      } else if (objectType.kind == SemanticType::Class ||
+                 objectType.kind == SemanticType::TypeParameter) {
         report(expr.bracket(),
                "operator[] does not provide mutable element access.",
                "GTI-S2002");
@@ -17754,6 +17783,32 @@ private:
       return referent == nullptr ||
              candidate->returnType.arguments.front() == *referent;
     };
+    const auto mutableReference = [](const FunctionCandidate &candidate,
+                                     const SemanticType *referent) {
+      if (candidate.receiverMutability != ReceiverMutability::Mutable ||
+          candidate.returnType.kind != SemanticType::Reference ||
+          candidate.returnType.referenceAccess != AccessMode::Mutable ||
+          candidate.returnType.arguments.size() != 1) {
+        return false;
+      }
+      return referent == nullptr ||
+             candidate.returnType.arguments.front() == *referent;
+    };
+    const auto hasMutableDereference = [&](const SemanticType &iterator,
+                                           const SemanticType *referent) {
+      const std::optional<FunctionCandidate> candidate =
+          selectStructuralOperator(iterator, OverloadedOperator::Dereference,
+                                   {}, true);
+      return candidate && mutableReference(*candidate, referent);
+    };
+    const auto hasVoidMutation = [&](const SemanticType &iterator,
+                                     OverloadedOperator mutation,
+                                     std::span<const SemanticType> parameters) {
+      const std::optional<FunctionCandidate> candidate =
+          selectStructuralOperator(iterator, mutation, parameters, true);
+      return candidate && candidate->returnType == SemanticType::Void &&
+             candidate->receiverMutability == ReceiverMutability::Mutable;
+    };
 
     switch (kind) {
     case StructuralConstraintKind::InputIterator: {
@@ -17788,6 +17843,55 @@ private:
     case StructuralConstraintKind::DereferencesTo:
       return arguments.size() == 2 &&
              hasDereference(arguments[0], &arguments[1]);
+    case StructuralConstraintKind::WritableIterator:
+      return arguments.size() == 1 &&
+             hasMutableDereference(arguments.front(), nullptr) &&
+             hasVoidMutation(arguments.front(),
+                             OverloadedOperator::PreIncrement, {});
+    case StructuralConstraintKind::WritesTo:
+      return arguments.size() == 2 &&
+             hasMutableDereference(arguments[0], &arguments[1]);
+    case StructuralConstraintKind::BidirectionalIterator:
+      return arguments.size() == 1 &&
+             hasVoidMutation(arguments.front(),
+                             OverloadedOperator::PreDecrement, {});
+    case StructuralConstraintKind::RandomAccessIterator: {
+      if (arguments.size() != 1) {
+        return false;
+      }
+      const SemanticType distance = SemanticType::Int64;
+      return hasVoidMutation(arguments.front(), OverloadedOperator::AddAssign,
+                             std::span<const SemanticType>(&distance, 1)) &&
+             hasVoidMutation(arguments.front(),
+                             OverloadedOperator::SubtractAssign,
+                             std::span<const SemanticType>(&distance, 1));
+    }
+    case StructuralConstraintKind::SubscriptsToMut: {
+      if (arguments.size() != 2) {
+        return false;
+      }
+      const SemanticType index = SemanticType::Int64;
+      const std::optional<FunctionCandidate> subscript =
+          selectStructuralOperator(arguments[0], OverloadedOperator::Subscript,
+                                   std::span<const SemanticType>(&index, 1),
+                                   true);
+      return subscript && mutableReference(*subscript, &arguments[1]);
+    }
+    case StructuralConstraintKind::SizedSentinelFor: {
+      if (arguments.size() != 2) {
+        return false;
+      }
+      const SemanticType &sentinel = arguments[0];
+      const SemanticType &iterator = arguments[1];
+      const SemanticType parameter =
+          SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
+      const std::optional<FunctionCandidate> difference =
+          selectStructuralOperator(iterator, OverloadedOperator::Minus,
+                                   std::span<const SemanticType>(&parameter, 1),
+                                   false);
+      return difference && difference->returnType == SemanticType::Int64 &&
+             difference->receiverMutability == ReceiverMutability::ReadOnly;
+    }
     case StructuralConstraintKind::None:
       return true;
     }
@@ -17845,6 +17949,85 @@ private:
           matches = true;
         }
         break;
+      case StructuralConstraintKind::WritableIterator:
+        if (requirement.arguments.size() == 1 &&
+            requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+          if (kind == OverloadedOperator::PreIncrement) {
+            candidate.returnType = SemanticType::Void;
+            candidate.receiverMutability = ReceiverMutability::Mutable;
+            matches = true;
+          } else if (kind == OverloadedOperator::Dereference) {
+            candidate.returnType = SemanticType::referenceTo(
+                SemanticType::Unknown, AccessMode::Mutable);
+            candidate.receiverMutability = ReceiverMutability::Mutable;
+            candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+            candidate.returnBorrowAccess = AccessMode::Mutable;
+            matches = true;
+          }
+        }
+        break;
+      case StructuralConstraintKind::WritesTo:
+        if (kind == OverloadedOperator::Dereference &&
+            requirement.arguments.size() == 2 &&
+            requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+          candidate.returnType = SemanticType::referenceTo(
+              requirement.arguments[1], AccessMode::Mutable);
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+          candidate.returnBorrowAccess = AccessMode::Mutable;
+          matches = true;
+        }
+        break;
+      case StructuralConstraintKind::BidirectionalIterator:
+        if (kind == OverloadedOperator::PreDecrement &&
+            requirement.arguments.size() == 1 &&
+            requirement.arguments[0] == receiverType && argumentTypes.empty()) {
+          candidate.returnType = SemanticType::Void;
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          matches = true;
+        }
+        break;
+      case StructuralConstraintKind::RandomAccessIterator:
+        if ((kind == OverloadedOperator::AddAssign ||
+             kind == OverloadedOperator::SubtractAssign) &&
+            requirement.arguments.size() == 1 &&
+            requirement.arguments[0] == receiverType &&
+            argumentTypes.size() == 1 &&
+            argumentTypes[0] == SemanticType::Int64) {
+          candidate.returnType = SemanticType::Void;
+          candidate.parameterTypes = {SemanticType::Int64};
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          matches = true;
+        }
+        break;
+      case StructuralConstraintKind::SubscriptsToMut:
+        if (kind == OverloadedOperator::Subscript &&
+            requirement.arguments.size() == 2 &&
+            requirement.arguments[0] == receiverType &&
+            argumentTypes.size() == 1 &&
+            argumentTypes[0] == SemanticType::Int64) {
+          candidate.returnType = SemanticType::referenceTo(
+              requirement.arguments[1], AccessMode::Mutable);
+          candidate.parameterTypes = {SemanticType::Int64};
+          candidate.receiverMutability = ReceiverMutability::Mutable;
+          candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+          candidate.returnBorrowAccess = AccessMode::Mutable;
+          matches = true;
+        }
+        break;
+      case StructuralConstraintKind::SizedSentinelFor:
+        if (kind == OverloadedOperator::Minus &&
+            requirement.arguments.size() == 2 &&
+            requirement.arguments[1] == receiverType &&
+            argumentTypes.size() == 1 &&
+            argumentTypes[0] == requirement.arguments[0]) {
+          candidate.returnType = SemanticType::Int64;
+          candidate.parameterTypes = {SemanticType::referenceTo(
+              requirement.arguments[0], AccessMode::ReadOnly)};
+          candidate.receiverMutability = ReceiverMutability::ReadOnly;
+          matches = true;
+        }
+        break;
       case StructuralConstraintKind::None:
         break;
       }
@@ -17854,20 +18037,37 @@ private:
       }
     }
 
-    const bool hasKnownDereference =
-        kind == OverloadedOperator::Dereference &&
-        std::any_of(result.begin(), result.end(), [](const auto &candidate) {
-          return candidate.returnType.kind == SemanticType::Reference &&
-                 !candidate.returnType.arguments.empty() &&
-                 candidate.returnType.arguments.front() !=
-                     SemanticType::Unknown;
-        });
-    if (hasKnownDereference) {
-      std::erase_if(result, [](const FunctionCandidate &candidate) {
-        return candidate.returnType.kind == SemanticType::Reference &&
-               !candidate.returnType.arguments.empty() &&
-               candidate.returnType.arguments.front() == SemanticType::Unknown;
-      });
+    // An exact-referent dereference or subscript relation (dereferences_to,
+    // writes_to, subscripts_to_mut) refines the unknown-referent form from
+    // the unary capability with the same receiver mutability; the refined
+    // candidate replaces only its own mutability's unknown form so a
+    // read-only refinement never erases a mutable capability or vice versa.
+    const auto knownReference = [](const FunctionCandidate &candidate) {
+      return candidate.returnType.kind == SemanticType::Reference &&
+             !candidate.returnType.arguments.empty() &&
+             candidate.returnType.arguments.front() != SemanticType::Unknown;
+    };
+    const auto unknownReference = [](const FunctionCandidate &candidate) {
+      return candidate.returnType.kind == SemanticType::Reference &&
+             !candidate.returnType.arguments.empty() &&
+             candidate.returnType.arguments.front() == SemanticType::Unknown;
+    };
+    if (kind == OverloadedOperator::Dereference ||
+        kind == OverloadedOperator::Subscript) {
+      for (const ReceiverMutability mutability :
+           {ReceiverMutability::ReadOnly, ReceiverMutability::Mutable}) {
+        const bool hasKnown = std::any_of(
+            result.begin(), result.end(), [&](const auto &candidate) {
+              return candidate.receiverMutability == mutability &&
+                     knownReference(candidate);
+            });
+        if (hasKnown) {
+          std::erase_if(result, [&](const FunctionCandidate &candidate) {
+            return candidate.receiverMutability == mutability &&
+                   unknownReference(candidate);
+          });
+        }
+      }
     }
     std::vector<FunctionCandidate> unique;
     for (FunctionCandidate &candidate : result) {
@@ -17918,6 +18118,17 @@ private:
       return candidate.receiverMutability == ReceiverMutability::Mutable &&
              !mutableReceiver;
     });
+    // Mirror the concrete structural selection: a mutable receiver prefers
+    // the mutable-receiver form when the requirements prove both.
+    if (mutableReceiver && std::any_of(viable.begin(), viable.end(),
+                                       [](const FunctionCandidate &candidate) {
+                                         return candidate.receiverMutability ==
+                                                ReceiverMutability::Mutable;
+                                       })) {
+      std::erase_if(viable, [](const FunctionCandidate &candidate) {
+        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
+      });
+    }
     if (viable.size() != 1) {
       report(token,
              viable.empty()

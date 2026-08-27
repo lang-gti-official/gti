@@ -197,7 +197,20 @@ public library name:
   prefix increment; ordinary parameter ownership separately checks whether a
   particular iterator expression can be transferred into an algorithm;
 - `std::sentinel_for<S, I>` proves exact public read-only
-  `bool I::operator!=(S&)`.
+  `bool I::operator!=(S&)`;
+- `std::output_iterator<I>` proves mut checked dereference returning a mutable
+  reference plus mutable prefix increment, and `std::writes_to<I, T>` refines
+  the mutable referent to exactly `T`;
+- `std::bidirectional_iterator<I>` composes `forward_iterator` with public
+  `void operator--() mut`, and `std::random_access_iterator<I>` further adds
+  `void operator+=(std::ptrdiff_t) mut` and
+  `void operator-=(std::ptrdiff_t) mut`;
+- `std::subscripts_to_mut<I, T>` proves
+  `mut T& I::operator[](std::ptrdiff_t) mut` for exactly `T`, the positioned
+  write contract that keeps one exclusive cursor over a whole range;
+- `std::sized_sentinel_for<S, I>` composes `sentinel_for` with read-only
+  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
+  the sentinel.
 
 `<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
 version proves that read-only dereferencing `I` returns a checked reference to
@@ -238,6 +251,27 @@ borrow-carrying concrete iterator, that declaration-linked move selects
 `first`, rather than an unrelated sentinel or other read-only carrier, as the
 return owner. Mixed return paths rooted in different parameters remain
 ambiguous and are rejected. `count` returns an independent `ptrdiff_t`.
+
+`std::copy(first, last, output)` is the first writable-output client: the
+source side uses the input/sentinel contract and the destination uses
+`std::output_iterator`. Every destination write remains checked at the access
+itself, and the advanced destination cursor is not returned because a mutable
+owner-tied cursor cannot escape through a return value. The read-only vector
+cursor additionally implements the bidirectional, random-access, and
+sized-sentinel operator sets, so `std::prev`, signed `std::next`, in-place
+`+=`/`-=` movement, and `cursor - sentinel` distances are ordinary generic
+code over it.
+
+`std::fill`, `std::transform`, `std::reverse`, and `std::sort` take the owning
+`std::vector<T>` directly. The whole-container forms exist because the
+iterator-pair spelling would either need a read borrow of the owner while its
+exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
+one call) or retainable mutable cursors in ordinary bodies; the container form
+keeps one exclusive borrow for the whole rewrite and names the element type
+for locals. In-place element rewrites copy the element out and assign it back,
+so their element types require `std::copyable` until moving out of an indexed
+element is representable. `std::sort` orders by `operator<` through a
+partition exchange whose recursion always descends into the smaller side.
 
 `for_each` invokes its by-value callable zero or more times with the exact
 checked-reference type produced by dereference, then returns that same callable

@@ -136,6 +136,37 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The iterator's read-only dereference must return a checked "
           "reference whose referent is exactly the required type.");
       break;
+    case StructuralConstraintKind::WritableIterator:
+      diagnostic.hints.emplace_back(
+          "The iterator must provide public mut operator*() returning a "
+          "mutable checked reference and public void operator++() mut.");
+      break;
+    case StructuralConstraintKind::WritesTo:
+      diagnostic.hints.emplace_back(
+          "The iterator's mut operator*() must return a mutable checked "
+          "reference whose referent is exactly the required type.");
+      break;
+    case StructuralConstraintKind::BidirectionalIterator:
+      diagnostic.hints.emplace_back(
+          "The iterator must provide public void operator--() mut.");
+      break;
+    case StructuralConstraintKind::RandomAccessIterator:
+      diagnostic.hints.emplace_back(
+          "The iterator must provide public void operator+=(std::ptrdiff_t) "
+          "mut and public void operator-=(std::ptrdiff_t) mut.");
+      break;
+    case StructuralConstraintKind::SubscriptsToMut:
+      diagnostic.hints.emplace_back(
+          "The iterator's mut operator[](std::ptrdiff_t) must return a "
+          "mutable checked reference whose referent is exactly the required "
+          "type.");
+      break;
+    case StructuralConstraintKind::SizedSentinelFor:
+      diagnostic.hints.emplace_back(
+          "The iterator must provide public read-only "
+          "std::ptrdiff_t operator-(S&) for the exact sentinel type, "
+          "returning the signed distance from the iterator to the sentinel.");
+      break;
     case StructuralConstraintKind::None:
       break;
     }
