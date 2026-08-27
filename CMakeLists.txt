@@ -567,9 +567,10 @@ if(GTI_BUNDLE_LLVM)
   # — and ships beside the LLVM archives. The installed gti binary locates it
   # by rpath relative to its own location.
   install(
-    FILES "$<TARGET_FILE:libclang>"
-    DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
-    COMPONENT gti_toolchain
+    TARGETS libclang
+    LIBRARY DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
+            COMPONENT gti_toolchain
+            NAMELINK_COMPONENT gti_toolchain
   )
   if(APPLE)
     set_target_properties(
