@@ -6,12 +6,11 @@ class HirLowerer::Impl {
 public:
   explicit Impl(TargetInfo target) : target(std::move(target)) {}
 
-  // Non-const: concrete instance reanalysis uses the analyzer's detach/
-  // restore bracket (InstanceAnalysisScope) instead of copying it.
-  [[nodiscard]] HirLoweringResult lower(const Program &source,
-                                        SemanticVisitor &semantics) {
-    analyzer = &semantics;
-    baseModel = &semantics.model();
+  [[nodiscard]] HirLoweringResult
+  lower(const Program &source, const SemanticModel &semantics,
+        SemanticInstanceProvider &provider) {
+    instanceProvider = &provider;
+    baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
@@ -191,7 +190,7 @@ private:
          .valueArguments = resolvedType.valueArguments,
          .instantiationSite = std::move(site),
          .type = resolvedType,
-         .traits = analyzer->traitsFor(resolvedType),
+         .traits = instanceProvider->traitsFor(resolvedType),
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,
@@ -216,7 +215,7 @@ private:
          .requiresActiveDropState =
              lifecycle != nullptr && lifecycle->requiresActiveDropState,
          .requiresActiveCleanup =
-             analyzer->requiresActiveCleanupFor(resolvedType)});
+             instanceProvider->requiresActiveCleanupFor(resolvedType)});
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
     return id;
@@ -864,7 +863,7 @@ private:
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
-      analysis = analyzer->analyzeClassFieldInitializers(
+      analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
@@ -882,7 +881,7 @@ private:
                                          field.declaration->isMutable()
                                      ? AccessMode::Mutable
                                      : AccessMode::ReadOnly,
-                       .traits = analyzer->traitsFor(type)};
+                       .traits = instanceProvider->traitsFor(type)};
       if (field.declaration != nullptr) {
         if (const BindingInfo *recorded =
                 model->findBinding(*field.declaration)) {
@@ -913,7 +912,7 @@ private:
            .binding = binding,
            .initializer = initializer,
            .info = info,
-           .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
+           .requiresActiveCleanup = instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, false);
@@ -931,7 +930,7 @@ private:
                                          field.declaration->isMutable()
                                      ? AccessMode::Mutable
                                      : AccessMode::ReadOnly,
-                       .traits = analyzer->traitsFor(type),
+                       .traits = instanceProvider->traitsFor(type),
                        .staticStorage = true};
       if (field.declaration != nullptr) {
         if (const BindingInfo *recorded =
@@ -971,7 +970,7 @@ private:
            .binding = lowered.binding,
            .initializer = lowered.initializer,
            .info = info,
-           .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
+           .requiresActiveCleanup = instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, false);
@@ -1023,7 +1022,7 @@ private:
       return nullptr;
     }
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
-        analyzer->analyzeFunctionInstance(
+        instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
@@ -1049,7 +1048,7 @@ private:
     }
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
-        analyzer->analyzeConstructorInstance(
+        instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
@@ -1434,7 +1433,7 @@ private:
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
-      analysis = analyzer->analyzeDestructorInstance(
+      analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
@@ -1461,7 +1460,7 @@ private:
          .info = {.type = currentReceiverType,
                   .category = ValueCategory::Place,
                   .access = currentReceiverAccess,
-                  .traits = analyzer->traitsFor(currentReceiverType)}});
+                  .traits = instanceProvider->traitsFor(currentReceiverType)}});
     return id;
   }
 
@@ -1587,7 +1586,7 @@ private:
   [[nodiscard]] HirDropType dropTypeFor(const SemanticType &type) {
     HirDropType result{.type = type,
                        .requiresActiveCleanup =
-                           analyzer->requiresActiveCleanupFor(type)};
+                           instanceProvider->requiresActiveCleanupFor(type)};
     if (type.kind != SemanticType::Class) {
       if (type.kind == SemanticType::Lambda) {
         const auto lambda = lambdaTargets.find(type.lambdaId);
@@ -1662,7 +1661,7 @@ private:
         value.info.traits.drop != DropKind::Lexical) {
       return false;
     }
-    if (!analyzer->requiresActiveCleanupFor(value.info.type) &&
+    if (!instanceProvider->requiresActiveCleanupFor(value.info.type) &&
         !materializesFixedArrayOwnership(value, body)) {
       return false;
     }
@@ -2181,7 +2180,7 @@ private:
                             .category = ValueCategory::Value,
                             .access = AccessMode::ReadOnly,
                             .traits =
-                                analyzer->traitsFor(payload.binding.type)},
+                                instanceProvider->traitsFor(payload.binding.type)},
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,
@@ -2402,7 +2401,7 @@ private:
     captureRequiresActiveCleanup.reserve(info->captures.size());
     for (const LambdaCaptureInfo &capture : info->captures) {
       captureRequiresActiveCleanup.push_back(
-          analyzer->requiresActiveCleanupFor(capture.type));
+          instanceProvider->requiresActiveCleanupFor(capture.type));
     }
     output.program.lambdas[id - 1] = {
         .id = id,
@@ -2655,7 +2654,7 @@ private:
     return {.type = type,
             .category = category,
             .access = access,
-            .traits = analyzer->traitsFor(type)};
+            .traits = instanceProvider->traitsFor(type)};
   }
 
   [[nodiscard]] static bool isAssignmentOperator(OverloadedOperator kind) {
@@ -2831,7 +2830,7 @@ private:
         .info = {.type = construction.constructedType,
                  .category = ValueCategory::Value,
                  .access = AccessMode::ReadOnly,
-                 .traits = analyzer->traitsFor(construction.constructedType)},
+                 .traits = instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
@@ -2943,7 +2942,7 @@ private:
         .info = {.type = type,
                  .category = ValueCategory::Value,
                  .access = AccessMode::ReadOnly,
-                 .traits = analyzer->traitsFor(type)},
+                 .traits = instanceProvider->traitsFor(type)},
         .operands = std::move(elements),
     };
     const HirValueId id = value.id;
@@ -2993,7 +2992,7 @@ private:
           .info = {.type = type,
                    .category = ValueCategory::Place,
                    .access = extractionAccess,
-                   .traits = analyzer->traitsFor(type)},
+                   .traits = instanceProvider->traitsFor(type)},
           .operands = {*operand},
           .intrinsic = intrinsic,
           .receiver = *operand,
@@ -3013,7 +3012,7 @@ private:
                              .info = {.type = type,
                                       .category = ValueCategory::Value,
                                       .access = AccessMode::ReadOnly,
-                                      .traits = analyzer->traitsFor(type)},
+                                      .traits = instanceProvider->traitsFor(type)},
                              .operands = {extraction},
                              .intrinsic = IntrinsicKind::Move});
       return id;
@@ -3037,7 +3036,7 @@ private:
          .info = {.type = unexpectedType,
                   .category = ValueCategory::Value,
                   .access = AccessMode::ReadOnly,
-                  .traits = analyzer->traitsFor(unexpectedType)},
+                  .traits = instanceProvider->traitsFor(unexpectedType)},
          .operands = {errorValue}});
 
     std::vector<HirValueId> operands{*operand, successExtraction};
@@ -3531,7 +3530,7 @@ private:
       } else {
         value.packExpansionElements.reserve(value.info.type.arguments.size());
         for (const SemanticType &element : value.info.type.arguments) {
-          const SemanticTypeTraits traits = analyzer->traitsFor(element);
+          const SemanticTypeTraits traits = instanceProvider->traitsFor(element);
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
@@ -4093,7 +4092,7 @@ private:
   }
 
   TargetInfo target;
-  SemanticVisitor *analyzer = nullptr;
+  SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
   HirValueId nextValueId = 1;
@@ -4128,9 +4127,10 @@ HirLowerer::~HirLowerer() = default;
 HirLowerer::HirLowerer(HirLowerer &&) noexcept = default;
 HirLowerer &HirLowerer::operator=(HirLowerer &&) noexcept = default;
 
-HirLoweringResult HirLowerer::lower(const Program &source,
-                                    SemanticVisitor &semantics) {
-  return impl->lower(source, semantics);
+HirLoweringResult
+HirLowerer::lower(const Program &source, const SemanticModel &semantics,
+                  SemanticInstanceProvider &instanceProvider) {
+  return impl->lower(source, semantics, instanceProvider);
 }
 
 } // namespace lang
