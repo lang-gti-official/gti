@@ -9,6 +9,9 @@
 
 namespace lang {
 
+class MirBodyAnalysisManager;
+struct MirClosedCallSafetyAnalysis;
+
 struct MirInstructionKey {
   MirBodyAddress body;
   MirInstructionId instruction = 0;
@@ -118,6 +121,12 @@ public:
 
   [[nodiscard]] MirEditResult apply();
 
+  // Reuses the analysis manager's immutable, revisioned whole-program safety
+  // snapshot. This entry point is reserved for optimizer passes already
+  // deriving claims from that manager; apply() remains the standalone
+  // canonical replay path.
+  [[nodiscard]] MirEditResult apply(MirBodyAnalysisManager &analyses);
+
 private:
   struct LiteralReplacement {
     MirInstructionKey target;
@@ -151,6 +160,9 @@ private:
     MirInstructionKey target;
     MirSafetyDischarge discharge;
   };
+
+  [[nodiscard]] MirEditResult
+  applyWithSafetySnapshot(const MirClosedCallSafetyAnalysis *sourceSafety);
 
   MirProgram &program;
   std::string pass;

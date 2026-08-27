@@ -112,6 +112,12 @@ writes, lifetime changes, and other unclassified mutation invalidate mutable
 facts instead of being guessed through. Every canonical normal edge
 participates, including a switch default edge; omitted infeasible branch edges
 retain their terminator slot identity when they later become executable.
+On a comparison edge, the refined interval also carries an edge-local widening
+envelope bounded by that comparison. A later loop join may widen the place,
+but replaying the dominating true edge restores its proved range before a call
+or checked operation. This envelope is derived only from the existing MIR
+predicate and exact comparison operand; it is not a relational solver or a
+source-name rule.
 
 Exact nonzero integer remainder and bitwise-and with one exact nonnegative mask
 have dedicated interval transfer. Remainder contributes a result-domain
@@ -123,16 +129,19 @@ For one bounded loop-carried accumulator family, safety analysis first solves
 the ordinary lattice, then derives a threshold from the existing reducible
 natural-loop forest and alias/effect facts. Every containing loop must have one
 literal initialization, one positive literal step, one latch, and a finite
-literal upper bound. The accumulator must have one dominating literal
-initialization and one additive write, cannot escape, and cannot share its loop
-with calls, raw/unsafe memory, synchronization, user code, unknown memory
-effects, or another aliasing write. The product of the containing trip-count
-upper bounds and the already-proved per-update interval forms a checked GTI
-integer threshold. A second run of the same solver widens to that threshold;
-ordinary branch refinement supplies the bounded edge narrowing needed by the
-client. Irreducible CFGs and arithmetic used to derive an unrepresentable
-threshold fail closed. This is not a second solver, general recurrence engine,
-or symbolic loop optimizer.
+nonnegative upper-bound interval proved at its dominating exit comparison. The
+comparison may follow exact source-defined calls only when their signatures,
+effects, and closed summaries prove that they cannot mutate or escape the
+counter; native, virtual, raw, unsafe, synchronizing, allocating, or otherwise
+opaque calls remain barriers. The accumulator must have one dominating literal
+initialization and one additive write and cannot escape or have another
+may-alias write. The product of the containing maximum trip counts and the
+already-proved per-update interval forms a checked GTI integer threshold. A
+second run of the same solver widens to that threshold; ordinary branch
+refinement supplies the bounded edge narrowing needed by the client.
+Irreducible CFGs and arithmetic used to derive an unrepresentable threshold
+fail closed. This is not a second solver, general recurrence engine, symbolic
+loop optimizer, or call transform.
 
 The admitted operations are deliberately narrow:
 
@@ -147,6 +156,8 @@ The admitted operations are deliberately narrow:
   by a destroy or mutation barrier; and
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
+- public logical-size checks whose integer intervals prove
+  `0 <= index < size`; and
 - integer remainder whose divisor is an exact nonzero value. The proof removes
   only the zero-divisor outcome; the C++ backend still uses a GTI-owned helper
   so signed-minimum remainder `-1` retains GTI's defined zero result instead of
@@ -159,23 +170,38 @@ fields, private prefix-storage capacity/length/content, and structurally
 admitted indexed-container element envelopes through concrete source-defined
 static calls and constructors. Indexed elements are admitted only when every
 relevant `operator[]` body is verified to return the exact receiver-owned
-prefix-storage element loan; public names never participate. Contexts join
-monotonically, use fixed global and per-body update budgets, and contribute
-proofs only after convergence. Recursive SCCs, native or virtual calls, owning
-argument transfers, synchronization, raw/unsafe memory, unsupported cleanup,
-open call families, and conflicting facts remain conservative.
+prefix-storage element loan through one matching field path; public names never
+participate. A scalar fact returned by reference crosses the call boundary only
+when the returned loan identifies one exact prefix-read producer with the same
+source and access. Prefix length is always constrained to the storage invariant
+`0 <= length <= capacity`; contradictory abstract facts fail closed. Contexts
+join monotonically and use the same typed integer/object widening policy as the
+body-local client after four prior per-body context updates. The global
+32-round limit and per-body eight-update limit remain fail-closed budgets; a
+body exceeding either boundary contributes no contextual proof. Proofs are
+published only after convergence. A body may retain contextual proofs
+established before a conservative call barrier even when that barrier prevents
+the body from exporting a complete return or mutation summary. The barrier
+still clears mutable facts for every later instruction. Recursive SCCs, native
+or virtual calls, owning-argument transfers, synchronization, raw/unsafe
+memory, unsupported cleanup, open call families, and conflicting facts remain
+conservative.
 
 Discharged checked `+=`, `-=`, and `*=` may emit the equivalent native C++
 compound operator. Remainder and shifts remain on GTI-owned helpers even after
 a local failure is discharged because native C++ does not represent every GTI
 defined-semantics boundary, including signed-minimum remainder by `-1`.
 
-Array borrows, public logical-size checks, division, dynamic-divisor remainder,
-shifts, unsupported conversions, and unproved or mismatched dynamic indices
-remain checked. A proved prefix read keeps that public check and discharges
-only the private representation recheck. Prefix append, insert, erase, pop,
-relocation, storage/index aliasing, opaque calls, and unsupported joins discard
-the exact relation. Place alias facts refine mutable safety state: duplicate
+Array borrows, unproved public logical-size checks, division, dynamic-divisor
+remainder, shifts, unsupported conversions, and unproved or mismatched dynamic
+indices remain checked. A proved public logical-size check and its matching
+private prefix read are discharged independently; proving only the first does
+not imply storage identity or initialization. A discharged public check emits
+no target operation and its existing failure edge becomes an unconditional
+success edge. Prefix append, insert, erase, pop, relocation, storage/index
+aliasing, opaque calls, and unsupported joins discard the exact relation.
+Place alias facts refine mutable safety state:
+duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves
 facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
 invalidated. Alias facts do not themselves discharge a check or infer a
@@ -253,11 +279,12 @@ to the header with different block arguments, the recurrence is ambiguous and
 no induction fact is produced.
 
 `analyzeMirPlaceAliasEscape` derives a body-local dense relation over stable
-MIR places. Equal places are `must-alias`; precise disjoint roots, fields, and
-constant indices are `no-alias`; indirect, dynamic-index, raw-memory, or
-otherwise unresolved relationships are `may-alias`. Distinct fields of a
-verified ordinary record are disjoint, while fields of a union overlap and
-remain `may-alias`. Escape reasons record
+MIR places. Equal places are `must-alias`; distinct precise roots, including
+roots of different local, receiver, global, and temporary kinds, plus disjoint
+fields and constant indices are `no-alias`; indirect, loan-rooted,
+value-rooted, dynamic-index, raw-memory, or otherwise unresolved relationships
+are `may-alias`. Distinct fields of a verified ordinary record are disjoint,
+while fields of a union overlap and remain `may-alias`. Escape reasons record
 address taking, returns, retained borrows, non-local stores, raw memory, and
 calls. Only closed exact static call summaries may project receiver or
 argument escape; unresolved, native, virtual, and recursive boundaries remain
@@ -284,6 +311,18 @@ claim invalidates conservatively. Cache entries have stable addresses and no
 interior MIR pointer survives invalidation. Memory SSA, inlining,
 devirtualization, and loop or memory transformations remain absent until a
 bounded measured client requires them.
+
+Safety-discharge passes hand the controlled MIR editor that same manager-owned
+closed-call snapshot. The editor exact-matches every queued claim against the
+canonical proof and may reuse it for candidate replay only when the complete
+edit batch attaches safety metadata and changes no semantic MIR input. A mixed
+batch independently analyzes the candidate, the standalone editor entry point
+independently analyzes its source, and final optimization-coherence verification
+still derives a fresh whole-program snapshot from canonical source MIR for any
+batch claiming a safety discharge. O0/O1 batches with no safety claim skip that
+inapplicable analysis. This avoids repeating the bounded interprocedural
+analysis for each safety family without turning cached pass claims into backend
+authority.
 
 ## Per-Instance Effects
 

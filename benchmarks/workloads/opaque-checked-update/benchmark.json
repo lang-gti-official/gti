@@ -1,0 +1,33 @@
+{
+  "schema": 2,
+  "name": "opaque-checked-update",
+  "description": "Runtime-opaque checked scalar recurrence with an exact source preflight proxy",
+  "work_units": 200000000,
+  "minimum_sample_seconds": 0.05,
+  "variants": [
+    {
+      "name": "gti-checked",
+      "kind": "gti",
+      "source": "checked.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "gti-preflight-proxy",
+      "kind": "gti",
+      "source": "preflight.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp",
+      "execution_profile": null
+    },
+    {
+      "name": "cpp-idiomatic",
+      "kind": "cpp",
+      "source": "idiomatic.cpp",
+      "execution_profile": null
+    }
+  ]
+}

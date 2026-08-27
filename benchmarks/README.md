@@ -223,6 +223,9 @@ workloads rather than one aggregate score:
   floating-point and closed-method control;
 - [`game-update-stage`](workloads/game-update-stage/README.md) is the initial
   representative scalar/container update stage;
+- [`opaque-checked-update`](workloads/opaque-checked-update/README.md) isolates
+  one runtime-opaque checked scalar recurrence and its exact source preflight
+  proxy;
 - [`optimizer-level-control`](workloads/optimizer-level-control/README.md)
   replaces the former manual optimizer example with a descriptor-backed
   fixed-native campaign.

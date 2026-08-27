@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "game-update-stage",
   "description": "Deterministic scalar and vector-backed entity update stage",
-  "work_units": 51200000,
+  "work_units": 61440000,
   "minimum_sample_seconds": 0.05,
   "variants": [
     {

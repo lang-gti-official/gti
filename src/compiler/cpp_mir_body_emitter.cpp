@@ -13238,6 +13238,26 @@ storageBoundsDetailSpelling(const MirProgram &program,
 }
 
 [[nodiscard]] bool
+dischargedStorageBoundsCheck(const MirProgram &program,
+                             const MirInstruction &instruction) {
+  if (!storageBoundsCheckCall(instruction) ||
+      instruction.localFailureSites.size() != 1) {
+    return false;
+  }
+  const FailureSiteDescriptor *site =
+      program.failureMetadata().findSite(instruction.localFailureSites.front());
+  if (site == nullptr || site->outcomes.size() != 1) {
+    return false;
+  }
+  return std::any_of(instruction.safetyDischarges.begin(),
+                     instruction.safetyDischarges.end(),
+                     [&](const MirSafetyDischarge &proof) {
+                       return proof.family == MirSafetyCheckFamily::Bounds &&
+                              proof.outcome == site->outcomes.front();
+                     });
+}
+
+[[nodiscard]] bool
 stringViewIndexFailureSite(const MirProgram &program,
                            const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Compute ||
@@ -20862,6 +20882,10 @@ private:
       output << ");\n";
       return;
     }
+    if (dischargedStorageBoundsCheck(program, instruction)) {
+      output << "// discharged logical bounds check " << instruction.id << "\n";
+      return;
+    }
     if (failureForm && storageBoundsCheckCall(instruction)) {
       const std::optional<std::string_view> detail =
           storageBoundsDetailSpelling(program, instruction);
@@ -21977,6 +22001,8 @@ private:
             producer->localFailureSites.empty() &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::None) ||
+           (producer->kind == MirInstructionKind::Call &&
+            dischargedStorageBoundsCheck(program, *producer)) ||
            (producer->kind == MirInstructionKind::Construct &&
             producer->localFailureSites.empty() &&
             producer->definedFailure.propagation ==
