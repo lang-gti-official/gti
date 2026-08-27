@@ -25099,6 +25099,131 @@ concept signed_value<T> = std::signed_numeric<T>;
          "conjunction spacing");
 }
 
+void testDomainValueOperatorCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "domain-operator-capabilities.gti", R"(
+#include <std/numeric>
+
+class vec3 {
+public:
+  vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+  float x;
+  float y;
+  float z;
+  vec3 operator+(vec3& other) {
+    return vec3(this.x + other.x, this.y + other.y, this.z + other.z);
+  }
+  vec3 operator-(vec3& other) {
+    return vec3(this.x - other.x, this.y - other.y, this.z - other.z);
+  }
+  vec3 operator-() { return vec3(-this.x, -this.y, -this.z); }
+  vec3 operator*(float scale) {
+    return vec3(this.x * scale, this.y * scale, this.z * scale);
+  }
+};
+
+int main() {
+  vec3 from = vec3(0.0, 0.0, 0.0);
+  vec3 to = vec3(10.0, 20.0, 30.0);
+  vec3 middle = std::lerp(from, to, 0.5);
+  vec3 opposite = std::negated(to);
+  float scalar = std::lerp(0.0, 8.0, 0.25);
+  return (middle.x == 5.0 && middle.y == 10.0 && middle.z == 15.0 &&
+          opposite.x == -10.0 && scalar == 2.0)
+             ? 0
+             : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected domain-operator diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "a user domain type should satisfy std::vector_space and drive the "
+         "generic std::lerp while built-in float uses its exact overload");
+
+  const auto rejects = [&](std::string_view name, const std::string &source,
+                           std::string_view conceptName,
+                           std::string_view hintFragment,
+                           std::string_view message) {
+    const lang::FrontendResult result = lang::Frontend().analyze(
+        std::string(name), source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnostic(result.diagnostics,
+                             std::string("do not satisfy concept '") +
+                                 std::string(conceptName) + "'") &&
+               hasDiagnostic(result.diagnostics, std::string(hintFragment)),
+           std::string(message));
+  };
+
+  rejects("domain-operator-missing-add.gti", R"(
+class half {
+public:
+  half(float v) : v(v) {}
+  float v;
+};
+T twice<T>(T& a) requires std::addable<T> { return a + a; }
+int main() { half h = half(1.0); half r = twice(h); return 0; }
+)",
+          "std::addable", "T operator+(T&)",
+          "a domain type without operator+ should fail std::addable with the "
+          "member-form hint");
+
+  rejects("domain-operator-missing-negate.gti", R"(
+class half {
+public:
+  half(float v) : v(v) {}
+  float v;
+  half operator+(half& o) { return half(this.v + o.v); }
+};
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { half h = half(1.0); half r = opposite(h); return 0; }
+)",
+          "std::negatable", "unary",
+          "a domain type without unary operator- should fail std::negatable");
+
+  rejects("domain-operator-builtin-excluded.gti", R"(
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { int32_t v = 3; int32_t r = opposite(v); return 0; }
+)",
+          "std::negatable", "unary",
+          "the domain family is member-only: a built-in numeric keeps its own "
+          "checked arithmetic and does not satisfy it");
+
+  rejects("domain-operator-mismatched-scalar.gti", R"(
+class vec2 {
+public:
+  vec2(float x, float y) : x(x), y(y) {}
+  float x;
+  float y;
+  vec2 operator*(float s) { return vec2(this.x * s, this.y * s); }
+};
+T scale<T, S>(T& v, S s) requires std::scalable_by<T, S> { return v * s; }
+int main() { vec2 v = vec2(1.0, 2.0); vec2 r = scale(v, 2); return 0; }
+)",
+          "std::scalable_by", "operator*(Scalar)",
+          "scaling by a type the domain does not accept should fail "
+          "std::scalable_by rather than converting the scalar");
+
+  rejects("domain-operator-borrowed-result.gti", R"(
+class holder {
+public:
+  holder(float v) : v(v) {}
+  mut float v;
+  holder& operator+(holder& other) { return other; }
+};
+T twice<T>(T& a) requires std::addable<T> { return a + a; }
+int main() { holder h = holder(1.0); holder r = twice(h); return 0; }
+)",
+          "std::addable", "owned value",
+          "a borrowed operator result should fail std::addable: the capability "
+          "requires an owned domain value");
+}
+
 void testStructuralRequiresAndAccumulate() {
   const std::string source = R"(
 #include <std/iterator>
@@ -35544,6 +35669,7 @@ int main(int argc, char **argv) {
     testCallSiblingArgumentBorrowConflicts();
     testForwardIteratorContractsAndBinarySearch();
     testWritableAndMovementIteratorCapabilities();
+    testDomainValueOperatorCapabilities();
     return failures == 0 ? 0 : 1;
   }
   if (argc == 2 && std::string(argv[1]) == "constexpr") {

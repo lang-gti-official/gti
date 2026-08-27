@@ -2585,14 +2585,35 @@ name recognition.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
-- **State/role:** systems-ready, bounded-first; select a demonstrated
-  renderer/math/domain-type client before implementation.
-- **Scope:** Decide which arithmetic operators improve domain types without
-  importing ADL, rewrite rules, or conversion ranking. Add one exact
-  member/capability family with all tooling layers before the next.
-- **Exit gate:** the selected operator family has one lookup/conversion rule,
-  exhaustive diagnostics and tooling coverage, and no native C++ overload
-  behavior is needed to explain accepted source.
+- **State/role:** first family implemented; the demonstrated client is
+  renderer/math domain values (`vec2`/`vec3`-shaped types and a second
+  integer-scalar domain type) driving one generic body.
+- **Implemented family:** four structural capabilities — `adds<T>`,
+  `subtracts<T>`, `negates<T>`, and `scales_by<T, Scalar>` — each proving one
+  exact public read-only member returning an *owned* value of the domain type.
+  They are spelled publicly as `std::addable`, `std::subtractable`,
+  `std::negatable`, and `std::scalable_by`, composing into
+  `std::vector_space<T, Scalar>` with `std::copyable<T>`. Generic bodies gain
+  the matching symbolic candidates for binary `+`/`-`, unary `-`, and scalar
+  `*` on a constrained type parameter; concrete instances re-select the real
+  member declarations. `std::lerp` and `std::negated` in `<std/numeric>` are
+  the source-defined clients, with exact `float`/`double` overloads of
+  `std::lerp` for built-ins.
+- **Deliberate boundary:** the family is member-only, matching the language's
+  member-only user-operator rule. A built-in numeric does not satisfy it —
+  admitting one would resolve its operators as symbolic member calls and drop
+  the canonical local failure outcomes checked integer arithmetic must retain
+  (observed directly while implementing this row). A borrowed operator result
+  is also excluded, since the produced value would be tied to a receiver whose
+  lifetime the requirement cannot name.
+- **Remaining scope:** compound domain operators (`+=` and friends), a
+  matrix/product family with distinct operand and result domains, and any
+  ordering or hashing capability for domain values are separate families under
+  the same one-family-at-a-time rule.
+- **Exit gate (met for this family):** one lookup rule (exact member-only
+  selection, no conversion), focused positive and negative diagnostics for each
+  capability, and O0/O3 × C++20/C++23 runtime evidence over two domain types.
+  No native C++ overload behavior is needed to explain accepted source.
 
 ### L-OWN-01: Shared And Weak Ownership
 

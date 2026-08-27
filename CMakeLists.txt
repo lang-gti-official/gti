@@ -1774,6 +1774,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME domain_operator_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/domain_operator_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(domain_operator_runtime PROPERTIES TIMEOUT 300)
 
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
