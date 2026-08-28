@@ -1016,6 +1016,9 @@ auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
   if (const auto *variable = stmtAs<VariableDecl>(&statement)) {
     return sourceUnitFor(variable->name());
   }
+  if (const auto *assertion = stmtAs<StaticAssertDecl>(&statement)) {
+    return sourceUnitFor(assertion->keyword());
+  }
   if (const auto *binding = stmtAs<StructuredBindingDecl>(&statement)) {
     return sourceUnitFor(binding->autoKeyword());
   }

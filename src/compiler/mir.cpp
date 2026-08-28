@@ -8842,12 +8842,33 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   }
 
   const auto markerCanReach = [&](const MirInstruction &from,
-                                  const MirInstruction &to) {
+                                  const MirInstruction &to,
+                                  const MirFullExpression &expression) {
     const MirBlockId fromBlock = instructionBlocks.at(from.id);
     const MirBlockId toBlock = instructionBlocks.at(to.id);
     if (fromBlock == toBlock) {
       return instructionOrders.at(from.id) < instructionOrders.at(to.id);
     }
+    const auto beginsNextEvaluation = [&](const MirBlock &block) {
+      const auto isRoot = [&](HirValueId value) {
+        return value != 0 &&
+               std::find(expression.roots.begin(), expression.roots.end(),
+                         value) != expression.roots.end();
+      };
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.id == to.id) {
+          return false;
+        }
+        // Boundary lifecycle instructions repeat the source root identity;
+        // only an ordinary root-producing instruction starts a new dynamic
+        // evaluation of this full expression.
+        if (instruction.fullExpressionEnd == 0 &&
+            isRoot(instruction.hirValue)) {
+          return true;
+        }
+      }
+      return block.id != toBlock && isRoot(block.terminator.hirValue);
+    };
     std::queue<MirBlockId> pendingBlocks;
     std::unordered_set<MirBlockId> visitedBlocks;
     const MirBlock *origin = body.findBlock(fromBlock);
@@ -8862,12 +8883,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (!visitedBlocks.insert(candidate).second) {
         continue;
       }
+      const MirBlock *block = body.findBlock(candidate);
+      if (block == nullptr || beginsNextEvaluation(*block)) {
+        continue;
+      }
       if (candidate == toBlock) {
         return true;
-      }
-      const MirBlock *block = body.findBlock(candidate);
-      if (block == nullptr) {
-        continue;
       }
       for (const MirBlockId successor : successors(block->terminator)) {
         pendingBlocks.push(successor);
@@ -8875,12 +8896,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     return false;
   };
-  for (const std::vector<const MirInstruction *> &markers :
-       fullExpressionMarkerRows) {
+  for (std::size_t expressionIndex = 0;
+       expressionIndex < fullExpressionMarkerRows.size(); ++expressionIndex) {
+    const std::vector<const MirInstruction *> &markers =
+        fullExpressionMarkerRows[expressionIndex];
+    const MirFullExpression &expression =
+        body.fullExpressions[expressionIndex];
     for (std::size_t left = 0; left < markers.size(); ++left) {
       for (std::size_t right = left + 1; right < markers.size(); ++right) {
-        if (markerCanReach(*markers[left], *markers[right]) ||
-            markerCanReach(*markers[right], *markers[left])) {
+        if (markerCanReach(*markers[left], *markers[right], expression) ||
+            markerCanReach(*markers[right], *markers[left], expression)) {
           return failure(body, owner,
                          "full-expression boundary markers are not on mutually "
                          "exclusive control-flow paths",

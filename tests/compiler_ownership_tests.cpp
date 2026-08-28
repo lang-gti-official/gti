@@ -11768,6 +11768,29 @@ int main() {
          "HIR should retain range syntax provenance and concrete begin, end, "
          "comparison, dereference, and increment targets");
 
+  const lang::FrontendResult concreteGeneric = lang::Frontend().analyze(
+      "generic-range-for.gti", R"(
+#include <std/vector>
+int32_t count_all<std::copyable T>(std::vector<T>& values) {
+  mut int32_t total = 0;
+  for (auto& value : values) { total = total + 1; }
+  return total;
+}
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  return count_all(values) - 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(concreteGeneric.canGenerateCode() &&
+             concreteGeneric.diagnostics.empty() &&
+             lang::verifyHirProgramPlans(concreteGeneric.semantics,
+                                         concreteGeneric.hir)
+                 .valid(),
+         "a concrete generic range body should verify against its exact HIR "
+         "binding and per-instance loan facts");
+
   const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
   const auto &occurrences = frontend.semantics.database().occurrences(unit);
   expect(std::none_of(occurrences.begin(), occurrences.end(),
@@ -14993,6 +15016,28 @@ int main() {
              earlyBoundaries == 2 && primaryBoundaries == 1,
          "MIR should lower two propagations in one expression to ordered, "
          "mutually exclusive early returns and one normal boundary");
+
+  const lang::FrontendResult loopPropagation =
+      analyzeTrustedPreludeFixture("expected-propagation-loop.gti", R"(
+enum class parse_errc { bad_digit };
+expected<int32_t, parse_errc> digit_value(int32_t value) {
+  if (value < 0) { return unexpected(parse_errc::bad_digit); }
+  return value;
+}
+expected<int32_t, parse_errc> sum_three() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    int32_t digit = ?digit_value(index);
+    total = total + digit;
+  }
+  return total;
+}
+int main() { return sum_three().value() - 3; }
+)");
+  expect(loopPropagation.canGenerateCode() &&
+             lang::verifyMirProgram(loopPropagation.mir).valid(),
+         "a propagation boundary repeated by a loop should remain exclusive "
+         "within each dynamic full-expression evaluation");
 
   const lang::FrontendResult manualExtraction =
       analyzeTrustedPreludeFixture("manual-expected-extraction.gti", R"(
