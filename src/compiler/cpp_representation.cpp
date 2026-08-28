@@ -2,7 +2,16 @@
 
 #include "gti/lowered_program.h"
 
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/Support/SHA256.h>
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 
@@ -34,6 +43,236 @@ namespace {
     begin = end + 2;
   }
   return index == 0 ? "void" : result;
+}
+
+void appendIdentityInteger(std::vector<std::uint8_t> &output,
+                           std::uint64_t value) {
+  for (unsigned index = 0; index < 8; ++index) {
+    output.push_back(static_cast<std::uint8_t>(value >> (index * 8U)));
+  }
+}
+
+void appendIdentityText(std::vector<std::uint8_t> &output,
+                        std::string_view value) {
+  appendIdentityInteger(output, value.size());
+  output.insert(output.end(), value.begin(), value.end());
+}
+
+[[nodiscard]] bool
+appendConcreteValueIdentity(std::vector<std::uint8_t> &output,
+                            const CompileTimeValue &value) {
+  if (value.kind != CompileTimeValue::UInt64) {
+    return false;
+  }
+  appendIdentityText(output, "value-u64");
+  appendIdentityInteger(output, value.value);
+  return true;
+}
+
+[[nodiscard]] const LoweredDeclaration *
+classDeclarationRow(const LoweredProgram &program, ClassId id) {
+  for (const LoweredDeclaration &row : program.declarations()) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&row.payload);
+    if (declaration != nullptr && declaration->id == id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] const LoweredDeclaration *
+enumDeclarationRow(const LoweredProgram &program, EnumId id) {
+  for (const LoweredDeclaration &row : program.declarations()) {
+    const auto *declaration = std::get_if<LoweredEnumDeclaration>(&row.payload);
+    if (declaration != nullptr && declaration->id == id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] bool appendConcreteTypeIdentity(std::vector<std::uint8_t> &output,
+                                              const LoweredProgram &program,
+                                              const SemanticType &type) {
+  const auto appendArguments = [&]() {
+    appendIdentityInteger(output, type.arguments.size());
+    for (const SemanticType &argument : type.arguments) {
+      if (!appendConcreteTypeIdentity(output, program, argument)) {
+        return false;
+      }
+    }
+    appendIdentityInteger(output, type.valueArguments.size());
+    for (const CompileTimeValue &argument : type.valueArguments) {
+      if (!appendConcreteValueIdentity(output, argument)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  switch (type.kind) {
+  case SemanticType::Void:
+    appendIdentityText(output, "void");
+    return true;
+  case SemanticType::Int8:
+    appendIdentityText(output, "i8");
+    return true;
+  case SemanticType::Int16:
+    appendIdentityText(output, "i16");
+    return true;
+  case SemanticType::Int32:
+    appendIdentityText(output, "i32");
+    return true;
+  case SemanticType::Int64:
+    appendIdentityText(output, "i64");
+    return true;
+  case SemanticType::UInt8:
+    appendIdentityText(output, "u8");
+    return true;
+  case SemanticType::UInt16:
+    appendIdentityText(output, "u16");
+    return true;
+  case SemanticType::UInt32:
+    appendIdentityText(output, "u32");
+    return true;
+  case SemanticType::UInt64:
+    appendIdentityText(output, "u64");
+    return true;
+  case SemanticType::Float:
+    appendIdentityText(output, "f32");
+    return true;
+  case SemanticType::Double:
+    appendIdentityText(output, "f64");
+    return true;
+  case SemanticType::Bool:
+    appendIdentityText(output, "bool");
+    return true;
+  case SemanticType::Char:
+    appendIdentityText(output, "char");
+    return true;
+  case SemanticType::StringView:
+    appendIdentityText(output, "string-view");
+    return true;
+  case SemanticType::CString:
+    appendIdentityText(output, "c-string");
+    return true;
+  case SemanticType::NullPtr:
+    appendIdentityText(output, "null-pointer");
+    return true;
+  case SemanticType::RawPointer:
+    appendIdentityText(output, "raw-pointer");
+    appendIdentityInteger(output,
+                          static_cast<std::uint64_t>(type.pointerAccess));
+    return appendArguments();
+  case SemanticType::Array:
+    if (type.arrayLengthParameterId != 0) {
+      return false;
+    }
+    appendIdentityText(output, "array");
+    appendIdentityInteger(output, type.arrayLength);
+    return appendArguments();
+  case SemanticType::Class: {
+    const LoweredClassDeclaration *declaration =
+        program.findClassDeclaration(type.classId);
+    const LoweredDeclaration *row = classDeclarationRow(program, type.classId);
+    if (declaration == nullptr || row == nullptr) {
+      return false;
+    }
+    appendIdentityText(output, "class");
+    appendIdentityText(output, declaration->qualifiedName);
+    // A compiler-private or same-spelled nominal declaration in another
+    // source unit remains distinct without importing snapshot-local IDs.
+    appendIdentityText(output, row->source.source);
+    const std::vector<SemanticType> &arguments =
+        declaration->exactSpecializationPrimary == 0
+            ? type.arguments
+            : declaration->exactTypeArguments;
+    const std::vector<CompileTimeValue> &values =
+        declaration->exactSpecializationPrimary == 0
+            ? type.valueArguments
+            : declaration->exactValueArguments;
+    appendIdentityInteger(output, arguments.size());
+    for (const SemanticType &argument : arguments) {
+      if (!appendConcreteTypeIdentity(output, program, argument)) {
+        return false;
+      }
+    }
+    appendIdentityInteger(output, values.size());
+    for (const CompileTimeValue &value : values) {
+      if (!appendConcreteValueIdentity(output, value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  case SemanticType::Enum: {
+    const LoweredEnumDeclaration *declaration =
+        program.findEnumDeclaration(type.enumId);
+    const LoweredDeclaration *row = enumDeclarationRow(program, type.enumId);
+    if (declaration == nullptr || row == nullptr) {
+      return false;
+    }
+    appendIdentityText(output, "enum");
+    appendIdentityText(output, declaration->qualifiedName);
+    appendIdentityText(output, row->source.source);
+    return true;
+  }
+  case SemanticType::Reference:
+    appendIdentityText(output, "reference");
+    appendIdentityInteger(output,
+                          static_cast<std::uint64_t>(type.referenceAccess));
+    return appendArguments();
+  case SemanticType::UniqueOwner:
+    appendIdentityText(output, "unique-owner");
+    return appendArguments();
+  case SemanticType::Storage:
+    appendIdentityText(output, "storage");
+    return appendArguments();
+  case SemanticType::PrefixStorage:
+    appendIdentityText(output, "prefix-storage");
+    return appendArguments();
+  case SemanticType::TypePack:
+    if (!type.concretePack) {
+      return false;
+    }
+    appendIdentityText(output, "concrete-type-pack");
+    return appendArguments();
+  case SemanticType::NativeFunction:
+    if (!type.hasNativeFunctionShape()) {
+      return false;
+    }
+    appendIdentityText(output, "native-function");
+    return appendArguments();
+  case SemanticType::Expected:
+    appendIdentityText(output, "expected");
+    return appendArguments();
+  case SemanticType::Unknown:
+  case SemanticType::SharedPointer:
+  case SemanticType::TypeParameter:
+  case SemanticType::TypeName:
+  case SemanticType::Function:
+  case SemanticType::Lambda:
+  case SemanticType::Unexpected:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] std::string
+identityDigestHex(const std::vector<std::uint8_t> &identity) {
+  static constexpr std::array<char, 16> digits = {'0', '1', '2', '3', '4', '5',
+                                                  '6', '7', '8', '9', 'a', 'b',
+                                                  'c', 'd', 'e', 'f'};
+  const std::array<std::uint8_t, 32> digest = llvm::SHA256::hash(
+      llvm::ArrayRef<std::uint8_t>(identity.data(), identity.size()));
+  std::string result;
+  result.reserve(digest.size() * 2);
+  for (const std::uint8_t byte : digest) {
+    result.push_back(digits[byte >> 4U]);
+    result.push_back(digits[byte & 0x0FU]);
+  }
+  return result;
 }
 
 } // namespace
@@ -292,6 +531,96 @@ std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
   }
   return "__gti_fn_" + std::to_string(function.id) + "_" +
          std::string(sourceName);
+}
+
+bool cppConcreteFunctionInstanceIsNameable(
+    const LoweredProgram &program, const LoweredFunctionInstance &instance,
+    const MirFunctionInstance &mirInstance) {
+  if (instance.id == 0 || instance.id != mirInstance.id ||
+      instance.declaration == 0 ||
+      instance.declaration != mirInstance.declaration ||
+      instance.owner != mirInstance.owner ||
+      instance.typeArguments != mirInstance.typeArguments ||
+      instance.valueArguments != mirInstance.valueArguments) {
+    return false;
+  }
+  std::vector<std::uint8_t> identity;
+  for (const SemanticType &argument : instance.typeArguments) {
+    if (!appendConcreteTypeIdentity(identity, program, argument)) {
+      return false;
+    }
+  }
+  for (const CompileTimeValue &argument : instance.valueArguments) {
+    if (!appendConcreteValueIdentity(identity, argument)) {
+      return false;
+    }
+  }
+  if (!appendConcreteTypeIdentity(identity, program, mirInstance.returnType)) {
+    return false;
+  }
+  for (const SemanticType &parameter : mirInstance.parameterTypes) {
+    if (!appendConcreteTypeIdentity(identity, program, parameter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<std::string>
+cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance) {
+  const auto *rowFunction =
+      std::get_if<LoweredFunctionDeclaration>(&row.payload);
+  if (rowFunction == nullptr || rowFunction->id != function.id ||
+      function.id == 0 || function.ownerClass != 0 ||
+      function.genericParameters.empty() ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.linkage != LanguageLinkage::Gti ||
+      function.intrinsic != IntrinsicKind::None || instance.owner ||
+      mirInstance.owner || instance.declaration != function.id ||
+      mirInstance.declaration != function.id ||
+      !cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance)) {
+    return std::nullopt;
+  }
+
+  std::vector<std::uint8_t> identity;
+  appendIdentityText(identity, "GTI-CONCRETE-FREE-FUNCTION-V1");
+  appendIdentityText(identity, function.qualifiedName);
+  appendIdentityText(identity, row.name);
+  appendIdentityInteger(identity, function.internalLinkage ? 1 : 0);
+  if (function.internalLinkage) {
+    appendIdentityText(identity, row.source.source);
+  }
+  appendIdentityInteger(identity, function.genericParameters.size());
+  for (const LoweredGenericParameter &parameter : function.genericParameters) {
+    appendIdentityInteger(identity, parameter.value ? 1 : 0);
+    appendIdentityInteger(identity, parameter.pack ? 1 : 0);
+  }
+  appendIdentityInteger(identity, instance.typeArguments.size());
+  for (const SemanticType &argument : instance.typeArguments) {
+    if (!appendConcreteTypeIdentity(identity, program, argument)) {
+      return std::nullopt;
+    }
+  }
+  appendIdentityInteger(identity, instance.valueArguments.size());
+  for (const CompileTimeValue &argument : instance.valueArguments) {
+    if (!appendConcreteValueIdentity(identity, argument)) {
+      return std::nullopt;
+    }
+  }
+  if (!appendConcreteTypeIdentity(identity, program, mirInstance.returnType)) {
+    return std::nullopt;
+  }
+  appendIdentityInteger(identity, mirInstance.parameterTypes.size());
+  for (const SemanticType &parameter : mirInstance.parameterTypes) {
+    if (!appendConcreteTypeIdentity(identity, program, parameter)) {
+      return std::nullopt;
+    }
+  }
+  return "__gti_inst_" + identityDigestHex(identity) + "_" + row.name;
 }
 
 // Ported verbatim from the compatibility emitter's

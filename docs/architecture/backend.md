@@ -403,10 +403,18 @@ reject body emission rather than falling back to native temporary behavior.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
-effects come from the lowered MIR and generated-item contracts. Generic source
-surfaces may be represented as C++ templates and concrete specializations;
-specialization eligibility comes from concrete-instance items, and executable
-specialization text still comes from MIR.
+effects come from the lowered MIR and generated-item contracts. A nameable
+source-defined generic free-function instance emits as one ordinary C++
+function, not a native template specialization. Its backend-private
+`__gti_inst_<digest>_<source-name>` symbol hashes a versioned serialization of
+the lowered qualified declaration identity, generic parameter shape, concrete
+type/value arguments, and MIR return/parameter signature. The identity contains
+no discovery-order `FunctionId`, and the representation snapshot copies that
+exact symbol into every normal or failure-form call row. Native overload
+resolution and template argument deduction therefore perform no selection for
+this family. Generic classes, members, and constructors still use the bounded
+primary/specialization representation described below until their concrete
+instance families migrate in turn; their executable text still comes from MIR.
 
 Closure-typed (unnameable) instances of one generic declaration emit through
 a single deduced-callable template whose body text is canonical per

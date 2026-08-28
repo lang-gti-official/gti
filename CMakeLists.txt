@@ -413,6 +413,8 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
+target_include_directories("gti_cpp_backend" SYSTEM PRIVATE
+                           ${GTI_LLVM_INCLUDE_DIRS})
 target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
 target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 

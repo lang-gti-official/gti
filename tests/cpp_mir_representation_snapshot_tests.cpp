@@ -1928,6 +1928,136 @@ int main() {
          "complete C++ plan");
 }
 
+void testConcreteGenericFreeFunctionIdentity() {
+  const std::string genericSource = R"(
+T identity<T>(T value) { return value; }
+constexpr uint64_t extent<uint64_t N>() { return N; }
+
+int main() {
+  int32_t first = identity(1);
+  int64_t second = identity(int64_t(2));
+  uint64_t count = extent<3>();
+  return first + int32_t(second) + int32_t(count) - 6;
+}
+)";
+  const std::string shiftedSource = R"(
+int32_t unrelated(int32_t value) { return value; }
+T identity<T>(T value) { return value; }
+constexpr uint64_t extent<uint64_t N>() { return N; }
+
+int main() {
+  int32_t first = identity(1);
+  int64_t second = identity(int64_t(2));
+  uint64_t count = extent<3>();
+  return first + int32_t(second) + int32_t(count) - 6;
+}
+)";
+  const lang::FrontendResult original =
+      lang::Frontend().analyze("concrete-generic-identity.gti", genericSource);
+  const lang::FrontendResult shifted =
+      lang::Frontend().analyze("concrete-generic-identity.gti", shiftedSource);
+  expect(original.canGenerateCode() && shifted.canGenerateCode(),
+         "the concrete generic identity fixtures should pass the frontend");
+  if (!original.canGenerateCode() || !shifted.canGenerateCode()) {
+    return;
+  }
+
+  const lang::LoweredProgram originalLowered =
+      gti_test::lowerProgram(original, original.mir, original.mir);
+  const lang::LoweredProgram shiftedLowered =
+      gti_test::lowerProgram(shifted, shifted.mir, shifted.mir);
+  struct Evidence {
+    std::vector<std::string> spellings;
+    lang::FunctionId identityDeclaration = 0;
+    std::string legacyIdentitySpelling;
+  };
+  const auto collect = [](const lang::LoweredProgram &lowered) {
+    Evidence evidence;
+    for (const lang::LoweredDeclaration &row : lowered.declarations()) {
+      const auto *function =
+          std::get_if<lang::LoweredFunctionDeclaration>(&row.payload);
+      if (function == nullptr ||
+          (row.name != "identity" && row.name != "extent")) {
+        continue;
+      }
+      if (row.name == "identity") {
+        evidence.identityDeclaration = function->id;
+        evidence.legacyIdentitySpelling =
+            lang::cppFunctionSpelling(*function, row.name);
+      }
+      for (const lang::MirFunctionInstance &mirInstance :
+           lowered.mir().functionInstances()) {
+        if (mirInstance.declaration != function->id) {
+          continue;
+        }
+        const lang::LoweredFunctionInstance *instance =
+            lowered.findFunctionInstance(mirInstance.id);
+        const std::optional<std::string> spelling =
+            instance == nullptr
+                ? std::nullopt
+                : lang::cppConcreteFreeFunctionSpelling(lowered, row, *function,
+                                                        *instance, mirInstance);
+        if (spelling) {
+          evidence.spellings.push_back(*spelling);
+        }
+      }
+    }
+    std::sort(evidence.spellings.begin(), evidence.spellings.end());
+    return evidence;
+  };
+  const Evidence originalEvidence = collect(originalLowered);
+  const Evidence shiftedEvidence = collect(shiftedLowered);
+  const auto wellFormed = [](const std::string &spelling) {
+    constexpr std::string_view prefix = "__gti_inst_";
+    if (!spelling.starts_with(prefix) ||
+        spelling.size() <= prefix.size() + 64 ||
+        spelling[prefix.size() + 64] != '_') {
+      return false;
+    }
+    return std::all_of(
+        spelling.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+        spelling.begin() + static_cast<std::ptrdiff_t>(prefix.size() + 64),
+        [](char character) {
+          return (character >= '0' && character <= '9') ||
+                 (character >= 'a' && character <= 'f');
+        });
+  };
+  expect(originalEvidence.spellings.size() == 3 &&
+             std::all_of(originalEvidence.spellings.begin(),
+                         originalEvidence.spellings.end(), wellFormed) &&
+             std::adjacent_find(originalEvidence.spellings.begin(),
+                                originalEvidence.spellings.end()) ==
+                 originalEvidence.spellings.end(),
+         "type and value generic instances should receive distinct, "
+         "well-formed GTI-owned concrete symbols");
+  expect(originalEvidence.identityDeclaration != 0 &&
+             shiftedEvidence.identityDeclaration != 0 &&
+             originalEvidence.identityDeclaration !=
+                 shiftedEvidence.identityDeclaration &&
+             originalEvidence.legacyIdentitySpelling !=
+                 shiftedEvidence.legacyIdentitySpelling &&
+             originalEvidence.spellings == shiftedEvidence.spellings,
+         "concrete generic symbols should remain byte-identical when an "
+         "unrelated declaration changes discovery-order IDs");
+
+  const std::string generated = gti_test::emitCppText(original);
+  bool everyConcreteSymbolEmitted = true;
+  for (const std::string &spelling : originalEvidence.spellings) {
+    everyConcreteSymbolEmitted =
+        everyConcreteSymbolEmitted &&
+        generated.find(spelling + "(") != std::string::npos &&
+        generated.find("template <> " + spelling) == std::string::npos;
+  }
+  expect(everyConcreteSymbolEmitted &&
+             generated.find("template <typename T>\n  T " +
+                            originalEvidence.legacyIdentitySpelling) ==
+                 std::string::npos &&
+             generated.find("::__gti_program::__gti_inst_") !=
+                 std::string::npos,
+         "nameable generic free functions should emit and call plain concrete "
+         "functions without native template selection");
+}
+
 int main() {
   testImmutableProgramPlanOwnsOrderedText();
   testExhaustiveSealedInventory();
@@ -1951,6 +2081,7 @@ int main() {
   testUnusedGenericDestructorNeedsNoConcreteDefinition();
   testConcreteInstanceGeneratedItemRows();
   testReferenceReceiverCompoundAssignPlaceCoherence();
+  testConcreteGenericFreeFunctionIdentity();
 
   if (failures != 0) {
     std::cerr << failures

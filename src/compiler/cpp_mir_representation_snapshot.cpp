@@ -819,6 +819,7 @@ struct RowFunctionFacts {
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> parameterTypes;
   std::string spelling;
+  bool concreteSpelling = false;
   bool cLinkage = false;
   bool runtimeBinding = false;
 };
@@ -885,18 +886,27 @@ public:
   }
 
   [[nodiscard]] std::optional<RowFunctionFacts>
-  functionFacts(FunctionId id) const {
+  functionFacts(const MirFunctionInstance &instance) const {
     for (const LoweredDeclaration &declaration : lowered.declarations()) {
       const auto *info =
           std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
-      if (info == nullptr || info->id != id) {
+      if (info == nullptr || info->id != instance.declaration) {
         continue;
       }
+      const LoweredFunctionInstance *loweredInstance =
+          lowered.findFunctionInstance(instance.id);
+      const std::optional<std::string> concrete =
+          loweredInstance == nullptr
+              ? std::nullopt
+              : cppConcreteFreeFunctionSpelling(lowered, declaration, *info,
+                                                *loweredInstance, instance);
       RowFunctionFacts result{
           .name = declaration.name,
           .namespaceScope = declaration.namespaceScope,
           .genericParameters = info->genericParameters,
-          .spelling = cppFunctionSpelling(*info, declaration.name),
+          .spelling =
+              concrete.value_or(cppFunctionSpelling(*info, declaration.name)),
+          .concreteSpelling = concrete.has_value(),
           .cLinkage = info->linkage == LanguageLinkage::C,
           .runtimeBinding =
               info->definitionKind == MirDefinitionKind::RuntimeBinding};
@@ -1568,8 +1578,7 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     // declarations their exact external names. Only the namespace-scope
     // source-defined GTI form is also a valid call-target spelling; the
     // scalar call family's gates admit exactly that form.
-    const std::optional<RowFunctionFacts> info =
-        facts.functionFacts(function.declaration);
+    const std::optional<RowFunctionFacts> info = facts.functionFacts(function);
     if (!info) {
       continue;
     }
@@ -1615,7 +1624,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     // substituted arguments explicitly — exactly like the compatibility
     // call site. Deducible instances keep the bare name so shipped
     // spellings stay byte-stable.
-    if ((!function.typeArguments.empty() || !function.valueArguments.empty()) &&
+    if (!info->concreteSpelling &&
+        (!function.typeArguments.empty() || !function.valueArguments.empty()) &&
         !info->genericParameters.empty()) {
       const auto mentionsParameter =
           [&](const LoweredGenericParameter &parameter) {
