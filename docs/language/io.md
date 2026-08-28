@@ -114,6 +114,16 @@ grouping, width, or alternate base, and complete coverage of signed minima and
 unsigned maxima. `<std/string>` supplies the same conversion as an owning
 `std::to_string(integer)` result.
 
+`<std/string>` also adds binary32 text through `std::to_string(float)` and the
+matching `std::print`/`std::println` overloads. The output is an optional minus
+sign, the integer part, a point, and exactly six fractional digits, with `nan`,
+`inf`, and `-inf` for non-finite values and no locale, width, precision, or
+exponent form. The digits are the stored value's exact decimal expansion,
+rounded half up at the sixth place — not a re-rounded approximation — so the
+text matches C's `printf("%f", (float)value)` for every finite binary32,
+including magnitudes past the range of a 64-bit integer. Binary64 text, float
+parsing, and float arguments to `std::format` are separate later slices.
+
 `<std/format>` adds the first replacement-field layer:
 
 ```gti
