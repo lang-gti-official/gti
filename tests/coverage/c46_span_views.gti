@@ -1,0 +1,31 @@
+// Spans over an owner: subspan, first/last, iteration and generic relay.
+#include <std/vector>
+#include <std/span>
+
+int32_t sum_span(std::span<int32_t> view) {
+  mut int32_t total = 0;
+  for (mut std::size_t i = std::size_t(0); i < view.size(); i++) {
+    total = total + view[i];
+  }
+  return total;
+}
+
+std::span<T> relay<T>(std::span<T> view) { return view; }
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1); values.push_back(2); values.push_back(3); values.push_back(4);
+
+  std::span<int32_t> all = values.as_span();
+  std::print(sum_span(all)); std::print(" ");
+  std::print(int32_t(all.size())); std::print(" ");
+  std::print(all.empty() ? 1 : 0); std::print(" ");
+  std::print(all.front()); std::print(all.back()); std::print(" ");
+
+  std::span<int32_t> middle = all.subspan(std::size_t(1), std::size_t(2));
+  std::print(sum_span(middle)); std::print(" ");
+  std::print(sum_span(all.first(std::size_t(2)))); std::print(" ");
+  std::print(sum_span(relay(all)));
+  std::println("");
+  return 0;
+}

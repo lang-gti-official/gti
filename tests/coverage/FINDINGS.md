@@ -10,12 +10,14 @@ Run it with:
 
     tests/coverage/run_coverage.sh build/gti
 
-Outcomes are classified as pass, ICE (`GTI-B0001`), silent failure (non-zero
-exit with no diagnostic), or rejection.
+Outcomes are classified as pass, ICE (`GTI-B0001`), link failure (the GTI
+front end accepts the program and the C++ linker then reports an undefined
+generated symbol), silent failure (non-zero exit with no diagnostic), or
+rejection.
 
 ## Result at time of writing
 
-41 programs: **32 pass, 7 ICE, 2 silent failures**.
+49 programs: **38 pass, 8 ICE, 1 link failure, 2 silent failures**.
 
 A second script, `scaffold_probe.sh`, probes stdlib operations the surface
 manifest marks as unimplemented and records how each one actually fails
@@ -359,6 +361,58 @@ Corpus program: `c36_utility_pairs`.
 
 ---
 
+## F12 — ICE: returning a `std::span` parameter by plain copy
+
+`reproducers/f12-span-returned-by-plain-copy.gti`
+
+```gti
+std::span<int32_t> relay(std::span<int32_t> view) { return view; }
+```
+
+Emitter-vocabulary ICE. Writing `return std::move(view);` instead compiles and
+runs. A span is a copyable view, so the plain return is the natural spelling —
+and it is the one that fails. Generic and non-generic forms both reproduce it.
+
+This one is worth dwelling on. `tests/fixtures/span_owner_dependent.gti` is a
+shipped fixture covering exactly this function shape, and it passes because it
+happens to be written `return std::move(view);`. Changing that one word to
+`return view;` makes the compiler ICE. The construct is covered, the test is
+green, and the defect is still there — which is the premise this corpus was
+built to test.
+
+Corpus program: `c46_span_views`.
+
+## F13 — Link failure: `std::string`'s constructor in a member initializer list
+
+`reproducers/f13-string-ctor-in-member-init-list.gti`
+
+```gti
+class Holder {
+  mut std::string s;
+public:
+  Holder() : s(std::string("lit")) {}
+};
+```
+
+```
+Undefined symbols for architecture arm64:
+  "__gti_program::__gti_std::string::string(
+       std::__1::basic_string_view<char, std::__1::char_traits<char>>)"
+```
+
+The same constructor call inside a function body is fine, and assigning to the
+field in the constructor body is fine. Other types in a member initializer
+list are fine — a user-defined class works, and so does
+`std::vector<int32_t>()`. It is `std::string`'s constructor, reached from an
+initializer list, that emits a call to a symbol that is never defined.
+
+Member initializer lists are the idiomatic way to initialize fields, and a
+`std::string` field is about as common as fields get.
+
+Corpus program: `c48_ownership_breadth`.
+
+---
+
 ## Language behaviour recorded along the way
 
 These are not filed as defects. They are diagnosed correctly and are either
@@ -400,6 +454,23 @@ worth capturing for whoever writes the language reference.
   argument is rejected (GTI-S2017) and must be bound to a name first.
 - `std::fopen` yields `unique_ptr<FILE>`, so its members are reached with `->`.
 - `std::string` has no `substr`.
+- `Type{...}` is valid only as direct initialization (`mut Point a{5};`), never
+  after `=`. `mut Point b = Point{6};` is a parse error.
+- A `[[c_abi]]` record cannot be constructed in GTI at all: it may not declare
+  constructors and its fields may not have initializers (both GTI-S2064), while
+  a struct variable requires explicit construction (GTI-S2000). The design
+  intent is that these records come from a native factory, which the GTI-S2064
+  message states — but the messages you actually hit first do not, and one of
+  them (GTI-S2038, "place the braces directly") points at a form that then
+  fails for a different reason. `examples/48-native-c-records.gti` only queries
+  layout, so it never meets this.
+- Payload enums cannot carry a type needing cleanup, such as `std::string`
+  (GTI-S2067); variant-aware drop state is not implemented.
+- Payload enums cannot be generic; `enum class Result<T>` is a parse error.
+- `sizeof` accepts only a type, not an expression.
+- `sizeof...(pack)` is not supported.
+- A fixed array binding must be declared `mut` before its elements can be
+  assigned.
 
 ## Coverage gaps still open
 
