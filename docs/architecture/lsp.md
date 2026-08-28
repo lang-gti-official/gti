@@ -101,7 +101,11 @@ Declaration hover retains the symbolic generic
 contract, while
 selected-call hover applies the compiler-recorded generic type and value
 arguments so the same contract is rendered with concrete types and inferred
-fixed-array extents. Generic-constructor declaration hover retains its symbolic
+fixed-array extents. Declaration signatures print generic type/value defaults
+from their semantic/AST records, including dependent value expressions;
+selected-call signatures print the complete concrete substitution regardless
+of whether each argument was written, inferred, or defaulted. Generic
+constructor declaration hover retains its symbolic
 local type/value parameters and requirements, while selected construction
 hover substitutes the exact inferred arguments, requirements, and parameter
 types from `ResolvedConstructionInfo`. Definition, references, and signature

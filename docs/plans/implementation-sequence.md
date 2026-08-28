@@ -2357,9 +2357,12 @@ name recognition.
      backend calls, formatting, Tree-sitter, and LSP signatures. Literal,
      named-constant, symbolic forwarding, mixed type/value, value-only, and
      method calls execute across the production mode matrix;
-  2. add declaration-owned default type/value arguments and closed dependent
-     `uint64_t` constant expressions, with exact call identity and no return-
-     context inference or native-template defaults;
+  2. **Completed:** declaration-owned trailing type/value defaults and closed
+     dependent `uint64_t` constant expressions are selected by GTI after exact
+     inference, preserve complete call/type identity, diagnose checked
+     arithmetic and ordering errors, and appear coherently in formatting,
+     Tree-sitter, and LSP without return-context inference or native-template
+     defaults;
   3. finish public callable/predicate/operation capability relations over the
      accepted exact read/mut/once callable contract, then use them in
      comparator `sort` and complete-range algorithm clients without ranking;
@@ -3463,7 +3466,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Production generic functions | type/value/pack declarations, exact type inference and explicit type arguments, inferred array extents, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, and verified-MIR execution are implemented; explicit callable value arguments, generic defaults/dependent constants, public callable relations, deterministic concrete emission, and the production stdlib/tooling matrix remain | `L-GEN-01` -> `E-SYM-01` -> `E-INST-01`, sharing the remaining `L-CALL-01`/`L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Production generic functions | type/value/pack declarations, exact type inference and explicit type/value expressions, inferred array extents, declaration defaults, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, and verified-MIR execution are implemented; public callable relations, deterministic concrete emission, and the production stdlib/tooling matrix remain | `L-GEN-01` -> `E-SYM-01` -> `E-INST-01`, sharing the remaining `L-CALL-01`/`L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

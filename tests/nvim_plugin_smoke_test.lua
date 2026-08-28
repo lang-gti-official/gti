@@ -124,6 +124,7 @@ local ok, problem = xpcall(function()
     "  return right;",
     "}",
     "uint64_t selected_extent<uint64_t N>() { return N; }",
+    "uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }",
     "int explicit_value_client() { return int(selected_extent<4>()); }",
     "char marker = 'G';",
     "constexpr uint64_t int_size = sizeof(int32_t);",
@@ -244,6 +245,8 @@ local ok, problem = xpcall(function()
   require_capture("T choose<std::ordered T>(T left, T right) {", "left", "variable.parameter")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "selected_extent", "function.call")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "4", "number")
+  require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "N", "variable.parameter")
+  require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "3", "number")
   require_capture("  if (left > right) {", "if", "keyword.conditional")
   require_capture("  if (left > right) {", "left", "variable")
   require_capture("    return left;", "return", "keyword.return")

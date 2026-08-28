@@ -35,6 +35,9 @@ std::string pathSpelling(const NamePath &path) {
 }
 
 std::string typeRefSpelling(const TypeRef &type) {
+  if (type.genericValueExpression) {
+    return arrayExtentSpelling(*type.genericValueExpression);
+  }
   std::string result = type.pointeeConst ? "const " : "";
   result += pathSpelling(type.name);
   if (!type.arguments.empty()) {

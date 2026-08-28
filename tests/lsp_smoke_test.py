@@ -6834,6 +6834,7 @@ def test_contextual_array_hover(executable, root):
     source = (
         "int total<uint64_t N>(int values[N]) { return values[0]; }\n"
         "uint64_t extent<uint64_t N>() { return N; }\n"
+        "uint64_t offset<uint64_t N = 3, uint64_t M = N + 2>() { return M; }\n"
         "class Total {\n"
         "public:\n"
         "  Total<uint64_t N>(int values[N]) {}\n"
@@ -6844,7 +6845,8 @@ def test_contextual_array_hover(executable, root):
         "  Total object = Total({4, 5});\n"
         "  uint64_t selected = extent<4>();\n"
         "  uint64_t member = object.extent<5>();\n"
-        "  return value + int(selected) + int(member) - 10;\n"
+        "  uint64_t defaulted = offset();\n"
+        "  return value + int(selected) + int(member) + int(defaulted) - 15;\n"
         "}\n"
     )
     path = root / "contextual-array-hover.gti"
@@ -6936,6 +6938,17 @@ def test_contextual_array_hover(executable, root):
         assert selected_method.startswith(
             "```gti\nuint64_t Total::extent<5>()\n```"
         ), selected_method
+
+        declared_default = hover(8, source.index("offset<uint64_t") + 1)
+        assert declared_default.startswith(
+            "```gti\nuint64_t offset<uint64_t N = 3, "
+            "uint64_t M = (N + 2)>()\n```"
+        ), declared_default
+
+        selected_default = hover(9, source.index("offset();") + 1)
+        assert selected_default.startswith(
+            "```gti\nuint64_t offset<3, 5>()\n```"
+        ), selected_default
     finally:
         session.close()
 

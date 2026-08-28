@@ -1976,6 +1976,10 @@ private:
   [[nodiscard]] std::optional<CompileTimeValue>
   genericValueArgument(const TypeRef &argument) const;
 
+  [[nodiscard]] bool
+  reportGenericValueArgumentFailure(const TypeRef &argument,
+                                    std::string_view context);
+
   [[nodiscard]] ArrayExtentEvaluation
   evaluateResolvedArrayExtent(const ArrayExtentExpr &expression) const;
 
@@ -2077,6 +2081,50 @@ private:
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName,
                         const std::vector<std::string> &fromScope);
+
+  [[nodiscard]] std::shared_ptr<const GenericValueExpression>
+  normalizeGenericValueDefault(const ArrayExtentExpr &expression,
+                               const std::vector<std::string> &fromScope);
+
+  struct GenericDefaultConstant {
+    std::uint64_t value = 0;
+    SourceUnitId sourceUnit = 0;
+    bool internalLinkage = false;
+    std::string qualifiedName;
+  };
+
+  struct GenericDefaultConstantUse {
+    Token token;
+    GenericDefaultConstant constant;
+  };
+
+  [[nodiscard]] std::optional<GenericDefaultConstant>
+  genericDefaultConstant(const Token &name,
+                         const std::vector<std::string> &fromScope) const;
+
+  [[nodiscard]] std::optional<std::uint64_t>
+  evaluateGenericDefaultConstantInitializer(
+      const Expr &expression, const std::vector<std::string> &fromScope) const;
+
+  void recordGenericDefaultConstant(const VariableDecl &declaration,
+                                    const std::vector<std::string> &fromScope);
+
+  void recordGenericDefaultConstantUses();
+
+  struct GenericValueEvaluation {
+    std::optional<CompileTimeValue> value;
+    ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
+    const Token *token = nullptr;
+  };
+
+  [[nodiscard]] GenericValueEvaluation
+  evaluateGenericValueExpression(const GenericValueExpression &expression,
+                                 const GenericSubstitution &substitution) const;
+
+  [[nodiscard]] bool
+  applyGenericDefaults(const std::vector<GenericParameterInfo> &parameters,
+                       GenericSubstitution &substitution, const Token &site,
+                       bool diagnoseFailure);
 
   [[nodiscard]] const std::vector<GenericParameterInfo> &
   genericParametersFor(const FunctionDecl &function) const;
@@ -3529,6 +3577,9 @@ private:
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
+    std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
+        genericDefaultConstants;
+    std::vector<GenericDefaultConstantUse> genericDefaultConstantUses;
     std::vector<std::unordered_map<std::string, SemanticType>>
         typeParameterScopes;
     std::vector<std::unordered_map<std::string, CompileTimeValue>>
@@ -3642,6 +3693,10 @@ private:
       requestSession.constexprDefinitionsAnalyzed;
   std::unordered_set<const ConstructorDecl *> &constexprConstructorsAnalyzed =
       requestSession.constexprConstructorsAnalyzed;
+  std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
+      &genericDefaultConstants = requestSession.genericDefaultConstants;
+  std::vector<GenericDefaultConstantUse> &genericDefaultConstantUses =
+      requestSession.genericDefaultConstantUses;
   std::unordered_map<const Expr *, const ParameterDefault *>
       &defaultArgumentSyntax = requestSession.defaultArgumentSyntax;
   std::unordered_map<const Expr *, std::vector<const Expr *>>

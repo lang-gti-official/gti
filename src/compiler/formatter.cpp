@@ -1226,7 +1226,7 @@ private:
       const std::unordered_set<std::string> &declaredTypes) {
     const Lexeme *name = previousSyntaxLexeme(lexemes, genericStart);
     const std::optional<std::size_t> genericEnd =
-        matchingGenericClose(lexemes, genericStart);
+        matchingGenericClose(lexemes, genericStart, true);
     if (name == nullptr || name->kind != Kind::Word || !genericEnd) {
       return false;
     }
@@ -1260,7 +1260,7 @@ private:
         break;
       }
       if (lexemes[cursor].kind != Kind::Less ||
-          matchingGenericClose(lexemes, cursor) != close) {
+          matchingGenericClose(lexemes, cursor, true) != close) {
         continue;
       }
       const Lexeme *name = previousSyntaxLexeme(lexemes, cursor);
@@ -1370,7 +1370,7 @@ private:
         lexemes, static_cast<std::size_t>(name - lexemes.data()));
     if (parameters != nullptr && parameters->kind == Kind::Less) {
       const std::optional<std::size_t> genericEnd = matchingGenericClose(
-          lexemes, static_cast<std::size_t>(parameters - lexemes.data()));
+          lexemes, static_cast<std::size_t>(parameters - lexemes.data()), true);
       if (!genericEnd) {
         return false;
       }
@@ -1695,7 +1695,8 @@ private:
   }
 
   static std::optional<std::size_t>
-  matchingGenericClose(const std::vector<Lexeme> &lexemes, std::size_t left) {
+  matchingGenericClose(const std::vector<Lexeme> &lexemes, std::size_t left,
+                       bool allowDefaultAssignment = false) {
     std::size_t depth = 0;
     std::size_t parenthesisDepth = 0;
     std::size_t bracketDepth = 0;
@@ -1740,7 +1741,8 @@ private:
              candidate.text == "||" || candidate.text == "==" ||
              candidate.text == "!=" || candidate.text == "<=" ||
              candidate.text == ">=" ||
-             (bracketDepth == 0 && isAssignmentOperator(candidate.text)))) {
+             (bracketDepth == 0 && isAssignmentOperator(candidate.text) &&
+              !(allowDefaultAssignment && candidate.text == "=")))) {
           return std::nullopt;
         }
       }
@@ -1850,6 +1852,9 @@ private:
     }
     if (isConceptGenericAngle(lexemes, index) ||
         isRequiresGenericAngle(lexemes, index)) {
+      return true;
+    }
+    if (isFunctionGenericParameterClause(lexemes, index, declaredTypes)) {
       return true;
     }
 

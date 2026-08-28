@@ -312,15 +312,23 @@ the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
 An explicit ordinary function or method generic suffix is classified before
-candidate selection using the written token and lexical constant catalog.
-Integer literals, in-scope `constexpr uint64_t` bindings, and enclosing value
-parameters occupy value slots; all other identifiers occupy type slots. Type
-slots must precede value slots, and once a value is written the complete type
-and value suffix is required. Exact overload viability consumes those two
-ordered vectors, then concrete instance reanalysis substitutes the selected
-values just like inferred fixed-array extents. This is frontend authority:
-native template deduction is not consulted and failed candidates cannot leave
-partial substitutions in shared semantic state.
+candidate selection using its syntax, the target parameter kinds, and the
+lexical constant catalog. Closed `uint64_t` expression trees contain literals,
+in-scope `constexpr uint64_t` bindings, enclosing value parameters,
+parentheses, and checked arithmetic; other written arguments occupy type
+slots. Type slots precede value slots. Exact overload viability consumes those
+ordered vectors, performs structural inference from written call arguments,
+then applies declaration-owned defaults to unresolved trailing positions in
+order. An ordered registration-side constant catalog folds earlier visible
+namespace `constexpr uint64_t` bindings whose initializers are themselves
+closed arithmetic before generic declarations, without making later or
+invisible storage available. Default type records retain
+resolved symbolic `SemanticType`s, and default value records retain normalized
+parameter-identity expression trees; neither is source text. Concrete instance
+reanalysis substitutes the complete result just like inferred fixed-array
+extents. This is frontend authority:
+native template deduction/defaults are not consulted and failed candidates
+cannot leave partial substitutions in shared semantic state.
 
 An ordinary constructor can add inference-only local type parameters inside
 its owning class's generic scope. Candidate analysis infers them solely from

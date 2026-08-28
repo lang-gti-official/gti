@@ -1156,7 +1156,7 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
     const std::size_t typeParameterCount =
         genericTypeParameterCount(function.record().genericParameters);
-    if (explicitTypeArguments.size() != typeParameterCount) {
+    if (explicitTypeArguments.size() > typeParameterCount) {
       report(paren,
              "Generic function called with the wrong number of type arguments.",
              "GTI-S2026");
@@ -1164,8 +1164,7 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     }
     const std::size_t valueParameterCount =
         genericValueParameterCount(function.record().genericParameters);
-    if (!explicitValueArguments.empty() &&
-        explicitValueArguments.size() != valueParameterCount) {
+    if (explicitValueArguments.size() > valueParameterCount) {
       report(paren,
              "Generic function called with the wrong number of explicit "
              "value arguments.",
@@ -1189,6 +1188,29 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
       substitution.types.emplace(parameter.id,
                                  explicitTypeArguments[typeIndex++]);
     }
+    for (const GenericParameterInfo &parameter :
+         function.record().genericParameters) {
+      if (parameter.pack) {
+        continue;
+      }
+      if (!parameter.value && !substitution.types.contains(parameter.id) &&
+          !parameter.defaultType) {
+        report(paren,
+               "Generic function called with the wrong number of type "
+               "arguments.",
+               "GTI-S2026");
+        valid = false;
+      }
+      if (parameter.value && !explicitValueArguments.empty() &&
+          !substitution.values.contains(parameter.id) &&
+          !parameter.defaultValue) {
+        report(paren,
+               "Generic function called with the wrong number of explicit "
+               "value arguments.",
+               "GTI-S2026");
+        valid = false;
+      }
+    }
   }
   const std::size_t count =
       std::min(argumentTypes.size(), function.parameterTypes.size());
@@ -1200,6 +1222,10 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
             valid;
   }
 
+  valid = applyGenericDefaults(function.record().genericParameters,
+                               substitution, paren, true) &&
+          valid;
+
   for (const GenericParameterInfo &parameter :
        function.record().genericParameters) {
     const bool resolved = parameter.value
@@ -1210,9 +1236,11 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
              "Cannot infer generic " +
                  std::string(parameter.value ? "value" : "type") +
                  " parameter '" + parameter.name.lexeme +
-                 (parameter.value ? "' from a fixed-array argument extent; "
-                                    "provide every value argument explicitly."
-                                  : "'; provide explicit type arguments."),
+                 (parameter.value
+                      ? "' from a fixed-array argument extent and no default "
+                        "is declared; provide it explicitly."
+                      : "' and no default is declared; provide explicit type "
+                        "arguments."),
              parameter.value ? "GTI-S2026" : "GTI-S2023");
       valid = false;
     }
@@ -1406,7 +1434,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     return false;
   }
   if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
-    if (pack == nullptr && explicitTypeArguments.size() != fixedGenerics) {
+    if (pack == nullptr && explicitTypeArguments.size() > fixedGenerics) {
       return false;
     }
     if (pack != nullptr && explicitTypeArguments.size() < fixedGenerics) {
@@ -1414,8 +1442,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     }
     const std::size_t valueGenerics =
         genericValueParameterCount(candidate.record().genericParameters);
-    if ((!explicitValueArguments.empty() &&
-         explicitValueArguments.size() != valueGenerics) ||
+    if ((explicitValueArguments.size() > valueGenerics) ||
         (pack != nullptr && !explicitValueArguments.empty())) {
       return false;
     }
@@ -1436,6 +1463,21 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       substitution.types.emplace(parameter.id,
                                  explicitTypeArguments[typeIndex++]);
     }
+    for (const GenericParameterInfo &parameter :
+         candidate.record().genericParameters) {
+      if (parameter.pack) {
+        continue;
+      }
+      if (!parameter.value && !substitution.types.contains(parameter.id) &&
+          !parameter.defaultType) {
+        return false;
+      }
+      if (parameter.value && !explicitValueArguments.empty() &&
+          !substitution.values.contains(parameter.id) &&
+          !parameter.defaultValue) {
+        return false;
+      }
+    }
   }
   const std::size_t count =
       std::min(fixedParameterCount(candidate), argumentTypes.size());
@@ -1447,6 +1489,12 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
             candidate.record().genericParameters, substitution, expression)) {
       return false;
     }
+  }
+
+  if (!applyGenericDefaults(candidate.record().genericParameters, substitution,
+                            candidate.record().genericParameters.front().name,
+                            false)) {
+    return false;
   }
 
   for (const GenericParameterInfo &parameter :

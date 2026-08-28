@@ -84,9 +84,12 @@ diagnostics or letting a backend message choose either identity.
   initializer-list type or implicit conversion. An exact invalid element keeps
   the ordinary `GTI-S2003` assignment diagnostic at that element. `GTI-S2026`
   separately owns an invalid, uninferable, wrong-kind, or incomplete explicit
-  `uint64_t` generic suffix; point at its declaration name or the written call
-  argument/order that violates the target's type/value shape. Neither family
-  has a universally correct fix-it.
+  `uint64_t` generic suffix and a malformed value-parameter default. Point at
+  the declaration name, missing/unavailable parameter, or exact arithmetic
+  operand/operator that violates the target's type/value shape. `GTI-S2023`
+  owns invalid type defaults and defaults mixed with generic packs. Neither
+  family has a universally correct fix-it because selecting a replacement
+  type/value or changing declaration order requires intent.
 - `GTI-S2002` owns assignment through the current method's read-only receiver
   when the receiver-rooted field path is otherwise mutable. Trace only
   ordinary grouping, named `.` projections, and built-in fixed-array indexing;

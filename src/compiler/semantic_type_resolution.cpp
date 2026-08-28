@@ -559,18 +559,30 @@ auto SemanticVisitor::Impl::resolveClassArguments(
   const ClassInfo &owner = classInfo(classId);
   result.types.reserve(genericTypeParameterCount(owner.genericParameters));
   result.values.reserve(genericValueParameterCount(owner.genericParameters));
-  if (arguments.size() != owner.genericParameters.size()) {
+  const std::size_t requiredArguments = static_cast<std::size_t>(std::count_if(
+      owner.genericParameters.begin(), owner.genericParameters.end(),
+      [](const GenericParameterInfo &parameter) {
+        return parameter.value ? !parameter.defaultValue
+                               : !parameter.defaultType;
+      }));
+  if (arguments.size() < requiredArguments ||
+      arguments.size() > owner.genericParameters.size()) {
     const bool typeOnly =
         genericValueParameterCount(owner.genericParameters) == 0;
+    const std::string arity =
+        requiredArguments == owner.genericParameters.size()
+            ? std::to_string(requiredArguments)
+            : "between " + std::to_string(requiredArguments) + " and " +
+                  std::to_string(owner.genericParameters.size());
     report(site,
-           "Type '" + owner.name.lexeme + "' requires " +
-               std::to_string(owner.genericParameters.size()) +
+           "Type '" + owner.name.lexeme + "' requires " + arity +
                (typeOnly ? " generic type argument" : " generic argument") +
                (owner.genericParameters.size() == 1 ? "." : "s."),
            diagnosticCode);
     result.valid = false;
   }
 
+  GenericSubstitution substitution;
   const std::size_t count =
       std::min(arguments.size(), owner.genericParameters.size());
   for (std::size_t index = 0; index < count; ++index) {
@@ -580,14 +592,21 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       const std::optional<CompileTimeValue> value =
           genericValueArgument(argument);
       if (!value) {
-        report(argument.name.last(),
-               "Generic parameter '" + parameter.name.lexeme +
-                   "' requires a uint64_t compile-time value.",
-               diagnosticCode);
+        if (!reportGenericValueArgumentFailure(
+                argument,
+                "Generic value argument for '" + parameter.name.lexeme + "'")) {
+          report(argument.name.last(),
+                 "Generic parameter '" + parameter.name.lexeme +
+                     "' requires a uint64_t compile-time value.",
+                 diagnosticCode);
+        }
         result.values.emplace_back();
         result.valid = false;
       } else {
-        result.values.emplace_back(*value);
+        substitution.values.emplace(parameter.id, *value);
+        if (argument.genericValueExpression) {
+          recordArrayExtentUses(*argument.genericValueExpression);
+        }
       }
       continue;
     }
@@ -597,7 +616,6 @@ auto SemanticVisitor::Impl::resolveClassArguments(
              "Generic parameter '" + parameter.name.lexeme +
                  "' requires a type argument.",
              diagnosticCode);
-      result.types.emplace_back(SemanticType::Unknown);
       result.valid = false;
       continue;
     }
@@ -618,7 +636,36 @@ auto SemanticVisitor::Impl::resolveClassArguments(
                             .constraintName = parameter.constraintName});
       result.valid = false;
     }
-    result.types.emplace_back(type);
+    substitution.types.emplace(parameter.id, type);
+  }
+  if (!applyGenericDefaults(owner.genericParameters, substitution, site,
+                            true)) {
+    result.valid = false;
+  }
+  result.types.clear();
+  result.values.clear();
+  for (const GenericParameterInfo &parameter : owner.genericParameters) {
+    if (parameter.value) {
+      const auto found = substitution.values.find(parameter.id);
+      if (found == substitution.values.end()) {
+        result.valid = false;
+      } else {
+        result.values.emplace_back(found->second);
+      }
+    } else {
+      const auto found = substitution.types.find(parameter.id);
+      if (found == substitution.types.end()) {
+        result.valid = false;
+      } else {
+        result.types.emplace_back(found->second);
+      }
+    }
+  }
+  for (std::size_t index = count; index < arguments.size(); ++index) {
+    if (arguments[index].genericArgumentSyntax !=
+        GenericArgumentSyntax::Value) {
+      validateType(arguments[index]);
+    }
   }
   return result;
 }
@@ -1607,6 +1654,50 @@ auto SemanticVisitor::Impl::constantFor(const Symbol &symbol) const
 
 auto SemanticVisitor::Impl::genericValueArgument(const TypeRef &argument) const
     -> std::optional<CompileTimeValue> {
+  if (argument.genericValueExpression) {
+    const ArrayExtentEvaluation evaluation =
+        evaluateResolvedArrayExtent(*argument.genericValueExpression);
+    if (evaluation.value) {
+      return CompileTimeValue::uint64(*evaluation.value);
+    }
+    struct DependencyCheck {
+      bool valid = false;
+      bool dependent = false;
+    };
+    const auto dependency =
+        [&](const auto &self,
+            const ArrayExtentExpr &expression) -> DependencyCheck {
+      if (expression.isAtom()) {
+        if (std::holds_alternative<std::uint64_t>(expression.token.literal)) {
+          return {.valid = true};
+        }
+        if (expression.token.kind != TokenKind::IDENTIFIER) {
+          return {};
+        }
+        if (const std::optional<CompileTimeValue> parameter =
+                resolveValueParameter(expression.token)) {
+          return {.valid = true,
+                  .dependent = parameter->kind == CompileTimeValue::Parameter};
+        }
+        const Symbol *symbol = resolve(expression.token);
+        const ConstantValue *constant =
+            symbol == nullptr ? nullptr : constantFor(*symbol);
+        return {.valid = constant != nullptr &&
+                         constantUnsignedMagnitude(*constant).has_value()};
+      }
+      if (!expression.left || !expression.right) {
+        return {};
+      }
+      const DependencyCheck left = self(self, *expression.left);
+      const DependencyCheck right = self(self, *expression.right);
+      return {.valid = left.valid && right.valid,
+              .dependent = left.dependent || right.dependent};
+    };
+    const DependencyCheck check =
+        dependency(dependency, *argument.genericValueExpression);
+    return check.valid && check.dependent ? std::optional{CompileTimeValue{}}
+                                          : std::nullopt;
+  }
   if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
       argument.pointer || argument.outerPointer ||
       !argument.arrayExtents.empty() || argument.reference) {
@@ -1637,6 +1728,36 @@ auto SemanticVisitor::Impl::genericValueArgument(const TypeRef &argument) const
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::reportGenericValueArgumentFailure(
+    const TypeRef &argument, std::string_view context) -> bool {
+  if (!argument.genericValueExpression) {
+    return false;
+  }
+  const ArrayExtentEvaluation evaluation =
+      evaluateResolvedArrayExtent(*argument.genericValueExpression);
+  const Token &location =
+      evaluation.token == nullptr ? argument.name.last() : *evaluation.token;
+  if (evaluation.error == ArrayExtentEvaluationError::Overflow ||
+      evaluation.error == ArrayExtentEvaluationError::Underflow) {
+    report(location,
+           std::string(context) + " arithmetic " +
+               (evaluation.error == ArrayExtentEvaluationError::Underflow
+                    ? "underflows"
+                    : "overflows") +
+               " uint64_t.",
+           "GTI-S2026");
+    return true;
+  }
+  if (evaluation.error == ArrayExtentEvaluationError::ZeroDivisor) {
+    report(location,
+           std::string(context) +
+               " arithmetic cannot divide or take modulo by zero.",
+           "GTI-S2026");
+    return true;
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::evaluateResolvedArrayExtent(
     const ArrayExtentExpr &expression) const -> ArrayExtentEvaluation {
   if (expression.isAtom()) {
@@ -1645,6 +1766,11 @@ auto SemanticVisitor::Impl::evaluateResolvedArrayExtent(
       return {.value = *value};
     }
     if (expression.token.kind == TokenKind::IDENTIFIER) {
+      if (const std::optional<CompileTimeValue> parameter =
+              resolveValueParameter(expression.token);
+          parameter && parameter->kind == CompileTimeValue::UInt64) {
+        return {.value = parameter->value};
+      }
       const Symbol *symbol = resolve(expression.token);
       const ConstantValue *constant =
           symbol == nullptr ? nullptr : constantFor(*symbol);
@@ -2135,12 +2261,24 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   }
   const ClassInfo &declaration = classInfo(*classId);
   const std::size_t expectedArguments = declaration.genericParameters.size();
-  if (type.arguments.size() != expectedArguments) {
+  const std::size_t requiredArguments = static_cast<std::size_t>(
+      std::count_if(declaration.genericParameters.begin(),
+                    declaration.genericParameters.end(),
+                    [](const GenericParameterInfo &parameter) {
+                      return parameter.value ? !parameter.defaultValue
+                                             : !parameter.defaultType;
+                    }));
+  if (type.arguments.size() < requiredArguments ||
+      type.arguments.size() > expectedArguments) {
     const bool typeOnly =
         genericValueParameterCount(declaration.genericParameters) == 0;
+    const std::string arity =
+        requiredArguments == expectedArguments
+            ? std::to_string(expectedArguments)
+            : "between " + std::to_string(requiredArguments) + " and " +
+                  std::to_string(expectedArguments);
     report(type.name.last(),
-           "Type '" + pathSpelling(type.name) + "' requires " +
-               std::to_string(expectedArguments) +
+           "Type '" + pathSpelling(type.name) + "' requires " + arity +
                (typeOnly ? " generic type argument" : " generic argument") +
                (expectedArguments == 1 ? "." : "s."));
   }
@@ -2154,10 +2292,16 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       const std::optional<CompileTimeValue> value =
           genericValueArgument(argument);
       if (!value) {
-        report(argument.name.last(),
-               "Generic parameter '" + parameter.name.lexeme +
-                   "' requires a uint64_t compile-time value.",
-               "GTI-S2026");
+        if (!reportGenericValueArgumentFailure(
+                argument,
+                "Generic value argument for '" + parameter.name.lexeme + "'")) {
+          report(argument.name.last(),
+                 "Generic parameter '" + parameter.name.lexeme +
+                     "' requires a uint64_t compile-time value.",
+                 "GTI-S2026");
+        }
+      } else if (argument.genericValueExpression) {
+        recordArrayExtentUses(*argument.genericValueExpression);
       } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
         recordGenericParameterUse(argument.name.last(), *value,
                                   OccurrenceRole::Read);
@@ -2991,6 +3135,354 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   return false;
 }
 
+auto SemanticVisitor::Impl::genericDefaultConstant(
+    const Token &name, const std::vector<std::string> &fromScope) const
+    -> std::optional<GenericDefaultConstant> {
+  for (std::size_t count = fromScope.size() + 1; count > 0; --count) {
+    const std::string qualified =
+        qualifiedName(fromScope, count - 1, name.lexeme);
+    const auto found = genericDefaultConstants.find(qualified);
+    if (found == genericDefaultConstants.end()) {
+      continue;
+    }
+    for (auto candidate = found->second.rbegin();
+         candidate != found->second.rend(); ++candidate) {
+      if (candidate->sourceUnit == currentSourceUnit ||
+          (!candidate->internalLinkage &&
+           sourceVisible(candidate->sourceUnit))) {
+        return *candidate;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::evaluateGenericDefaultConstantInitializer(
+    const Expr &expression, const std::vector<std::string> &fromScope) const
+    -> std::optional<std::uint64_t> {
+  if (const auto *literal = exprAs<LiteralExpr>(&expression)) {
+    if (const auto *value = std::get_if<std::uint64_t>(&literal->value())) {
+      return *value;
+    }
+    return std::nullopt;
+  }
+  if (const auto *variable = exprAs<Variable>(&expression)) {
+    const std::optional<GenericDefaultConstant> constant =
+        genericDefaultConstant(variable->name(), fromScope);
+    return constant ? std::optional{constant->value} : std::nullopt;
+  }
+  if (const auto *grouping = exprAs<Grouping>(&expression)) {
+    return evaluateGenericDefaultConstantInitializer(*grouping->expression(),
+                                                     fromScope);
+  }
+  if (const auto *conversion = exprAs<Conversion>(&expression)) {
+    const TypeRef &target = conversion->targetType();
+    if (target.name.last().kind != TokenKind::UINT64 || target.pointer ||
+        target.outerPointer || target.reference ||
+        !target.arrayExtents.empty() || !target.arguments.empty()) {
+      return std::nullopt;
+    }
+    return evaluateGenericDefaultConstantInitializer(*conversion->value(),
+                                                     fromScope);
+  }
+  const auto *binary = exprAs<Binary>(&expression);
+  if (binary == nullptr || (binary->oper().kind != TokenKind::PLUS &&
+                            binary->oper().kind != TokenKind::MINUS &&
+                            binary->oper().kind != TokenKind::STAR &&
+                            binary->oper().kind != TokenKind::SLASH &&
+                            binary->oper().kind != TokenKind::PERCENT)) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint64_t> left =
+      evaluateGenericDefaultConstantInitializer(*binary->left(), fromScope);
+  const std::optional<std::uint64_t> right =
+      evaluateGenericDefaultConstantInitializer(*binary->right(), fromScope);
+  if (!left || !right) {
+    return std::nullopt;
+  }
+  const ConstantEvaluation evaluated = evaluateConstantBinary(
+      binary->oper().kind,
+      ConstantValue{makeConstantInteger({.magnitude = *left}, {.width = 64})},
+      ConstantValue{makeConstantInteger({.magnitude = *right}, {.width = 64})},
+      CheckedIntegerDomain{.width = 64});
+  return evaluated ? constantUnsignedMagnitude(*evaluated.value) : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::recordGenericDefaultConstant(
+    const VariableDecl &declaration, const std::vector<std::string> &fromScope)
+    -> void {
+  const TypeRef &type = declaration.type();
+  if (!declaration.isConstexpr() || declaration.isMutable() ||
+      declaration.initializer() == nullptr ||
+      type.name.last().kind != TokenKind::UINT64 || type.pointer ||
+      type.outerPointer || type.reference || !type.arrayExtents.empty() ||
+      !type.arguments.empty()) {
+    return;
+  }
+  const std::optional<std::uint64_t> value =
+      evaluateGenericDefaultConstantInitializer(*declaration.initializer(),
+                                                fromScope);
+  if (!value) {
+    return;
+  }
+  const std::string qualified =
+      qualifiedName(fromScope, declaration.name().lexeme);
+  genericDefaultConstants[qualified].push_back(
+      GenericDefaultConstant{.value = *value,
+                             .sourceUnit = currentSourceUnit,
+                             .internalLinkage = declaration.isStatic(),
+                             .qualifiedName = qualified});
+}
+
+auto SemanticVisitor::Impl::recordGenericDefaultConstantUses() -> void {
+  for (const GenericDefaultConstantUse &use : genericDefaultConstantUses) {
+    const Symbol *symbol = nullptr;
+    if (use.constant.internalLinkage) {
+      const auto unit =
+          valueFlow.internalNamespaceSymbols.find(use.constant.sourceUnit);
+      if (unit != valueFlow.internalNamespaceSymbols.end()) {
+        const auto found = unit->second.find(use.constant.qualifiedName);
+        if (found != unit->second.end()) {
+          symbol = &found->second;
+        }
+      }
+    } else {
+      const auto found =
+          valueFlow.namespaceSymbols.find(use.constant.qualifiedName);
+      if (found != valueFlow.namespaceSymbols.end()) {
+        symbol = &found->second;
+      }
+    }
+    if (symbol == nullptr || symbol->toolingSymbol == 0) {
+      continue;
+    }
+    semanticModel.recordOccurrence(
+        {.sourceUnit = sourceUnitFor(use.token),
+         .span = tokenSpan(use.token),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol->toolingSymbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::Read,
+         .name = use.token.lexeme,
+         .type = SemanticType::UInt64});
+  }
+}
+
+auto SemanticVisitor::Impl::normalizeGenericValueDefault(
+    const ArrayExtentExpr &expression,
+    const std::vector<std::string> &fromScope)
+    -> std::shared_ptr<const GenericValueExpression> {
+  if (expression.isAtom()) {
+    if (const auto *value =
+            std::get_if<std::uint64_t>(&expression.token.literal)) {
+      return std::make_shared<GenericValueExpression>(
+          GenericValueExpression{.kind = GenericValueExpression::UInt64,
+                                 .token = expression.token,
+                                 .value = *value});
+    }
+    if (expression.token.kind == TokenKind::IDENTIFIER) {
+      if (const std::optional<CompileTimeValue> parameter =
+              resolveValueParameter(expression.token)) {
+        if (parameter->kind == CompileTimeValue::UInt64) {
+          return std::make_shared<GenericValueExpression>(
+              GenericValueExpression{.kind = GenericValueExpression::UInt64,
+                                     .token = expression.token,
+                                     .value = parameter->value});
+        }
+        if (parameter->kind == CompileTimeValue::Parameter) {
+          recordGenericParameterUse(expression.token, *parameter,
+                                    OccurrenceRole::Read);
+          return std::make_shared<GenericValueExpression>(
+              GenericValueExpression{.kind = GenericValueExpression::Parameter,
+                                     .token = expression.token,
+                                     .parameterId = parameter->parameterId});
+        }
+      }
+      const Symbol *symbol = resolve(expression.token);
+      const ConstantValue *constant =
+          symbol == nullptr ? nullptr : constantFor(*symbol);
+      if (constant != nullptr) {
+        if (const std::optional<std::uint64_t> value =
+                constantUnsignedMagnitude(*constant)) {
+          return std::make_shared<GenericValueExpression>(
+              GenericValueExpression{.kind = GenericValueExpression::UInt64,
+                                     .token = expression.token,
+                                     .value = *value});
+        }
+      }
+      if (const std::optional<GenericDefaultConstant> constant =
+              genericDefaultConstant(expression.token, fromScope)) {
+        genericDefaultConstantUses.push_back(
+            {.token = expression.token, .constant = *constant});
+        return std::make_shared<GenericValueExpression>(
+            GenericValueExpression{.kind = GenericValueExpression::UInt64,
+                                   .token = expression.token,
+                                   .value = constant->value});
+      }
+    }
+    report(expression.token,
+           "A generic value default must use uint64_t literals, visible "
+           "uint64_t constexpr bindings, or earlier value parameters.",
+           "GTI-S2026");
+    return nullptr;
+  }
+
+  if (!expression.left || !expression.right) {
+    report(expression.token, "Malformed generic value default expression.",
+           "GTI-S2026");
+    return nullptr;
+  }
+  const std::shared_ptr<const GenericValueExpression> left =
+      normalizeGenericValueDefault(*expression.left, fromScope);
+  const std::shared_ptr<const GenericValueExpression> right =
+      normalizeGenericValueDefault(*expression.right, fromScope);
+  if (!left || !right) {
+    return nullptr;
+  }
+  if (left->kind == GenericValueExpression::UInt64 &&
+      right->kind == GenericValueExpression::UInt64) {
+    const ConstantEvaluation evaluated = evaluateConstantBinary(
+        expression.token.kind,
+        ConstantValue{
+            makeConstantInteger({.magnitude = left->value}, {.width = 64})},
+        ConstantValue{
+            makeConstantInteger({.magnitude = right->value}, {.width = 64})},
+        CheckedIntegerDomain{.width = 64});
+    if (evaluated) {
+      return std::make_shared<GenericValueExpression>(GenericValueExpression{
+          .kind = GenericValueExpression::UInt64,
+          .token = expression.token,
+          .value = *constantUnsignedMagnitude(*evaluated.value)});
+    }
+    report(expression.token,
+           evaluated.failure == ConstantEvaluationFailure::IntegerOverflow
+               ? (expression.token.kind == TokenKind::MINUS
+                      ? "Generic value default arithmetic underflows uint64_t."
+                      : "Generic value default arithmetic overflows uint64_t.")
+               : "Generic value default arithmetic cannot divide or take "
+                 "modulo by zero.",
+           "GTI-S2026");
+    return nullptr;
+  }
+  return std::make_shared<GenericValueExpression>(
+      GenericValueExpression{.kind = GenericValueExpression::Binary,
+                             .token = expression.token,
+                             .left = std::move(left),
+                             .right = std::move(right)});
+}
+
+auto SemanticVisitor::Impl::evaluateGenericValueExpression(
+    const GenericValueExpression &expression,
+    const GenericSubstitution &substitution) const -> GenericValueEvaluation {
+  if (expression.kind == GenericValueExpression::UInt64) {
+    return {.value = CompileTimeValue::uint64(expression.value)};
+  }
+  if (expression.kind == GenericValueExpression::Parameter) {
+    if (const auto found = substitution.values.find(expression.parameterId);
+        found != substitution.values.end()) {
+      return {.value = found->second};
+    }
+    return {.value = CompileTimeValue::parameter(expression.parameterId)};
+  }
+  if (!expression.left || !expression.right) {
+    return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
+            .token = &expression.token};
+  }
+  const GenericValueEvaluation left =
+      evaluateGenericValueExpression(*expression.left, substitution);
+  if (!left.value) {
+    return left;
+  }
+  const GenericValueEvaluation right =
+      evaluateGenericValueExpression(*expression.right, substitution);
+  if (!right.value) {
+    return right;
+  }
+  if (left.value->kind != CompileTimeValue::UInt64 ||
+      right.value->kind != CompileTimeValue::UInt64) {
+    return {.value = CompileTimeValue{}};
+  }
+  const ConstantEvaluation evaluated = evaluateConstantBinary(
+      expression.token.kind,
+      ConstantValue{
+          makeConstantInteger({.magnitude = left.value->value}, {.width = 64})},
+      ConstantValue{makeConstantInteger({.magnitude = right.value->value},
+                                        {.width = 64})},
+      CheckedIntegerDomain{.width = 64});
+  if (!evaluated) {
+    return {.failure = evaluated.failure, .token = &expression.token};
+  }
+  return {.value = CompileTimeValue::uint64(
+              *constantUnsignedMagnitude(*evaluated.value))};
+}
+
+auto SemanticVisitor::Impl::applyGenericDefaults(
+    const std::vector<GenericParameterInfo> &parameters,
+    GenericSubstitution &substitution, const Token &site, bool diagnoseFailure)
+    -> bool {
+  bool valid = true;
+  for (const GenericParameterInfo &parameter : parameters) {
+    if (parameter.value) {
+      if (substitution.values.contains(parameter.id) ||
+          !parameter.defaultValue) {
+        continue;
+      }
+      const GenericValueEvaluation evaluation =
+          evaluateGenericValueExpression(*parameter.defaultValue, substitution);
+      if (!evaluation.value) {
+        if (diagnoseFailure) {
+          const Token &location =
+              evaluation.token == nullptr ? site : *evaluation.token;
+          if (evaluation.failure ==
+              ConstantEvaluationFailure::IntegerOverflow) {
+            report(location,
+                   location.kind == TokenKind::MINUS
+                       ? "Generic value default arithmetic underflows "
+                         "uint64_t for the selected arguments."
+                       : "Generic value default arithmetic overflows "
+                         "uint64_t for the selected arguments.",
+                   "GTI-S2026");
+          } else if (evaluation.failure ==
+                         ConstantEvaluationFailure::DivisionByZero ||
+                     evaluation.failure ==
+                         ConstantEvaluationFailure::ModuloByZero) {
+            report(location,
+                   "Generic value default arithmetic cannot divide or take "
+                   "modulo by zero for the selected arguments.",
+                   "GTI-S2026");
+          } else {
+            report(location,
+                   "Default for generic value parameter '" +
+                       parameter.name.lexeme +
+                       "' is invalid for the selected arguments.",
+                   "GTI-S2026");
+          }
+        }
+        valid = false;
+      } else {
+        substitution.values.emplace(parameter.id, *evaluation.value);
+      }
+      continue;
+    }
+    if (substitution.types.contains(parameter.id) || !parameter.defaultType) {
+      continue;
+    }
+    const SemanticType type =
+        substituteType(*parameter.defaultType, substitution);
+    if (type == SemanticType::Unknown || type == SemanticType::Void) {
+      if (diagnoseFailure) {
+        report(site,
+               "Default for generic type parameter '" + parameter.name.lexeme +
+                   "' does not resolve to a non-void type.",
+               "GTI-S2023");
+      }
+      valid = false;
+    } else {
+      substitution.types.emplace(parameter.id, type);
+    }
+  }
+  return valid;
+}
+
 auto SemanticVisitor::Impl::makeGenericParameters(
     const std::vector<GenericParameter> &parameters,
     const Token &declarationName, const std::vector<std::string> &fromScope)
@@ -3130,6 +3622,141 @@ auto SemanticVisitor::Impl::makeGenericParameters(
          .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
          .name = parameter.name.lexeme,
          .type = parameterType});
+  }
+  bool sawDefault = false;
+  const bool hasPack = std::any_of(parameters.begin(), parameters.end(),
+                                   [](const GenericParameter &parameter) {
+                                     return parameter.pack.has_value();
+                                   });
+  std::vector<GenericParameterInfo> available;
+  available.reserve(result.size());
+  for (const GenericParameter &parameter : parameters) {
+    const auto found = std::find_if(
+        result.begin(), result.end(), [&](const GenericParameterInfo &info) {
+          return info.name.lexeme == parameter.name.lexeme &&
+                 info.name.position == parameter.name.position &&
+                 info.name.source == parameter.name.source;
+        });
+    if (found == result.end()) {
+      continue;
+    }
+    const bool hasDefault = parameter.equal.has_value();
+    if (hasDefault) {
+      sawDefault = true;
+    } else if (sawDefault && !parameter.pack) {
+      report(parameter.name,
+             "A generic parameter without a default cannot follow a "
+             "defaulted parameter.",
+             "GTI-S2026");
+    }
+    if (parameter.pack && hasDefault) {
+      report(*parameter.equal,
+             "A generic type pack cannot declare a default argument.",
+             "GTI-S2023");
+    } else if (hasPack && hasDefault) {
+      report(*parameter.equal,
+             "Generic defaults are not supported in a parameter list that "
+             "contains a type pack.",
+             "GTI-S2023");
+    }
+
+    beginTypeParameterScope(available);
+    if (parameter.defaultType) {
+      const auto referencesUnavailableParameter =
+          [&](const auto &self, const TypeRef &type) -> bool {
+        if (type.name.segments.size() == 1 &&
+            std::any_of(parameters.begin(), parameters.end(),
+                        [&](const GenericParameter &candidate) {
+                          return candidate.name.lexeme ==
+                                 type.name.last().lexeme;
+                        }) &&
+            std::none_of(available.begin(), available.end(),
+                         [&](const GenericParameterInfo &candidate) {
+                           return candidate.name.lexeme ==
+                                  type.name.last().lexeme;
+                         })) {
+          return true;
+        }
+        return std::any_of(
+            type.arguments.begin(), type.arguments.end(),
+            [&](const TypeRef &argument) { return self(self, argument); });
+      };
+      if (referencesUnavailableParameter(referencesUnavailableParameter,
+                                         *parameter.defaultType)) {
+        report(parameter.defaultType->name.last(),
+               "A generic type default may reference only visible types and "
+               "earlier generic parameters.",
+               "GTI-S2023");
+      } else {
+        const std::size_t diagnosticStart = diagnostics.size();
+        validateType(*parameter.defaultType);
+        const SemanticType type = typeOf(*parameter.defaultType);
+        if (type == SemanticType::Unknown &&
+            diagnostics.size() == diagnosticStart) {
+          report(parameter.defaultType->name.last(),
+                 "A generic type default may reference only visible types "
+                 "and earlier generic parameters.",
+                 "GTI-S2023");
+        } else if (type == SemanticType::Void) {
+          report(parameter.defaultType->name.last(),
+                 "A generic type default cannot be void.", "GTI-S2023");
+        } else if (type != SemanticType::Unknown) {
+          if (const std::optional<GenericConstraintKind> failed =
+                  firstUnsatisfiedConstraint(type, found->constraints)) {
+            reportConstraintFailure(
+                parameter.defaultType->name.last(),
+                ConstraintFailure{.parameter = found->name,
+                                  .argument = type,
+                                  .constraints = found->constraints,
+                                  .failed = *failed,
+                                  .constraintName = found->constraintName});
+          } else {
+            found->defaultType = std::make_shared<SemanticType>(type);
+          }
+        }
+      }
+    } else if (parameter.defaultValue) {
+      const auto unavailableValueParameter =
+          [&](const auto &self,
+              const ArrayExtentExpr &expression) -> const Token * {
+        if (expression.isAtom()) {
+          if (expression.token.kind != TokenKind::IDENTIFIER) {
+            return nullptr;
+          }
+          const bool declaredGeneric = std::any_of(
+              parameters.begin(), parameters.end(),
+              [&](const GenericParameter &candidate) {
+                return candidate.name.lexeme == expression.token.lexeme;
+              });
+          const bool availableValue = std::any_of(
+              available.begin(), available.end(),
+              [&](const GenericParameterInfo &candidate) {
+                return candidate.value &&
+                       candidate.name.lexeme == expression.token.lexeme;
+              });
+          return declaredGeneric && !availableValue ? &expression.token
+                                                    : nullptr;
+        }
+        if (expression.left) {
+          if (const Token *token = self(self, *expression.left)) {
+            return token;
+          }
+        }
+        return expression.right ? self(self, *expression.right) : nullptr;
+      };
+      if (const Token *token = unavailableValueParameter(
+              unavailableValueParameter, *parameter.defaultValue)) {
+        report(*token,
+               "A generic value default may reference only earlier value "
+               "parameters.",
+               "GTI-S2026");
+      } else {
+        found->defaultValue =
+            normalizeGenericValueDefault(*parameter.defaultValue, fromScope);
+      }
+    }
+    endTypeParameterScope();
+    available.emplace_back(*found);
   }
   return result;
 }

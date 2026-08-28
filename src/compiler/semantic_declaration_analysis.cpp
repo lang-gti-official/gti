@@ -1623,6 +1623,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       if (const StmtList *branch = conditional->activeBranch(target)) {
         registerClasses(*branch, scope);
       }
+    } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
+      currentSourceUnit = sourceUnitFor(variable->name());
+      recordGenericDefaultConstant(*variable, scope);
     } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(classDecl->name());
       if (classDecl->isExactSpecialization()) {
@@ -2255,6 +2258,11 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       }
     } else if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
       registerFunctionGenericParameters(externC->declarations(), scope, false);
+    } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
+      if (!classMember) {
+        currentSourceUnit = sourceUnitFor(variable->name());
+        recordGenericDefaultConstant(*variable, scope);
+      }
     } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(function->name());
       std::vector<GenericParameterInfo> genericParameters =
@@ -4638,6 +4646,12 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
           allocateDefaultArgumentEffectOwners(constructor->parameters());
       for (const GenericParameter &constructorParameter :
            constructor->genericParameters()) {
+        if (constructorParameter.equal) {
+          report(*constructorParameter.equal,
+                 "Constructor-local generic parameters are inference-only "
+                 "and cannot declare defaults.",
+                 "GTI-S2026");
+        }
         for (const GenericParameterInfo &classParameter :
              owner.genericParameters) {
           if (constructorParameter.name.lexeme == classParameter.name.lexeme) {

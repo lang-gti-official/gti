@@ -5150,6 +5150,9 @@ int main() { return 0; }
 
 void testValueGenerics() {
   const std::string source = R"(
+constexpr uint64_t default_array_base = 2;
+constexpr uint64_t default_array_size = default_array_base + 1;
+
 class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
@@ -5165,12 +5168,21 @@ public:
   uint64_t size() { return this.value.size(); }
 };
 
+class DefaultArray<T = int, uint64_t N = default_array_size> {
+  T values[N] = {};
+
+public:
+  uint64_t size() { return N; }
+};
+
 int main() {
   StaticArray<int, 4> four = StaticArray<int, 4>();
+  StaticArray<int, 2 + 2> arithmetic = StaticArray<int, 2 + 2>();
   StaticArray<int, 8> eight = StaticArray<int, 8>();
   WrappedArray<int, 4> wrapped = WrappedArray<int, 4>();
-  if (four.size() == 4 and eight.size() == 8 and wrapped.size() == 4 and
-      four.first() == 0) {
+  DefaultArray defaulted = DefaultArray();
+  if (four.size() == 4 and arithmetic.size() == 4 and eight.size() == 8 and
+      wrapped.size() == 4 and four.first() == 0 and defaulted.size() == 3) {
     return 0;
   }
   return 1;
@@ -5191,7 +5203,18 @@ int main() {
 
   bool foundFour = false;
   bool foundEight = false;
+  bool foundDefaultThree = false;
   for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "DefaultArray" &&
+        instance.typeArguments.size() == 1 &&
+        instance.typeArguments.front() == lang::SemanticType::Int32 &&
+        instance.valueArguments.size() == 1 &&
+        instance.valueArguments.front().kind ==
+            lang::CompileTimeValue::UInt64 &&
+        instance.valueArguments.front().value == 3) {
+      foundDefaultThree = true;
+    }
     if (instance.source == nullptr ||
         instance.source->name().lexeme != "StaticArray" ||
         instance.valueArguments.size() != 1 || instance.fields.empty()) {
@@ -5207,9 +5230,30 @@ int main() {
       foundEight = foundEight || length.value == 8;
     }
   }
-  expect(foundFour && foundEight,
+  expect(foundFour && foundEight && foundDefaultThree,
          "HIR should keep value arguments in class identity and substitute "
-         "symbolic array extents");
+         "symbolic array extents, including declaration-owned defaults");
+
+  const std::size_t namedDefault =
+      source.find("N = default_array_size") + std::string("N = ").size();
+  const lang::SourceUnitId valueGenericsUnit = valid.sourceGraph.entryUnit();
+  const lang::SemanticOccurrence *namedDefaultOccurrence =
+      valid.semantics.database().findOccurrence(valueGenericsUnit,
+                                                namedDefault + 1);
+  const lang::SymbolRecord *namedDefaultSymbol =
+      valid.semantics.database().findSymbolAt(valueGenericsUnit,
+                                              namedDefault + 1);
+  expect(namedDefaultOccurrence != nullptr &&
+             lang::hasRole(namedDefaultOccurrence->roles,
+                           lang::OccurrenceRole::Reference) &&
+             lang::hasRole(namedDefaultOccurrence->roles,
+                           lang::OccurrenceRole::Read) &&
+             namedDefaultSymbol != nullptr &&
+             namedDefaultSymbol->kind == lang::SymbolKind::GlobalVariable &&
+             namedDefaultSymbol->name == "default_array_size",
+         "an early namespace constexpr generic default should retain an exact "
+         "tooling reference to its declaration after registration-time "
+         "normalization");
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(generated.find(
@@ -5219,8 +5263,14 @@ int main() {
                  std::string::npos &&
              generated.find("StaticArray<T, N> value") != std::string::npos &&
              generated.find("StaticArray<std::int32_t, 4>") !=
-                 std::string::npos,
-         "the C++ backend should preserve mixed type and value arguments");
+                 std::string::npos &&
+             generated.find("DefaultArray<std::int32_t, 3>") !=
+                 std::string::npos &&
+             generated.find("typename T =") == std::string::npos &&
+             generated.find("std::size_t N =") == std::string::npos,
+         "the C++ backend should preserve mixed type and value arguments "
+         "after GTI selects them rather than relying on native template "
+         "defaults");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -5232,10 +5282,24 @@ public:
   void overwrite() { N = 2; }
 };
 uint64_t invalid_function<uint64_t N>() { return N; }
+T same_default<T>(T value) { return value; }
+T same_default<T = int>(T value) { return value; }
 NeedsValue<int, int> wrong_value;
 NeedsValue<4, 4> wrong_type;
 NeedsValue<int, Missing> missing_value;
 int invalid_extent[Missing] = {};
+class MissingAfterDefault<T = int, U> {};
+class ForwardDefault<T = U, U = int> {};
+class ForwardValue<uint64_t N = M, uint64_t M = 2> {};
+class BadValueDefault<uint64_t N = 1 / 0> {};
+class BadValueUnderflow<uint64_t N = 1 - 2> {};
+class BadValueOverflow<uint64_t N = 18446744073709551615 + 1> {};
+class BadValueName<uint64_t N = Missing> {};
+void default_pack<T = int, Args...>() {}
+class ConstructorDefault {
+public:
+  ConstructorDefault<T = int>(T value) {}
+};
 )"));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
@@ -5254,20 +5318,124 @@ int invalid_extent[Missing] = {};
                            "Cannot assign to compile-time value parameter") &&
              hasDiagnostic(invalidSemantic,
                            "is not an in-scope constexpr integer or uint64_t "
-                           "value generic"),
+                           "value generic") &&
+             hasDiagnostic(invalidSemantic,
+                           "without a default cannot follow a defaulted") &&
+             hasDiagnostic(invalidSemantic,
+                           "may reference only visible types and earlier") &&
+             hasDiagnostic(invalidSemantic,
+                           "may reference only earlier value parameters") &&
+             hasDiagnostic(invalidSemantic,
+                           "cannot divide or take modulo by zero") &&
+             hasDiagnostic(invalidSemantic, "underflows uint64_t") &&
+             hasDiagnostic(invalidSemantic, "overflows uint64_t") &&
+             hasDiagnostic(invalidSemantic, "must use uint64_t literals") &&
+             hasDiagnostic(invalidSemantic,
+                           "parameter list that contains a type pack") &&
+             hasDiagnostic(invalidSemantic,
+                           "Constructor-local generic parameters are "
+                           "inference-only") &&
+             hasDiagnostic(invalidSemantic,
+                           "Duplicate overload signature for 'same_default'"),
          "value generic diagnostics should identify unsupported parameter "
-         "types, ordering, scope, and argument kind without requiring every "
-         "value to be inferable");
+         "types, ordering, scope, defaults, and argument kind without "
+         "requiring every value to be inferable");
+
+  const std::string invalidDefaultsSource =
+      "T constrained<std::integral T = double>() { return T(); }\n"
+      "uint64_t selected<uint64_t N>() { return N; }\n"
+      "uint64_t dependent_underflow<uint64_t N, uint64_t M = N - 2>() { "
+      "return M; }\n"
+      "int main() { return int(selected<1 / 0>() + "
+      "dependent_underflow<1>()); }\n";
+  const lang::FrontendResult invalidDefaults = lang::Frontend().analyze(
+      "invalid-generic-defaults.gti", invalidDefaultsSource,
+      {standardLibraryPrelude()});
+  const auto invalidExpression = std::find_if(
+      invalidDefaults.diagnostics.begin(), invalidDefaults.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message.find(
+                   "Function value generic argument arithmetic cannot") !=
+                   std::string::npos;
+      });
+  const auto dependentUnderflow = std::find_if(
+      invalidDefaults.diagnostics.begin(), invalidDefaults.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message.find(
+                   "underflows uint64_t for the selected") != std::string::npos;
+      });
+  expect(!invalidDefaults.canGenerateCode() &&
+             hasDiagnostic(invalidDefaults.diagnostics,
+                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalidDefaults.diagnostics,
+                           "Function value generic argument arithmetic "
+                           "cannot divide or take modulo by zero") &&
+             invalidExpression != invalidDefaults.diagnostics.end() &&
+             invalidExpression->primary.source.ends_with(
+                 "/invalid-generic-defaults.gti") &&
+             invalidExpression->primary.start ==
+                 invalidDefaultsSource.find('/') &&
+             dependentUnderflow != invalidDefaults.diagnostics.end() &&
+             dependentUnderflow->primary.start ==
+                 invalidDefaultsSource.find("N - 2") + 2,
+         "invalid constrained defaults and closed value expressions should "
+         "remain precisely anchored GTI diagnostics rather than native "
+         "substitution failures");
+
+  const lang::FrontendResult lateDefault = lang::Frontend().analyze(
+      "late-generic-default.gti", "class LateDefault<uint64_t N = later> {};\n"
+                                  "constexpr uint64_t later = 3;\n");
+  expect(!lateDefault.canGenerateCode() &&
+             hasDiagnostic(lateDefault.diagnostics,
+                           "must use uint64_t literals, visible uint64_t "
+                           "constexpr bindings, or earlier value parameters"),
+         "generic defaults should not see a namespace constexpr binding "
+         "declared later in source order");
 
   const std::string formatted = lang::Formatter().format(
       "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
-      "values=StaticArray<int,4>();");
+      "values=StaticArray<int,4>();T choose<T=int,uint64_t N=2+1>(){return "
+      "T();}");
   expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
                  std::string::npos &&
              formatted.find("StaticArray<int, 4> values =") !=
                  std::string::npos &&
+             formatted.find("T choose<T = int, uint64_t N = 2 + 1>() {") !=
+                 std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
-         "value generic syntax should format idempotently");
+         "value generic defaults and dependent expressions should format "
+         "idempotently");
+
+  lang::Parser recoveryParser(
+      lexer.scan("T broken<T = >(); int recovered() { return 0; }"));
+  lang::Program recovered = recoveryParser.parse();
+  expect(recoveryParser.hadError() &&
+             findTopLevelFunction(recovered, "recovered") != nullptr,
+         "a malformed generic default should recover at the declaration "
+         "boundary and preserve the following function");
+
+  lang::Parser typeArgumentParser(lexer.scan(R"(
+class Widget {};
+T identity<T>(T value) { return value; }
+void accept_type_arguments(Widget* pointer) {
+  identity<Widget*>(pointer);
+}
+class CallbackHolder<T> {};
+void accept_callback(CallbackHolder<(int)->void> callback) {}
+)"));
+  (void)typeArgumentParser.parse();
+  if (typeArgumentParser.hadError()) {
+    for (const lang::ParseDiagnostic &diagnostic :
+         typeArgumentParser.errors()) {
+      std::cerr << "Unexpected generic type-argument parser diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(!typeArgumentParser.hadError(),
+         "dependent value arithmetic lookahead should preserve pointer and "
+         "native-function generic type arguments");
 }
 
 void testContextualArrayArguments() {

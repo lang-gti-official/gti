@@ -105,6 +105,7 @@ module.exports = grammar({
     [$._initializer_element, $.expression],
     [$._expression_not_comma, $._generic_member_function],
     [$._postfix_expression, $._generic_member_function],
+    [$._array_extent_expression, $._qualified_identifier],
   ],
 
   rules: {
@@ -662,11 +663,22 @@ module.exports = grammar({
           field("constraint", $._qualified_identifier),
           field("name", $.identifier),
           optional(field("pack", "...")),
+          optional(seq("=", field("default_type", $.type))),
         ),
-        seq(field("name", $.identifier), optional(field("pack", "..."))),
+        seq(
+          field("name", $.identifier),
+          optional(field("pack", "...")),
+          optional(seq("=", field("default_type", $.type))),
+        ),
         seq(
           field("value_type", choice("uint64_t", "uint64")),
           field("name", $.identifier),
+          optional(
+            seq(
+              "=",
+              field("default_value", $._array_extent_expression),
+            ),
+          ),
         ),
       ),
 
@@ -791,7 +803,18 @@ module.exports = grammar({
       ),
 
     type_argument_clause: ($) =>
-      seq("<", commaSep1(choice($.type, $.integer_literal)), ">"),
+      seq(
+        "<",
+        commaSep1(
+          choice(
+            $.type,
+            $.integer_literal,
+            $.array_extent_parenthesized_expression,
+            $.array_extent_binary_expression,
+          ),
+        ),
+        ">",
+      ),
 
     array_extent: ($) =>
       seq("[", field("size", $._array_extent_expression), "]"),
