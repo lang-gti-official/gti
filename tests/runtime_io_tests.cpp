@@ -3,10 +3,15 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -102,6 +107,53 @@ int main() {
          "invalid descriptors must not be seekable");
   expect(gti_rt_seek_file_v1(0, 0, 99) < 0,
          "unknown seek origins must be rejected before host access");
+
+#if !defined(_WIN32)
+  int pipeDescriptors[2]{-1, -1};
+  const int pipeStatus = ::pipe(pipeDescriptors);
+  expect(pipeStatus == 0,
+         "the broken-pipe regression fixture should create a pipe");
+  if (pipeStatus == 0) {
+    (void)::close(pipeDescriptors[0]);
+    expect(gti_rt_write_file_v1(pipeDescriptors[1], view("x")) < 0,
+           "a closed pipe must report write failure without SIGPIPE escape");
+    (void)::close(pipeDescriptors[1]);
+  }
+
+  const int bufferingStatus = std::setvbuf(stdout, nullptr, _IONBF, 0);
+  expect(bufferingStatus == 0,
+         "stdout should become unbuffered for the broken-pipe probe");
+  int stdoutPipe[2]{-1, -1};
+  const int savedStdout = ::dup(STDOUT_FILENO);
+  const int stdoutPipeStatus = savedStdout >= 0 ? ::pipe(stdoutPipe) : -1;
+  expect(savedStdout >= 0 && stdoutPipeStatus == 0,
+         "the stdout broken-pipe fixture should preserve stdout");
+  if (bufferingStatus == 0 && savedStdout >= 0 && stdoutPipeStatus == 0) {
+    (void)::close(stdoutPipe[0]);
+    const bool installed = ::dup2(stdoutPipe[1], STDOUT_FILENO) >= 0;
+    expect(installed, "the stdout probe should install its pipe");
+    (void)::close(stdoutPipe[1]);
+    if (installed) {
+      const std::int64_t stdoutStatus = gti_rt_write_stdout_bytes_v1(view("x"));
+      expect(::dup2(savedStdout, STDOUT_FILENO) >= 0,
+             "the stdout probe should restore stdout");
+      std::clearerr(stdout);
+      expect(stdoutStatus < 0,
+             "stdout should report a closed pipe without SIGPIPE escape");
+    }
+    (void)::close(savedStdout);
+  } else {
+    if (stdoutPipe[0] >= 0) {
+      (void)::close(stdoutPipe[0]);
+    }
+    if (stdoutPipe[1] >= 0) {
+      (void)::close(stdoutPipe[1]);
+    }
+    if (savedStdout >= 0) {
+      (void)::close(savedStdout);
+    }
+  }
+#endif
 
   std::filesystem::remove(path, removeError);
   if (removeError) {
