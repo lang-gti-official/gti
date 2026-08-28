@@ -74,7 +74,7 @@
     "73-constructor-local-generics.gti": 199,
     "74-read-only-range-loans.gti": 49,
     "75-bounded-arena-pool.gti": 67,
-    "76-scalar-atomics.gti": 63
+    "76-scalar-atomics.gti": 77
   },
-  "total": 4479
+  "total": 4493
 }

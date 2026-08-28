@@ -1,11 +1,11 @@
 # Concurrency And Atomic Values
 
 Status: Current language contract for the implemented concurrent profile,
-managed threads, and sequentially consistent scalar atomics.
+managed threads, and ordered scalar atomics.
 
 Rationale is recorded in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining mutex,
-weaker-order, scoped-thread, and foreign-entry work is tracked in the
+scoped-thread, and foreign-entry work is tracked in the
 [concurrency plan](../plans/concurrency-memory-model.md).
 
 ## Profiles And Availability
@@ -91,7 +91,7 @@ movement remains subject to ordinary loan and move-state rules. Destruction is
 not a synchronization operation and is valid only after every possible user
 has ended.
 
-## Sequentially Consistent Operations
+## Default Sequentially Consistent Operations
 
 The current API is:
 
@@ -107,9 +107,8 @@ int32_t observed = changed.observed();
 ```
 
 Construction initializes the atomic before ordinary ownership publication.
-`load`, `store`, `exchange`, and `compare_exchange_strong` are all
-sequentially consistent. There is no source order argument in this first
-surface.
+`load`, `store`, `exchange`, and `compare_exchange_strong` are sequentially
+consistent when no order argument is supplied.
 
 Strong compare/exchange performs one atomic read-modify-write on success and
 one atomic load on failure. It succeeds exactly when the value observed at the
@@ -131,13 +130,71 @@ wrapper is ordinary GTI source over exact compiler-private declarations from
 the trusted `std/atomic` source unit; neither its public name nor the generated
 C++ representation defines semantics.
 
+## Explicit Memory Orders
+
+The public order vocabulary consists of five statically typed tags:
+
+```gti
+std::memory_order_relaxed()
+std::memory_order_acquire()
+std::memory_order_release()
+std::memory_order_acq_rel()
+std::memory_order_seq_cst()
+```
+
+The constructor spelling makes each order an ordinary `std` type rather than
+a runtime enum. An atomic method overload accepts only an order type legal for
+that operation. Illegal combinations therefore fail in source overload
+resolution before HIR or backend invocation; generated code never branches on
+an order value.
+
+```gti
+value.store(7, std::memory_order_release());
+int32_t observed = value.load(std::memory_order_acquire());
+int32_t prior = value.exchange(8, std::memory_order_acq_rel());
+auto changed = value.compare_exchange_strong(
+    8, 9, std::memory_order_acq_rel(), std::memory_order_acquire());
+```
+
+The exact legality matrix is:
+
+| Operation | Accepted order types |
+| --- | --- |
+| `load` | relaxed, acquire, seq_cst |
+| `store` | relaxed, release, seq_cst |
+| `exchange` | relaxed, acquire, release, acq_rel, seq_cst |
+| compare/exchange success | relaxed, acquire, release, acq_rel, seq_cst |
+| compare/exchange failure | relaxed for relaxed/release success; relaxed or acquire for acquire/acq_rel success; relaxed, acquire, or seq_cst for seq_cst success |
+
+The three-argument compare/exchange form accepts one success-order tag and
+derives the failure order as follows: relaxed -> relaxed, acquire -> acquire,
+release -> relaxed, acq_rel -> acquire, and seq_cst -> seq_cst. The four-
+argument form exposes all nine valid success/failure pairs. Failure can never
+be release or acq_rel and can never be stronger than success. There is no
+`consume` order.
+
+Relaxed operations remain atomic and participate in their object's
+modification order, but create no synchronizes-with edge themselves. A release
+operation synchronizes with an acquire operation that reads the released value
+or a value in its release sequence. A release sequence is that release followed
+contiguously in modification order by atomic read-modify-write operations.
+Everything sequenced before the release then happens-before everything
+sequenced after the acquiring observation. Acquire/release operations do not
+join the global sequentially consistent order unless their selected order is
+seq_cst.
+
+Semantic resolution records the exact operation and order pair. HIR preserves
+it, MIR applies the operation-specific legality table and optimizer barrier,
+and the sealed backend maps that verified record to the corresponding native
+order spelling. Native overload resolution never supplies or strengthens GTI
+semantics.
+
 ## Current Omissions
 
 The current surface deliberately excludes weak compare/exchange, spurious
-failure, fetch arithmetic, wait/notify, atomic references, and fences. Explicit
-`relaxed`, `acquire`, `release`, `acq_rel`, and `seq_cst` selection is not yet a
-source API. Mutex guards, condition variables, scoped borrows, detach, thread
-locals, and foreign-created-thread entry are also not implemented.
+failure, fetch arithmetic, wait/notify, atomic references, and fences. Mutex
+guards, condition variables, scoped borrows, detach, thread locals, and
+foreign-created-thread entry are also not implemented.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.

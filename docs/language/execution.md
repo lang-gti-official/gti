@@ -640,8 +640,9 @@ GTI does not provide language exceptions.
 
 GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler
-exposes owned managed threads through `<std/thread>` and sequentially
-consistent scalar atomics through `<std/atomic>`. Mutexes and foreign-thread
+exposes owned managed threads through `<std/thread>` and scalar atomics with a
+sequentially consistent default plus explicit legal orders through
+`<std/atomic>`. Mutexes and foreign-thread
 entry remain unavailable. The single-threaded profile remains the default
 executable profile. The focused current source contract is in
 [Concurrency And Atomic Values](concurrency.md).
@@ -694,19 +695,22 @@ edges below. The remaining row defines the later mutex slice:
   entry;
 - task completion happens-before successful explicit or automatic join
   returns or continues cleanup;
-- every sequentially consistent atomic operation participates in one
-  program-wide sequentially consistent order; and
+- release/acquire observations create the synchronization edges specified in
+  [the atomic contract](concurrency.md#explicit-memory-orders), every atomic
+  operation participates in its object's modification order, and every
+  sequentially consistent operation also participates in one program-wide
+  sequentially consistent order; and
 - a future mutex unlock synchronizes-with the corresponding later successful
   acquisition.
 
 The implemented atomic value domains are fixed-width integers and `bool`.
-Construction, load, store, exchange, and strong compare/exchange are
-sequentially consistent and promise neither lock freedom nor C-compatible
+Construction, load, store, exchange, and strong compare/exchange default to
+sequential consistency and promise neither lock freedom nor C-compatible
 layout. Strong compare/exchange never fails spuriously and reports success plus
-the actual observation without exposing a reference. Later accepted order
-names are `relaxed`,
-`acquire`, `release`, `acq_rel`, and `seq_cst`; `consume` is absent. Operation-
-specific legality must be checked before lowering.
+the actual observation without exposing a reference. Static `std` tag types
+select `relaxed`, `acquire`, `release`, `acq_rel`, or `seq_cst`; `consume` is
+absent. Operation-specific legality is checked by source overload resolution
+and again in MIR before lowering.
 
 The first managed thread model transfers one owned exact `void()` task through
 `std::thread` or one exact `Result()` task through

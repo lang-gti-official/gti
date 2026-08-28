@@ -25,6 +25,24 @@ namespace {
 
 [[nodiscard]] bool failureStatusCannotFail(const MirBody &body);
 
+[[nodiscard]] std::string_view cppAtomicMemoryOrder(AtomicMemoryOrder order) {
+  switch (order) {
+  case AtomicMemoryOrder::Relaxed:
+    return "std::memory_order_relaxed";
+  case AtomicMemoryOrder::Acquire:
+    return "std::memory_order_acquire";
+  case AtomicMemoryOrder::Release:
+    return "std::memory_order_release";
+  case AtomicMemoryOrder::AcquireRelease:
+    return "std::memory_order_acq_rel";
+  case AtomicMemoryOrder::SequentiallyConsistent:
+    return "std::memory_order_seq_cst";
+  case AtomicMemoryOrder::Count:
+    throw std::logic_error("invalid verified atomic memory order");
+  }
+  throw std::logic_error("invalid verified atomic memory order");
+}
+
 // The index chain of a fixed-array element access together with how its
 // nonterminal dimensions carry their bound: `routed` means the caller emitted
 // the checked guard that reports the instruction's failure site, so the text
@@ -21961,7 +21979,11 @@ private:
         emitOperand(instruction.operands[2]);
         output << ", ";
         emitCallArgument(instruction.operands[3], false, false);
-        output << ", std::memory_order_seq_cst, std::memory_order_seq_cst";
+        output << ", "
+               << cppAtomicMemoryOrder(*instruction.synchronization.order)
+               << ", "
+               << cppAtomicMemoryOrder(
+                      *instruction.synchronization.failureOrder);
       } else {
         emitCallArgument(instruction.operands[0], false, false);
         output << (instruction.intrinsic == IntrinsicKind::AtomicLoad ? ".load("
@@ -21972,7 +21994,7 @@ private:
           emitOperand(instruction.operands[1]);
           output << ", ";
         }
-        output << "std::memory_order_seq_cst";
+        output << cppAtomicMemoryOrder(*instruction.synchronization.order);
       }
       output << ");\n";
       return;
@@ -31130,10 +31152,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
             return &storage.arguments.front();
           };
-          const auto sequentiallyConsistentAtomic = [&] {
-            return instruction.synchronization.order ==
-                   AtomicMemoryOrder::SequentiallyConsistent;
-          };
           if (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
               instruction.intrinsic == IntrinsicKind::AtomicStore ||
               instruction.intrinsic == IntrinsicKind::AtomicExchange ||
@@ -31170,11 +31188,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 element == nullptr ||
                 instruction.operands.size() != operandCount || !resultReady ||
                 instruction.synchronization.kind != expectedSynchronization ||
-                !sequentiallyConsistentAtomic() ||
-                (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange
-                     ? instruction.synchronization.failureOrder !=
-                           AtomicMemoryOrder::SequentiallyConsistent
-                     : instruction.synchronization.failureOrder.has_value()) ||
+                !validSynchronizationOperation(instruction.synchronization) ||
                 !instruction.localFailureSites.empty()) {
               return false;
             }

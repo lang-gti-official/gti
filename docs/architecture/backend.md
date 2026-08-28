@@ -675,6 +675,16 @@ live representation destructor while the hosted terminal path completes.
 The backend does not infer this route from `std::thread`, a destructor name,
 or native C++ ownership behavior.
 
+Private atomic intrinsics lower only from their exact verified operation and
+memory-order records. Representation planning maps compiler-owned
+`atomic_storage<T>` to the conditional native atomic support type; body
+preflight independently validates storage, scalar operands, result shape, and
+the complete operation-specific order matrix. Text emission then selects the
+native `relaxed`, `acquire`, `release`, `acq_rel`, or `seq_cst` spelling from
+that record. It never inspects a public `std::atomic` method, order-tag source
+expression, or native overload to reconstruct semantics. Strong CAS emits both
+verified success and failure orders, including the exact nine legal pairs.
+
 ## Native Header Backend
 
 `NativeHeaderBackend` derives public records, opaque handles, callback aliases,

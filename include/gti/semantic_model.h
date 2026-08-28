@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/concurrency.h"
 #include "gti/semantic_core.h"
 
 namespace lang {
@@ -749,6 +750,7 @@ struct ResolvedCallInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;

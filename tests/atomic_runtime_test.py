@@ -55,9 +55,10 @@ def build(
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         raise SystemExit(
-            "usage: atomic_runtime_test.py /path/to/gti scalar.gti concurrent.gti"
+            "usage: atomic_runtime_test.py /path/to/gti scalar.gti "
+            "concurrent.gti orders.gti"
         )
     requested_compiler = pathlib.Path(sys.argv[1])
     resolved_compiler = (
@@ -70,6 +71,7 @@ def main() -> int:
     compiler = pathlib.Path(resolved_compiler).resolve()
     scalar = pathlib.Path(sys.argv[2]).resolve()
     concurrent = pathlib.Path(sys.argv[3]).resolve()
+    orders = pathlib.Path(sys.argv[4]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-") as scratch:
         root = pathlib.Path(scratch)
@@ -78,6 +80,7 @@ def main() -> int:
                 suffix = f"{standard.replace('+', 'p')}_{optimization[1:].lower()}"
                 scalar_binary = executable_path(root, f"atomic_scalar_{suffix}")
                 concurrent_binary = executable_path(root, f"atomic_concurrent_{suffix}")
+                orders_binary = executable_path(root, f"atomic_orders_{suffix}")
                 build(
                     compiler,
                     scalar,
@@ -92,9 +95,17 @@ def main() -> int:
                     standard=standard,
                     optimization=optimization,
                 )
+                build(
+                    compiler,
+                    orders,
+                    orders_binary,
+                    standard=standard,
+                    optimization=optimization,
+                )
                 execute([str(scalar_binary)])
                 for _ in range(10):
                     execute([str(concurrent_binary)])
+                    execute([str(orders_binary)])
 
     print("atomic native matrix checks passed")
     return 0

@@ -2303,19 +2303,30 @@ or MIR prerequisite.
 
 ### C-ORDER-01: Explicit Atomic Memory Orders
 
-- **State/role:** active; the validated `C-ATOM-01` client is complete.
+- **State/role:** done; the validated `C-ATOM-01` client is complete.
 - **Scope:** Add only the orderings accepted by `D-MEM-02`, with operation-
   specific legality and happens-before tests. Keep sequential consistency the
   simple default.
 - **Exit gate:** every accepted load/store/RMW/CAS order has semantic and MIR
   legality coverage plus deterministic message-passing/litmus tests; forbidden
   combinations fail before backend invocation.
+- **Completion evidence:** distinct source-defined
+  `std::memory_order_relaxed`, `memory_order_acquire`,
+  `memory_order_release`, `memory_order_acq_rel`, and `memory_order_seq_cst`
+  tag types make operation legality an overload property rather than a runtime
+  enum branch. Default operations remain SC. One-order strong CAS derives its
+  standard failure order; the two-order form exposes exactly nine legal pairs.
+  `atomic_semantic_ir` proves the complete HIR/MIR matrix and forbidden source
+  combinations, optimizer and backend checks preserve/map exact metadata, and
+  `atomic_end_to_end` proves release/acquire publication plus every order at
+  O0/O3 under C++20/C++23. `atomic_tsan`, LSP, stdlib surface, corpus, and
+  installed nightly/release checks cover the remaining boundaries.
 
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/role:** complete for public `std::thread` and the SC scalar-atomic
-  subset; active for explicit orders and again when mutexes, scoped threads,
-  or another public concurrency family is added.
+- **State/role:** complete for public `std::thread` and ordered scalar atomics;
+  active again when mutexes, scoped threads, or another public concurrency
+  family is added.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -2327,7 +2338,7 @@ or MIR prerequisite.
   `managed_thread_runtime`, `managed_thread_end_to_end`, `atomic_semantic_ir`,
   `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`, `lsp_protocol`, the stdlib
   surface/corpus gates, installed workflows, and sanitizer runs cover the
-  shipped thread and SC scalar-atomic surfaces. Timing is never a correctness
+  shipped thread and ordered scalar-atomic surfaces. Timing is never a correctness
   oracle.
 
 The following remain blocked beyond the initial concurrency profile: detached
@@ -3399,7 +3410,7 @@ owned by the rows and domain plans above.
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
-| Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, and SC scalar `std::atomic<T>` **complete**; explicit orders and mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, and their `C-CONFORM-01` subsets done; `C-ORDER-01`/`C-SYNC-01` remain |
+| Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, and ordered scalar `std::atomic<T>` **complete**; mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, `C-ORDER-01`, and their `C-CONFORM-01` subsets done; `C-SYNC-01` remains |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **hover/completion/signature-help tooling complete; broader consumers remain** | `///` retention, hover, completion, and signature help are complete in `T-LSP-01`; broader library coverage and generated API documentation remain |

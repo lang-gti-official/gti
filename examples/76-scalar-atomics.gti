@@ -4,10 +4,12 @@
 std::atomic<int32_t> shared_count{0};
 
 void add_one() {
-  mut int32_t observed = shared_count.load();
+  mut int32_t observed =
+      shared_count.load(std::memory_order_relaxed());
   while (true) {
-    auto update =
-        shared_count.compare_exchange_strong(observed, observed + 1);
+    auto update = shared_count.compare_exchange_strong(
+        observed, observed + 1, std::memory_order_acq_rel(),
+        std::memory_order_acquire());
     if (update.exchanged()) {
       return;
     }
@@ -30,6 +32,6 @@ int main() {
     return 2;
   }
 
-  std::println(shared_count.load());
-  return shared_count.load() == 2 ? 0 : 3;
+  std::println(shared_count.load(std::memory_order_acquire()));
+  return shared_count.load(std::memory_order_relaxed()) == 2 ? 0 : 3;
 }

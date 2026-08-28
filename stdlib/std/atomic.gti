@@ -1,4 +1,30 @@
 namespace std {
+/// Static tag selecting relaxed atomic ordering.
+struct memory_order_relaxed {
+  /// Static tag selecting relaxed atomic ordering.
+  constexpr memory_order_relaxed() {}
+};
+/// Static tag selecting acquire atomic ordering.
+struct memory_order_acquire {
+  /// Static tag selecting acquire atomic ordering.
+  constexpr memory_order_acquire() {}
+};
+/// Static tag selecting release atomic ordering.
+struct memory_order_release {
+  /// Static tag selecting release atomic ordering.
+  constexpr memory_order_release() {}
+};
+/// Static tag selecting acquire-release atomic ordering.
+struct memory_order_acq_rel {
+  /// Static tag selecting acquire-release atomic ordering.
+  constexpr memory_order_acq_rel() {}
+};
+/// Static tag selecting sequentially consistent atomic ordering.
+struct memory_order_seq_cst {
+  /// Static tag selecting sequentially consistent atomic ordering.
+  constexpr memory_order_seq_cst() {}
+};
+
 /// Result of one strong atomic compare/exchange operation.
 class atomic_compare_exchange_result<std::atomic_scalar T> {
   bool exchanged_value;
@@ -29,11 +55,51 @@ public:
 };
 
 T atomic_load<std::atomic_scalar T>(gti_internal::atomic_storage<T>& storage);
+T atomic_load_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage);
+T atomic_load_acquire<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage);
 void atomic_store<std::atomic_scalar T>(gti_internal::atomic_storage<T>& storage,
                                         T value);
+void atomic_store_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
+void atomic_store_release<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
 T atomic_exchange<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage, T value);
+T atomic_exchange_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
+T atomic_exchange_acquire<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
+T atomic_exchange_release<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
+T atomic_exchange_acq_rel<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
 bool atomic_compare_exchange<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_relaxed_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_acquire_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_acquire_acquire<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_release_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_acq_rel_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_acq_rel_acquire<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_seq_cst_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+bool atomic_compare_exchange_seq_cst_acquire<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
     mut T& observed);
 }
@@ -41,7 +107,8 @@ bool atomic_compare_exchange<std::atomic_scalar T>(
 namespace std {
 /// A share-safe atomic bool or fixed-width integer.
 ///
-/// Every operation in this initial surface is sequentially consistent. The
+/// Operations without an order argument are sequentially consistent. Explicit
+/// static order tags select only combinations valid for that operation. The
 /// value is move-only; GTI's borrow rules prevent moving it while shared
 /// references are live, preserving the storage identity used by an operation.
 class atomic<std::atomic_scalar T> {
@@ -59,8 +126,38 @@ public:
     return gti_internal::atomic_load(this.storage);
   }
 
+  /// Returns the current value without creating a synchronizes-with edge.
+  T load(memory_order_relaxed order) {
+    return gti_internal::atomic_load_relaxed(this.storage);
+  }
+
+  /// Returns the current value with acquire ordering.
+  T load(memory_order_acquire order) {
+    return gti_internal::atomic_load_acquire(this.storage);
+  }
+
+  /// Returns the current value with sequentially consistent ordering.
+  T load(memory_order_seq_cst order) {
+    return gti_internal::atomic_load(this.storage);
+  }
+
   /// Replaces the current value with sequentially consistent ordering.
   void store(T value) {
+    gti_internal::atomic_store(this.storage, value);
+  }
+
+  /// Replaces the current value without creating a synchronizes-with edge.
+  void store(T value, memory_order_relaxed order) {
+    gti_internal::atomic_store_relaxed(this.storage, value);
+  }
+
+  /// Replaces the current value with release ordering.
+  void store(T value, memory_order_release order) {
+    gti_internal::atomic_store_release(this.storage, value);
+  }
+
+  /// Replaces the current value with sequentially consistent ordering.
+  void store(T value, memory_order_seq_cst order) {
     gti_internal::atomic_store(this.storage, value);
   }
 
@@ -70,11 +167,162 @@ public:
     return gti_internal::atomic_exchange(this.storage, value);
   }
 
+  /// Replaces and returns the prior value with relaxed ordering.
+  T exchange(T value, memory_order_relaxed order) {
+    return gti_internal::atomic_exchange_relaxed(this.storage, value);
+  }
+
+  /// Replaces and returns the prior value with acquire ordering.
+  T exchange(T value, memory_order_acquire order) {
+    return gti_internal::atomic_exchange_acquire(this.storage, value);
+  }
+
+  /// Replaces and returns the prior value with release ordering.
+  T exchange(T value, memory_order_release order) {
+    return gti_internal::atomic_exchange_release(this.storage, value);
+  }
+
+  /// Replaces and returns the prior value with acquire-release ordering.
+  T exchange(T value, memory_order_acq_rel order) {
+    return gti_internal::atomic_exchange_acq_rel(this.storage, value);
+  }
+
+  /// Replaces and returns the prior value with sequentially consistent
+  /// ordering.
+  T exchange(T value, memory_order_seq_cst order) {
+    return gti_internal::atomic_exchange(this.storage, value);
+  }
+
   /// Strongly compares with `expected_value`, conditionally stores `desired`,
   /// and reports both success and the observed value. This operation never
   /// fails spuriously and is sequentially consistent.
   atomic_compare_exchange_result<T> compare_exchange_strong(
       T expected_value, T desired) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  /// Strong compare/exchange using the supplied success order and its standard
+  /// derived failure order.
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_relaxed order) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_relaxed_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acquire order) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acquire_acquire(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_release order) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_release_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acq_rel order) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acq_rel_acquire(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_seq_cst order) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  /// Strong compare/exchange using explicit success and failure orders. Only
+  /// the nine valid static type pairs have overloads.
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_relaxed success,
+      memory_order_relaxed failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_relaxed_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acquire success,
+      memory_order_relaxed failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acquire_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acquire success,
+      memory_order_acquire failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acquire_acquire(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_release success,
+      memory_order_relaxed failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_release_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acq_rel success,
+      memory_order_relaxed failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acq_rel_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_acq_rel success,
+      memory_order_acquire failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_acq_rel_acquire(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_seq_cst success,
+      memory_order_relaxed failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_seq_cst_relaxed(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_seq_cst success,
+      memory_order_acquire failure) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange_seq_cst_acquire(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired, memory_order_seq_cst success,
+      memory_order_seq_cst failure) {
     mut T observed = expected_value;
     bool exchanged = gti_internal::atomic_compare_exchange(
         this.storage, expected_value, desired, observed);

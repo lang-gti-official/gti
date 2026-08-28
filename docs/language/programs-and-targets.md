@@ -334,8 +334,9 @@ The concurrency and memory-model boundary is specified in
 [Execution section 4.9](execution.md#49-concurrency-boundary) and
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The source-defined
 `std::thread` and `std::thread_result<Result>` provide public owned
-managed-thread operations. `std::atomic<T>` provides sequentially consistent
-`bool` and fixed-width integer atomics. Mutexes, signal interaction,
+managed-thread operations. `std::atomic<T>` provides `bool` and fixed-width
+integer atomics with sequentially consistent defaults and explicit static
+legal orders. Mutexes, signal interaction,
 detached/asynchronous execution, and foreign-thread entry are not currently
 implemented. An implementation shall not infer the
 concurrent profile or a `threads` capability solely from the target operating

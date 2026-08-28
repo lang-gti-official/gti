@@ -123,6 +123,12 @@ Verification requires every concrete private thread-spawn intrinsic to retain
 its adapter reference, so deleting both that reference and its inventory row
 cannot create a self-consistent forged program. Synchronization records remain
 backend-independent operation identities rather than private-intrinsic tags.
+One shared constexpr validity table admits relaxed/acquire/seq_cst loads,
+relaxed/release/seq_cst stores, all five read-modify-write orders, and exactly
+nine strong-CAS success/failure pairs. Semantic resolution selects the record
+from exact private declaration identity, HIR copies it, MIR lowering retains
+it, and both program verification and backend preflight consume the same
+operation-specific legality contract.
 Missing, duplicate, reordered, retargeted, or inexact adapter rows are rejected
 before backend entry.
 Program v45 adds concrete fixed-array drop schedules: every array drop retains

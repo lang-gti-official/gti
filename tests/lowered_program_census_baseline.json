@@ -1111,9 +1111,9 @@
       }
     },
     "76-scalar-atomics.gti": {
-      "declarations": 218,
-      "bodies": 64,
-      "generated_items": 18,
+      "declarations": 269,
+      "bodies": 78,
+      "generated_items": 19,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -1122,13 +1122,13 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 2,
-        "thread_task_adapter": 12
+        "thread_task_adapter": 13
       }
     }
   },
   "totals": {
-    "declarations": 14995,
-    "bodies": 4480,
-    "generated_items": 687
+    "declarations": 15046,
+    "bodies": 4494,
+    "generated_items": 688
   }
 }

@@ -6,8 +6,10 @@
 #include "cpp_backend_test_support.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -63,6 +65,14 @@ void printDiagnostics(const lang::FrontendResult &result) {
   for (const lang::Diagnostic &diagnostic : result.diagnostics) {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+}
+
+std::string fixtureSource(std::string_view name) {
+  const std::filesystem::path path =
+      std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
+  std::ifstream input(path);
+  return {std::istreambuf_iterator<char>(input),
+          std::istreambuf_iterator<char>()};
 }
 
 std::string validProgram() {
@@ -375,6 +385,172 @@ int main() {
          "the public atomic value should be move-only");
 }
 
+void testExplicitOrders() {
+  const lang::FrontendResult frontend =
+      analyze("atomic-orders.gti", fixtureSource("atomic_orders.gti"));
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "every public operation/order combination should retain exact valid "
+         "HIR and MIR metadata");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  constexpr std::size_t orderCount =
+      static_cast<std::size_t>(lang::AtomicMemoryOrder::Count);
+  std::array<bool, orderCount> loadOrders{};
+  std::array<bool, orderCount> storeOrders{};
+  std::array<bool, orderCount> exchangeOrders{};
+  std::array<std::array<bool, orderCount>, orderCount> compareOrders{};
+  lang::MirProgram inspected = frontend.mir;
+  forEachInstruction(inspected, [&](lang::MirBody &,
+                                    lang::MirInstruction &instruction) {
+    if (!isAtomic(instruction.intrinsic) ||
+        !instruction.synchronization.order) {
+      return;
+    }
+    const std::size_t order =
+        static_cast<std::size_t>(*instruction.synchronization.order);
+    if (order >= orderCount) {
+      return;
+    }
+    switch (instruction.intrinsic) {
+    case lang::IntrinsicKind::AtomicLoad:
+      loadOrders[order] = true;
+      break;
+    case lang::IntrinsicKind::AtomicStore:
+      storeOrders[order] = true;
+      break;
+    case lang::IntrinsicKind::AtomicExchange:
+      exchangeOrders[order] = true;
+      break;
+    case lang::IntrinsicKind::AtomicCompareExchange:
+      if (instruction.synchronization.failureOrder) {
+        const std::size_t failure =
+            static_cast<std::size_t>(*instruction.synchronization.failureOrder);
+        if (failure < orderCount) {
+          compareOrders[order][failure] = true;
+        }
+      }
+      break;
+    default:
+      break;
+    }
+  });
+  const auto has = [](const auto &orders, lang::AtomicMemoryOrder order) {
+    return orders[static_cast<std::size_t>(order)];
+  };
+  expect(has(loadOrders, lang::AtomicMemoryOrder::Relaxed) &&
+             has(loadOrders, lang::AtomicMemoryOrder::Acquire) &&
+             has(loadOrders, lang::AtomicMemoryOrder::SequentiallyConsistent) &&
+             !has(loadOrders, lang::AtomicMemoryOrder::Release) &&
+             !has(loadOrders, lang::AtomicMemoryOrder::AcquireRelease),
+         "load should expose exactly relaxed, acquire, and seq_cst");
+  expect(
+      has(storeOrders, lang::AtomicMemoryOrder::Relaxed) &&
+          has(storeOrders, lang::AtomicMemoryOrder::Release) &&
+          has(storeOrders, lang::AtomicMemoryOrder::SequentiallyConsistent) &&
+          !has(storeOrders, lang::AtomicMemoryOrder::Acquire) &&
+          !has(storeOrders, lang::AtomicMemoryOrder::AcquireRelease),
+      "store should expose exactly relaxed, release, and seq_cst");
+  expect(std::all_of(exchangeOrders.begin(), exchangeOrders.end(),
+                     [](bool present) { return present; }),
+         "exchange should expose every accepted memory order");
+  const auto cas = [&](lang::AtomicMemoryOrder success,
+                       lang::AtomicMemoryOrder failure) {
+    return compareOrders[static_cast<std::size_t>(success)]
+                        [static_cast<std::size_t>(failure)];
+  };
+  expect(
+      cas(lang::AtomicMemoryOrder::Relaxed, lang::AtomicMemoryOrder::Relaxed) &&
+          cas(lang::AtomicMemoryOrder::Acquire,
+              lang::AtomicMemoryOrder::Relaxed) &&
+          cas(lang::AtomicMemoryOrder::Acquire,
+              lang::AtomicMemoryOrder::Acquire) &&
+          cas(lang::AtomicMemoryOrder::Release,
+              lang::AtomicMemoryOrder::Relaxed) &&
+          cas(lang::AtomicMemoryOrder::AcquireRelease,
+              lang::AtomicMemoryOrder::Relaxed) &&
+          cas(lang::AtomicMemoryOrder::AcquireRelease,
+              lang::AtomicMemoryOrder::Acquire) &&
+          cas(lang::AtomicMemoryOrder::SequentiallyConsistent,
+              lang::AtomicMemoryOrder::Relaxed) &&
+          cas(lang::AtomicMemoryOrder::SequentiallyConsistent,
+              lang::AtomicMemoryOrder::Acquire) &&
+          cas(lang::AtomicMemoryOrder::SequentiallyConsistent,
+              lang::AtomicMemoryOrder::SequentiallyConsistent),
+      "compare/exchange should expose all nine and only statically valid "
+      "success/failure pairs");
+  bool exactCompareMatrix = true;
+  for (std::size_t success = 0; success < orderCount; ++success) {
+    for (std::size_t failure = 0; failure < orderCount; ++failure) {
+      exactCompareMatrix =
+          exactCompareMatrix &&
+          compareOrders[success][failure] ==
+              lang::validAtomicCompareExchangeFailureOrder(
+                  static_cast<lang::AtomicMemoryOrder>(success),
+                  static_cast<lang::AtomicMemoryOrder>(failure));
+    }
+  }
+  expect(exactCompareMatrix,
+         "compare/exchange MIR should contain exactly the legal order matrix");
+
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, frontend.mir, frontend.mir, concurrentTarget());
+  const std::string cpp =
+      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+  for (std::string_view spelling :
+       {"std::memory_order_relaxed", "std::memory_order_acquire",
+        "std::memory_order_release", "std::memory_order_acq_rel",
+        "std::memory_order_seq_cst"}) {
+    expect(cpp.find(spelling) != std::string::npos,
+           "the backend should lower each verified atomic order explicitly");
+  }
+
+  const auto expectInvalidOrder = [&](const std::string &name,
+                                      const std::string &expression) {
+    const lang::FrontendResult invalid =
+        analyze("atomic-invalid-order-" + name + ".gti",
+                "#include <std/atomic>\nint main() {\n  std::atomic<int32_t> "
+                "value{0};\n  " +
+                    expression + ";\n  return 0;\n}\n");
+    expect(!invalid.canGenerateCode() && !invalid.diagnostics.empty() &&
+               !hasCode(invalid, "GTI-B0001"),
+           name + " should fail in source overload resolution before the "
+                  "backend");
+  };
+  for (const auto &[name, expression] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"load-release", "value.load(std::memory_order_release())"},
+           {"load-acq-rel", "value.load(std::memory_order_acq_rel())"},
+           {"store-acquire", "value.store(1, std::memory_order_acquire())"},
+           {"store-acq-rel", "value.store(1, std::memory_order_acq_rel())"}}) {
+    expectInvalidOrder(name, expression);
+  }
+  constexpr std::array<std::string_view, orderCount> orderNames{
+      "relaxed", "acquire", "release", "acq_rel", "seq_cst"};
+  for (std::size_t success = 0; success < orderCount; ++success) {
+    for (std::size_t failure = 0; failure < orderCount; ++failure) {
+      if (lang::validAtomicCompareExchangeFailureOrder(
+              static_cast<lang::AtomicMemoryOrder>(success),
+              static_cast<lang::AtomicMemoryOrder>(failure))) {
+        continue;
+      }
+      expectInvalidOrder(
+          "cas-" + std::string(orderNames[success]) + "-" +
+              std::string(orderNames[failure]),
+          "value.compare_exchange_strong(0, 1, std::memory_order_" +
+              std::string(orderNames[success]) + "(), std::memory_order_" +
+              std::string(orderNames[failure]) + "())");
+    }
+  }
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("atomic-verifier.gti", validProgram());
@@ -382,14 +558,14 @@ void testVerifierMutations() {
     return;
   }
 
-  lang::MirProgram relaxedLoad = frontend.mir;
+  lang::MirProgram invalidLoad = frontend.mir;
   lang::MirInstruction *load =
-      findAtomic(relaxedLoad, lang::IntrinsicKind::AtomicLoad);
+      findAtomic(invalidLoad, lang::IntrinsicKind::AtomicLoad);
   if (load != nullptr) {
-    load->synchronization.order = lang::AtomicMemoryOrder::Relaxed;
+    load->synchronization.order = lang::AtomicMemoryOrder::Release;
   }
-  expect(load != nullptr && !lang::verifyMirProgram(relaxedLoad).valid(),
-         "MIR should reject a relaxed order forged into the SC-only slice");
+  expect(load != nullptr && !lang::verifyMirProgram(invalidLoad).valid(),
+         "MIR should reject an operation-illegal atomic load order");
 
   lang::MirProgram wrongExchange = frontend.mir;
   lang::MirInstruction *exchange =
@@ -419,7 +595,7 @@ void testVerifierMutations() {
   }
   expect(compareExchange != nullptr &&
              !lang::verifyMirProgram(wrongCas).valid(),
-         "MIR should reject an illegal or non-SC compare/exchange failure "
+         "MIR should reject an operation-illegal compare/exchange failure "
          "order");
 
   lang::MirProgram strippedProvenance = frontend.mir;
@@ -441,6 +617,7 @@ int main() {
   testPublicPipeline();
   testScalarDomain();
   testSemanticBoundaries();
+  testExplicitOrders();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;
 }

@@ -7,7 +7,8 @@
 > D-MEM-02 adopted the boundary; the first owned thread vertical slice landed
 > in 0.309.0 and the public `std::thread` plus
 > `std::thread_result<Result>` surfaces are complete in 0.313.0. The public
-> sequentially consistent scalar `std::atomic<T>` surface is also complete.
+> scalar `std::atomic<T>` surface, including the accepted explicit order
+> matrix, is also complete.
 > Remaining concurrency families stay staged below.
 > ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
 > technical prerequisites remain evidence, while the bounded public
@@ -445,10 +446,10 @@ The wrapper is an ordinary public GTI type over a trusted capability. Compiler
 semantics bind the capability by declaration identity and record the operation
 and order. The compiler does not recognize the public wrapper name.
 
-### Future Atomic Orders
+### Explicit Atomic Orders
 
-After the sequentially consistent implementation is validated, C-ORDER-01 may
-add this complete vocabulary:
+C-ORDER-01 adds this complete vocabulary after the sequentially consistent
+implementation:
 
 | Operation | Permitted orderings |
 | --- | --- |
@@ -744,11 +745,11 @@ column is part of every stage rather than a final test-only pass.
 | D-CALL-01 / C-CALL-01 | **Done:** one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
 | C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::thread`, typed `std::thread_result<Result>`, and recoverable creation/join | Spawn/join happens-before tests, move-only task and result transfer, explicit result take or automatic abandon, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
 | M-OWN-03 / C-SYNC-01 | Add guard-tied mutex access after stored mutable dependencies exist | Exactly-once unlock on every edge, no protected-reference escape, contention stress, poisoning/failure behavior, and TSAN. |
-| C-ORDER-01 | Add only the accepted weaker orders | Operation/order compile-fail cases plus deterministic litmus tests for release/acquire and relaxed non-synchronization. |
+| C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
 | later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
-| C-CONFORM-01 | **Done for `std::thread` and the SC scalar-atomic subset; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
+| C-CONFORM-01 | **Done for `std::thread` and ordered scalar atomics; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
 must not infer transfer/share from spelling. Hover displays the adopted public
