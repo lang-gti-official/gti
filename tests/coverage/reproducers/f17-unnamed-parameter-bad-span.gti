@@ -1,0 +1,11 @@
+class Holder {
+  int32_t& value;
+public:
+  Holder(int32_t& source) : value(source) {}
+  int32_t read() { return this.value; }
+};
+Holder build(int32_t&) {
+  mut int32_t local = 2;
+  return Holder(local);
+}
+int main() { mut int32_t s = 1; mut Holder h = build(s); std::println(h.read()); return 0; }

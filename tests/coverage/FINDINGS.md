@@ -18,11 +18,15 @@ rejection.
 ## Result at time of writing
 
 65 programs: **50 pass, 10 ICE, 1 link failure, 2 silent failures, 2
-rejections of valid code**.
+rejections of valid code**. Four further defects (F17–F20) came from
+sanitizer, malformed-input, and resource-stress runs rather than from the
+sweep.
 
 A second script, `scaffold_probe.sh`, probes stdlib operations the surface
 manifest marks as unimplemented and records how each one actually fails
-(finding F7).
+(finding F7). `stress/` holds inputs that crash or exhaust the compiler
+(F18–F20); they are deliberately outside the sweep, and `stress/README.md`
+explains how to run them safely.
 
 Every finding below is reproduced by a self-contained program in
 `reproducers/`. None of them are fixed here — this pass is about locating
@@ -489,6 +493,166 @@ fail on its literal argument, so this is a pattern rather than an isolated
 signature choice.
 
 Corpus program: `c55_iterator_utilities`.
+
+---
+
+## F17 — Diagnostic with an empty name and an out-of-source span
+
+`reproducers/f17-unnamed-parameter-bad-span.gti`
+
+Unnamed parameters are legal GTI — `int32_t ignore_arg(int32_t) { return 7; }`
+compiles and runs. But when a diagnostic's related information refers to one:
+
+```gti
+Holder build(int32_t&) {          // parameter has a type but no name
+  mut int32_t local = 2;
+  return Holder(local);
+}
+```
+
+```
+error[GTI-S2045]: Returned stored-reference value must derive from
+                  read-only parameter ''.
+<source>:1:1: note: Required owner dependency source is here.
+```
+
+Two defects in one diagnostic. The name renders as `''`, and the note points
+at `<source>:1:1` — a synthetic location that is not a position in the user's
+file at all. Give the same parameter a name and the diagnostic is perfect: it
+says `'seed'` and the note carries a real line, column, and caret.
+
+The out-of-source span is not merely cosmetic. The pipeline harness in `fuzz/`
+asserts that every diagnostic range lies inside its source, and this input
+trips that assertion — which is how it was found. Anything consuming ranges
+programmatically rather than reading the rendered text, the LSP above all,
+receives a range that does not exist.
+
+The mechanism is visible at
+[`semantic_type_resolution.cpp:2611`](../../src/compiler/semantic_type_resolution.cpp:2611):
+the message interpolates `source.name.lexeme` and the note uses
+`tokenSpan(source.name)`. For an unnamed parameter `source.name` is a
+default-constructed token, so the lexeme is empty and the span is offset 0 in
+no file. A fallback to the parameter's type or declaration span, and wording
+that does not require a name, would cover it.
+
+## F18 — Crash: a long operator chain overflows the compiler stack
+
+`stress/operator-chain-500.gti`
+
+```gti
+int main() { std::println(1+1+1+ ... +1); return 0; }   // 500 terms
+```
+
+**SIGSEGV, exit 139.** The crash appears between 450 and 470 terms and is
+reproducible. `lldb` stops in `___chkstk_darwin` on a guard page, so it is
+recursion exhausting the stack rather than a bad pointer; ASan prints nothing
+at all, which is consistent with the stack being gone before its handler runs.
+
+The parser *does* have a depth limit, and for nested constructs it works
+perfectly — 100 nested parentheses, blocks, or `if` statements all produce a
+clean `GTI-P0005` in 0.3s at any depth tested. The guard is
+`maximumNestingDepth = 64` in
+[`parser.cpp:21`](../../src/compiler/parser.cpp:21), taken at six
+recursive-descent sites.
+
+A left-associative binary chain never touches it. `1+1+1+...` is parsed by a
+loop, so `nestingDepth` stays flat while the resulting AST grows one level
+deeper per term. The guard is counting parser recursion, not the depth of the
+tree it produces, and a later recursive walk over that tree — which has no
+guard of its own — runs out of stack.
+
+Two observations that narrow it further:
+
+- The chain crashes inside a function that is never called, so this is not
+  code generation for `main`.
+- `||` chains crash identically, so it is not arithmetic-specific.
+- 500 separate `t = t + 1;` statements are fine, so it is expression depth and
+  not program size.
+
+## F19 — Unbounded memory: one level past the nesting limit
+
+`stress/namespace-depth-63.gti`, `stress/namespace-depth-62-control.gti`
+
+| Nested namespaces | Result |
+| --- | --- |
+| 62 | `GTI-P0005` in **0.3s**, exit 65 |
+| 63 | **no diagnostic, no termination**, memory climbs without bound |
+
+Watched over 75 seconds, resident size at depth 63 grows steadily past 3.2 GB
+and is still climbing when killed. Nothing is printed. The only reason the
+measurement stops is the external cap.
+
+This is a one-line cliff. At depth 62 the parser's nesting guard fires and
+reports the right thing immediately; at depth 63 the compiler runs away. The
+shape of it — a guard that throws, followed by a recovery path that re-enters
+and generates unbounded work — is the same recovery-spin family as the parser
+defect fixed in PR #160.
+
+It is specific to namespaces. Parentheses, blocks, `if` chains, and class
+nesting were all tested at depths 62, 63, and 70 and every one is rejected
+cleanly and instantly.
+
+Worth stating plainly: this is a compiler that can be made to eat all
+available memory by a 63-line file, with no output explaining why. It is the
+most likely explanation for a compiler memory spike during ordinary work.
+
+## F20 — The formatter is not idempotent
+
+`stress/formatter-blank-lines.gti`
+
+The project's own formatter harness asserts `format(format(x)) == format(x)`.
+It does not hold.
+
+A file containing nothing but two newlines:
+
+```
+input  (2 bytes): "\n\n"
+format once      : "\n"
+format twice     : ""
+```
+
+Each pass removes one more newline, so the file erodes to empty. Every other
+whitespace-only shape tested is stable — a single newline, spaces only, a tab,
+a comment followed by blank lines. It is specifically a token-free file with
+two or more newlines.
+
+Three further non-idempotent inputs turned up on lexically invalid bytes,
+where the divergence is angle-bracket spacing: the first pass emits
+`std::name < int32_t >` and the second collapses it to `std::name<int32_t>`.
+The formatter's decision about whether `<` opens a generic argument list or is
+a comparison depends on whitespace that the formatter itself has just
+rewritten.
+
+The formatter has no file-formatting CLI command, so the reachable path is the
+LSP — that is, format-on-save. A formatter that is not a fixed point is a
+formatter that can keep producing diffs, and in the blank-file case can delete
+content.
+
+---
+
+## What was checked and found sound
+
+Recording the negative results as well, since they bound where the defects
+above are not:
+
+- **No miscompilation.** All 50 passing corpus programs produce byte-identical
+  stdout and exit status at `-O0`, `-O1`, `-O2`, `-O3` and under both C++20 and
+  C++23 — 250 configurations. The optimizer does not change observable
+  behaviour anywhere this corpus reaches.
+- **Arithmetic is correct.** 400 randomly generated, provably-defined integer
+  expressions over the full operator set agree exactly between an independent
+  evaluator, C++ at `-O0`/`-O2`, and GTI at `-O0`/`-O3`.
+- **No memory errors on well-formed input.** An ASan+UBSan build of the
+  compiler processed all 81 corpus programs and reproducers and all 74 shipped
+  examples with zero reports.
+- **The existing matrices are clean.** `container_element_matrix.py` (65
+  container × element × operation cells) and `place_shape_matrix.py` both pass
+  with no unspellable shapes.
+
+The defects in this document were found by malformed input through the `fuzz/`
+harnesses (F17, F20), by structural stress inputs (F18, F19), and by writing
+ordinary programs (F1–F16) — not by the differential and matrix tooling, which
+was clean throughout.
 
 ---
 
