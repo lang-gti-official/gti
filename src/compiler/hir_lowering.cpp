@@ -3660,28 +3660,24 @@ private:
         } else if (resolved->intrinsic == IntrinsicKind::ThreadJoin ||
                    resolved->intrinsic == IntrinsicKind::ThreadAutoJoin) {
           value.synchronization.kind = SynchronizationOperationKind::ThreadJoin;
-        } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad) {
-          value.synchronization.kind = SynchronizationOperationKind::AtomicLoad;
-          value.synchronization.order =
-              AtomicMemoryOrder::SequentiallyConsistent;
-        } else if (resolved->intrinsic == IntrinsicKind::AtomicStore) {
-          value.synchronization.kind =
-              SynchronizationOperationKind::AtomicStore;
-          value.synchronization.order =
-              AtomicMemoryOrder::SequentiallyConsistent;
-        } else if (resolved->intrinsic == IntrinsicKind::AtomicExchange) {
-          value.synchronization.kind =
-              SynchronizationOperationKind::AtomicReadModifyWrite;
-          value.synchronization.order =
-              AtomicMemoryOrder::SequentiallyConsistent;
-        } else if (resolved->intrinsic ==
-                   IntrinsicKind::AtomicCompareExchange) {
-          value.synchronization.kind =
-              SynchronizationOperationKind::AtomicCompareExchange;
-          value.synchronization.order =
-              AtomicMemoryOrder::SequentiallyConsistent;
-          value.synchronization.failureOrder =
-              AtomicMemoryOrder::SequentiallyConsistent;
+        } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad ||
+                   resolved->intrinsic == IntrinsicKind::AtomicStore ||
+                   resolved->intrinsic == IntrinsicKind::AtomicExchange ||
+                   resolved->intrinsic ==
+                       IntrinsicKind::AtomicCompareExchange) {
+          value.synchronization = resolved->synchronization;
+          const SynchronizationOperationKind expected =
+              resolved->intrinsic == IntrinsicKind::AtomicLoad
+                  ? SynchronizationOperationKind::AtomicLoad
+              : resolved->intrinsic == IntrinsicKind::AtomicStore
+                  ? SynchronizationOperationKind::AtomicStore
+              : resolved->intrinsic == IntrinsicKind::AtomicExchange
+                  ? SynchronizationOperationKind::AtomicReadModifyWrite
+                  : SynchronizationOperationKind::AtomicCompareExchange;
+          if (value.synchronization.kind != expected ||
+              !validSynchronizationOperation(value.synchronization)) {
+            lifecycleValid = false;
+          }
         }
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {

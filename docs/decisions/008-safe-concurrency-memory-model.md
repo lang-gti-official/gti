@@ -5,8 +5,8 @@ Status: Accepted
 > **Scheduling note:** ADR 012 supersedes this record's former pre/post-1.0
 > release-horizon split. The memory-model decision remains accepted. Its
 > bounded owned-thread/task, SC-atomic, mutex-guard, and conformance profile is
-> now systems-readiness work; detach, weak-order breadth, and advanced
-> reclamation remain later breadth.
+> now systems-readiness work. Explicit accepted atomic orders have since
+> landed; detach and advanced reclamation remain later breadth.
 
 ## Context
 
@@ -20,9 +20,9 @@ executable language is therefore single-threaded even though generated C++ or
 a native dependency may internally use host threads.
 
 That paragraph records the adoption-time context. The current implementation
-now exposes owned managed threads and sequentially consistent scalar atomics
-under the opt-in concurrent profile; mutexes and foreign-thread entry remain
-outstanding. Current source semantics live in
+now exposes owned managed threads and scalar atomics with sequentially
+consistent defaults plus explicit accepted orders under the opt-in concurrent
+profile; mutexes and foreign-thread entry remain outstanding. Current source semantics live in
 [the concurrency language contract](../language/concurrency.md).
 
 That implementation accident cannot become the language memory model. Before
@@ -191,22 +191,24 @@ full-expression contract. **Synchronizes-with** is created only by a GTI
 operation whose language contract says so. **Happens-before** is the transitive
 closure of those relations.
 
-The implemented profile provides the spawn, join, and sequentially consistent
-atomic edges below; mutex ordering remains future:
+The implemented profile provides the spawn, join, atomic, and sequentially
+consistent edges below; mutex ordering remains future:
 
 - evaluations sequenced before successful spawn happen-before task entry;
 - task completion happens-before a successful explicit or automatic join
   returns or continues cleanup;
-- every sequentially consistent atomic operation participates in one
-  program-wide sequentially consistent order; and
+- release/acquire observations establish their contracted synchronizes-with
+  edge, every atomic operation participates in its object's modification
+  order, and every sequentially consistent atomic operation additionally
+  participates in one program-wide sequentially consistent order; and
 - future mutex unlock synchronizes-with the corresponding later successful
   acquisition.
 
-The first atomic surface is limited to fixed-width integers and `bool`, uses
+The atomic surface is limited to fixed-width integers and `bool`, defaults to
 sequential consistency, and promises neither lock freedom nor C-compatible
-layout. Later accepted orders are `relaxed`, `acquire`, `release`, `acq_rel`,
-and `seq_cst`; there is no `consume`. Operation-specific legality must be
-checked before lowering.
+layout. Static source tags select `relaxed`, `acquire`, `release`, `acq_rel`,
+and `seq_cst`; there is no `consume`. Operation-specific legality is checked
+by source overload resolution and again in MIR before lowering.
 
 HIR and MIR must represent recognized synchronization operations and their
 orders explicitly. An unknown call or `maySynchronize` effect is a conservative
@@ -275,8 +277,9 @@ The implementation sequence remains:
    runtime prerequisites;
 5. add explicit synchronization operations/effects;
 6. expose sequentially consistent scalar atomics and the owned automatic-join
-   task/thread model; and
-7. add conformance, stress, optimizer-ordering, installed-toolchain, and
+   task/thread model;
+7. add the accepted explicit atomic order matrix; and
+8. add conformance, stress, optimizer-ordering, installed-toolchain, and
    sanitizer gates before advertising the profile.
 
 No implementation row may use public wrapper spelling, emitted C++ traits, or
@@ -299,7 +302,7 @@ and test these semantic cases:
 | ordinary mutable, borrowed-state, raw-pointer, or cleanup-owning global/static | rejected for the concurrent profile; existing single-threaded source remains valid |
 | immutable atomic/mutex global performing contracted mutation | accepted only after its compiler-private operation and runtime support exist |
 | two overlapping ordinary accesses that could race | rejected before backend entry |
-| recognized SC atomic accesses | accepted and retained as ordered synchronization operations |
+| recognized default or explicitly ordered atomic accesses | accepted only for the operation's legal order types and retained as exact synchronization operations |
 | unknown/native call claimed as synchronization without a contract | retained as an optimizer barrier but rejected as proof of happens-before |
 | task checked failure followed by explicit or automatic join | task state cleans; the exact original record is re-raised on the joining thread |
 | outstanding handle reaches ordinary destruction | automatic join; completion precedes continuation of cleanup |
@@ -324,8 +327,8 @@ supported. No timing-only test is a correctness oracle.
 - Automatic join preserves structured lifetime at the cost of potentially
   blocking cleanup and participating in deadlock.
 - Stored and scoped cross-thread borrows, detach, mutex guards, pointer
-  atomics, weaker orders, shared ownership across threads, and native callbacks
-  retain their explicit prerequisite rows.
+  atomics, shared ownership across threads, and native callbacks retain their
+  explicit prerequisite rows.
 
 ## Rejected Alternatives
 

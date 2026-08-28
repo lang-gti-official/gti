@@ -1165,6 +1165,11 @@ private:
                        const std::vector<std::string> &scope,
                        std::string_view name) const;
 
+  [[nodiscard]] SynchronizationOperation
+  trustedSynchronizationOperation(SourceUnitId sourceUnit,
+                                  const std::vector<std::string> &scope,
+                                  std::string_view name) const;
+
   [[nodiscard]] std::optional<CallableCandidate>
   intrinsicCandidate(const ExprPtr &callee) const;
 

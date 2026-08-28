@@ -35,6 +35,29 @@ using mir_detail::sameGlobalBorrowPlace;
 using mir_detail::terminatorSuccessors;
 using mir_detail::verificationFailure;
 
+[[nodiscard]] bool
+exactAtomicSynchronization(IntrinsicKind intrinsic,
+                           const SynchronizationOperation &operation) {
+  SynchronizationOperationKind expected = SynchronizationOperationKind::None;
+  switch (intrinsic) {
+  case IntrinsicKind::AtomicLoad:
+    expected = SynchronizationOperationKind::AtomicLoad;
+    break;
+  case IntrinsicKind::AtomicStore:
+    expected = SynchronizationOperationKind::AtomicStore;
+    break;
+  case IntrinsicKind::AtomicExchange:
+    expected = SynchronizationOperationKind::AtomicReadModifyWrite;
+    break;
+  case IntrinsicKind::AtomicCompareExchange:
+    expected = SynchronizationOperationKind::AtomicCompareExchange;
+    break;
+  default:
+    return false;
+  }
+  return operation.kind == expected && validSynchronizationOperation(operation);
+}
+
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   MirValueId valueId) {
   return mir_detail::definitionFor(body, valueId);
@@ -4724,39 +4747,21 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
-        const auto exactSequentiallyConsistentAtomic = [&]() {
-          const SynchronizationOperation &sync = instruction.synchronization;
-          const bool sequentiallyConsistent =
-              sync.order == AtomicMemoryOrder::SequentiallyConsistent;
-          switch (instruction.intrinsic) {
-          case IntrinsicKind::AtomicLoad:
-            return sync.kind == SynchronizationOperationKind::AtomicLoad &&
-                   sequentiallyConsistent && !sync.failureOrder;
-          case IntrinsicKind::AtomicStore:
-            return sync.kind == SynchronizationOperationKind::AtomicStore &&
-                   sequentiallyConsistent && !sync.failureOrder;
-          case IntrinsicKind::AtomicExchange:
-            return sync.kind ==
-                       SynchronizationOperationKind::AtomicReadModifyWrite &&
-                   sequentiallyConsistent && !sync.failureOrder;
-          case IntrinsicKind::AtomicCompareExchange:
-            return sync.kind ==
-                       SynchronizationOperationKind::AtomicCompareExchange &&
-                   sequentiallyConsistent &&
-                   sync.failureOrder ==
-                       AtomicMemoryOrder::SequentiallyConsistent;
-          default:
-            return true;
-          }
-        };
-        if (!exactSequentiallyConsistentAtomic()) {
+        const bool atomicIntrinsic =
+            instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+            instruction.intrinsic == IntrinsicKind::AtomicStore ||
+            instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+            instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
+        if (atomicIntrinsic &&
+            !exactAtomicSynchronization(instruction.intrinsic,
+                                        instruction.synchronization)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,
                .block = block.id,
                .instruction = instruction.id,
                .message = "atomic intrinsic does not retain its exact "
-                          "sequentially-consistent synchronization contract"});
+                          "operation-specific synchronization contract"});
         }
         if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
             !instruction.threadTaskAdapter) {
@@ -4841,31 +4846,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                  SynchronizationOperationKind::ThreadJoin &&
              (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
               instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)) ||
-            (instruction.synchronization.kind ==
-                 SynchronizationOperationKind::AtomicLoad &&
-             instruction.intrinsic == IntrinsicKind::AtomicLoad &&
-             instruction.synchronization.order ==
-                 AtomicMemoryOrder::SequentiallyConsistent &&
-             !instruction.synchronization.failureOrder) ||
-            (instruction.synchronization.kind ==
-                 SynchronizationOperationKind::AtomicStore &&
-             instruction.intrinsic == IntrinsicKind::AtomicStore &&
-             instruction.synchronization.order ==
-                 AtomicMemoryOrder::SequentiallyConsistent &&
-             !instruction.synchronization.failureOrder) ||
-            (instruction.synchronization.kind ==
-                 SynchronizationOperationKind::AtomicReadModifyWrite &&
-             instruction.intrinsic == IntrinsicKind::AtomicExchange &&
-             instruction.synchronization.order ==
-                 AtomicMemoryOrder::SequentiallyConsistent &&
-             !instruction.synchronization.failureOrder) ||
-            (instruction.synchronization.kind ==
-                 SynchronizationOperationKind::AtomicCompareExchange &&
-             instruction.intrinsic == IntrinsicKind::AtomicCompareExchange &&
-             instruction.synchronization.order ==
-                 AtomicMemoryOrder::SequentiallyConsistent &&
-             instruction.synchronization.failureOrder ==
-                 AtomicMemoryOrder::SequentiallyConsistent);
+            exactAtomicSynchronization(instruction.intrinsic,
+                                       instruction.synchronization);
         exactTrustedSynchronization =
             exactTrustedSynchronization && exactPrivateSynchronizationIntrinsic;
         if (program.executionProfile() != ExecutionProfile::SingleThreaded ||

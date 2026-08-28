@@ -3560,10 +3560,11 @@ def test_atomic_tooling(executable, root):
         "#include <std/atomic>\n"
         "std::atomic<int32_t> counter{0};\n"
         "int main() {\n"
-        "  counter.store(1);\n"
+        "  counter.store(1, std::memory_order_release());\n"
         "  int32_t prior = counter.exchange(2);\n"
         "  auto changed = counter.compare_exchange_strong(2, 3);\n"
-        "  return counter.load() == 3 && changed.exchanged() && prior == 1 ? 0 : 1;\n"
+        "  return counter.load(std::memory_order_acquire()) == 3 && "
+        "changed.exchanged() && prior == 1 ? 0 : 1;\n"
         "}\n"
     )
     path.write_text(source, encoding="utf-8")
@@ -3650,11 +3651,21 @@ def test_atomic_tooling(executable, root):
         assert definition is not None
         assert definition["uri"].endswith("/stdlib/std/atomic.gti")
 
-        load_use = source.index("load()")
+        load_use = source.index("load(")
         load_hover = position_request(4, "textDocument/hover", load_use + 1)
-        assert "Returns the current value with sequentially consistent ordering" in (
-            load_hover["contents"]["value"]
+        assert "Returns the current value with acquire ordering" in load_hover[
+            "contents"
+        ]["value"]
+        order_use = source.index("memory_order_release")
+        order_hover = position_request(9, "textDocument/hover", order_use + 1)
+        assert "Static tag selecting release atomic ordering" in order_hover[
+            "contents"
+        ]["value"], order_hover
+        order_definition = position_request(
+            10, "textDocument/definition", order_use + 1
         )
+        assert order_definition is not None
+        assert order_definition["uri"].endswith("/stdlib/std/atomic.gti")
 
         session.send(
             {
@@ -3675,13 +3686,17 @@ def test_atomic_tooling(executable, root):
             (source.index("exchange("), 6),
             (source.index("compare_exchange_strong("), 6),
             (load_use, 6),
+            (order_use, 6),
         ):
             position = lsp_position(source, offset)
-            assert tokens[(position["line"], position["character"])][
+            actual_type = tokens[(position["line"], position["character"])][
                 "type"
-            ] == expected_type
+            ]
+            assert actual_type == expected_type, (offset, actual_type, tokens)
 
-        completion_source = source.replace("counter.load()", "counter.lo")
+        completion_source = source.replace(
+            "counter.load(std::memory_order_acquire())", "counter.lo"
+        )
         session.send(
             {
                 "jsonrpc": "2.0",

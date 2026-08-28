@@ -1251,6 +1251,7 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_scalar.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
     )
     set_tests_properties(atomic_end_to_end PROPERTIES TIMEOUT 300)
     add_test(
@@ -1259,6 +1260,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 300)

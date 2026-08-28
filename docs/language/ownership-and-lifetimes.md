@@ -131,7 +131,8 @@ dereference operation.
 
 The default executable profile is single-threaded. GTI also implements the
 ownership facts, process-wide storage policy, owned managed threads, and
-sequentially consistent scalar atomics of its opt-in concurrent profile.
+ordered scalar atomics with sequentially consistent defaults in its opt-in
+concurrent profile.
 Mutex-protected borrows, scoped threads, detach, and foreign-thread entry
 remain unavailable.
 

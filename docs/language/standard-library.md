@@ -143,7 +143,9 @@ The current implemented foundation includes:
   token, separate argument pack, or cross-thread borrow; and
 - `<std/atomic>` source-defined move-only `std::atomic<T>` for `bool` and every
   fixed-width signed and unsigned integer. Construction, load, store, exchange,
-  and strong compare/exchange are sequentially consistent. Strong
+  and strong compare/exchange default to sequential consistency. Static
+  `std::memory_order_relaxed()`, `acquire()`, `release()`, `acq_rel()`, and
+  `seq_cst()` tag types expose only operation-legal overloads. Strong
   compare/exchange never fails spuriously and returns success plus the actual
   observation without exposing storage. The wrapper is transfer- and
   share-capable but promises neither lock freedom, stable layout, nor native
@@ -390,7 +392,7 @@ The following component families remain planned or incomplete:
 - indexed/named/specifier-based and floating-point formatting, formatter
   customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, random distributions and engine
-  breadth, connected networking, traffic buffers, atomic order/fetch/wait
+  breadth, connected networking, traffic buffers, atomic fetch/wait/fence
   breadth, mutexes, condition
   variables, stop tokens, detached/scoped tasks, typed argument packs, and
   broader threading;

@@ -154,10 +154,12 @@ its compare/exchange result policy. Semantics does not recognize either public
 name. The exact trusted unit alone owns the compiler-private
 `gti_internal::atomic_storage<T>` capability and load, store, exchange, and
 strong compare/exchange declarations. The capability admits only `bool` and
-fixed-width integers. HIR attaches the exact sequentially consistent operation
-record, MIR verifies it, and the sealed C++ plan maps the private storage to its
-native representation. The backend never infers an atomic from a class name or
-reconstructs an order from source syntax.
+fixed-width integers. Distinct public static order-tag overloads route to exact
+private declarations, whose selected identity records the operation and order
+pair in semantics. HIR preserves that record, MIR verifies the complete legal
+matrix, and the sealed C++ plan maps private storage and the verified order to
+their native representations. The backend never infers an atomic from a class
+name or reconstructs an order from source syntax.
 
 Only the irreducible host boundary is compiler-private. Its capability surface
 is the identity-bound `gti_internal::thread_handle` and

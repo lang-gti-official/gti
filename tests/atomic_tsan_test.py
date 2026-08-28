@@ -28,17 +28,21 @@ def execute(
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         raise SystemExit(
-            "usage: atomic_tsan_test.py /path/to/gti concurrent.gti /path/to/c++"
+            "usage: atomic_tsan_test.py /path/to/gti concurrent.gti "
+            "orders.gti /path/to/c++"
         )
     if sys.platform == "win32":
         print("atomic ThreadSanitizer check skipped: unsupported host platform")
         return 0
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
-    source = pathlib.Path(sys.argv[2]).resolve()
-    native_compiler = pathlib.Path(sys.argv[3]).resolve()
+    sources = [
+        pathlib.Path(sys.argv[2]).resolve(),
+        pathlib.Path(sys.argv[3]).resolve(),
+    ]
+    native_compiler = pathlib.Path(sys.argv[4]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-tsan-") as scratch:
         root = pathlib.Path(scratch)
@@ -62,41 +66,41 @@ def main() -> int:
             )
             return 0
 
-        binary = root / "atomic_concurrent"
-        build = execute(
-            [
-                str(compiler),
-                "--execution-profile",
-                "concurrent",
-                "--std",
-                "c++23",
-                "-O1",
-                "--cxx",
-                str(native_compiler),
-                str(source),
-                "-o",
-                str(binary),
-                "--",
-                "-fsanitize=thread",
-                "-fno-omit-frame-pointer",
-                "-g",
-            ]
-        )
-        if build.returncode != 0:
-            raise AssertionError(
-                f"ThreadSanitizer build returned {build.returncode}\n"
-                f"stdout: {build.stdout}\nstderr: {build.stderr}"
-            )
-
         environment = os.environ.copy()
         environment["TSAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
-        for _ in range(3):
-            run = execute([str(binary)], environment=environment)
-            if run.returncode != 0:
+        for source in sources:
+            binary = root / source.stem
+            build = execute(
+                [
+                    str(compiler),
+                    "--execution-profile",
+                    "concurrent",
+                    "--std",
+                    "c++23",
+                    "-O1",
+                    "--cxx",
+                    str(native_compiler),
+                    str(source),
+                    "-o",
+                    str(binary),
+                    "--",
+                    "-fsanitize=thread",
+                    "-fno-omit-frame-pointer",
+                    "-g",
+                ]
+            )
+            if build.returncode != 0:
                 raise AssertionError(
-                    f"ThreadSanitizer run returned {run.returncode}\n"
-                    f"stdout: {run.stdout}\nstderr: {run.stderr}"
+                    f"ThreadSanitizer build returned {build.returncode}\n"
+                    f"stdout: {build.stdout}\nstderr: {build.stderr}"
                 )
+            for _ in range(3):
+                run = execute([str(binary)], environment=environment)
+                if run.returncode != 0:
+                    raise AssertionError(
+                        f"ThreadSanitizer run returned {run.returncode}\n"
+                        f"stdout: {run.stdout}\nstderr: {run.stderr}"
+                    )
 
     print("atomic ThreadSanitizer check passed")
     return 0

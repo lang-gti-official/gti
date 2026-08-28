@@ -1048,6 +1048,100 @@ auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
          type.kind == SemanticType::PrefixStorage;
 }
 
+auto SemanticVisitor::Impl::trustedSynchronizationOperation(
+    SourceUnitId sourceUnit, const std::vector<std::string> &scope,
+    std::string_view name) const -> SynchronizationOperation {
+  if (!isAtomicLibraryUnit(sourceUnit) || scope.size() != 1 ||
+      scope.front() != "gti_internal") {
+    return {};
+  }
+  const auto operation =
+      [](SynchronizationOperationKind kind, AtomicMemoryOrder order,
+         std::optional<AtomicMemoryOrder> failureOrder = std::nullopt) {
+        return SynchronizationOperation{
+            .kind = kind, .order = order, .failureOrder = failureOrder};
+      };
+  if (name == "atomic_load_relaxed") {
+    return operation(SynchronizationOperationKind::AtomicLoad,
+                     AtomicMemoryOrder::Relaxed);
+  }
+  if (name == "atomic_load_acquire") {
+    return operation(SynchronizationOperationKind::AtomicLoad,
+                     AtomicMemoryOrder::Acquire);
+  }
+  if (name == "atomic_load") {
+    return operation(SynchronizationOperationKind::AtomicLoad,
+                     AtomicMemoryOrder::SequentiallyConsistent);
+  }
+  if (name == "atomic_store_relaxed") {
+    return operation(SynchronizationOperationKind::AtomicStore,
+                     AtomicMemoryOrder::Relaxed);
+  }
+  if (name == "atomic_store_release") {
+    return operation(SynchronizationOperationKind::AtomicStore,
+                     AtomicMemoryOrder::Release);
+  }
+  if (name == "atomic_store") {
+    return operation(SynchronizationOperationKind::AtomicStore,
+                     AtomicMemoryOrder::SequentiallyConsistent);
+  }
+  if (name == "atomic_exchange_relaxed") {
+    return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                     AtomicMemoryOrder::Relaxed);
+  }
+  if (name == "atomic_exchange_acquire") {
+    return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                     AtomicMemoryOrder::Acquire);
+  }
+  if (name == "atomic_exchange_release") {
+    return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                     AtomicMemoryOrder::Release);
+  }
+  if (name == "atomic_exchange_acq_rel") {
+    return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                     AtomicMemoryOrder::AcquireRelease);
+  }
+  if (name == "atomic_exchange") {
+    return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                     AtomicMemoryOrder::SequentiallyConsistent);
+  }
+  const auto compareExchange = [&](std::string_view candidate,
+                                   AtomicMemoryOrder success,
+                                   AtomicMemoryOrder failure) {
+    return name == candidate
+               ? operation(SynchronizationOperationKind::AtomicCompareExchange,
+                           success, failure)
+               : SynchronizationOperation{};
+  };
+  for (const auto [candidate, success, failure] :
+       {std::tuple<std::string_view, AtomicMemoryOrder, AtomicMemoryOrder>{
+            "atomic_compare_exchange_relaxed_relaxed",
+            AtomicMemoryOrder::Relaxed, AtomicMemoryOrder::Relaxed},
+        {"atomic_compare_exchange_acquire_relaxed", AtomicMemoryOrder::Acquire,
+         AtomicMemoryOrder::Relaxed},
+        {"atomic_compare_exchange_acquire_acquire", AtomicMemoryOrder::Acquire,
+         AtomicMemoryOrder::Acquire},
+        {"atomic_compare_exchange_release_relaxed", AtomicMemoryOrder::Release,
+         AtomicMemoryOrder::Relaxed},
+        {"atomic_compare_exchange_acq_rel_relaxed",
+         AtomicMemoryOrder::AcquireRelease, AtomicMemoryOrder::Relaxed},
+        {"atomic_compare_exchange_acq_rel_acquire",
+         AtomicMemoryOrder::AcquireRelease, AtomicMemoryOrder::Acquire},
+        {"atomic_compare_exchange_seq_cst_relaxed",
+         AtomicMemoryOrder::SequentiallyConsistent, AtomicMemoryOrder::Relaxed},
+        {"atomic_compare_exchange_seq_cst_acquire",
+         AtomicMemoryOrder::SequentiallyConsistent, AtomicMemoryOrder::Acquire},
+        {"atomic_compare_exchange", AtomicMemoryOrder::SequentiallyConsistent,
+         AtomicMemoryOrder::SequentiallyConsistent}}) {
+    SynchronizationOperation result =
+        compareExchange(candidate, success, failure);
+    if (result.kind != SynchronizationOperationKind::None) {
+      return result;
+    }
+  }
+  return {};
+}
+
 auto SemanticVisitor::Impl::trustedIntrinsicKind(
     SourceUnitId sourceUnit, const std::vector<std::string> &scope,
     std::string_view name) const -> IntrinsicKind {
@@ -1076,22 +1170,18 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     return IntrinsicKind::None;
   }
   if (isAtomicLibraryUnit(sourceUnit)) {
-    if (scope.front() != "gti_internal") {
+    switch (trustedSynchronizationOperation(sourceUnit, scope, name).kind) {
+    case SynchronizationOperationKind::AtomicLoad:
+      return IntrinsicKind::AtomicLoad;
+    case SynchronizationOperationKind::AtomicStore:
+      return IntrinsicKind::AtomicStore;
+    case SynchronizationOperationKind::AtomicReadModifyWrite:
+      return IntrinsicKind::AtomicExchange;
+    case SynchronizationOperationKind::AtomicCompareExchange:
+      return IntrinsicKind::AtomicCompareExchange;
+    default:
       return IntrinsicKind::None;
     }
-    if (name == "atomic_load") {
-      return IntrinsicKind::AtomicLoad;
-    }
-    if (name == "atomic_store") {
-      return IntrinsicKind::AtomicStore;
-    }
-    if (name == "atomic_exchange") {
-      return IntrinsicKind::AtomicExchange;
-    }
-    if (name == "atomic_compare_exchange") {
-      return IntrinsicKind::AtomicCompareExchange;
-    }
-    return IntrinsicKind::None;
   }
   if (!isPreludeUnit(sourceUnit)) {
     return IntrinsicKind::None;
@@ -3979,6 +4069,18 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
 auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  const CallableDeclaration &record = declaration.record();
+  const SynchronizationOperation synchronization =
+      trustedSynchronizationOperation(record.sourceUnit, record.namespaceScope,
+                                      record.syntax->name().lexeme);
+  if (!validSynchronizationOperation(synchronization)) {
+    report(expr.paren(),
+           "This private atomic operation has no valid static memory-order "
+           "contract.",
+           "GTI-S2086");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   std::vector<SemanticType> explicitTypeArguments;
   explicitTypeArguments.reserve(expr.typeArguments().size());
   for (const TypeRef &argument : expr.typeArguments()) {
@@ -4095,7 +4197,8 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
       expr, ResolvedCallInfo{.returnType = currentType,
                              .parameterTypes = std::move(parameterTypes),
                              .typeArguments = std::move(recordedTypeArguments),
-                             .intrinsic = intrinsic});
+                             .intrinsic = intrinsic,
+                             .synchronization = synchronization});
 }
 
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(

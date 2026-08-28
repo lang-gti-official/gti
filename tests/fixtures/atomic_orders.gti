@@ -1,0 +1,112 @@
+#include <std/atomic>
+#include <std/thread>
+
+std::atomic<int32_t> published_value{0};
+std::atomic<bool> published_ready{false};
+std::atomic<int32_t> publication_failure{0};
+
+void publish_value() {
+  published_value.store(42, std::memory_order_relaxed());
+  published_ready.store(true, std::memory_order_release());
+}
+
+void observe_value() {
+  while (!published_ready.load(std::memory_order_acquire())) {}
+  if (published_value.load(std::memory_order_relaxed()) != 42) {
+    publication_failure.store(1, std::memory_order_relaxed());
+  }
+}
+
+int32_t exercise_order_vocabulary() {
+  std::atomic<int32_t> value{0};
+  value.store(1, std::memory_order_relaxed());
+  if (value.load(std::memory_order_relaxed()) != 1) {
+    return 1;
+  }
+  value.store(2, std::memory_order_release());
+  if (value.load(std::memory_order_acquire()) != 2) {
+    return 2;
+  }
+  value.store(3, std::memory_order_seq_cst());
+  if (value.load(std::memory_order_seq_cst()) != 3) {
+    return 3;
+  }
+
+  if (value.exchange(4, std::memory_order_relaxed()) != 3 ||
+      value.exchange(5, std::memory_order_acquire()) != 4 ||
+      value.exchange(6, std::memory_order_release()) != 5 ||
+      value.exchange(7, std::memory_order_acq_rel()) != 6 ||
+      value.exchange(8, std::memory_order_seq_cst()) != 7) {
+    return 4;
+  }
+
+  auto one_relaxed = value.compare_exchange_strong(
+      8, 9, std::memory_order_relaxed());
+  auto one_acquire = value.compare_exchange_strong(
+      9, 10, std::memory_order_acquire());
+  auto one_release = value.compare_exchange_strong(
+      10, 11, std::memory_order_release());
+  auto one_acq_rel = value.compare_exchange_strong(
+      11, 12, std::memory_order_acq_rel());
+  auto one_seq_cst = value.compare_exchange_strong(
+      12, 13, std::memory_order_seq_cst());
+  if (!one_relaxed.exchanged() || !one_acquire.exchanged() ||
+      !one_release.exchanged() || !one_acq_rel.exchanged() ||
+      !one_seq_cst.exchanged()) {
+    return 5;
+  }
+
+  auto relaxed_relaxed = value.compare_exchange_strong(
+      13, 14, std::memory_order_relaxed(), std::memory_order_relaxed());
+  auto acquire_relaxed = value.compare_exchange_strong(
+      14, 15, std::memory_order_acquire(), std::memory_order_relaxed());
+  auto acquire_acquire = value.compare_exchange_strong(
+      15, 16, std::memory_order_acquire(), std::memory_order_acquire());
+  auto release_relaxed = value.compare_exchange_strong(
+      16, 17, std::memory_order_release(), std::memory_order_relaxed());
+  auto acq_rel_relaxed = value.compare_exchange_strong(
+      17, 18, std::memory_order_acq_rel(), std::memory_order_relaxed());
+  auto acq_rel_acquire = value.compare_exchange_strong(
+      18, 19, std::memory_order_acq_rel(), std::memory_order_acquire());
+  auto seq_cst_relaxed = value.compare_exchange_strong(
+      19, 20, std::memory_order_seq_cst(), std::memory_order_relaxed());
+  auto seq_cst_acquire = value.compare_exchange_strong(
+      20, 21, std::memory_order_seq_cst(), std::memory_order_acquire());
+  auto seq_cst_seq_cst = value.compare_exchange_strong(
+      21, 22, std::memory_order_seq_cst(), std::memory_order_seq_cst());
+  if (!relaxed_relaxed.exchanged() || !acquire_relaxed.exchanged() ||
+      !acquire_acquire.exchanged() || !release_relaxed.exchanged() ||
+      !acq_rel_relaxed.exchanged() || !acq_rel_acquire.exchanged() ||
+      !seq_cst_relaxed.exchanged() || !seq_cst_acquire.exchanged() ||
+      !seq_cst_seq_cst.exchanged() ||
+      value.load(std::memory_order_relaxed()) != 22) {
+    return 6;
+  }
+  return 0;
+}
+
+int main() {
+  int32_t vocabulary = exercise_order_vocabulary();
+  if (vocabulary != 0) {
+    return vocabulary;
+  }
+
+  auto observer_started = std::thread::start([]() -> void { observe_value(); });
+  if (!observer_started.has_value()) {
+    return 10;
+  }
+  mut std::thread observer = std::move(observer_started).value();
+
+  auto publisher_started = std::thread::start([]() -> void { publish_value(); });
+  if (!publisher_started.has_value()) {
+    return 11;
+  }
+  mut std::thread publisher = std::move(publisher_started).value();
+
+  auto publisher_joined = publisher.join();
+  auto observer_joined = observer.join();
+  if (!publisher_joined.has_value() || !observer_joined.has_value()) {
+    return 12;
+  }
+  return publication_failure.load(std::memory_order_relaxed()) == 0 ? 0 : 13;
+}
