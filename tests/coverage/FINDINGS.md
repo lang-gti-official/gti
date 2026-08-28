@@ -13,17 +13,31 @@ Run it with:
 Outcomes are classified as pass, ICE (`GTI-B0001`), silent failure (non-zero
 exit with no diagnostic), or rejection.
 
-## Result at time of writing
+## Integrated result
 
-30 programs: **24 pass, 4 ICE, 2 silent failures**.
+30 programs: **30 pass, 0 ICE, 0 silent failures, 0 rejections**.
 
-Every finding below is reproduced by a self-contained program in
-`reproducers/`. None of them are fixed here — this pass is about locating
-defects, not repairing them.
+The submitted corpus initially measured **24 pass, 4 ICE, 2 silent
+failures**. Every historical finding below remains reproduced by a
+self-contained program in `reproducers/`, and every reproducer now compiles
+and runs. The corpus is registered as the `language_coverage_corpus` CTest so
+these combinations remain release-gated.
+
+| Finding | Resolution |
+| --- | --- |
+| F1 | HIR verification now compares concrete generic range facts and stable loan provenance rather than declaration-level types and per-analysis loan IDs. |
+| F2 | Already fixed on the integration base by exact generic callable-reference lowering. |
+| F3 | MIR full-expression verification distinguishes a loop's next dynamic evaluation from two reachable markers in one evaluation. |
+| F4 | The C++ backend admits an adjacent, failure-free class prvalue at an exact confined callable parameter. |
+| F5 | The backend retains a verified failure-free nested constructor/reference-return chain without manufacturing an owning local. |
+| F6 | Semantic statement routing now attributes file-scope `static_assert` to its own source unit while retaining direct-include diagnostics for genuinely hidden declarations. |
+
+The detailed sections below preserve the original symptoms and reductions as
+regression rationale.
 
 ---
 
-## F1 — Silent compile failure: range-for over `std::vector<T>` in a generic function
+## F1 — Resolved: range-for over `std::vector<T>` in a generic function
 
 `reproducers/f1-generic-range-for-silent.gti`
 
@@ -58,7 +72,7 @@ fail. The generic context and the range-for are jointly required.
 
 Corpus programs: `c29_generic_constraints_mix`, `c30_generic_range_for`.
 
-## F2 — ICE: generic callable parameter invoked with a by-reference predicate
+## F2 — Resolved: generic callable parameter invoked with a by-reference predicate
 
 `reproducers/f2-generic-callable-by-reference.gti`
 
@@ -83,7 +97,7 @@ type reproduce it.
 
 Corpus program: `c01_generic_container_pipeline`.
 
-## F3 — ICE: `?` propagation operator inside a loop body
+## F3 — Resolved: `?` propagation operator inside a loop body
 
 `reproducers/f3-propagation-in-loop.gti`
 
@@ -115,7 +129,7 @@ exist, so this closes off most practical use of the feature.
 
 Corpus program: `c03_expected_error_flow`.
 
-## F4 — ICE: stdlib algorithms with a class functor
+## F4 — Resolved: stdlib algorithms with a class functor
 
 `reproducers/f4-algorithm-class-functor.gti`
 
@@ -140,7 +154,7 @@ is distinct from F2 despite the shared diagnostic text.
 
 Corpus program: `c08_lambda_captures`.
 
-## F5 — ICE: nested generic unwrapped through chained reference-returning accessors
+## F5 — Resolved: nested generic unwrapped through chained reference-returning accessors
 
 `reproducers/f5-nested-generic-chained-get.gti`
 
@@ -163,7 +177,7 @@ inside a generic function is what fails.
 
 Corpus program: `c15_multidim_and_nested_generics`.
 
-## F6 — Wrong diagnostic: file-scope `static_assert` over a file-scope `constexpr`
+## F6 — Resolved: file-scope `static_assert` over a file-scope `constexpr`
 
 `reproducers/f6-file-scope-static-assert.gti`
 
@@ -197,8 +211,8 @@ The visibility result depends on unrelated declarations elsewhere in the file:
 a class. Anyone writing a header of `constexpr` limits and assertions — with
 no class in it — hits this immediately.
 
-Corpus program: `c13_constexpr_static_assert` (passes only because it
-declares a class).
+Corpus program: `c13_constexpr_static_assert` now exercises the shape without
+an unrelated class declaration.
 
 ---
 
