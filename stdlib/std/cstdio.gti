@@ -1,3 +1,52 @@
+#include <std/string>
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+int64_t gti_rt_write_stdout_bytes_v1(gti_internal::text_view value);
+int64_t gti_rt_write_stderr_bytes_v1(gti_internal::text_view value);
+int32_t gti_rt_flush_stdout_v1();
+int32_t gti_rt_flush_stderr_v1();
+int64_t gti_rt_read_stdin_bytes_v1(uint8_t* output, uint64_t capacity);
+int64_t gti_rt_open_file_v1(gti_internal::text_view path, uint32_t mode);
+int64_t gti_rt_read_file_v1(int64_t descriptor, uint8_t* output,
+                            uint64_t capacity);
+int64_t gti_rt_write_file_v1(int64_t descriptor,
+                             gti_internal::text_view value);
+int64_t gti_rt_seek_file_v1(int64_t descriptor, int64_t offset,
+                            uint32_t origin);
+}
+
+int64_t write_stdout_bytes(gti_internal::text_view value) {
+  return gti_rt_write_stdout_bytes_v1(value);
+}
+
+int64_t write_stderr_bytes(gti_internal::text_view value) {
+  return gti_rt_write_stderr_bytes_v1(value);
+}
+
+int32_t flush_stdout() {
+  return gti_rt_flush_stdout_v1();
+}
+
+int32_t flush_stderr() {
+  return gti_rt_flush_stderr_v1();
+}
+
+int64_t open_file(gti_internal::text_view path, uint32_t mode) {
+  return gti_rt_open_file_v1(path, mode);
+}
+
+int64_t write_file(int64_t descriptor, gti_internal::text_view value) {
+  return gti_rt_write_file_v1(descriptor, value);
+}
+
+int64_t seek_file(int64_t descriptor, int64_t offset, uint32_t origin) {
+  return gti_rt_seek_file_v1(descriptor, offset, origin);
+}
+}
+}
+
 namespace std {
 enum class io_errc {
   end_of_file,
@@ -6,7 +55,67 @@ enum class io_errc {
   close_failed,
   invalid_stream,
   unsupported_mode,
+  write_failed,
+  seek_failed,
+  flush_failed,
 };
+
+/// File access policy selected when opening a stream.
+enum class file_mode {
+  read,
+  write,
+  append,
+  read_write,
+  read_write_truncate,
+  read_append,
+};
+
+/// Reference point used by a file seek operation.
+enum class seek_origin {
+  begin,
+  current,
+  end,
+};
+
+}
+
+namespace gti_internal {
+
+uint32_t runtime_file_mode(std::file_mode mode) {
+  switch (mode) {
+  case std::file_mode::read:
+    return uint32_t(0);
+  case std::file_mode::write:
+    return uint32_t(1);
+  case std::file_mode::append:
+    return uint32_t(2);
+  case std::file_mode::read_write:
+    return uint32_t(3);
+  case std::file_mode::read_write_truncate:
+    return uint32_t(4);
+  case std::file_mode::read_append:
+    return uint32_t(5);
+  default:
+    return uint32_t(6);
+  }
+}
+
+uint32_t runtime_seek_origin(std::seek_origin origin) {
+  switch (origin) {
+  case std::seek_origin::begin:
+    return uint32_t(0);
+  case std::seek_origin::current:
+    return uint32_t(1);
+  case std::seek_origin::end:
+    return uint32_t(2);
+  default:
+    return uint32_t(3);
+  }
+}
+
+}
+
+namespace std {
 
 class FILE {
   mut gti_internal::file_handle handle;
@@ -20,10 +129,12 @@ public:
     }
   }
 
+  /// Returns whether this owner still contains an open native file.
   bool is_open() {
     return this.handle.is_valid();
   }
 
+  /// Reads one unsigned byte, or reports end_of_file without a magic value.
   expected<int32_t, io_errc> get() mut {
     if (!this.handle.is_valid()) {
       return unexpected(io_errc::invalid_stream);
@@ -40,6 +151,89 @@ public:
     return unexpected(io_errc::read_failed);
   }
 
+  /// Reads at most `maximum` bytes in one bounded host operation.
+  ///
+  /// The returned string preserves every byte, including zero. An empty
+  /// successful result means either `maximum` was zero or end of file was
+  /// reached. A successful result may contain fewer bytes than requested.
+  expected<string, io_errc> read_some(size_t maximum) mut {
+    mut string result = string("");
+    if (maximum == size_t(0)) {
+      return std::move(result);
+    }
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    mut size_t capacity = maximum;
+    if (capacity > size_t(4096)) {
+      capacity = size_t(4096);
+    }
+    mut uint8_t buffer[4096] = {};
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_read_file_v1(
+          this.handle.get(), &buffer[0], uint64_t(capacity));
+    }
+    if (count < 0 || count > int64_t(capacity)) {
+      return unexpected(io_errc::read_failed);
+    }
+
+    size_t available = size_t(count);
+    result.reserve(available);
+    for (mut size_t index = size_t(0); index < available; index++) {
+      result.push_back(char(buffer[index]));
+    }
+    return std::move(result);
+  }
+
+  /// Writes one complete counted byte sequence.
+  ///
+  /// Success returns the input size. The input may contain embedded zero
+  /// bytes; a host failure never reports a short success.
+  expected<size_t, io_errc> write(string_view value) mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    int64_t count =
+        gti_internal::runtime::write_file(this.handle.get(), value);
+    if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
+      return unexpected(io_errc::write_failed);
+    }
+    return size_t(count);
+  }
+
+  /// Repositions the file and leaves it open on failure.
+  expected<void, io_errc> seek(int64_t offset, seek_origin origin) mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    int64_t position = gti_internal::runtime::seek_file(
+        this.handle.get(), offset, gti_internal::runtime_seek_origin(origin));
+    if (position < 0) {
+      return unexpected(io_errc::seek_failed);
+    }
+    return;
+  }
+
+  /// Returns the current byte offset without changing it.
+  expected<int64_t, io_errc> tell() mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    int64_t position = gti_internal::runtime::seek_file(
+        this.handle.get(), int64_t(0),
+        gti_internal::runtime_seek_origin(seek_origin::current));
+    if (position < 0) {
+      return unexpected(io_errc::seek_failed);
+    }
+    return position;
+  }
+
+  /// Closes the file exactly once and invalidates this owner.
   expected<void, io_errc> close() mut {
     if (!this.handle.is_valid()) {
       return unexpected(io_errc::invalid_stream);
@@ -65,23 +259,125 @@ expected<int32_t, io_errc> getchar() {
   return unexpected(io_errc::read_failed);
 }
 
-expected<unique_ptr<FILE>, io_errc> fopen(string_view path, string_view mode) {
-  if (mode != "r" and mode != "rb") {
-    return unexpected(io_errc::unsupported_mode);
+/// Reads at most `maximum` bytes from standard input into an owned string.
+///
+/// The operation is bounded to 4096 bytes per call. An empty successful result
+/// means either `maximum` was zero or standard input reached end of file.
+expected<string, io_errc> read_stdin_some(size_t maximum) {
+  mut string result = string("");
+  if (maximum == size_t(0)) {
+    return std::move(result);
   }
 
-  int64_t descriptor = gti_internal::runtime::open_file_read(path);
+  mut size_t capacity = maximum;
+  if (capacity > size_t(4096)) {
+    capacity = size_t(4096);
+  }
+  mut uint8_t buffer[4096] = {};
+  mut int64_t count = -1;
+  unsafe {
+    count = gti_internal::runtime::gti_rt_read_stdin_bytes_v1(
+        &buffer[0], uint64_t(capacity));
+  }
+  if (count < 0 || count > int64_t(capacity)) {
+    return unexpected(io_errc::read_failed);
+  }
+
+  size_t available = size_t(count);
+  result.reserve(available);
+  for (mut size_t index = size_t(0); index < available; index++) {
+    result.push_back(char(buffer[index]));
+  }
+  return std::move(result);
+}
+
+/// Opens a file using a typed access policy.
+expected<unique_ptr<FILE>, io_errc> fopen(string_view path, file_mode mode) {
+  int64_t descriptor = gti_internal::runtime::open_file(
+      path, gti_internal::runtime_file_mode(mode));
   if (descriptor < 0) {
     return unexpected(io_errc::open_failed);
   }
   return std::make_unique<FILE>(gti_internal::file_handle(descriptor));
 }
 
+/// Opens a file using a familiar C mode spelling.
+expected<unique_ptr<FILE>, io_errc> fopen(string_view path, string_view mode) {
+  if (mode == "r" || mode == "rb") {
+    return fopen(path, file_mode::read);
+  }
+  if (mode == "w" || mode == "wb") {
+    return fopen(path, file_mode::write);
+  }
+  if (mode == "a" || mode == "ab") {
+    return fopen(path, file_mode::append);
+  }
+  if (mode == "r+" || mode == "rb+" || mode == "r+b") {
+    return fopen(path, file_mode::read_write);
+  }
+  if (mode == "w+" || mode == "wb+" || mode == "w+b") {
+    return fopen(path, file_mode::read_write_truncate);
+  }
+  if (mode == "a+" || mode == "ab+" || mode == "a+b") {
+    return fopen(path, file_mode::read_append);
+  }
+  return unexpected(io_errc::unsupported_mode);
+}
+
 expected<int32_t, io_errc> fgetc(mut FILE& stream) {
   return stream.get();
 }
 
+expected<string, io_errc> fread(mut FILE& stream, size_t maximum) {
+  return stream.read_some(maximum);
+}
+
+expected<size_t, io_errc> fwrite(string_view value, mut FILE& stream) {
+  return stream.write(value);
+}
+
+expected<void, io_errc> fseek(mut FILE& stream, int64_t offset,
+                              seek_origin origin) {
+  return stream.seek(offset, origin);
+}
+
+expected<int64_t, io_errc> ftell(mut FILE& stream) {
+  return stream.tell();
+}
+
 expected<void, io_errc> fclose(mut FILE& stream) {
   return stream.close();
+}
+
+/// Writes one counted byte sequence to stdout without discarding host errors.
+expected<size_t, io_errc> try_write_stdout(string_view value) {
+  int64_t count = gti_internal::runtime::write_stdout_bytes(value);
+  if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
+    return unexpected(io_errc::write_failed);
+  }
+  return size_t(count);
+}
+
+/// Writes one counted byte sequence to stderr without discarding host errors.
+expected<size_t, io_errc> try_write_stderr(string_view value) {
+  int64_t count = gti_internal::runtime::write_stderr_bytes(value);
+  if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
+    return unexpected(io_errc::write_failed);
+  }
+  return size_t(count);
+}
+
+expected<void, io_errc> try_flush_stdout() {
+  if (gti_internal::runtime::flush_stdout() != 0) {
+    return unexpected(io_errc::flush_failed);
+  }
+  return;
+}
+
+expected<void, io_errc> try_flush_stderr() {
+  if (gti_internal::runtime::flush_stderr() != 0) {
+    return unexpected(io_errc::flush_failed);
+  }
+  return;
 }
 }

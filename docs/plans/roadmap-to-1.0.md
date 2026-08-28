@@ -170,7 +170,7 @@ metadata, typed HIR, and structural MIR:
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, explicit polymorphic unique-owner upcast, checked private storage, receiver-tied reference returns, exact global/static free-function and static-method borrow returns in the single-threaded profile, single-origin read-only owner dependencies through parameters and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
-| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
+| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, counted standard streams and unbuffered file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, a generated C17/C++20/C++23 bridge header, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
 | Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
 
@@ -745,10 +745,10 @@ real uses.
 
 Add narrow, versioned runtime operations and source-defined wrappers for:
 
-- stdout and unbuffered stdin byte input are implemented; stderr remains;
-- unbuffered read-only file open/read/close and process-working-directory path
-  resolution are implemented in `<std/cstdio>`; writes, richer path handling,
-  seeking, and buffered streams remain;
+- counted stdout/stderr and bounded stdin byte input are implemented;
+- unbuffered file open/read/write/seek/tell/close and
+  process-working-directory path resolution are implemented in `<std/cstdio>`;
+  richer path handling, buffering, and explicit text decoding remain;
 - monotonic and wall-clock time;
 - deterministic pseudo-random engines plus an explicitly nondeterministic seed
   source are implemented in `<std/random>`; distribution APIs remain;

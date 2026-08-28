@@ -119,9 +119,9 @@ The current implemented foundation includes:
   `expected<T, std::arithmetic_errc>`, plus source-defined integral `gcd` and
   `lcm` and numeric `midpoint`; and
 - `<std/utility>` source-defined `std::pair` and `std::make_pair`; and
-- `<std/cstdio>` unbuffered stdin and read-only file byte input through
-  `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
-  `std::FILE` owner; and
+- `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
+  open/read/write/seek/tell/close through recoverable source-defined wrappers
+  and a move-only `std::FILE` owner; and
 - `<std/format>` sequential integral replacement through source-defined
   `std::format`, `std::try_print`, and `std::try_println`. The grammar is
   limited to `{}`, `{{`, and `}}`; pattern and argument-count errors return
@@ -380,7 +380,7 @@ The following component families remain planned or incomplete:
 - the remaining callable, complete-range, heterogeneous accumulation, and hash
   generic-capability families;
 - indexed/named/specifier-based and floating-point formatting, formatter
-  customization, buffered streams, file writes, seeking, and structured I/O;
+  customization, buffered streams, explicit text decoding, and structured I/O;
 - general filesystem operations, time, random distributions and engine
   breadth, connected networking, traffic buffers, atomics, mutexes, condition
   variables, stop tokens, detached/scoped tasks, typed argument packs, and
