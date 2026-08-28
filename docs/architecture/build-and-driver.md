@@ -180,8 +180,10 @@ checks as executable and generated-source outputs, must not alias a loaded
 source or the producer executable (including through a hard link), and is
 published atomically only after the driver has completed the native build and
 provenance capture. Emit-only builds reject the option. The public driver
-request/result types expose the structured record; the CLI owns JSON
-presentation.
+request/result types expose the structured record, and the driver owns the
+sidecar format in both directions: verification reads a recorded report back
+through the same schema, so the writer and the reader cannot drift apart. The
+CLI owns path validation, atomic publication, and human presentation.
 
 Source provenance is captured from the exact `SourceGraph` and
 `SourceManager` snapshot returned by `SourceLoader`, before compilation inputs
@@ -217,14 +219,21 @@ This executable binding is independent of packaged `BUILD_ID` metadata and is
 the fact benchmark tooling uses to verify that a sidecar came from the selected
 `--gti` binary.
 
+The current sidecar schema is 2. Beyond the facts above it records the
+published executable's own content identity, captured from the final output
+path after publication, and a `project` section that is `null` for a direct
+build. Schema 1 records carry neither and are refused rather than partially
+interpreted.
+
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
 resolves executable and test targets, profiles, declared cross-compilation
 toolchains, and structured native inputs (including declared C and C++
-sources), and produces immutable `ProjectBuildPlan` values. `build`, `check`, `run`, `test`, `clean`, `metadata`,
-`new`, and `init` are implemented. `check` stops after the frontend; `run`
-executes one executable target through exact arguments and inherited streams;
+sources), and produces immutable `ProjectBuildPlan` values. `build`, `check`,
+`run`, `test`, `clean`, `metadata`, `new`, and `init` are implemented. `check`
+stops after the frontend; `run` executes one executable target through exact
+arguments and inherited streams;
 `test` deterministically plans every test target or one named test and
 builds/runs each as an independent whole program in target-name order. A build
 failure stops the command; a runtime failure is recorded while later tests
@@ -379,6 +388,74 @@ once for the host toolchain. A cross link therefore needs a runtime built for
 the selected target, supplied through the existing `GTI_RUNTIME_LIBRARY` and
 `GTI_RUNTIME_INCLUDE` overrides; the manifest does not yet select them per
 target.
+
+### Recorded Provenance And Verification
+
+`gti build [target] --build-report <path>` records the same structured sidecar
+in project mode, through the same driver capture path as direct mode, and adds
+the project facts a direct compilation has no concept of: the resolved package
+name and version, target name and kind, profile name, selected target triple,
+and the project model identity that produced the effective request. Capture
+bypasses whole-program cache reuse exactly as it does in direct mode, so the
+record always describes a native invocation that was actually performed. The
+option builds one executable: `--emit-mir` and `--all` reject it, and `check`,
+`run`, and `test` do not accept it.
+
+`gti verify --build-report <path>` reproduces a recorded project build and
+reports what no longer matches. It reads the record, re-resolves the package,
+target, profile, and target triple the record names from the current
+directory, rebuilds with capture, and compares the fresh record against the
+recorded one. Selecting the recorded triple rather than the build host is what
+makes a cross build verifiable: a record naming a non-host target resolves that
+target's declared `[toolchains.<triple>]` table and fails closed when the table
+is absent, instead of silently reproducing the build for the host and reporting
+the mismatch as a divergence. The recorded report is only ever read;
+verification cannot repair its own evidence.
+Because the record names the selection, `verify` refuses a contradicting
+target, `--package`, `--profile`, `--release`, or `--target`; host toolchain
+and resolution
+options (`--cxx`, `--cc`, `--offline`, `--locked`, `--no-cache`, `-v`) and the
+build overrides that a recorded invocation may have used (`-O`, `--std`,
+`--execution-profile`, `-D`) remain available. A direct-mode record is refused:
+its sidecar does not describe the option surface needed to reissue that
+command.
+
+Comparison is by content identity, not by path. Source units and runtime
+headers are matched on their logical identities, so a workspace that moved
+compares equal when its content did not change, while an application include
+outside the package keeps its path-sensitive external identity. Every recorded
+identity is compared: the producer executable, the compiler source identity,
+each source unit and the relocation-stable source aggregate, the project
+selection and model identity, the native compiler executable, the native argv,
+each runtime and compatibility header, the runtime archive, the runtime
+aggregate, and the produced executable's bytes. Divergences are reported one
+per fact, naming the subject, the compared field, and the recorded and rebuilt
+values, and the command exits 70. Two native argv operands are normalized
+before comparison because the driver generates them fresh for every
+invocation: the staged link output after `-o` and the build-report dependency
+file after `-MF`. Every other operand, absolute paths included, compares
+exactly, so verifying a relocated checkout reports the paths that moved.
+
+**What a successful verification proves.** The current tree, built by this
+compiler on this host, consumed exactly the recorded GTI sources and toolchain
+materials, issued the recorded native command, and produced a byte-identical
+executable. Artifact bytes are compared deliberately: comparing inputs alone
+would accept a rebuild that silently produced different output, and the
+driver's determinism work (including `-Wl,-reproducible` on Apple hosts) is
+what makes byte equality a testable claim rather than an aspiration.
+
+**What it does not prove.** It is not a hermeticity proof. The
+non-hermetic boundary named for the cache applies unchanged: implicit C++
+standard-library and platform SDK headers are treated as stable for an
+unchanged native compiler identity, and they are not hashed. It does not
+attest that the recorded build ever happened on another machine, that the
+recorded compiler binary is trustworthy, or that a byte-identical executable
+behaves identically under a different kernel or loader. A divergence in
+artifact bytes with no divergence in any recorded input is exactly the signal
+that something outside the recorded boundary moved. Verification also proves
+nothing about a build it cannot reproduce: an unresolvable package, target, or
+profile, or a build that no longer completes, is reported as a failure rather
+than as a match.
 
 ### Bindgen Imports
 

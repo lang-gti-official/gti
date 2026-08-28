@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import os
 import pathlib
@@ -2949,6 +2950,141 @@ def main():
                 cwd=cross_project,
             )
             assert "GTI-B1001" in unknown.stderr, unknown.stderr
+        # --- Recorded build provenance and verification ---
+        verify_project = root / "verify-project"
+        (verify_project / "src").mkdir(parents=True)
+        (verify_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "verify-project"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.verify-project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (verify_project / "src/support.gti").write_text(
+            "int support_value() { return 0; }\n", encoding="utf-8"
+        )
+        (verify_project / "src/main.gti").write_text(
+            '#include "support.gti"\n'
+            "int main() { return support_value(); }\n",
+            encoding="utf-8",
+        )
+        report = verify_project / "provenance.json"
+        recorded = run(
+            [gti, "build", "--build-report", str(report)], cwd=verify_project
+        )
+        assert "Build report" in recorded.stdout
+        record = json.loads(report.read_text(encoding="utf-8"))
+        assert record["schema"] == 2
+        project_section = record["project"]
+        assert project_section["package_name"] == "verify-project"
+        assert project_section["package_version"] == "0.1.0"
+        assert project_section["target_name"] == "verify-project"
+        assert project_section["target_kind"] == "executable"
+        assert project_section["profile_name"] == "dev"
+        # The record names the target it was built for, so `gti verify` can
+        # reproduce a cross build instead of assuming the build host.
+        recorded_triple = recorded.stdout.split("[dev, ", 1)[1].split("]", 1)[0]
+        assert project_section["target_triple"] == recorded_triple
+        assert project_section["model_identity"]
+        verify_built = executable_named(
+            verify_project / "build/gti/dev", "verify-project"
+        )
+        assert record["artifact"]["sha256"] == hashlib.sha256(
+            verify_built.read_bytes()
+        ).hexdigest()
+
+        # An unchanged tree reproduces every recorded identity, and
+        # verification never rewrites the record it is checking.
+        preserved_record = report.read_bytes()
+        verified = run(
+            [gti, "verify", "--build-report", str(report), "-v"],
+            cwd=verify_project,
+        )
+        assert "Verified verify-project [dev," in verified.stdout
+        assert "reproduced:" in verified.stdout
+        # Capture always performs the native invocation it describes.
+        assert "cache bypassed" in verified.stderr
+        assert report.read_bytes() == preserved_record
+
+        # A changed source unit is named with its recorded and rebuilt
+        # content identities, and the rebuilt executable differs too.
+        (verify_project / "src/support.gti").write_text(
+            "int support_value() { return 0; }\n"
+            "int support_extra() { return 1; }\n",
+            encoding="utf-8",
+        )
+        diverged = run(
+            [gti, "verify", "--build-report", str(report)],
+            expected=70,
+            cwd=verify_project,
+        )
+        assert "does not describe this tree" in diverged.stderr
+        assert "src/support.gti" in diverged.stderr
+        assert "source materials: aggregate sha256" in diverged.stderr
+        assert "built artifact: content" in diverged.stderr
+        assert "src/main.gti" not in diverged.stderr
+        assert report.read_bytes() == preserved_record
+
+        # The record names the selection, so a contradicting one is refused,
+        # and the option only belongs to commands that build one executable.
+        run([gti, "verify"], expected=64, cwd=verify_project)
+        run(
+            [gti, "verify", "--build-report", str(report), "verify-project"],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "verify", "--build-report", str(report), "--release"],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "build", "--all", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "check", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "build", "--emit-mir", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        unreadable_record = verify_project / "unreadable.json"
+        unreadable_record.write_text("{}\n", encoding="utf-8")
+        malformed = run(
+            [gti, "verify", "--build-report", str(unreadable_record)],
+            expected=64,
+            cwd=verify_project,
+        )
+        assert "is not a build report this compiler can verify" in (
+            malformed.stderr
+        )
+        assert report.read_bytes() == preserved_record
+
+        # `gti verify` takes every selection from the record, the target
+        # triple included; a contradicting one would verify another build.
+        rejected_triple = run(
+            [
+                gti,
+                "verify",
+                "--target",
+                recorded_triple,
+                "--build-report",
+                str(report),
+            ],
+            expected=64,
+            cwd=verify_project,
+        )
+        assert "takes its package, target, profile, and target triple" in (
+            rejected_triple.stderr
+        ), rejected_triple.stderr
 
 
 if __name__ == "__main__":
