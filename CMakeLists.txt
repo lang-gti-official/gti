@@ -449,6 +449,7 @@ add_library(
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"
   "src/driver/project.cpp"
+  "src/driver/project_facts.cpp"
   "src/driver/workspace.cpp"
 )
 target_include_directories(

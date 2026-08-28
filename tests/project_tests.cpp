@@ -1,6 +1,7 @@
 #include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
+#include "gti/driver/project_facts.h"
 #include "gti/format_config.h"
 #include "gti/support.h"
 
@@ -1459,6 +1460,292 @@ version = "1.0.0"
   }
 }
 
+void testProjectFacts() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  const std::filesystem::path app = root / "packages/app";
+  const std::filesystem::path math = root / "packages/math";
+  expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(app / "src/main.gti",
+                       "#include <math/add>\nint main() { return 0; }\n") &&
+             writeFile(math / "lib/add.gti",
+                       "namespace math { int add(int a, int b) { return a + b; "
+                       "} }\n"),
+         "project-facts source fixtures should be writable");
+
+  const std::string rootManifest = R"(manifest-version = 1
+
+[package]
+name = "workspace_root"
+version = "0.1.0"
+
+[targets.root]
+kind = "executable"
+root = "src/main.gti"
+
+[workspace]
+members = ["packages/math", "packages/app"]
+)";
+  const std::string appManifest = R"(manifest-version = 1
+
+[package]
+name = "app"
+version = "1.0.0"
+
+[build]
+defines = ["FEATURE_FAST"]
+
+[dependencies]
+math = { path = "../math" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.app_tests]
+kind = "test"
+root = "src/main.gti"
+
+[profiles.release]
+execution-profile = "concurrent"
+)";
+  const std::string mathManifest = R"(manifest-version = 1
+
+[package]
+name = "math"
+version = "2.0.0"
+source-root = "lib"
+)";
+  expect(writeFile(root / "gti.toml", rootManifest) &&
+             writeFile(app / "gti.toml", appManifest) &&
+             writeFile(math / "gti.toml", mathManifest),
+         "project-facts manifests should be writable");
+
+  const lang::driver::ProjectFactsResult resolved =
+      lang::driver::resolveProjectFacts(app / "src");
+  expect(resolved.succeeded() && resolved.facts,
+         "project facts should resolve from a directory inside a member "
+         "package");
+  if (!resolved.facts) {
+    return;
+  }
+  const lang::driver::ProjectFacts &facts = *resolved.facts;
+
+  expect(facts.workspaceRoot() == std::filesystem::canonical(root) &&
+             facts.declaredWorkspace() && facts.packages().size() == 3,
+         "project facts should publish the declared workspace root and its "
+         "full package closure");
+  expect(facts.selectedPackage().identity == "app@1.0.0" &&
+             facts.selectedPackage().membership ==
+                 lang::driver::ProjectPackageMembership::Member &&
+             facts.selectedPackage().selectable,
+         "project facts should select the package containing the start "
+         "directory");
+
+  // The fact a consumer cannot reconstruct from one manifest, and the one an
+  // editor that reads gti.toml itself silently loses.
+  const std::vector<lang::PackageSourceRoot> &roots =
+      facts.packageSourceRoots();
+  const auto appRoot = std::find_if(roots.begin(), roots.end(),
+                                    [](const lang::PackageSourceRoot &source) {
+                                      return source.name == "app";
+                                    });
+  const auto mathRoot = std::find_if(roots.begin(), roots.end(),
+                                     [](const lang::PackageSourceRoot &source) {
+                                       return source.name == "math";
+                                     });
+  expect(appRoot != roots.end() && mathRoot != roots.end() &&
+             appRoot->dependencies.size() == 1 &&
+             appRoot->dependencies.front().alias == "math" &&
+             appRoot->dependencies.front().targetIdentity == "math@2.0.0" &&
+             mathRoot->sourceRoot == std::filesystem::canonical(math / "lib"),
+         "project facts should publish the package source-root graph package "
+         "includes resolve through");
+
+  const lang::driver::ProjectFactsPackage *describedMath =
+      facts.findPackage("math@2.0.0");
+  expect(describedMath != nullptr && describedMath->name == "math" &&
+             describedMath->version == "2.0.0" &&
+             describedMath->membership ==
+                 lang::driver::ProjectPackageMembership::Member &&
+             describedMath->selectable &&
+             describedMath->sourceRoot ==
+                 std::filesystem::canonical(math / "lib") &&
+             !describedMath->sourceIdentity.has_value(),
+         "a declared workspace member should be described as selectable with "
+         "its declared source root and no git provenance");
+
+  const lang::driver::ProjectFactsPackage *describedApp =
+      facts.findPackage("app@1.0.0");
+  expect(describedApp != nullptr && describedApp->dependencies.size() == 1 &&
+             describedApp->dependencies.front().alias == "math" &&
+             describedApp->dependencies.front().targetIdentity == "math@2.0.0",
+         "project facts should publish each package's direct alias edges");
+
+  expect(facts.defaultProfileName() == "dev" &&
+             facts.findProfile("dev") != nullptr &&
+             facts.findProfile("release") != nullptr &&
+             facts.findProfile("missing") == nullptr,
+         "project facts should publish declared profiles and the profile a "
+         "command selects when none is named");
+  const lang::driver::ProjectFactsProfile *releaseProfile =
+      facts.findProfile("release");
+  expect(releaseProfile != nullptr && releaseProfile->executionProfile ==
+                                          lang::ExecutionProfile::Concurrent,
+         "a declared profile should carry its resolved execution profile");
+
+  expect(facts.configurationFlags().size() == 1 &&
+             facts.configurationFlags().front() == "FEATURE_FAST",
+         "project facts should publish package-level configuration flags");
+
+  const std::optional<lang::driver::AnalysisConfiguration> configuration =
+      facts.analysisConfiguration("release", lang::TargetInfo::host(),
+                                  lang::driver::RuntimeProfile::Hosted);
+  expect(configuration.has_value() &&
+             configuration->configurationFlags().size() == 1 &&
+             configuration->runtimeProfile() ==
+                 lang::driver::RuntimeProfile::Hosted,
+         "project facts should assemble an analysis configuration for a "
+         "declared profile");
+  expect(!facts
+              .analysisConfiguration("missing", lang::TargetInfo::host(),
+                                     lang::driver::RuntimeProfile::Hosted)
+              .has_value(),
+         "an undeclared profile should not produce an analysis configuration");
+
+  expect(facts.targets().size() == 2 && facts.targets().front().name == "app" &&
+             facts.targets().front().kind ==
+                 lang::driver::ProjectTargetKind::Executable &&
+             facts.targets().back().kind ==
+                 lang::driver::ProjectTargetKind::Test,
+         "project facts should publish the selected package's declared targets "
+         "and kinds");
+
+  // Resolution is read-only: it plans nothing and creates no managed output.
+  expect(!std::filesystem::exists(root / "build") &&
+             !std::filesystem::exists(app / "build"),
+         "resolving project facts should not create build directories");
+
+  // The facts must be the build path's facts, not a second interpretation.
+  const lang::driver::ProjectBuildRequest buildRequest(
+      app / "src", std::nullopt, "release", lang::TargetInfo::host());
+  const lang::driver::ProjectResolutionResult built =
+      lang::driver::resolveProjectBuild(buildRequest);
+  expect(built.succeeded() && built.plan, "the same project should build-plan");
+  if (built.plan) {
+    expect(built.plan->packageSources().size() == roots.size() &&
+               built.plan->configurationFlags() == facts.configurationFlags(),
+           "project facts should agree with the build plan about source roots "
+           "and configuration flags");
+    // A build plan extends the workspace-graph identity with configuration
+    // and bindgen facts, so the facts' identity is its base rather than its
+    // equal.
+    expect(built.plan->projectModelIdentity().rfind(facts.modelIdentity(), 0) ==
+               0,
+           "a build plan's model identity should extend the workspace-graph "
+           "identity project facts publish");
+  }
+
+  // An already-resolved workspace describes identically without resolving
+  // twice.
+  const lang::driver::WorkspaceResolutionResult workspace =
+      lang::driver::resolveProjectWorkspace(app / "src", std::nullopt,
+                                            {.allowAcquisition = false});
+  expect(workspace.succeeded() && workspace.workspace,
+         "the workspace should resolve for direct description");
+  if (workspace.workspace) {
+    const lang::driver::ProjectFacts reused =
+        lang::driver::projectFactsFromWorkspace(*workspace.workspace);
+    expect(reused.modelIdentity() == facts.modelIdentity() &&
+               reused.selectedPackage().identity ==
+                   facts.selectedPackage().identity &&
+               reused.packageSourceRoots().size() == roots.size(),
+           "describing an already-resolved workspace should match resolving "
+           "facts directly");
+  }
+}
+
+void testProjectFactsDiagnostics() {
+  TemporaryDirectory temporary;
+  const lang::driver::ProjectFactsResult missing =
+      lang::driver::resolveProjectFacts(temporary.root());
+  expect(!missing.succeeded() && !missing.facts &&
+             missing.status ==
+                 lang::driver::ProjectFactsStatus::DiscoveryFailure,
+         "project facts should report discovery failure without a manifest");
+
+  const std::filesystem::path broken = temporary.root() / "broken";
+  expect(writeFile(broken / "gti.toml", "manifest-version = 1\n\n[package]\n"),
+         "a malformed manifest should be writable");
+  const lang::driver::ProjectFactsResult invalid =
+      lang::driver::resolveProjectFacts(broken);
+  expect(!invalid.succeeded() && !invalid.facts &&
+             invalid.status ==
+                 lang::driver::ProjectFactsStatus::ManifestFailure &&
+             !invalid.diagnostics.empty(),
+         "project facts should report manifest failure with diagnostics rather "
+         "than partial facts");
+
+  const std::filesystem::path package = temporary.root() / "package";
+  expect(writeFile(package / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(package / "gti.toml",
+                       "manifest-version = 1\n\n[package]\nname = \"solo\"\n"
+                       "version = \"0.1.0\"\n\n[targets.solo]\n"
+                       "kind = \"executable\"\nroot = \"src/main.gti\"\n"),
+         "a standalone package should be writable");
+  const lang::driver::ProjectFactsResult standalone =
+      lang::driver::resolveProjectFacts(package);
+  expect(standalone.succeeded() && standalone.facts &&
+             !standalone.facts->declaredWorkspace() &&
+             standalone.facts->packages().size() == 1 &&
+             standalone.facts->configurationFlags().empty(),
+         "a standalone package should resolve as its own undeclared workspace");
+  const lang::driver::ProjectFactsResult unknownPackage =
+      lang::driver::resolveProjectFacts(package, std::string("absent"));
+  expect(!unknownPackage.succeeded() &&
+             unknownPackage.status ==
+                 lang::driver::ProjectFactsStatus::SelectionFailure,
+         "selecting an undeclared package should report selection failure");
+
+  // A path dependency outside any declared workspace is a Dependency, not a
+  // member, and cannot be selected as a command target.
+  const std::filesystem::path consumer = temporary.root() / "consumer";
+  const std::filesystem::path library = temporary.root() / "library";
+  expect(writeFile(consumer / "src/main.gti",
+                   "#include <lib/unit>\nint main() { return 0; }\n") &&
+             writeFile(library / "src/unit.gti",
+                       "namespace lib { int value() { return 1; } }\n") &&
+             writeFile(consumer / "gti.toml",
+                       "manifest-version = 1\n\n[package]\nname = "
+                       "\"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
+                       "lib = { path = \"../library\" }\n\n"
+                       "[targets.consumer]\nkind = \"executable\"\n"
+                       "root = \"src/main.gti\"\n") &&
+             writeFile(library / "gti.toml",
+                       "manifest-version = 1\n\n[package]\nname = "
+                       "\"library\"\nversion = \"3.0.0\"\n"),
+         "a standalone package with a path dependency should be writable");
+  const lang::driver::ProjectFactsResult dependent =
+      lang::driver::resolveProjectFacts(consumer);
+  expect(dependent.succeeded() && dependent.facts &&
+             !dependent.facts->declaredWorkspace() &&
+             dependent.facts->packages().size() == 2,
+         "a path dependency should resolve into an undeclared workspace's "
+         "package closure");
+  if (dependent.facts) {
+    const lang::driver::ProjectFactsPackage *describedLibrary =
+        dependent.facts->findPackage("library@3.0.0");
+    expect(describedLibrary != nullptr &&
+               describedLibrary->membership ==
+                   lang::driver::ProjectPackageMembership::Dependency &&
+               !describedLibrary->selectable,
+           "a path dependency package should be described as an unselectable "
+           "dependency");
+    expect(dependent.facts->packageSourceRoots().size() == 2,
+           "a path dependency should contribute a package source root");
+  }
+}
+
 void testProjectScaffolding() {
   TemporaryDirectory temporary;
   const std::string expectedSource = R"(#include <std/string>
@@ -2166,6 +2453,8 @@ int main() {
   testDependencyLockModel();
   testGitDependencyManifestValidation();
   testNativeDependencyComposition();
+  testProjectFacts();
+  testProjectFactsDiagnostics();
   testProjectScaffolding();
   testFormatConfigScaffolding();
   testBindgenImportManifest();

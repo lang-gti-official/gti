@@ -4,10 +4,16 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/project.h"
+#include "gti/driver/project_facts.h"
 
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+static_assert(!std::is_default_constructible_v<lang::driver::ProjectFacts>);
+static_assert(std::is_copy_constructible_v<lang::driver::ProjectFacts>);
+static_assert(std::is_move_constructible_v<lang::driver::ProjectFacts>);
 
 int main() {
   const lang::driver::CompilationRequest compilation(
@@ -80,6 +86,17 @@ int main() {
       false, false);
   const lang::driver::CompilerBuildIdentity buildIdentity =
       lang::driver::currentCompilerBuildIdentity();
+
+  // The read-only project-facts surface is part of the published driver
+  // library: an installed consumer must be able to ask for a project that is
+  // not there and receive a discovery failure rather than a partial answer.
+  const lang::driver::ProjectFactsResult facts =
+      lang::driver::resolveProjectFacts("gti-absent-project-directory");
+  if (facts.succeeded() || facts.facts.has_value() ||
+      facts.status != lang::driver::ProjectFactsStatus::DiscoveryFailure) {
+    return 6;
+  }
+
   return buildRequest.output() == "program" &&
                  !buildRequest.keepGeneratedSource() &&
                  lang::driver::currentBuildProvenanceSchema == 1 &&
