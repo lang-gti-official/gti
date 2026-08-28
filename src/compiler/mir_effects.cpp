@@ -310,13 +310,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // MutexGuardActive: observes the private token state.
     MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
     // MutexGuardRead: publishes a tracked read-only loan.
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .startsLoan = true},
+    MirEffectTraits{
+        .readsUnknownMemory = true, .invokesRuntime = true, .startsLoan = true},
     // MutexGuardReadMut: publishes a tracked exclusive loan.
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .startsLoan = true},
+    MirEffectTraits{
+        .readsUnknownMemory = true, .invokesRuntime = true, .startsLoan = true},
     // MutexLockFailure: enters the defined-failure runtime path.
     MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
 });

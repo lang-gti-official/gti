@@ -6006,8 +6006,7 @@ public:
         // concrete type. This is deliberately per-field: a mutex owner is
         // move-constructible while its public move assignment stays deleted.
         if (field->type.kind != SemanticType::Array &&
-            !cppMirFailureConstructorEmptyStateTypeEligible(mir,
-                                                            field->type)) {
+            !cppMirFailureConstructorEmptyStateTypeEligible(mir, field->type)) {
           continue;
         }
         initializers.push_back({.kind = BindingKind::EmptyField,

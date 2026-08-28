@@ -2252,12 +2252,12 @@ auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
     const ClassInfo &owner) const -> bool {
   return isDefaultLibraryMutexGuardCarrier(owner) ||
          (isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
-         owner.storedReference->type.kind == SemanticType::Reference &&
-         !owner.storedReference->type.arguments.empty() &&
-         (owner.storedReference->type.arguments.front().kind ==
-              SemanticType::Storage ||
-          owner.storedReference->type.arguments.front().kind ==
-              SemanticType::PrefixStorage));
+          owner.storedReference->type.kind == SemanticType::Reference &&
+          !owner.storedReference->type.arguments.empty() &&
+          (owner.storedReference->type.arguments.front().kind ==
+               SemanticType::Storage ||
+           owner.storedReference->type.arguments.front().kind ==
+               SemanticType::PrefixStorage));
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
@@ -2271,9 +2271,8 @@ auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
   }
   const ClassInfo *storage =
       classInfo(owner.storedReference->type.arguments.front());
-  return storage != nullptr &&
-         storage->compilerCapability ==
-             CompilerCapabilityTypeKind::MutexStorage;
+  return storage != nullptr && storage->compilerCapability ==
+                                   CompilerCapabilityTypeKind::MutexStorage;
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowParameter(
