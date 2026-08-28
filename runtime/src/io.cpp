@@ -16,6 +16,8 @@
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #endif
 
@@ -25,6 +27,69 @@ constexpr std::int32_t kEndOfFile = -1;
 constexpr std::int32_t kReadFailure = -2;
 std::mutex stdoutMutex;
 std::mutex stderrMutex;
+
+class ScopedSigpipeBlock {
+public:
+  ScopedSigpipeBlock() {
+#if !defined(_WIN32)
+    sigemptyset(&signals_);
+    sigaddset(&signals_, SIGPIPE);
+    if (pthread_sigmask(SIG_BLOCK, &signals_, &previous_) != 0) {
+      return;
+    }
+
+    sigset_t pending{};
+    if (sigpending(&pending) != 0) {
+      (void)pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
+      return;
+    }
+    sigpipeWasPending_ = sigismember(&pending, SIGPIPE) == 1;
+#endif
+    active_ = true;
+  }
+
+  ScopedSigpipeBlock(const ScopedSigpipeBlock &) = delete;
+  ScopedSigpipeBlock &operator=(const ScopedSigpipeBlock &) = delete;
+
+  ~ScopedSigpipeBlock() {
+#if !defined(_WIN32)
+    if (active_) {
+      (void)pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
+    }
+#endif
+  }
+
+  [[nodiscard]] bool active() const { return active_; }
+
+  void consumeIfGenerated(int error) {
+#if !defined(_WIN32)
+    if (!active_ || error != EPIPE || sigpipeWasPending_) {
+      return;
+    }
+
+    int received = 0;
+    int status = 0;
+    do {
+      status = sigwait(&signals_, &received);
+    } while (status == EINTR);
+    if (status != 0 || received != SIGPIPE) {
+      // Keep SIGPIPE blocked rather than restoring a potentially fatal
+      // generated signal after an incoherent host signal operation.
+      active_ = false;
+    }
+#else
+    (void)error;
+#endif
+  }
+
+private:
+  bool active_{false};
+#if !defined(_WIN32)
+  sigset_t signals_{};
+  sigset_t previous_{};
+  bool sigpipeWasPending_{false};
+#endif
+};
 
 int narrowDescriptor(std::int64_t descriptor) {
   if (descriptor < 0 || descriptor > INT_MAX) {
@@ -64,12 +129,17 @@ std::int64_t writeStandardStream(std::FILE *stream, std::mutex &mutex,
   }
 
   const std::lock_guard lock(mutex);
+  ScopedSigpipeBlock sigpipe;
+  if (!sigpipe.active()) {
+    return -1;
+  }
   const std::size_t length = static_cast<std::size_t>(value.length);
   std::size_t written = 0;
   while (written < length) {
     const std::size_t count =
         std::fwrite(value.data + written, 1, length - written, stream);
     if (count == 0) {
+      sigpipe.consumeIfGenerated(errno);
       return -1;
     }
     written += count;
@@ -114,6 +184,10 @@ std::int64_t writeBytes(int descriptor, const char *input,
   if (input == nullptr || length > static_cast<std::uint64_t>(INT64_MAX)) {
     return -1;
   }
+  ScopedSigpipeBlock sigpipe;
+  if (!sigpipe.active()) {
+    return -1;
+  }
   std::uint64_t written = 0;
   while (written < length) {
     const std::uint64_t remaining = length - written;
@@ -135,6 +209,7 @@ std::int64_t writeBytes(int descriptor, const char *input,
     } while (count < 0 && errno == EINTR);
 #endif
     if (count <= 0) {
+      sigpipe.consumeIfGenerated(errno);
       return -1;
     }
     written += static_cast<std::uint64_t>(count);
@@ -198,12 +273,28 @@ extern "C" std::int64_t gti_rt_write_stderr_bytes_v1(gti_c_string_view value) {
 
 extern "C" std::int32_t gti_rt_flush_stdout_v1(void) {
   const std::lock_guard lock(stdoutMutex);
-  return std::fflush(stdout) == 0 ? 0 : 1;
+  ScopedSigpipeBlock sigpipe;
+  if (!sigpipe.active()) {
+    return 1;
+  }
+  const int status = std::fflush(stdout);
+  if (status != 0) {
+    sigpipe.consumeIfGenerated(errno);
+  }
+  return status == 0 ? 0 : 1;
 }
 
 extern "C" std::int32_t gti_rt_flush_stderr_v1(void) {
   const std::lock_guard lock(stderrMutex);
-  return std::fflush(stderr) == 0 ? 0 : 1;
+  ScopedSigpipeBlock sigpipe;
+  if (!sigpipe.active()) {
+    return 1;
+  }
+  const int status = std::fflush(stderr);
+  if (status != 0) {
+    sigpipe.consumeIfGenerated(errno);
+  }
+  return status == 0 ? 0 : 1;
 }
 
 extern "C" std::int32_t gti_rt_read_stdin_byte(void) {

@@ -103,10 +103,12 @@ fixed buffer.
 `write` and `fwrite` submit one complete counted byte sequence. A successful
 result equals the input size; a short count is never reported as success. A
 failure can still leave a prefix written because operating-system writes are
-not transactional. Files are unbuffered at this layer, so there is no file
-flush operation. `seek` uses an explicit `seek_origin`; `tell` reports the
-current byte offset. Both return `seek_failed` when the native object is not
-seekable or the requested offset is invalid.
+not transactional. On POSIX targets a closed pipe is translated to
+`write_failed`; the runtime confines the generated `SIGPIPE` to the calling
+thread rather than letting it terminate the process. Files are unbuffered at
+this layer, so there is no file flush operation. `seek` uses an explicit
+`seek_origin`; `tell` reports the current byte offset. Both return `seek_failed`
+when the native object is not seekable or the requested offset is invalid.
 
 ## Ownership and close behavior
 
