@@ -1,0 +1,9 @@
+#include <std/vector>
+int32_t count_local<std::copyable T>(T seed) {
+  mut std::vector<T> values = std::vector<T>();
+  values.push_back(seed);
+  mut int32_t total = 0;
+  for (auto& v : values) { total = total + 1; }
+  return total;
+}
+int main() { std::println(count_local(3)); return 0; }

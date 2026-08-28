@@ -1,0 +1,17 @@
+#define FEATURE_FAST
+class Anchor { public: int32_t id() { return 0; } };
+int32_t pick() {
+#ifdef FEATURE_FAST
+  return 1;
+#else
+  return 2;
+#endif
+}
+int32_t target_kind() {
+#if defined(FEATURE_MISSING)
+  return 9;
+#else
+  return 3;
+#endif
+}
+int main() { std::println(pick() + target_kind()); return 0; }

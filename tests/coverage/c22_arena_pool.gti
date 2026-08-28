@@ -1,0 +1,12 @@
+#include <std/memory>
+class Anchor { public: int32_t id() { return 0; } };
+int main() {
+  mut auto arena_result = std::try_make_arena<int32_t>(std::size_t(4));
+  if (!arena_result.has_value()) { std::println("arena unavailable"); return 0; }
+  mut auto arena = std::move(arena_result).value();
+  [[discard]] arena.try_insert(10);
+  [[discard]] arena.try_insert(20);
+  std::print(int32_t(arena.size())); std::print(" ");
+  std::println(arena.empty() ? 1 : 0);
+  return 0;
+}

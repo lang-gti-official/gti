@@ -1,0 +1,18 @@
+#include <std/vector>
+std::vector<T> filtered<T, Predicate>(std::vector<T>& source, mut Predicate keep)
+  requires std::copyable<T> {
+  mut std::vector<T> result = std::vector<T>();
+  for (mut std::size_t i = std::size_t(0); i < source.size(); i++) {
+    T element = source[i];
+    if (keep(element)) { result.push_back(element); }
+  }
+  return std::move(result);
+}
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(1);
+  auto keep = [](int32_t& x) -> bool { return x > 0; };
+  mut auto out = filtered(v, std::move(keep));
+  std::println(int32_t(out.size()));
+  return 0;
+}

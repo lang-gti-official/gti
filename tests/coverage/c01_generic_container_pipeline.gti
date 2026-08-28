@@ -1,0 +1,47 @@
+// Generics over containers combined with lambdas, algorithms and ownership.
+#include <std/vector>
+#include <std/algorithm>
+#include <std/string>
+
+class Sample {
+public:
+  Sample(int32_t id, float weight) : id(id), weight(weight) {}
+  int32_t id;
+  float weight;
+};
+
+std::vector<T> filtered<T, Predicate>(std::vector<T>& source, mut Predicate keep)
+  requires std::copyable<T> {
+  mut std::vector<T> result = std::vector<T>();
+  for (mut std::size_t i = std::size_t(0); i < source.size(); i++) {
+    T element = source[i];
+    if (keep(element)) {
+      result.push_back(element);
+    }
+  }
+  return std::move(result);
+}
+
+int32_t total_ids(std::vector<Sample>& samples) {
+  mut int32_t total = 0;
+  for (auto& s : samples) {
+    total = total + s.id;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<Sample> samples = std::vector<Sample>();
+  samples.push_back(Sample(1, 0.5));
+  samples.push_back(Sample(2, 1.5));
+  samples.push_back(Sample(3, 2.5));
+
+  mut std::vector<Sample> heavy =
+      filtered(samples, [](Sample& s) -> bool { return s.weight > 1.0; });
+
+  std::print("kept ");
+  std::print(int32_t(heavy.size()));
+  std::print(" total ");
+  std::println(total_ids(heavy));
+  return 0;
+}

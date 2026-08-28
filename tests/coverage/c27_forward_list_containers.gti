@@ -1,0 +1,14 @@
+#include <std/forward_list>
+class Anchor { public: int32_t id() { return 0; } };
+int main() {
+  mut std::forward_list<int32_t> l = std::forward_list<int32_t>();
+  std::print(l.empty() ? 1 : 0); std::print(" ");
+  l.push_front(3);
+  l.push_front(2);
+  std::print(l.front()); std::print(" ");
+  l.pop_front();
+  std::print(l.front()); std::print(" ");
+  l.clear();
+  std::println(l.empty() ? 1 : 0);
+  return 0;
+}

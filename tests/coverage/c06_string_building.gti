@@ -1,0 +1,26 @@
+// String construction, views, comparison, and to_string round trips.
+#include <std/string>
+#include <std/vector>
+
+std::string join(std::vector<std::string>& parts, char sep) {
+  mut std::string out = std::string();
+  for (mut std::size_t i = std::size_t(0); i < parts.size(); i++) {
+    if (i > std::size_t(0)) { out.push_back(sep); }
+    out.append(parts[i].view());
+  }
+  return std::move(out);
+}
+
+int main() {
+  mut std::vector<std::string> parts = std::vector<std::string>();
+  parts.push_back(std::string("alpha"));
+  parts.push_back(std::string("beta"));
+  parts.push_back(std::string("gamma"));
+  mut std::string joined = join(parts, '-');
+  std::println(joined);
+  std::println(std::to_string(int32_t(joined.size())));
+  mut std::string num = std::to_string(-4096);
+  std::println(num);
+  std::println(joined.empty() ? "empty" : "full");
+  return 0;
+}

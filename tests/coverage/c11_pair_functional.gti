@@ -1,0 +1,17 @@
+#include <std/utility>
+#include <std/functional>
+#include <std/vector>
+#include <std/algorithm>
+int main() {
+  mut auto p = std::make_pair(int32_t(3), int32_t(4));
+  std::print(p.first + p.second); std::print(" ");
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(5); v.push_back(1); v.push_back(9);
+  mut std::less<int32_t> cmp = std::less<int32_t>();
+  mut int32_t lo = 1;
+  mut int32_t hi = 2;
+  bool ordered = cmp(lo, hi);
+  std::ptrdiff_t above = std::count_if(v.begin(), v.end(), [](int32_t& x) -> bool { return x > 2; });
+  std::println(int32_t(above) + (ordered ? 100 : 0));
+  return 0;
+}
