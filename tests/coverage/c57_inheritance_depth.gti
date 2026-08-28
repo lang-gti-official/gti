@@ -1,0 +1,36 @@
+// Multi-level inheritance, overriding through the chain and base access.
+class Base {
+  mut int32_t tag = 1;
+public:
+  Base() {}
+  virtual int32_t kind() { return 1; }
+  int32_t tag_value() { return this.tag; }
+};
+
+class Middle : public Base {
+public:
+  Middle() {}
+  int32_t kind() override { return 2; }
+  int32_t doubled() { return this.kind() * 2; }
+};
+
+class Leaf : public Middle {
+public:
+  Leaf() {}
+  int32_t kind() override { return 3; }
+};
+
+int32_t dispatch(Base& b) { return b.kind(); }
+
+int main() {
+  Base base = Base();
+  Middle middle = Middle();
+  Leaf leaf = Leaf();
+
+  std::print(dispatch(base)); std::print(" ");
+  std::print(dispatch(middle)); std::print(" ");
+  std::print(dispatch(leaf)); std::print(" ");
+  std::print(leaf.doubled()); std::print(" ");
+  std::println(leaf.tag_value());
+  return 0;
+}

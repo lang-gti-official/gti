@@ -1,0 +1,7 @@
+class A { public: int32_t i() { return 0; } };
+int32_t apply_twice<Op>(mut Op op, int32_t v) { return op(op(v)); }
+int main() {
+  auto d = [](int32_t v) -> int32_t { return v * 2; };
+  std::println(apply_twice(std::move(d), 3));
+  return 0;
+}

@@ -1,0 +1,44 @@
+// expected observers, error paths and layered returns without the ? operator.
+class Anchor { public: int32_t id() { return 0; } };
+
+enum class calc_errc {
+  divide_by_zero,
+  out_of_range,
+};
+
+expected<int32_t, calc_errc> divide(int32_t a, int32_t b) {
+  if (b == 0) { return unexpected(calc_errc::divide_by_zero); }
+  return a / b;
+}
+
+expected<int32_t, calc_errc> bounded(int32_t v) {
+  if (v > 100) { return unexpected(calc_errc::out_of_range); }
+  return v;
+}
+
+int32_t classify(expected<int32_t, calc_errc>& r) {
+  if (!r) {
+    switch (r.error()) {
+    case calc_errc::divide_by_zero:
+      return -1;
+    case calc_errc::out_of_range:
+      return -2;
+    }
+  }
+  return r.value();
+}
+
+int main() {
+  mut auto ok = divide(10, 2);
+  mut auto zero = divide(1, 0);
+  mut auto big = bounded(500);
+  mut auto small = bounded(7);
+
+  std::print(classify(ok)); std::print(" ");
+  std::print(classify(zero)); std::print(" ");
+  std::print(classify(big)); std::print(" ");
+  std::print(classify(small)); std::print(" ");
+  std::print(ok.has_value() ? 1 : 0);
+  std::println(zero.has_value() ? 1 : 0);
+  return 0;
+}
