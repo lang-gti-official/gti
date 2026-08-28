@@ -184,7 +184,7 @@ identical.
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
 selected C++ standard and exact Expected, storage, managed-thread,
-defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+atomic, defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
 they do not query program meaning. Storage and defined-failure support remain
 universal only because that is the current artifact contract, not because the

@@ -272,7 +272,7 @@ start a later phase:
 | Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, integral scoped enums, passive unions, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
-| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
+| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure. Public managed threads and SC scalar atomics implement the bounded first surface. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later local-detector or static direct-call arguments after prepared owners. |
 
 MIR is the sole executable-body authority. It still has bounded verifier gaps
@@ -2182,10 +2182,9 @@ or MIR prerequisite.
 
 ### C-ATOM-01: Sequentially Consistent Atomic Scalars
 
-- **State/role:** blocked; `C-MIR-01`, `C-GLOBAL-01`, and the target thread
-  capability substrate in `C-RUNTIME-01` are done. Remaining prerequisites are
-  an `M-EXEC-01` sub-slice and matching backend/runtime lowering for ordered
-  atomic operations; systems-readiness implementation.
+- **State/role:** done; `C-MIR-01`, `C-GLOBAL-01`, and the target thread
+  capability substrate in `C-RUNTIME-01` are complete. Exact backend lowering
+  and the public source-defined wrapper now close the systems-readiness slice.
 - **Scope:** Introduce an ordinary GTI standard-library atomic wrapper over a
   closed scalar allowlist with construction, load, store, exchange, and one
   compare-exchange shape. The first executable contract is sequentially
@@ -2196,6 +2195,17 @@ or MIR prerequisite.
   native multithreaded runtime tests through a controlled harness, TSAN where
   available, and optimizer barrier tests.
 - **Unlocks:** `C-ORDER-01` and safe synchronized shared-state building blocks.
+- **Completion evidence:** `<std/atomic>` provides move-only
+  `std::atomic<T>` for `bool` and every fixed-width signed/unsigned integer,
+  with construction, load, store, exchange, and strong compare-exchange. Exact
+  declaration identity selects the compiler-private storage capability and
+  intrinsics; semantic analysis, HIR, MIR verification, representation
+  sealing, and the C++ backend all validate the operation and SC order. The
+  `atomic_semantic_ir`, `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`,
+  optimizer, corpus, standard-library surface, and installed nightly/release
+  checks cover domain rejection, private forgery, target rejection, strong-CAS
+  observed values, modification order, a deterministic SC store-buffer
+  litmus, O0/O3, C++20/C++23, and ThreadSanitizer where supported.
 
 ### C-CALL-01: Thread-Task Transfer Contract
 
@@ -2293,7 +2303,7 @@ or MIR prerequisite.
 
 ### C-ORDER-01: Explicit Atomic Memory Orders
 
-- **State/role:** later breadth; prerequisite is a validated `C-ATOM-01` client.
+- **State/role:** active; the validated `C-ATOM-01` client is complete.
 - **Scope:** Add only the orderings accepted by `D-MEM-02`, with operation-
   specific legality and happens-before tests. Keep sequential consistency the
   simple default.
@@ -2303,9 +2313,9 @@ or MIR prerequisite.
 
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/role:** complete for the public `std::thread` subset; active again
-  when atomics, mutexes, scoped threads, or another public concurrency family
-  is added.
+- **State/role:** complete for public `std::thread` and the SC scalar-atomic
+  subset; active for explicit orders and again when mutexes, scoped threads,
+  or another public concurrency family is added.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -2314,9 +2324,11 @@ or MIR prerequisite.
   toolchain coverage on each advertised target, sanitizer coverage where
   supported, and no unexplained reliance on native C++ ordering.
 - **Current evidence:** `managed_thread_semantic_ir`,
-  `managed_thread_runtime`, `managed_thread_end_to_end`, `lsp_protocol`, the
-  stdlib surface/corpus gates, installed workflows, and sanitizer runs cover
-  the shipped thread surface. Timing is never a correctness oracle.
+  `managed_thread_runtime`, `managed_thread_end_to_end`, `atomic_semantic_ir`,
+  `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`, `lsp_protocol`, the stdlib
+  surface/corpus gates, installed workflows, and sanitizer runs cover the
+  shipped thread and SC scalar-atomic surfaces. Timing is never a correctness
+  oracle.
 
 The following remain blocked beyond the initial concurrency profile: detached
 threads; scoped borrowed captures; mutex/RW-lock guards before stored/escaping
@@ -3387,7 +3399,7 @@ owned by the rows and domain plans above.
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
-| Public threads/atomics/mutex | source-defined owned `std::thread` and `std::thread_result<Result>` **complete**; atomics and mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, and the thread `C-CONFORM-01` slice done; `C-ATOM-01`/`C-SYNC-01` remain |
+| Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, and SC scalar `std::atomic<T>` **complete**; explicit orders and mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, and their `C-CONFORM-01` subsets done; `C-ORDER-01`/`C-SYNC-01` remain |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **hover/completion/signature-help tooling complete; broader consumers remain** | `///` retention, hover, completion, and signature help are complete in `T-LSP-01`; broader library coverage and generated API documentation remain |

@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
         std::filesystem::path(argv[index]).filename().string();
     const std::filesystem::path source = root / "examples" / name;
     lang::TargetInfo target = lang::TargetInfo::host();
-    if (name == "66-managed-threads.gti") {
+    if (name == "66-managed-threads.gti" || name == "76-scalar-atomics.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }

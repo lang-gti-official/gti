@@ -687,6 +687,8 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     return isUnsignedInteger(argument);
   case GenericConstraintKind::FloatingPoint:
     return semanticFloatFormat(argument).has_value();
+  case GenericConstraintKind::AtomicScalar:
+    return argument == SemanticType::Bool || isInteger(argument);
   case GenericConstraintKind::CopyConstructible:
     return typeTraits(argument).copyable;
   case GenericConstraintKind::Copyable: {
@@ -2623,6 +2625,9 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
   if (owner->compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
     return true;
   }
+  if (owner->compilerCapability == CompilerCapabilityTypeKind::AtomicStorage) {
+    return true;
+  }
   if (!visiting.insert(owner->id).second) {
     return false;
   }
@@ -2656,7 +2661,7 @@ auto SemanticVisitor::Impl::typeRequiresThreads(const SemanticType &type) const
   return typeRequiresThreads(type, visiting);
 }
 
-auto SemanticVisitor::Impl::validateThreadSurfaceAvailability(
+auto SemanticVisitor::Impl::validateConcurrentSurfaceAvailability(
     const Token &location, std::string_view surface) -> bool {
   if (target.executionProfile == ExecutionProfile::Concurrent &&
       target.runtimeCapabilities.threads) {
@@ -2668,11 +2673,11 @@ auto SemanticVisitor::Impl::validateThreadSurfaceAvailability(
           ? std::string(surface) + " requires the concurrent execution profile."
           : std::string(surface) +
                 " is unavailable because the selected target does not "
-                "provide managed threads.");
+                "provide thread-capable concurrency support.");
   diagnostic.hints.emplace_back(
       target.executionProfile != ExecutionProfile::Concurrent
           ? "Select the concurrent execution profile for programs that "
-            "spawn or join std::thread values."
+            "use std::thread or atomic synchronization."
           : "Select a target whose runtime capability set includes "
             "threads.");
   diagnostics.emplace_back(std::move(diagnostic));
@@ -2724,7 +2729,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
                       return typeRequiresThreads(parameter);
                     });
     if (requiresThreads &&
-        !validateThreadSurfaceAvailability(paren, "This managed-thread API")) {
+        !validateConcurrentSurfaceAvailability(paren, "This concurrency API")) {
       return false;
     }
   }

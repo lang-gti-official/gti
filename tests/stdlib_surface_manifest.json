@@ -1,9 +1,10 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "d99eac6797d6fdfc893643f003e7f391eff9a4ac3f96a220cb22f758a9b54ad7",
+    "stdlib/prelude.gti": "f1449937ffb6a977c01da15b1272c18ade114407381b976dda043f6f4faf6291",
     "stdlib/std/algorithm.gti": "ebfafdb53acb944829f2f83876072307a6c940246ddce97922e625f953cb50a4",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
+    "stdlib/std/atomic.gti": "10379b53d972c12314cb443f95ce5de091af6d3340c335d642c337b0ff2ad3de",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
     "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
@@ -50,6 +51,14 @@
       "id": "array",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_array.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "atomic",
+      "mode": "run",
+      "source": "tests/fixtures/atomic_scalar.gti",
+      "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -293,6 +302,23 @@
       "operations": ["std::array::swap"],
       "reason": "swap is bodyless because moving a value out through a mutable reference is not expressible yet.",
       "evidence": ["stdlib/std/array.gti", "stdlib/README.md"]
+    },
+    {
+      "id": "atomic.executable",
+      "source": "stdlib/std/atomic.gti",
+      "status": "executable",
+      "operations": [
+        "std::atomic::atomic",
+        "std::atomic::compare_exchange_strong",
+        "std::atomic::exchange",
+        "std::atomic::load",
+        "std::atomic::store",
+        "std::atomic_compare_exchange_result::exchanged",
+        "std::atomic_compare_exchange_result::observed"
+      ],
+      "case_ids": ["atomic"],
+      "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction"],
+      "evidence": ["docs/language/concurrency.md", "examples/76-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_scalar.gti"]
     },
     {
       "id": "cmath.executable",

@@ -1,0 +1,34 @@
+#include <std/atomic>
+
+int main() {
+  std::atomic<int32_t> value{1};
+  if (value.load() != 1) {
+    return 1;
+  }
+  value.store(2);
+  if (value.exchange(3) != 2 || value.load() != 3) {
+    return 2;
+  }
+  auto exchanged = value.compare_exchange_strong(3, 4);
+  if (!exchanged.exchanged() || exchanged.observed() != 3 ||
+      value.load() != 4) {
+    return 3;
+  }
+  auto rejected = value.compare_exchange_strong(3, 5);
+  if (rejected.exchanged() || rejected.observed() != 4 || value.load() != 4) {
+    return 4;
+  }
+
+  std::atomic<bool> flag{false};
+  flag.store(true);
+  if (!flag.load()) {
+    return 5;
+  }
+
+  std::atomic<int32_t> movable{9};
+  std::atomic<int32_t> moved = std::move(movable);
+  if (moved.load() != 9) {
+    return 6;
+  }
+  return 0;
+}

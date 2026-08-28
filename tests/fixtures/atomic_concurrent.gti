@@ -1,0 +1,93 @@
+#include <std/atomic>
+#include <std/thread>
+
+std::atomic<int32_t> shared_count{0};
+std::atomic<int32_t> left_value{0};
+std::atomic<int32_t> right_value{0};
+std::atomic<int32_t> first_observation{0};
+std::atomic<int32_t> second_observation{0};
+
+void increment_shared_count() {
+  for (mut int32_t iteration = 0; iteration < 2000; iteration++) {
+    mut bool complete = false;
+    while (!complete) {
+      int32_t observed = shared_count.load();
+      auto result =
+          shared_count.compare_exchange_strong(observed, observed + 1);
+      complete = result.exchanged();
+    }
+  }
+}
+
+void store_left_then_observe_right() {
+  left_value.store(1);
+  first_observation.store(right_value.load());
+}
+
+void store_right_then_observe_left() {
+  right_value.store(1);
+  second_observation.store(left_value.load());
+}
+
+int main() {
+  auto first_started =
+      std::thread::start([]() -> void { increment_shared_count(); });
+  if (!first_started.has_value()) {
+    return 1;
+  }
+  mut std::thread first = std::move(first_started).value();
+
+  auto second_started =
+      std::thread::start([]() -> void { increment_shared_count(); });
+  if (!second_started.has_value()) {
+    return 2;
+  }
+  mut std::thread second = std::move(second_started).value();
+
+  auto first_joined = first.join();
+  if (!first_joined.has_value()) {
+    return 3;
+  }
+  auto second_joined = second.join();
+  if (!second_joined.has_value()) {
+    return 4;
+  }
+
+  if (shared_count.load() != 4000) {
+    return 5;
+  }
+
+  // Sequential consistency forbids both loads from preceding both stores in
+  // the one program-wide atomic order. The deterministic MIR checks prove the
+  // selected order; this repeated native execution guards the lowering.
+  for (mut int32_t round = 0; round < 64; round++) {
+    left_value.store(0);
+    right_value.store(0);
+    first_observation.store(0);
+    second_observation.store(0);
+
+    auto left_started = std::thread::start(
+        []() -> void { store_left_then_observe_right(); });
+    if (!left_started.has_value()) {
+      return 6;
+    }
+    mut std::thread left = std::move(left_started).value();
+
+    auto right_started = std::thread::start(
+        []() -> void { store_right_then_observe_left(); });
+    if (!right_started.has_value()) {
+      return 7;
+    }
+    mut std::thread right = std::move(right_started).value();
+
+    auto left_joined = left.join();
+    auto right_joined = right.join();
+    if (!left_joined.has_value() || !right_joined.has_value()) {
+      return 8;
+    }
+    if (first_observation.load() == 0 && second_observation.load() == 0) {
+      return 9;
+    }
+  }
+  return 0;
+}

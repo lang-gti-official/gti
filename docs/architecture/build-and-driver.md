@@ -647,7 +647,8 @@ Metadata schema 9 publishes the declared value for every profile plus the
 selected workspace and sorted package/dependency graph. This build profile
 field selects static language policy only; the independently selected runtime
 profile derives the target/runtime `threads` capability. Public managed-thread
-operations require both the concurrent execution profile and that capability.
+and atomic operations require both the concurrent execution profile and that
+capability.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses

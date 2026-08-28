@@ -66,7 +66,8 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                     "--emit-cpp",
                     *(
                         ["--execution-profile", "concurrent"]
-                        if source.name == "66-managed-threads.gti"
+                        if source.name
+                        in {"66-managed-threads.gti", "76-scalar-atomics.gti"}
                         else []
                     ),
                     str(source),

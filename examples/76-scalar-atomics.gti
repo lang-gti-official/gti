@@ -1,0 +1,35 @@
+#include <std/atomic>
+#include <std/thread>
+
+std::atomic<int32_t> shared_count{0};
+
+void add_one() {
+  mut int32_t observed = shared_count.load();
+  while (true) {
+    auto update =
+        shared_count.compare_exchange_strong(observed, observed + 1);
+    if (update.exchanged()) {
+      return;
+    }
+    observed = update.observed();
+  }
+}
+
+int main() {
+  auto first_started = std::thread::start([]() -> void { add_one(); });
+  auto second_started = std::thread::start([]() -> void { add_one(); });
+  if (!first_started.has_value() || !second_started.has_value()) {
+    return 1;
+  }
+
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread second = std::move(second_started).value();
+  auto first_joined = first.join();
+  auto second_joined = second.join();
+  if (!first_joined.has_value() || !second_joined.has_value()) {
+    return 2;
+  }
+
+  std::println(shared_count.load());
+  return shared_count.load() == 2 ? 0 : 3;
+}

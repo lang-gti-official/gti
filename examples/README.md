@@ -80,6 +80,8 @@ own `main` function.
 | `72-filesystem-paths.gti` | pathname assignment and direct output of fresh owned strings |
 | `73-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
 | `74-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
+| `75-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
+| `76-scalar-atomics.gti` | share-safe sequentially consistent scalar atomics across managed threads |
 
 Build and run an example from the repository root:
 
@@ -234,6 +236,20 @@ copies characters and retains no borrow of the source.
 one read-only element loan per iteration. The temporary vector is owned by
 hidden loop storage until cleanup; mutable element iteration remains a separate
 language slice.
+
+`76-scalar-atomics.gti` also requires the concurrent execution profile:
+
+```sh
+./build/gti --execution-profile concurrent examples/76-scalar-atomics.gti \
+  -o /tmp/gti-scalar-atomics
+/tmp/gti-scalar-atomics
+```
+
+It uses an immutable namespace-global `std::atomic<int32_t>` for synchronized
+interior mutation from two managed threads. Strong compare/exchange returns a
+value object containing both success and the actual observation, so retry code
+never receives a reference into atomic storage. The first surface is entirely
+sequentially consistent and makes no lock-free or layout promise.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

@@ -249,6 +249,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back(
         "The required concept needs a public zero-argument constructor.");
     break;
+  case GenericConstraintKind::AtomicScalar:
+    diagnostic.hints.emplace_back(
+        "The atomic scalar domain contains bool and the fixed-width signed "
+        "and unsigned integer types only.");
+    break;
   case GenericConstraintKind::None:
   case GenericConstraintKind::Invalid:
   case GenericConstraintKind::Count:

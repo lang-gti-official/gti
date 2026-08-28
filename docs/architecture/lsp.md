@@ -361,7 +361,8 @@ reimplement TOML, target, or capability policy. A startup
 profile and also configures standalone documents. Omission selects the
 manifest `dev` profile when present and otherwise remains single-threaded.
 This keeps standalone and concurrent-project diagnostics and the public
-`<std/thread>` surface aligned with compiler-driver workflows. Analysis work
+`<std/thread>` and `<std/atomic>` surfaces aligned with compiler-driver
+workflows. Analysis work
 additionally runs inside `lang::runGuarded`, and that boundary is deliberately
 narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
 an isolated `DocumentAnalysis` and its immutable frontend snapshot, and

@@ -466,12 +466,14 @@ int main() {
   unsupportedTarget.executionProfile = lang::ExecutionProfile::Concurrent;
   const lang::FrontendResult unsupported =
       analyze("unsupported-thread-target.gti", basic, unsupportedTarget);
-  expect(!unsupported.canGenerateCode() && hasCode(unsupported, "GTI-S2084") &&
-             hasMessage(unsupported, "does not provide managed threads") &&
-             !hasCode(unsupported, "GTI-B0001") &&
-             !unsupportedTarget.runtimeCapabilities.threads,
-         "a raw target's safe-default runtime profile should reject managed "
-         "threads before lowering");
+  expect(
+      !unsupported.canGenerateCode() && hasCode(unsupported, "GTI-S2084") &&
+          hasMessage(unsupported,
+                     "does not provide thread-capable concurrency support") &&
+          !hasCode(unsupported, "GTI-B0001") &&
+          !unsupportedTarget.runtimeCapabilities.threads,
+      "a raw target's safe-default runtime profile should reject managed "
+      "threads before lowering");
 
   expectThreadRejection("nonvoid-thread-task.gti", R"(
 #include <std/thread>

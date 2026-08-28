@@ -4724,6 +4724,40 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
+        const auto exactSequentiallyConsistentAtomic = [&]() {
+          const SynchronizationOperation &sync = instruction.synchronization;
+          const bool sequentiallyConsistent =
+              sync.order == AtomicMemoryOrder::SequentiallyConsistent;
+          switch (instruction.intrinsic) {
+          case IntrinsicKind::AtomicLoad:
+            return sync.kind == SynchronizationOperationKind::AtomicLoad &&
+                   sequentiallyConsistent && !sync.failureOrder;
+          case IntrinsicKind::AtomicStore:
+            return sync.kind == SynchronizationOperationKind::AtomicStore &&
+                   sequentiallyConsistent && !sync.failureOrder;
+          case IntrinsicKind::AtomicExchange:
+            return sync.kind ==
+                       SynchronizationOperationKind::AtomicReadModifyWrite &&
+                   sequentiallyConsistent && !sync.failureOrder;
+          case IntrinsicKind::AtomicCompareExchange:
+            return sync.kind ==
+                       SynchronizationOperationKind::AtomicCompareExchange &&
+                   sequentiallyConsistent &&
+                   sync.failureOrder ==
+                       AtomicMemoryOrder::SequentiallyConsistent;
+          default:
+            return true;
+          }
+        };
+        if (!exactSequentiallyConsistentAtomic()) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "atomic intrinsic does not retain its exact "
+                          "sequentially-consistent synchronization contract"});
+        }
         if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
             !instruction.threadTaskAdapter) {
           result.errors.push_back(
@@ -4799,16 +4833,41 @@ verifyMirProgramContracts(const MirProgram &program) {
           continue;
         }
         hasSynchronization = true;
-        const bool exactPrivateThreadIntrinsic =
+        const bool exactPrivateSynchronizationIntrinsic =
             (instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadSpawn &&
              instruction.intrinsic == IntrinsicKind::ThreadSpawn) ||
             (instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadJoin &&
              (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
-              instruction.intrinsic == IntrinsicKind::ThreadAutoJoin));
+              instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::AtomicLoad &&
+             instruction.intrinsic == IntrinsicKind::AtomicLoad &&
+             instruction.synchronization.order ==
+                 AtomicMemoryOrder::SequentiallyConsistent &&
+             !instruction.synchronization.failureOrder) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::AtomicStore &&
+             instruction.intrinsic == IntrinsicKind::AtomicStore &&
+             instruction.synchronization.order ==
+                 AtomicMemoryOrder::SequentiallyConsistent &&
+             !instruction.synchronization.failureOrder) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::AtomicReadModifyWrite &&
+             instruction.intrinsic == IntrinsicKind::AtomicExchange &&
+             instruction.synchronization.order ==
+                 AtomicMemoryOrder::SequentiallyConsistent &&
+             !instruction.synchronization.failureOrder) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::AtomicCompareExchange &&
+             instruction.intrinsic == IntrinsicKind::AtomicCompareExchange &&
+             instruction.synchronization.order ==
+                 AtomicMemoryOrder::SequentiallyConsistent &&
+             instruction.synchronization.failureOrder ==
+                 AtomicMemoryOrder::SequentiallyConsistent);
         exactTrustedSynchronization =
-            exactTrustedSynchronization && exactPrivateThreadIntrinsic;
+            exactTrustedSynchronization && exactPrivateSynchronizationIntrinsic;
         if (program.executionProfile() != ExecutionProfile::SingleThreaded ||
             body.compilerTrustedSynchronization) {
           continue;
@@ -4830,7 +4889,8 @@ verifyMirProgramContracts(const MirProgram &program) {
           {.bodyKind = body.kind,
            .owner = owner,
            .message = "compiler-trusted synchronization marker is stale or "
-                      "does not name exact private thread intrinsics"});
+                      "does not name exact private synchronization "
+                      "intrinsics"});
     }
   };
 

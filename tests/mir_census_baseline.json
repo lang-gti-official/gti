@@ -73,7 +73,8 @@
     "72-filesystem-paths.gti": 254,
     "73-constructor-local-generics.gti": 199,
     "74-read-only-range-loans.gti": 49,
-    "75-bounded-arena-pool.gti": 67
+    "75-bounded-arena-pool.gti": 67,
+    "76-scalar-atomics.gti": 63
   },
-  "total": 4416
+  "total": 4479
 }

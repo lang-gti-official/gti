@@ -963,6 +963,8 @@ struct RowsBuilder {
             classInfo &&
             (classInfo->compilerCapability ==
                  CompilerCapabilityTypeKind::ThreadHandle ||
+             classInfo->compilerCapability ==
+                 CompilerCapabilityTypeKind::AtomicStorage ||
              classInfo->passiveCAbiRecord ||
              (classInfo->defaultConstructor != SpecialMemberStatus::Deleted &&
               classInfo->moveAssignment != SpecialMemberStatus::Deleted));

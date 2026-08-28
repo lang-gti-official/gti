@@ -96,6 +96,7 @@ public:
         .expected = loweredProgramContainsTypeKind(SemanticType::Expected),
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
+        .atomics = loweredProgramContainsAtomics(),
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
@@ -248,6 +249,29 @@ public:
           case IntrinsicKind::ThreadJoinable:
           case IntrinsicKind::ThreadJoin:
           case IntrinsicKind::ThreadAutoJoin:
+            return true;
+          default:
+            break;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool loweredProgramContainsAtomics() const {
+    for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+      const MirBody *body = findMirBody(mir, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          switch (instruction.intrinsic) {
+          case IntrinsicKind::AtomicLoad:
+          case IntrinsicKind::AtomicStore:
+          case IntrinsicKind::AtomicExchange:
+          case IntrinsicKind::AtomicCompareExchange:
             return true;
           default:
             break;

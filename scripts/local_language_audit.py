@@ -33,6 +33,7 @@ COMPARISON_RUNNER = EXAMPLES_ROOT / "gti-vs-cpp" / "verify.py"
 # configuration instead of silently excluding them from the corpus.
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
     "66-managed-threads.gti": "concurrent",
+    "76-scalar-atomics.gti": "concurrent",
 }
 
 INTERNAL_FAILURE_MARKERS = (

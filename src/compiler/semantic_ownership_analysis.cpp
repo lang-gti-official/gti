@@ -527,6 +527,18 @@ auto SemanticVisitor::Impl::typeTraits(
                               .transferCapable = false,
                               .shareCapable = false};
   }
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::AtomicStorage) {
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Trivial,
+                              .copyable = false,
+                              .movable = true,
+                              .copyAssignable = false,
+                              .moveAssignable = false,
+                              .containsBorrowedState = false,
+                              .transferCapable = true,
+                              .shareCapable = true};
+  }
   if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
     traits.drop = DropKind::Trivial;
   }
@@ -1060,6 +1072,24 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "thread_auto_join" || name == "thread_result_auto_join") {
       return IntrinsicKind::ThreadAutoJoin;
+    }
+    return IntrinsicKind::None;
+  }
+  if (isAtomicLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "atomic_load") {
+      return IntrinsicKind::AtomicLoad;
+    }
+    if (name == "atomic_store") {
+      return IntrinsicKind::AtomicStore;
+    }
+    if (name == "atomic_exchange") {
+      return IntrinsicKind::AtomicExchange;
+    }
+    if (name == "atomic_compare_exchange") {
+      return IntrinsicKind::AtomicCompareExchange;
     }
     return IntrinsicKind::None;
   }
@@ -3946,6 +3976,128 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
                              .threadTaskEntry = std::move(threadTaskEntry)});
 }
 
+auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
+    const Call &expr, const CallableCandidate &declaration) -> void {
+  const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  std::vector<SemanticType> explicitTypeArguments;
+  explicitTypeArguments.reserve(expr.typeArguments().size());
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+    explicitTypeArguments.push_back(typeOf(argument));
+  }
+
+  std::vector<SemanticType> argumentTypes;
+  argumentTypes.reserve(expr.arguments().size());
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.emplace_back(analyze(argument));
+  }
+
+  const auto atomicElement =
+      [&](const SemanticType &type) -> std::optional<SemanticType> {
+    const SemanticType *candidate = &type;
+    if (candidate->kind == SemanticType::Reference &&
+        candidate->arguments.size() == 1) {
+      candidate = &candidate->arguments.front();
+    }
+    const ClassInfo *owner = classInfo(*candidate);
+    if (owner == nullptr ||
+        owner->compilerCapability !=
+            CompilerCapabilityTypeKind::AtomicStorage ||
+        candidate->arguments.size() != 1) {
+      return std::nullopt;
+    }
+    return candidate->arguments.front();
+  };
+  const auto validScalar = [&](const SemanticType &type) {
+    return type == SemanticType::Unknown ||
+           satisfiesConstraint(
+               type, constraintBit(GenericConstraintKind::AtomicScalar));
+  };
+
+  const std::size_t expectedArguments =
+      intrinsic == IntrinsicKind::AtomicLoad ? 1
+      : intrinsic == IntrinsicKind::AtomicStore ||
+              intrinsic == IntrinsicKind::AtomicExchange
+          ? 2
+          : 4;
+  if (argumentTypes.size() != expectedArguments || argumentTypes.empty()) {
+    report(expr.paren(),
+           "This private atomic operation has the wrong number of "
+           "arguments.",
+           "GTI-S2086");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const std::optional<SemanticType> elementType =
+      atomicElement(argumentTypes.front());
+  if (!elementType || !validScalar(*elementType)) {
+    report(expressionToken(expr.arguments().front()),
+           "Atomic operations require the exact compiler-owned scalar "
+           "atomic storage capability.",
+           "GTI-S2086");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const ExpressionInfo *storage =
+      semanticModel.findExpression(*expr.arguments().front());
+  if (storage == nullptr || storage->category != ValueCategory::Place) {
+    report(expressionToken(expr.arguments().front()),
+           "Atomic operations require stable atomic storage.", "GTI-S2086");
+  }
+  for (std::size_t index = 1; index < argumentTypes.size(); ++index) {
+    if (argumentTypes[index] != SemanticType::Unknown &&
+        *elementType != SemanticType::Unknown &&
+        argumentTypes[index] != *elementType) {
+      report(expressionToken(expr.arguments()[index]),
+             "Atomic operands must exactly match the atomic scalar type '" +
+                 typeSpelling(*elementType) + "'.",
+             "GTI-S2086");
+    }
+  }
+  if (intrinsic == IntrinsicKind::AtomicCompareExchange) {
+    const ExpressionInfo *observed =
+        semanticModel.findExpression(*expr.arguments().back());
+    if (observed == nullptr || observed->category != ValueCategory::Place ||
+        observed->access != AccessMode::Mutable) {
+      report(expressionToken(expr.arguments().back()),
+             "The private compare-exchange observed-value output requires "
+             "mutable stable scalar storage.",
+             "GTI-S2086");
+    }
+  }
+
+  std::vector<SemanticType> recordedTypeArguments{*elementType};
+  if (intrinsic == IntrinsicKind::AtomicCompareExchange) {
+    if (!explicitTypeArguments.empty()) {
+      report(expr.paren(),
+             "atomic_compare_exchange infers its scalar type from storage.",
+             "GTI-S2086");
+    }
+    currentType = SemanticType::Bool;
+  } else {
+    if (!explicitTypeArguments.empty()) {
+      report(expr.paren(),
+             "This atomic operation infers its scalar type from storage.",
+             "GTI-S2086");
+    }
+    currentType = intrinsic == IntrinsicKind::AtomicStore ? SemanticType::Void
+                                                          : *elementType;
+  }
+
+  std::vector<SemanticType> parameterTypes = argumentTypes;
+  parameterTypes.front() =
+      SemanticType::referenceTo(argumentTypes.front(), AccessMode::ReadOnly);
+  if (intrinsic == IntrinsicKind::AtomicCompareExchange) {
+    parameterTypes.back() =
+        SemanticType::referenceTo(argumentTypes.back(), AccessMode::Mutable);
+  }
+  semanticModel.record(
+      expr, ResolvedCallInfo{.returnType = currentType,
+                             .parameterTypes = std::move(parameterTypes),
+                             .typeArguments = std::move(recordedTypeArguments),
+                             .intrinsic = intrinsic});
+}
+
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
@@ -3974,6 +4126,14 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::ThreadJoin ||
       intrinsic == IntrinsicKind::ThreadAutoJoin) {
     analyzeThreadIntrinsicCall(expr, declaration);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::AtomicLoad ||
+      intrinsic == IntrinsicKind::AtomicStore ||
+      intrinsic == IntrinsicKind::AtomicExchange ||
+      intrinsic == IntrinsicKind::AtomicCompareExchange) {
+    analyzeAtomicIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

@@ -1684,6 +1684,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedThreadCapabilityScope =
           isThreadLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedAtomicCapabilityScope =
+          isAtomicLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
       if (trustedPreludeCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
           !classDecl->genericParameters().front().valueType &&
@@ -1713,6 +1716,12 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  !classDecl->genericParameters().front().pack &&
                  classDecl->name().lexeme == "thread_result_handle") {
         compilerCapability = CompilerCapabilityTypeKind::ThreadHandle;
+      } else if (trustedAtomicCapabilityScope &&
+                 classDecl->genericParameters().size() == 1 &&
+                 !classDecl->genericParameters().front().valueType &&
+                 !classDecl->genericParameters().front().pack &&
+                 classDecl->name().lexeme == "atomic_storage") {
+        compilerCapability = CompilerCapabilityTypeKind::AtomicStorage;
       }
       CapabilityPolicyRegistration capabilityPolicies;
       if (classDecl->kind() == ClassKind::Union) {

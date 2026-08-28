@@ -324,6 +324,10 @@ void writeCppSupportPreamble(std::ostream &output,
             "#include <variant>\n";
   const bool usesExpected = features.expected;
   const bool usesManagedThreads = features.managedThreads;
+  const bool usesAtomics = features.atomics;
+  if (usesAtomics) {
+    output << "#include <atomic>\n";
+  }
   if (usesExpected) {
     if (features.standard == CppStandard::Cpp23) {
       output << "#include <expected>\n";
@@ -1305,6 +1309,52 @@ unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
 }
 
 )";
+  if (usesAtomics) {
+    output << R"(
+
+template <typename T> class atomic_value final {
+public:
+  explicit atomic_value(T value) noexcept : value_(value) {}
+  atomic_value(const atomic_value &) = delete;
+  atomic_value &operator=(const atomic_value &) = delete;
+
+  atomic_value(atomic_value &&other) noexcept
+      : value_(other.value_.load(std::memory_order_relaxed)) {}
+
+  atomic_value &operator=(atomic_value &&) = delete;
+
+  [[nodiscard]] T load(std::memory_order order) const noexcept {
+    return value_.load(order);
+  }
+
+  void store(T value, std::memory_order order) const noexcept {
+    value_.store(value, order);
+  }
+
+  [[nodiscard]] T exchange(T value, std::memory_order order) const noexcept {
+    return value_.exchange(value, order);
+  }
+
+  [[nodiscard]] bool compare_exchange_strong(
+      T &observed, T desired, std::memory_order success,
+      std::memory_order failure) const noexcept {
+    return value_.compare_exchange_strong(observed, desired, success, failure);
+  }
+
+private:
+  mutable std::atomic<T> value_;
+};
+
+template <typename T>
+[[nodiscard]] inline bool atomic_compare_exchange(
+    const atomic_value<T> &value, T expected, T desired, T &observed,
+    std::memory_order success, std::memory_order failure) {
+  observed = expected;
+  return value.compare_exchange_strong(observed, desired, success, failure);
+}
+
+)";
+  }
   if (usesManagedThreads) {
     output << R"(
 
