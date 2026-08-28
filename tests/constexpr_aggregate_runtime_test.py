@@ -65,6 +65,16 @@ def main() -> int:
                 "constexpr values\n"
             )
             return 1
+        recursive_empty_state = (
+            "values(::gti_internal::backend::mir_empty_state_v1<"
+            "std::remove_cv_t<decltype(values)>>())"
+        )
+        if generated.count(recursive_empty_state) < 2 or ": values{}" in generated:
+            sys.stderr.write(
+                "nested concrete arrays did not use recursive private "
+                "empty-state construction\n"
+            )
+            return 1
 
     return 0
 

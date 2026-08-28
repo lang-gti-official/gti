@@ -439,6 +439,13 @@ pointee instantiation for recursive shapes such as
 graphs on one ABI until the representation snapshot records an explicit
 carrier closure. A direct class's field-initializer schedule always uses its
 concrete representation row, never a declaration-level `T` or value parameter.
+A direct generic class definition is ordered by its exact concrete application
+and exact substituted by-value fields, not by one collapsed source-family
+node. Finite alternating nests such as `box<cell<box<int>>>` therefore form an
+acyclic concrete layout graph even though both source families mention one
+another across the program. A genuine cycle in that exact graph remains a
+fail-closed backend invariant violation; ordinary source-level recursive
+by-value fields are rejected earlier by semantics.
 A selected generic method on a retained carrier keeps its stable
 `__gti_member_` name, but the backend emits the required owner-specialization
 declaration before any use. These carriers consume identities and validity
@@ -520,6 +527,11 @@ passed to another constructor likewise remains in its verified value-rooted
 lifetime slot until the consuming construction finishes. Only fields named by
 the explicit constructor-initializer schedule are replaced with private empty
 state; unrelated in-class initializers retain their source-defined value.
+Fixed-array empty state is built recursively element by element, so a nested
+array of concrete generic class elements uses each element's private tag
+constructor and never assumes that the public class has a zero-argument
+constructor. This remains a backend-only rollback representation and does not
+add a GTI constructor or observable initialized value.
 Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.

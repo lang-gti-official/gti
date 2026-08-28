@@ -2685,14 +2685,10 @@ public:
           throw std::logic_error(
               "lowered empty-state constructor lost a field payload");
         }
-        output << fields[index]->name;
-        if (storage->type.kind == SemanticType::Array) {
-          output << "{}";
-        } else {
-          output << "(::gti_internal::backend::mir_empty_state_v1<"
-                    "std::remove_cv_t<decltype("
-                 << fields[index]->name << ")>>())";
-        }
+        output << fields[index]->name
+               << "(::gti_internal::backend::mir_empty_state_v1<"
+                  "std::remove_cv_t<decltype("
+               << fields[index]->name << ")>>())";
       }
     }
     output << " {}\n";
@@ -3248,180 +3244,43 @@ public:
         loweredClassNeedsNativePrimary(declaration)) {
       emitLoweredClassDefinitionBody(classRow, declaration);
     }
-
-    for (const MirClassInstance *instance :
-         loweredConcreteClassInstances(declaration.id)) {
-      const std::optional<std::string> name =
-          cppConcreteClassName(loweredProgram, instance->type);
-      if (!name) {
-        throw std::logic_error(
-            "nameable concrete class lost its stable representation");
-      }
-      LoweredDeclaration concreteRow = classRow;
-      concreteRow.name = *name;
-      LoweredClassDeclaration concrete = declaration;
-      concrete.exactSpecializationPrimary = 0;
-      concrete.exactTypeArguments.clear();
-      concrete.exactValueArguments.clear();
-      concrete.genericParameters.clear();
-      concrete.traits = instance->traits;
-      concrete.defaultConstructor = instance->defaultConstructor;
-      concrete.copyConstructor = instance->copyConstructor;
-      concrete.moveConstructor = instance->moveConstructor;
-      concrete.copyAssignment = instance->copyAssignment;
-      concrete.moveAssignment = instance->moveAssignment;
-      concrete.destructor = instance->destructorStatus;
-      concrete.requiresActiveDropState = instance->requiresActiveDropState;
-      for (std::size_t index = 0;
-           index < concrete.bases.size() && index < instance->bases.size();
-           ++index) {
-        concrete.bases[index].type = instance->bases[index].type;
-      }
-      concreteRow.payload = concrete;
-      loweredConcreteLifecycleInstances.insert_or_assign(*name, instance->id);
-      emitLoweredClassDefinitionBody(
-          concreteRow, std::get<LoweredClassDeclaration>(concreteRow.payload),
-          instance);
-    }
   }
 
   void
-  loweredCollectRepresentationDependencies(const SemanticType &type,
-                                           std::vector<ClassId> &result) const {
-    switch (type.kind) {
-    case SemanticType::RawPointer:
-    case SemanticType::Reference:
-    case SemanticType::UniqueOwner:
-    case SemanticType::SharedPointer:
-    case SemanticType::Storage:
-    case SemanticType::PrefixStorage:
-      return;
-    case SemanticType::Class:
-      if (type.classId != 0) {
-        result.push_back(type.classId);
-      }
-      for (const SemanticType &argument : type.arguments) {
-        loweredCollectRepresentationDependencies(argument, result);
-      }
-      return;
-    case SemanticType::Array:
-    case SemanticType::Expected:
-    case SemanticType::Unexpected:
-      for (const SemanticType &argument : type.arguments) {
-        loweredCollectRepresentationDependencies(argument, result);
-      }
-      return;
-    default:
-      return;
+  emitLoweredConcreteClassDefinition(const LoweredDeclaration &classRow,
+                                     const LoweredClassDeclaration &declaration,
+                                     const MirClassInstance &instance) {
+    const std::optional<std::string> name =
+        cppConcreteClassName(loweredProgram, instance.type);
+    if (!name) {
+      throw std::logic_error(
+          "nameable concrete class lost its stable representation");
     }
-  }
-
-  void
-  loweredCollectInitializerDependencies(const MirBody &body,
-                                        std::vector<ClassId> &result) const {
-    for (const MirPlace &place : body.places) {
-      loweredCollectRepresentationDependencies(place.type, result);
+    LoweredDeclaration concreteRow = classRow;
+    concreteRow.name = *name;
+    LoweredClassDeclaration concrete = declaration;
+    concrete.exactSpecializationPrimary = 0;
+    concrete.exactTypeArguments.clear();
+    concrete.exactValueArguments.clear();
+    concrete.genericParameters.clear();
+    concrete.traits = instance.traits;
+    concrete.defaultConstructor = instance.defaultConstructor;
+    concrete.copyConstructor = instance.copyConstructor;
+    concrete.moveConstructor = instance.moveConstructor;
+    concrete.copyAssignment = instance.copyAssignment;
+    concrete.moveAssignment = instance.moveAssignment;
+    concrete.destructor = instance.destructorStatus;
+    concrete.requiresActiveDropState = instance.requiresActiveDropState;
+    for (std::size_t index = 0;
+         index < concrete.bases.size() && index < instance.bases.size();
+         ++index) {
+      concrete.bases[index].type = instance.bases[index].type;
     }
-    for (const MirValue &value : body.values) {
-      loweredCollectRepresentationDependencies(value.info.type, result);
-    }
-    for (const MirBlock &block : body.blocks) {
-      for (const MirInstruction &instruction : block.instructions) {
-        loweredCollectRepresentationDependencies(instruction.info.type, result);
-        loweredCollectRepresentationDependencies(instruction.dispatchOwner,
-                                                 result);
-        for (const SemanticType &parameter : instruction.parameterTypes) {
-          loweredCollectRepresentationDependencies(parameter, result);
-        }
-        for (const SemanticType &capture : instruction.closureCaptureTypes) {
-          loweredCollectRepresentationDependencies(capture, result);
-        }
-        if (instruction.receiver) {
-          loweredCollectRepresentationDependencies(instruction.receiver->type,
-                                                   result);
-        }
-        for (const MirOperand &operand : instruction.operands) {
-          loweredCollectRepresentationDependencies(operand.type, result);
-        }
-        if (instruction.functionTarget) {
-          const MirFunctionInstance *function =
-              mir.findFunctionInstance(*instruction.functionTarget);
-          const MirClassInstance *owner =
-              function != nullptr && function->owner
-                  ? mir.findClassInstance(*function->owner)
-                  : nullptr;
-          if (owner != nullptr) {
-            loweredCollectRepresentationDependencies(owner->type, result);
-          }
-        }
-        if (instruction.constructorTarget) {
-          const MirConstructorInstance *constructor =
-              mir.findConstructorInstance(*instruction.constructorTarget);
-          const MirClassInstance *owner =
-              constructor == nullptr
-                  ? nullptr
-                  : mir.findClassInstance(constructor->owner);
-          if (owner != nullptr) {
-            loweredCollectRepresentationDependencies(owner->type, result);
-          }
-        }
-      }
-    }
-  }
-
-  [[nodiscard]] std::vector<ClassId> loweredClassDefinitionDependencies(
-      const LoweredDeclaration &row,
-      const LoweredClassDeclaration &declaration) const {
-    std::vector<ClassId> result;
-    if (declaration.exactSpecializationPrimary != 0) {
-      result.push_back(declaration.exactSpecializationPrimary);
-    }
-    for (const LoweredClassBase &base : declaration.bases) {
-      loweredCollectRepresentationDependencies(base.type, result);
-    }
-    for (const LoweredDeclaration *member : loweredChildren(row.id)) {
-      const auto *storage =
-          std::get_if<LoweredStorageDeclaration>(&member->payload);
-      if (storage != nullptr) {
-        loweredCollectRepresentationDependencies(storage->type, result);
-      }
-    }
-    // A generic definition is scheduled from its dependent source fields.
-    // Folding every concrete instantiation back to the primary declaration
-    // invents cycles such as box -> cell -> box for an acyclic nested type.
-    if (declaration.genericParameters.empty()) {
-      for (const MirClassInstance &instance : mir.classInstances()) {
-        if (instance.declaration != declaration.id) {
-          continue;
-        }
-        for (const MirClassFieldInfo &field : instance.declaredFields) {
-          loweredCollectRepresentationDependencies(field.type, result);
-        }
-        loweredCollectInitializerDependencies(instance.fieldInitializers,
-                                              result);
-      }
-    }
-    std::erase(result, declaration.id);
-    std::sort(result.begin(), result.end());
-    result.erase(std::unique(result.begin(), result.end()), result.end());
-    return result;
-  }
-
-  [[nodiscard]] std::vector<ClassId> loweredConcreteSpecializationDependencies(
-      const LoweredClassDeclaration &declaration) const {
-    std::vector<ClassId> result;
-    for (const MirClassInstance &instance : mir.classInstances()) {
-      if (instance.declaration != declaration.id) {
-        continue;
-      }
-      for (const MirClassFieldInfo &field : instance.declaredFields) {
-        loweredCollectRepresentationDependencies(field.type, result);
-      }
-    }
-    std::erase(result, declaration.id);
-    std::sort(result.begin(), result.end());
-    result.erase(std::unique(result.begin(), result.end()), result.end());
-    return result;
+    concreteRow.payload = concrete;
+    loweredConcreteLifecycleInstances.insert_or_assign(*name, instance.id);
+    emitLoweredClassDefinitionBody(
+        concreteRow, std::get<LoweredClassDeclaration>(concreteRow.payload),
+        &instance);
   }
 
   void emitLoweredScheduledTypeDefinition(const LoweredDeclaration &row) {
@@ -3439,10 +3298,25 @@ public:
     output << '\n';
   }
 
+  void emitLoweredScheduledConcreteTypeDefinition(
+      const LoweredDeclaration &row, const LoweredClassDeclaration &declaration,
+      const MirClassInstance &instance) {
+    const std::size_t namespaceCount =
+        emitLoweredNamespaceOpen(row.namespaceScope);
+    emitLoweredConcreteClassDefinition(row, declaration, instance);
+    emitLoweredNamespaceClose(namespaceCount);
+    output << '\n';
+  }
+
   void emitLoweredTypeDefinitions() {
+    struct ClassEmissionNode {
+      const LoweredDeclaration *row = nullptr;
+      const MirClassInstance *concrete = nullptr;
+    };
+
     std::vector<const LoweredDeclaration *> enumerations;
-    std::vector<const LoweredDeclaration *> classes;
-    std::unordered_map<ClassId, std::size_t> classSchedule;
+    std::vector<ClassEmissionNode> classes;
+    std::unordered_map<ClassId, std::size_t> sourceClassSchedule;
     for (const LoweredDeclaration &row : loweredProgram.declarations()) {
       const LoweredDeclaration *parent =
           loweredProgram.findDeclaration(row.parent);
@@ -3459,12 +3333,41 @@ public:
         continue;
       }
       const std::size_t index = classes.size();
-      classes.push_back(&row);
+      classes.push_back({.row = &row});
       if (!type->forwardDeclaration &&
           type->compilerCapability == CompilerCapabilityTypeKind::None &&
           !type->cOpaqueHandle) {
-        classSchedule.insert_or_assign(type->id, index);
+        sourceClassSchedule.insert_or_assign(type->id, index);
       }
+    }
+
+    std::unordered_map<std::string, std::size_t> concreteClassSchedule;
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      const std::optional<std::string> name =
+          cppConcreteClassName(loweredProgram, instance.type);
+      const LoweredDeclaration *row = loweredClassRow(instance.declaration);
+      const auto *declaration =
+          row == nullptr ? nullptr
+                         : std::get_if<LoweredClassDeclaration>(&row->payload);
+      const LoweredDeclaration *parent =
+          row == nullptr ? nullptr
+                         : loweredProgram.findDeclaration(row->parent);
+      if (!name || row == nullptr || declaration == nullptr ||
+          declaration->forwardDeclaration ||
+          declaration->compilerCapability != CompilerCapabilityTypeKind::None ||
+          declaration->cOpaqueHandle ||
+          (parent != nullptr &&
+           std::holds_alternative<LoweredClassDeclaration>(parent->payload))) {
+        continue;
+      }
+      if (concreteClassSchedule.contains(*name)) {
+        throw std::logic_error(
+            "lowered concrete class schedule contains a duplicate stable "
+            "representation");
+      }
+      const std::size_t index = classes.size();
+      classes.push_back({.row = row, .concrete = &instance});
+      concreteClassSchedule.emplace(*name, index);
     }
 
     // A variant alternative embeds its class payloads by value, so an enum
@@ -3493,6 +3396,173 @@ public:
       emitLoweredScheduledTypeDefinition(*enumeration);
     }
 
+    const auto collectTypeDependencies =
+        [&](const auto &self, const SemanticType &type,
+            std::vector<std::size_t> &result) -> void {
+      switch (type.kind) {
+      case SemanticType::RawPointer:
+      case SemanticType::Reference:
+      case SemanticType::UniqueOwner:
+      case SemanticType::SharedPointer:
+      case SemanticType::Storage:
+      case SemanticType::PrefixStorage:
+        return;
+      case SemanticType::Class: {
+        if (const std::optional<std::string> concrete =
+                cppConcreteClassName(loweredProgram, type)) {
+          const auto found = concreteClassSchedule.find(*concrete);
+          if (found == concreteClassSchedule.end()) {
+            throw std::logic_error(
+                "lowered class layout lost an exact concrete dependency");
+          }
+          result.push_back(found->second);
+          return;
+        }
+        if (const auto found = sourceClassSchedule.find(type.classId);
+            found != sourceClassSchedule.end()) {
+          result.push_back(found->second);
+        }
+        for (const SemanticType &argument : type.arguments) {
+          self(self, argument, result);
+        }
+        return;
+      }
+      case SemanticType::Array:
+      case SemanticType::Expected:
+      case SemanticType::Unexpected:
+        for (const SemanticType &argument : type.arguments) {
+          self(self, argument, result);
+        }
+        return;
+      default:
+        return;
+      }
+    };
+
+    const auto collectInitializerDependencies = [&](const MirBody &body,
+                                                    std::vector<std::size_t>
+                                                        &result) {
+      for (const MirPlace &place : body.places) {
+        collectTypeDependencies(collectTypeDependencies, place.type, result);
+      }
+      for (const MirValue &value : body.values) {
+        collectTypeDependencies(collectTypeDependencies, value.info.type,
+                                result);
+      }
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          collectTypeDependencies(collectTypeDependencies,
+                                  instruction.info.type, result);
+          collectTypeDependencies(collectTypeDependencies,
+                                  instruction.dispatchOwner, result);
+          for (const SemanticType &parameter : instruction.parameterTypes) {
+            collectTypeDependencies(collectTypeDependencies, parameter, result);
+          }
+          for (const SemanticType &capture : instruction.closureCaptureTypes) {
+            collectTypeDependencies(collectTypeDependencies, capture, result);
+          }
+          if (instruction.receiver) {
+            collectTypeDependencies(collectTypeDependencies,
+                                    instruction.receiver->type, result);
+          }
+          for (const MirOperand &operand : instruction.operands) {
+            collectTypeDependencies(collectTypeDependencies, operand.type,
+                                    result);
+          }
+          if (instruction.functionTarget) {
+            const MirFunctionInstance *function =
+                mir.findFunctionInstance(*instruction.functionTarget);
+            const MirClassInstance *owner =
+                function != nullptr && function->owner
+                    ? mir.findClassInstance(*function->owner)
+                    : nullptr;
+            if (owner != nullptr) {
+              collectTypeDependencies(collectTypeDependencies, owner->type,
+                                      result);
+            }
+          }
+          if (instruction.constructorTarget) {
+            const MirConstructorInstance *constructor =
+                mir.findConstructorInstance(*instruction.constructorTarget);
+            const MirClassInstance *owner =
+                constructor == nullptr
+                    ? nullptr
+                    : mir.findClassInstance(constructor->owner);
+            if (owner != nullptr) {
+              collectTypeDependencies(collectTypeDependencies, owner->type,
+                                      result);
+            }
+          }
+        }
+      }
+    };
+
+    const auto normalizeDependencies = [](std::vector<std::size_t> &result,
+                                          std::size_t current) {
+      std::erase(result, current);
+      std::sort(result.begin(), result.end());
+      result.erase(std::unique(result.begin(), result.end()), result.end());
+    };
+
+    const auto collectSourceDependencies =
+        [&](const LoweredDeclaration &row,
+            const LoweredClassDeclaration &declaration,
+            std::vector<std::size_t> &result) {
+          if (const auto found = sourceClassSchedule.find(
+                  declaration.exactSpecializationPrimary);
+              found != sourceClassSchedule.end()) {
+            result.push_back(found->second);
+          }
+          for (const LoweredClassBase &base : declaration.bases) {
+            collectTypeDependencies(collectTypeDependencies, base.type, result);
+          }
+          for (const LoweredDeclaration *member : loweredChildren(row.id)) {
+            const auto *storage =
+                std::get_if<LoweredStorageDeclaration>(&member->payload);
+            if (storage != nullptr) {
+              collectTypeDependencies(collectTypeDependencies, storage->type,
+                                      result);
+            }
+          }
+          if (!declaration.genericParameters.empty()) {
+            return;
+          }
+          for (const MirClassInstance &instance : mir.classInstances()) {
+            if (instance.declaration != declaration.id) {
+              continue;
+            }
+            for (const HirBaseInstance &base : instance.bases) {
+              collectTypeDependencies(collectTypeDependencies, base.type,
+                                      result);
+            }
+            for (const MirClassFieldInfo &field : instance.declaredFields) {
+              collectTypeDependencies(collectTypeDependencies, field.type,
+                                      result);
+            }
+            collectInitializerDependencies(instance.fieldInitializers, result);
+          }
+        };
+
+    const auto collectConcreteDependencies =
+        [&](const LoweredClassDeclaration &declaration,
+            const MirClassInstance &instance,
+            std::vector<std::size_t> &result) {
+          if (loweredClassNeedsNativePrimary(declaration)) {
+            if (const auto found = sourceClassSchedule.find(declaration.id);
+                found != sourceClassSchedule.end()) {
+              result.push_back(found->second);
+            }
+          }
+          for (const HirBaseInstance &base : instance.bases) {
+            collectTypeDependencies(collectTypeDependencies, base.type, result);
+          }
+          for (const MirClassFieldInfo &field : instance.declaredFields) {
+            collectTypeDependencies(collectTypeDependencies, field.type,
+                                    result);
+          }
+          collectInitializerDependencies(instance.fieldInitializers, result);
+        };
+
     std::vector<unsigned char> state(classes.size(), 0);
     const auto emitClass = [&](const auto &self, std::size_t index) -> void {
       if (index >= classes.size() || state[index] == 2) {
@@ -3503,74 +3573,66 @@ public:
             "lowered class layout contains a recursive by-value dependency");
       }
       state[index] = 1;
-      const LoweredDeclaration &row = *classes[index];
+      const ClassEmissionNode &node = classes[index];
+      if (node.row == nullptr) {
+        throw std::logic_error("lowered class schedule lost its source row");
+      }
+      const LoweredDeclaration &row = *node.row;
       const auto *declaration =
           std::get_if<LoweredClassDeclaration>(&row.payload);
       if (declaration == nullptr) {
         throw std::logic_error(
             "lowered class schedule lost its declaration payload");
       }
-      std::vector<ClassId> dependencies =
-          loweredClassDefinitionDependencies(row, *declaration);
-      if (!loweredConcreteClassInstances(declaration->id).empty()) {
-        std::vector<ClassId> concreteDependencies =
-            loweredConcreteSpecializationDependencies(*declaration);
-        dependencies.insert(dependencies.end(), concreteDependencies.begin(),
-                            concreteDependencies.end());
-        std::sort(dependencies.begin(), dependencies.end());
-        dependencies.erase(
-            std::unique(dependencies.begin(), dependencies.end()),
-            dependencies.end());
+      std::vector<std::size_t> dependencies;
+      if (node.concrete == nullptr) {
+        collectSourceDependencies(row, *declaration, dependencies);
+      } else {
+        collectConcreteDependencies(*declaration, *node.concrete, dependencies);
       }
-      std::sort(dependencies.begin(), dependencies.end(),
-                [&](ClassId left, ClassId right) {
-                  const auto leftAt = classSchedule.find(left);
-                  const auto rightAt = classSchedule.find(right);
-                  return (leftAt == classSchedule.end()
-                              ? std::numeric_limits<std::size_t>::max()
-                              : leftAt->second) <
-                         (rightAt == classSchedule.end()
-                              ? std::numeric_limits<std::size_t>::max()
-                              : rightAt->second);
-                });
-      for (const ClassId dependency : dependencies) {
-        if (const auto found = classSchedule.find(dependency);
-            found != classSchedule.end()) {
-          self(self, found->second);
-        }
+      normalizeDependencies(dependencies, index);
+      for (const std::size_t dependency : dependencies) {
+        self(self, dependency);
       }
       const std::size_t firstDeferredMember = loweredDeferredMembers.size();
       const std::size_t firstDeferredLifecycleClass =
           loweredDeferredLifecycleClasses.size();
-      emitLoweredScheduledTypeDefinition(row);
+      if (node.concrete == nullptr) {
+        emitLoweredScheduledTypeDefinition(row);
+      } else {
+        emitLoweredScheduledConcreteTypeDefinition(row, *declaration,
+                                                   *node.concrete);
+      }
       const std::size_t lastDeferredMember = loweredDeferredMembers.size();
       const std::size_t lastDeferredLifecycleClass =
           loweredDeferredLifecycleClasses.size();
       state[index] = 2;
 
-      // A concrete member specialization can instantiate its complete owner
-      // even though the primary definition only depends on source-level field
-      // types. Complete any concrete field dependencies first. Marking this
-      // primary complete above makes mutually nested generic arguments
-      // converge without treating them as recursive by-value source layouts.
-      std::vector<ClassId> specializationDependencies =
-          loweredConcreteSpecializationDependencies(*declaration);
-      std::sort(specializationDependencies.begin(),
-                specializationDependencies.end(),
-                [&](ClassId left, ClassId right) {
-                  const auto leftAt = classSchedule.find(left);
-                  const auto rightAt = classSchedule.find(right);
-                  return (leftAt == classSchedule.end()
-                              ? std::numeric_limits<std::size_t>::max()
-                              : leftAt->second) <
-                         (rightAt == classSchedule.end()
-                              ? std::numeric_limits<std::size_t>::max()
-                              : rightAt->second);
-                });
-      for (const ClassId dependency : specializationDependencies) {
-        if (const auto found = classSchedule.find(dependency);
-            found != classSchedule.end()) {
-          self(self, found->second);
+      // A retained source-template specialization can instantiate its
+      // complete owner. Complete the exact concrete field graph after the
+      // primary becomes available, but do not collapse distinct applications
+      // back to one class-family node: that invents cycles for finite nests
+      // such as box<cell<box<int>>>.
+      if (node.concrete == nullptr) {
+        std::vector<std::size_t> specializationDependencies;
+        for (const MirClassInstance &instance : mir.classInstances()) {
+          if (instance.declaration != declaration->id) {
+            continue;
+          }
+          for (const HirBaseInstance &base : instance.bases) {
+            collectTypeDependencies(collectTypeDependencies, base.type,
+                                    specializationDependencies);
+          }
+          for (const MirClassFieldInfo &field : instance.declaredFields) {
+            collectTypeDependencies(collectTypeDependencies, field.type,
+                                    specializationDependencies);
+          }
+          collectInitializerDependencies(instance.fieldInitializers,
+                                         specializationDependencies);
+        }
+        normalizeDependencies(specializationDependencies, index);
+        for (const std::size_t dependency : specializationDependencies) {
+          self(self, dependency);
         }
       }
       emitLoweredMemberSpecializationDeclarations(
@@ -6024,14 +6086,10 @@ public:
         continue;
       }
       if (initializer.kind == BindingKind::EmptyField) {
-        output << fieldName;
-        if (initializer.fieldType.kind == SemanticType::Array) {
-          output << "{}";
-        } else {
-          output << "(::gti_internal::backend::mir_empty_state_v1<"
-                    "std::remove_cv_t<decltype("
-                 << fieldName << ")>>())";
-        }
+        output << fieldName
+               << "(::gti_internal::backend::mir_empty_state_v1<"
+                  "std::remove_cv_t<decltype("
+               << fieldName << ")>>())";
         continue;
       }
       output << fieldName << '(';

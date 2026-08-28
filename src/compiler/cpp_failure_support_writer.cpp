@@ -286,17 +286,37 @@ struct mir_contained_constructor_state_v1 {
 struct mir_empty_state_constructor_tag_v1 {};
 
 template <typename T>
-[[nodiscard]] inline T mir_empty_state_v1() noexcept {
-  if constexpr (
-      std::is_constructible_v<T, mir_empty_state_constructor_tag_v1>) {
-    static_assert(
-        std::is_nothrow_constructible_v<T,
-                                        mir_empty_state_constructor_tag_v1>);
-    return T(mir_empty_state_constructor_tag_v1{});
-  } else {
-    static_assert(std::is_nothrow_default_constructible_v<T>);
-    return T{};
+struct mir_empty_state_factory_v1 {
+  [[nodiscard]] static T make() noexcept {
+    if constexpr (
+        std::is_constructible_v<T, mir_empty_state_constructor_tag_v1>) {
+      static_assert(
+          std::is_nothrow_constructible_v<T,
+                                          mir_empty_state_constructor_tag_v1>);
+      return T(mir_empty_state_constructor_tag_v1{});
+    } else {
+      static_assert(std::is_nothrow_default_constructible_v<T>);
+      return T{};
+    }
   }
+};
+
+template <typename Element, std::size_t Size>
+struct mir_empty_state_factory_v1<std::array<Element, Size>> {
+  template <std::size_t... Index>
+  [[nodiscard]] static std::array<Element, Size>
+  make(std::index_sequence<Index...>) noexcept {
+    return {((void)Index, mir_empty_state_factory_v1<Element>::make())...};
+  }
+
+  [[nodiscard]] static std::array<Element, Size> make() noexcept {
+    return make(std::make_index_sequence<Size>{});
+  }
+};
+
+template <typename T>
+[[nodiscard]] inline T mir_empty_state_v1() noexcept {
+  return mir_empty_state_factory_v1<T>::make();
 }
 
 struct mir_failure_status_v1 {
