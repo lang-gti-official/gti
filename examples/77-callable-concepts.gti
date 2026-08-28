@@ -1,0 +1,38 @@
+#include <std/algorithm>
+#include <std/functional>
+#include <std/vector>
+
+mut int32_t actions = 0;
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+};
+
+class once_action {
+public:
+  void operator()() && { actions++; }
+};
+
+bool accepts<Predicate>(int32_t value, mut Predicate predicate)
+  requires std::predicate<Predicate, int32_t> {
+  return predicate(value);
+}
+
+int main() {
+  if (!accepts(4, [](int32_t& value) -> bool { return value % 2 == 0; })) {
+    return 1;
+  }
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({1, 4, 2, 3});
+  std::sort(values, descending());
+  if (values[std::size_t(0)] != 4 || values[std::size_t(3)] != 1) {
+    return 2;
+  }
+
+  std::invoke_once(once_action());
+  return actions == 1 ? 0 : 3;
+}

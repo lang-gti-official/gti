@@ -507,9 +507,13 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
    move-capture mode;
 6. **Done in 0.126.0:** permit exact generic owned transport and one concrete
    generic field owner;
-7. add public unary callable/predicate concepts using those same semantic
-   requirements; and
-8. serve L-RANGE-04 without storing callables beyond the accepted exact owner.
+7. **Done:** public unary/binary read/mut/once callable, predicate, operation,
+   comparator, indirect iterator-call, and nullary once-action concepts use
+   those same semantic requirements; and
+8. **Done for the bounded clients:** comparator `sort`, complete-vector
+   predicate/operation algorithms, numeric reductions, and `invoke_once` do
+   not store callables beyond the accepted exact owner. Structural range-wide
+   generalization remains L-RANGE-04 breadth.
 
 Each sub-slice must preserve the current confined bridge until its replacement
 has equivalent semantic/HIR/MIR tests. Do not add a general callable base

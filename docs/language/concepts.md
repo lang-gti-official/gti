@@ -173,7 +173,19 @@ The current structural capability set is intentionally small:
   read-only member — `T operator+(T&)`, `T operator-(T&)`, and unary
   `T operator-()` — returning an *owned* value of the domain type itself; and
 - `scales_by<T, Scalar>` requires public read-only `T operator*(Scalar)`
-  returning an owned domain value for that exact scalar type.
+  returning an owned domain value for that exact scalar type;
+- `read_callable<F, A, R>`, `mut_callable<F, A, R>`, and
+  `once_callable<F, A, R>` require one exact public unary `operator()` whose
+  result is the owned, non-borrowed `R` and whose readable argument is either
+  `A` or `A&`. The receiver must respectively be read-only, repeatable
+  read-only/mutable, or usable once through owned access;
+- the corresponding `read_binary_callable`, `mut_binary_callable`, and
+  `once_binary_callable` relationships name two exact readable arguments;
+- `once_action<F>` is the nullary exact-`void` consuming-use relation;
+- `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
+  requires a repeatable `bool` callable for it; and
+- `indirect_operation<F, I, R>` derives the same referent and requires a
+  repeatable exact owned `R` operation.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies
@@ -184,6 +196,23 @@ mirroring concrete member selection.
 The four domain-value capabilities are spelled publicly as `std::addable`,
 `std::subtractable`, `std::negatable`, and `std::scalable_by`, and compose into
 `std::vector_space<T, Scalar>` together with `std::copyable<T>`.
+
+The callable facts are exposed from `<std/functional>`. Public
+`std::predicate`, `std::binary_predicate`, `std::operation`,
+`std::binary_operation`, and `std::comparator` are ordinary source concepts
+over the repeatable forms; `std::once_action` exposes the nullary consuming
+form. Read-only targets satisfy repeatable and once-use sites, mutable targets
+satisfy repeatable and once-use sites, and `operator() &&` satisfies only a
+once-use site. This implication is capability inclusion, not overload ranking:
+each relation still requires one exact candidate after receiver capability is
+selected.
+
+An exact callable argument describes a readable source value. A concrete
+target may copy it by value or observe it through an exact read-only reference.
+Library implementations therefore present readable lvalues at these sites;
+they do not use native reference binding or implicit conversion to widen the
+contract. Results may not be references, lambdas, or values carrying tracked
+borrowed state because the bounded relation has no result-owner parameter.
 
 A borrowed operator result does not satisfy these capabilities: the produced
 value would be tied to a receiver whose lifetime the requirement cannot name.
@@ -306,16 +335,40 @@ owner dependency. This rule does not select an owner when different return
 paths move unrelated parameters; the ordinary ambiguous-dependency diagnostic
 still applies.
 
-`for_each` needs no public callable concept. Its visible body records an exact
-`void` invocation whose parameter is the checked-reference type produced by
-the concrete iterator's dereference operation. The declared mutable callable
-parameter admits either a read-callable or mut-callable selected target. The
-same contract carries one independent exact moved-return proof, so the callable
-may be invoked repeatedly and then returned without changing the confined
-invocation boundary. Callers must transfer a named callable with `std::move`,
-and its stored state must not contain references, tracked borrows, or raw
-pointers. These are semantic and HIR/MIR facts; public algorithm names and
-emitted C++ overloads grant no capability.
+`for_each` states that contract publicly:
+
+```gti
+Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
+                                                Sentinel last,
+                                                mut Function function)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_operation<Function, Iterator, void>;
+```
+
+The indirect relation derives the checked-reference referent selected for the
+concrete iterator and rejects an inexact argument, non-`void` result, private
+target, ambiguity, or consuming-only target during call viability. Concrete
+body reanalysis then records the same exact invocation and selected
+read/mutable receiver in HIR and MIR. The contract also carries one independent
+exact moved-return proof, so the callable may be invoked repeatedly and then
+returned without changing the confined boundary. Callers must transfer a named
+callable with `std::move`, and its stored state must not contain references,
+tracked borrows, or raw pointers. Public algorithm names and emitted C++
+overloads grant no capability.
+
+`std::invoke_once` is the consuming counterpart:
+
+```gti
+void invoke_once<Callable>(Callable callable)
+  requires std::once_action<Callable> {
+  std::move(callable)();
+}
+```
+
+It accepts an exact reusable `void()` target or `operator() &&`, consumes the
+local once, and retains that choice through concrete HIR/MIR. It does not
+create escaping callable storage.
 
 ## Deliberate exclusions and extension rule
 
@@ -324,6 +377,9 @@ arbitrary expression requirements, disjunction, negation, associated types,
 value constraints, concept or partial specialization, constraint subsumption,
 constraint-based overload ordering, conditionally available operators,
 constrained polymorphic contracts, or unrestricted compile-time reflection.
+Variadic callable relations, generic `operator()` requirements, and function
+items or function pointers in public callable relations are also outside the
+current bounded surface.
 
 Add a new source concept when existing facts can express the contract. Add a
 new private compiler capability only when semantic analysis must answer a

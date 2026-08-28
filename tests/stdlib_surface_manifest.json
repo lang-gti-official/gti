@@ -1,8 +1,8 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "f1449937ffb6a977c01da15b1272c18ade114407381b976dda043f6f4faf6291",
-    "stdlib/std/algorithm.gti": "ebfafdb53acb944829f2f83876072307a6c940246ddce97922e625f953cb50a4",
+    "stdlib/prelude.gti": "3f2914cd85fdb02f11082974fe6001c0a5229e154726ff7a375615c947f3fb7a",
+    "stdlib/std/algorithm.gti": "bfc75d270ea682075d88bbdf50f9d5afe22f68806c877331936ea83b22f10186",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "20754efcfb369cd8d8955d5e2f132132657eda5ab0ab59ad52fb41d6cbb4f749",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
@@ -10,12 +10,12 @@
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
-    "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
+    "stdlib/std/functional.gti": "0ff67576bf3144e02b25f677be164673da3e26481c4cc23676844f77fa14868c",
     "stdlib/std/iterator.gti": "26f28bebc19ddd9fd58a2fcc6af778bcd90094e9d45fe57d88f939ea82736066",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "8994829d83715c6d855a758d9ce701231ec68a16f45bd9e5d2aeb42710fab86e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "2c18e9978aa15a9140e7a2bdf682122ee99d27dd98863283984d676ca2cb4ebf",
+    "stdlib/std/numeric.gti": "598c80e5c3f8f7904029002dcbaca7417742b30b5cf2e26bc70268edc20abbc5",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
@@ -291,32 +291,24 @@
         "std::any_of",
         "std::binary_search",
         "std::clamp",
+        "std::copy",
         "std::count",
         "std::count_if",
+        "std::fill",
         "std::find",
         "std::find_if",
         "std::find_if_not",
         "std::for_each",
         "std::max",
         "std::min",
-        "std::none_of"
-      ],
-      "case_ids": ["algorithm"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/algorithm.gti"]
-    },
-    {
-      "id": "algorithm.scaffold",
-      "source": "stdlib/std/algorithm.gti",
-      "status": "scaffold",
-      "operations": [
-        "std::copy",
+        "std::none_of",
         "std::reverse",
         "std::sort",
         "std::transform"
       ],
-      "reason": "These declarations have no GTI bodies and require writable-output or stronger bidirectional/random-access iterator contracts.",
-      "evidence": ["stdlib/std/algorithm.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["algorithm"],
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "std::vector<int32_t>/predicate/operation/comparator complete-range clients"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "array.executable",
@@ -533,10 +525,10 @@
       "id": "functional.executable",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::equal_to::operator()", "std::greater::operator()", "std::less::operator()", "std::not_equal_to::operator()"],
+      "operations": ["std::binary_operation", "std::binary_predicate", "std::comparator", "std::equal_to::operator()", "std::greater::operator()", "std::indirect_operation", "std::indirect_predicate", "std::invoke_once", "std::less::operator()", "std::mut_binary_callable", "std::mut_callable", "std::not_equal_to::operator()", "std::once_action", "std::once_binary_callable", "std::once_callable", "std::operation", "std::predicate", "std::read_binary_callable", "std::read_callable"],
       "case_ids": ["functional"],
-      "required_instantiations": ["comparison function objects<int32_t>"],
-      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "stdlib/std/functional.gti"]
+      "required_instantiations": ["comparison function objects<int32_t>", "read/mut/once void() actions"],
+      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/functional.gti"]
     },
     {
       "id": "functional.scaffold",
@@ -693,7 +685,7 @@
       ],
       "case_ids": ["numeric"],
       "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int32_t", "uint8_t"],
-      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/defined_integer_runtime_test.py"]
+      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py"]
     },
     {
       "id": "numeric.unsupported-hash-specializations",

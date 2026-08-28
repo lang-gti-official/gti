@@ -34,11 +34,18 @@ def fail_text(label: str, detail: str) -> int:
     return 1
 
 
-def declaration_id(generated: str, name: str) -> str | None:
-    match = re.search(
-        rf"\b__gti_fn_(\d+)_{name}\(Iterator\s+__gti_mir_arg_0,\s*"
-        rf"Sentinel\s+__gti_mir_arg_1,",
+def concrete_instances(generated: str, name: str) -> list[tuple[str, str]]:
+    return re.findall(
+        rf"\b(__gti_inst_[0-9a-f]{{64}}_{name}"
+        rf"(?:__gti_mir_failure)?)\([^;{{]*\)\s*\{{\s*\n\s*"
+        rf"// GTI verified-MIR body: [^\n]* function-instance (\d+)",
         generated,
+    )
+
+
+def instance_declaration(mir: str, instance: str) -> str | None:
+    match = re.search(
+        rf"^function @{instance} declaration=(\d+) ", mir, re.MULTILINE
     )
     return match.group(1) if match is not None else None
 
@@ -105,39 +112,47 @@ def main() -> int:
             artifacts[label] = (mir, cpp_path.read_text(encoding="utf-8"))
 
         find_mir, find_generated = artifacts["find-count"]
-        find_declaration = declaration_id(find_generated, "find")
-        count_declaration = declaration_id(find_generated, "count")
-        if find_declaration is None or count_declaration is None:
+        find_rows = concrete_instances(find_generated, "find")
+        count_rows = concrete_instances(find_generated, "count")
+        if len(find_rows) != 2 or len(count_rows) != 2:
             return fail_text(
-                "backend identity", "generic find/count declarations are absent"
+                "backend identity",
+                f"expected two concrete find/count definitions, got "
+                f"find={len(find_rows)}/count={len(count_rows)}",
             )
-
-        find_instances = re.findall(
-            rf"^function @\d+ declaration={find_declaration} ",
-            find_mir,
-            re.MULTILINE,
-        )
-        count_instances = re.findall(
-            rf"^function @\d+ declaration={count_declaration} ",
-            find_mir,
-            re.MULTILINE,
-        )
-        if len(find_instances) != 2 or len(count_instances) != 2:
+        find_declarations = {
+            instance_declaration(find_mir, instance)
+            for _, instance in find_rows
+        }
+        count_declarations = {
+            instance_declaration(find_mir, instance)
+            for _, instance in count_rows
+        }
+        if (
+            None in find_declarations
+            or None in count_declarations
+            or len(find_declarations) != 1
+            or len(count_declarations) != 1
+            or find_declarations == count_declarations
+        ):
             return fail_text(
                 "MIR identity",
-                f"expected find=2/count=2, got "
-                f"find={len(find_instances)}/count={len(count_instances)}",
+                f"concrete definitions did not map to one distinct MIR "
+                f"declaration each: find={find_declarations}/"
+                f"count={count_declarations}",
             )
 
         find_backend_patterns = (
-            rf"__gti_fn_{find_declaration}_find__gti_mir_failure\("
+            r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
             r"[^;]*move_only_iterator[^;]*move_only_sentinel",
-            rf"__gti_fn_{find_declaration}_find__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel",
-            rf"__gti_fn_{count_declaration}_count__gti_mir_failure\("
+            r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel",
+            r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
             r"[^;]*move_only_iterator[^;]*move_only_sentinel",
-            rf"__gti_fn_{count_declaration}_count__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel",
+            r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel",
         )
         for pattern in find_backend_patterns:
             if re.search(pattern, find_generated) is None:
@@ -146,18 +161,21 @@ def main() -> int:
                 )
 
         for_each_mir, for_each_generated = artifacts["for-each"]
-        for_each_declaration = declaration_id(for_each_generated, "for_each")
-        if for_each_declaration is None:
-            return fail_text("backend identity", "generic for_each is absent")
-        for_each_instances = re.findall(
-            rf"^function @\d+ declaration={for_each_declaration} ",
-            for_each_mir,
-            re.MULTILINE,
-        )
-        if len(for_each_instances) != 2:
+        for_each_rows = concrete_instances(for_each_generated, "for_each")
+        for_each_declarations = {
+            instance_declaration(for_each_mir, instance)
+            for _, instance in for_each_rows
+        }
+        if (
+            len(for_each_rows) != 2
+            or None in for_each_declarations
+            or len(for_each_declarations) != 1
+        ):
             return fail_text(
                 "MIR identity",
-                f"expected for_each=2, got for_each={len(for_each_instances)}",
+                f"expected two concrete for_each definitions with one MIR "
+                f"declaration, got rows={len(for_each_rows)}/"
+                f"declarations={for_each_declarations}",
             )
         callable_contract_counts = {
             "combined contract": for_each_mir.count(
@@ -182,10 +200,11 @@ def main() -> int:
             )
 
         for_each_backend_patterns = (
-            rf"__gti_fn_{for_each_declaration}_for_each__gti_mir_failure\("
+            r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
             r"[^;]*iteration_iterator[^;]*iteration_sentinel[^;]*read_observer",
-            rf"__gti_fn_{for_each_declaration}_for_each__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel"
+            r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel"
             r"[^;]*mutable_observer",
         )
         for pattern in for_each_backend_patterns:
@@ -282,20 +301,22 @@ def main() -> int:
             ),
             (
                 "generic_algorithm_for_each_bad_argument.gti",
-                "GTI-S2022",
+                "GTI-S2029",
                 (
-                    "No exact overload of operator() for argument types (int32_t).",
-                    "Candidate: operator()(uint64_t&)",
-                    "Concrete generic instance requested here.",
+                    "Generic arguments do not satisfy concept "
+                    "'std::indirect_operation'.",
+                    "std::indirect_operation<Function, Iterator, void>",
+                    "iterator's read-only dereference result",
                 ),
             ),
             (
                 "generic_algorithm_for_each_bad_return.gti",
-                "GTI-S2046",
+                "GTI-S2029",
                 (
-                    "Callable parameter 'function' must return 'void'",
-                    "selected callable returns 'int32_t'",
-                    "Concrete generic instance requested here.",
+                    "Generic arguments do not satisfy concept "
+                    "'std::indirect_operation'.",
+                    "std::indirect_operation<Function, Iterator, void>",
+                    "returning the required owned result type",
                 ),
             ),
             (

@@ -1,0 +1,100 @@
+constexpr uint64_t selected_extent<uint64_t N>() { return N; }
+
+constexpr uint64_t default_extent_base = 2;
+constexpr uint64_t named_default_extent = default_extent_base * 2;
+
+T default_value<std::default_initializable T = int>() { return T(); }
+
+constexpr uint64_t default_extent<uint64_t N = 3>() { return N; }
+
+constexpr uint64_t constexpr_default<uint64_t N = named_default_extent>() {
+  return N;
+}
+
+constexpr uint64_t dependent_default<uint64_t N = 3,
+                                     uint64_t M = N + 2>() {
+  return M;
+}
+
+constexpr uint64_t plus_one<uint64_t N>() {
+  return selected_extent<N + 1>();
+}
+
+T mixed_default<std::numeric T = int, uint64_t N = 5>() { return T(N); }
+
+U dependent_type_default<std::default_initializable T = int,
+                         std::default_initializable U = T>() {
+  return U();
+}
+
+constexpr uint64_t mixed_extent<T, uint64_t N>() { return N; }
+
+int sum_values<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+T first_value<T, uint64_t N>(T values[N]) { return values[0]; }
+
+int relay_sum<uint64_t N>(int values[N]) {
+  return sum_values<N>(values);
+}
+
+class Accumulator {
+  int initial;
+
+public:
+  Accumulator(int value) : initial(value) {}
+
+  int add<uint64_t N>(int values[N]) {
+    return this.initial + sum_values<N>(values);
+  }
+
+  uint64_t selected<uint64_t N = 6>() { return N; }
+};
+
+class DefaultBox<std::numeric T = int, uint64_t N = 2> {
+public:
+  T value() { return T(N); }
+};
+
+int main() {
+  constexpr uint64_t three = 3;
+  int literal = sum_values<3>({1, 2, 3});
+  int named_constant = sum_values<three>({4, 5, 6});
+  int mixed = first_value<int, 2>({7, 8});
+  int relayed = relay_sum<2>({9, 10});
+  uint64_t extent = selected_extent<2 + 2>();
+  int defaulted = default_value();
+  int explicit_default_type = default_value<int>();
+  uint64_t value_default = default_extent();
+  uint64_t named_value_default = constexpr_default();
+  uint64_t dependent = dependent_default();
+  uint64_t overridden_dependent = dependent_default<4>();
+  uint64_t forwarded_expression = plus_one<6>();
+  int mixed_defaulted = mixed_default();
+  int dependent_type = dependent_type_default();
+  uint64_t mixed_selected = mixed_extent<int, 5>();
+  DefaultBox box = DefaultBox();
+  int class_defaulted = box.value();
+  DefaultBox partial_box = DefaultBox<int>();
+  int class_partial_default = partial_box.value();
+  Accumulator accumulator = Accumulator(20);
+  int method = accumulator.add<2>({11, 12});
+  uint64_t method_selected = accumulator.selected<6>();
+  uint64_t method_defaulted = accumulator.selected();
+  if (literal == 6 and named_constant == 15 and mixed == 7 and
+      relayed == 19 and extent == 4 and defaulted == 0 and
+      explicit_default_type == 0 and value_default == 3 and dependent == 5 and
+      named_value_default == 4 and overridden_dependent == 6 and
+      forwarded_expression == 7 and
+      mixed_defaulted == 5 and dependent_type == 0 and mixed_selected == 5 and
+      class_defaulted == 2 and class_partial_default == 2 and method == 43 and
+      method_selected == 6 and method_defaulted == 6) {
+    return 0;
+  }
+  return 1;
+}

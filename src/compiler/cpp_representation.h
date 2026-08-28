@@ -3,6 +3,7 @@
 #include "gti/cpp_emitter.h"
 #include "gti/lowered_program.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -18,6 +19,21 @@ inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
                                                   CppStandard standard,
                                                   const SemanticType &type);
 
+// A deterministic GTI-owned class symbol for one concrete, nameable generic
+// class application. The direct representation is deliberately limited to
+// top-level source classes whose complete member type inventory can be emitted
+// without a native template carrier. Nested type families and lexical-closure
+// arguments return no spelling and retain their separately audited carrier.
+[[nodiscard]] std::optional<std::string>
+cppConcreteClassName(const LoweredProgram &program, const SemanticType &type);
+
+// The fully qualified form of cppConcreteClassName in the emitted program
+// namespace. This is the semantic type spelling used by fields, signatures,
+// MIR places, and calls once GTI has selected a concrete class instance.
+[[nodiscard]] std::optional<std::string>
+cppConcreteClassTypeSpelling(const LoweredProgram &program,
+                             const SemanticType &type);
+
 // The exact unqualified name `CppEmitter` writes for a function declaration:
 // comparison/assignment operator source spellings, runtime-binding and
 // C-linkage passthrough names, the reserved `__gti_entry` hosted entry name,
@@ -26,6 +42,37 @@ inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
 [[nodiscard]] std::string
 cppFunctionSpelling(const LoweredFunctionDeclaration &function,
                     std::string_view sourceName);
+
+// Whether one sealed GTI function instance has a fully concrete C++ signature.
+// This rejects dependent and lexical-closure types; the latter remain the one
+// physical ABI case that requires a deduced native template carrier.
+[[nodiscard]] bool
+cppConcreteFunctionInstanceIsNameable(const LoweredProgram &program,
+                                      const LoweredFunctionInstance &instance,
+                                      const MirFunctionInstance &mirInstance);
+
+// A deterministic, GTI-owned unqualified symbol for one nameable concrete
+// free-function instance. The digest is derived from semantic declaration and
+// concrete-argument/signature identity, never discovery-order IDs or native
+// overload resolution. Non-source, non-generic, member, dependent, or
+// incoherent instances return no spelling.
+[[nodiscard]] std::optional<std::string>
+cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance);
+
+// A deterministic unqualified symbol for one concrete member carried by a
+// direct concrete generic class. Operators retain their language-required C++
+// operator spelling; ordinary methods receive a digest that includes their
+// concrete owner and exact method arguments/signature.
+[[nodiscard]] std::optional<std::string>
+cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
+                                  const LoweredDeclaration &row,
+                                  const LoweredFunctionDeclaration &function,
+                                  const LoweredFunctionInstance &instance,
+                                  const MirFunctionInstance &mirInstance);
 
 // The exact holder and value spellings `CppEmitter` writes for
 // internal-linkage static storage: the `__gti_static_<symbol>_<name>` holder

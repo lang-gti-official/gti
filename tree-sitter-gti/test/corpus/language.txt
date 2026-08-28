@@ -3492,6 +3492,120 @@ int main() {
                   (literal
                     (integer_literal)))))))))))
 
+=================================
+Explicit function value arguments
+=================================
+
+uint64_t extent<uint64_t N>() { return N; }
+uint64_t offset<uint64_t N = 3, uint64_t M = N + 2>() { return M; }
+
+class Scale {
+public:
+  uint64_t extent<uint64_t N>() { return N; }
+};
+
+int main() {
+  Scale scale = Scale();
+  return int(extent<2 + 2>() + scale.extent<5>() + offset());
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)
+        (integer_literal))
+      (generic_parameter
+        (identifier)
+        (array_extent_binary_expression
+          (identifier)
+          (integer_literal))))
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (numeric_conversion
+              (primitive_type)
+              (binary_expression
+                (binary_expression
+                  (call_expression
+                    (generic_function
+                      (identifier)
+                      (type_argument_clause
+                        (array_extent_binary_expression
+                          (integer_literal)
+                          (integer_literal))))
+                    (argument_list))
+                  (call_expression
+                    (generic_function
+                      (member_expression
+                        (primary_expression
+                          (identifier))
+                        (identifier))
+                      (type_argument_clause
+                        (integer_literal)))
+                    (argument_list)))
+                (call_expression
+                  (primary_expression
+                    (identifier))
+                  (argument_list))))))))))
+
 ==================
 Native unions and payload enums
 ==================

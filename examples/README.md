@@ -252,6 +252,12 @@ strong compare/exchange loop; checked overflow fails before publication. The
 surface defaults to sequential consistency and uses static explicit order tags
 without making a lock-free or layout promise.
 
+`77-callable-concepts.gti` gives reusable generic functions a public exact
+callable contract. It combines a repeatable predicate, a complete-vector sort
+with an explicit comparator, and a consuming `void()` action; invalid argument,
+result, or receiver capabilities are rejected before the generic body is
+instantiated.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

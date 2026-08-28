@@ -705,6 +705,8 @@ private:
         : source.source->body() != nullptr ? MirDefinitionKind::Source
                                            : MirDefinitionKind::Declaration;
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
+        source.typeArguments != lowered.typeArguments ||
+        source.valueArguments != lowered.valueArguments ||
         source.owner != lowered.owner ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||

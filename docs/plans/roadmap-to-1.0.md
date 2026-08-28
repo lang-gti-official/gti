@@ -586,7 +586,10 @@ first exact frontend capabilities:
 - `std::copy_constructible`, `std::copyable`, `std::movable`, and
   `std::default_initializable`;
 - `std::equality_comparable` and `std::totally_ordered` based on exact operator
-  contracts, with `std::ordered` retained as a compatibility spelling;
+  contracts, with `std::ordered` retained as a compatibility spelling; and
+- public unary/binary read, repeatable mutable, and once-callable relations,
+  composed into predicates, operations, comparators, indirect iterator
+  operations, and a consuming `once_action` utility.
 
 Lifecycle checks use GTI traits and public construction availability. Nominal
 comparison checks require exact public read-only member operators, and
@@ -602,8 +605,7 @@ forward-iterator concepts; ordinary `<std/numeric>` uses them for
 overloads.
 The remaining capability work is:
 
-- callable and predicate capabilities with exact parameter and return types;
-- complete-range, readable, writable, sized, and later bidirectional or
+- structural complete-range, readable, writable, sized, and later bidirectional or
   random-access capabilities after the range protocol is stable;
 - heterogeneous accumulation through a separately specified exact operation
   relationship, rather than implicit conversion;
@@ -632,10 +634,11 @@ or a second template metaprogramming language merely to describe them.
   with explicit resource limits and useful stack diagnostics.
 - Exact scoped-enum values, value arguments, array extents, and the initial
   `std::array<T, N>`/`std::gcd<T>` library clients use the same evaluator.
-- Keep default generic arguments client-gated under `L-CONST-01` until canonical
-  type/value identity is stable and a concrete library client justifies them.
-  Do not widen exact specialization into partial or constraint-selected
-  specialization as a side effect.
+- Declaration-owned trailing type/value defaults and closed dependent
+  `uint64_t` arithmetic are implemented by `L-GEN-01`: GTI normalizes them,
+  applies them after exact inference, and carries their complete canonical
+  identity into concrete reanalysis. Do not widen exact specialization into
+  partial or constraint-selected specialization as a side effect.
 
 This is library-enabling work, especially for constants and generic API
 ergonomics, but it is not allowed to block the owner-tied container and
@@ -963,8 +966,8 @@ building the GTI compiler.
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
   partial or constraint-selected specialization, and unrestricted compile-time
   metaprogramming;
-- default generic arguments until a concrete library client and canonical
-  type/value identity justify the bounded `L-CONST-01` design;
+- value packs, non-`uint64_t` value domains, and unrestricted dependent
+  expressions beyond the bounded `L-GEN-01` default/argument model;
 - stored reference captures, general escaping lambdas, and type erasure beyond
   the bounded owned-callable minimum;
 - mutable, reference, nested, inherited, or partial-move structured bindings

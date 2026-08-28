@@ -327,10 +327,12 @@ Multiple-origin or nested stored views, pointer decay, and mutable spans or
 text views remain later lifetime layers. Mutable iteration currently uses
 conservative whole-owner invalidation exclusion rather than a public
 container-specific invalidation trait. Confined generic `void` operations,
-exact `bool`
-predicates, exact context-supplied non-reference value results without tracked
-borrowed state or lambda identity, and proven forwarding through other
-confined callable parameters are available for algorithm callbacks. Result
+Exact `bool` predicates, exact context-supplied non-reference value results
+without tracked borrowed state or lambda identity, and proven forwarding
+through other confined callable parameters are available for algorithm
+callbacks. `<std/functional>` exposes those same read/mut/once facts as public
+unary, binary, and iterator-aware predicate/operation relations, so invalid
+targets fail before concrete body reanalysis. Result
 inference through `auto` and borrowed callable results remain unavailable. One
 bounded exact-return transport may be combined with repeated direct invocation
 when every reachable return moves that same callable parameter; arbitrary
@@ -349,9 +351,12 @@ It makes one counting pass, then copies and advances cursors to select
 midpoints. A possibly distinct `last` remains an immutable sentinel; no
 iterator subtraction or numeric iterator operation is required. The algorithm
 performs logarithmic comparisons and linear iterator increments, and requires
-the input to already be sorted according to `operator<`. Complete-range,
-readable/writable element, sized-range, random-access, and public invalidation
-capabilities are still missing. The implemented iterator/sentinel
-`std::for_each` does not imply a range-first overload; a public range-first form
-over arbitrary structural ranges should wait for those capabilities instead of
-teaching the compiler a public container or algorithm name.
+the input to already be sorted according to `operator<`. Whole-vector
+`all_of`, `any_of`, `none_of`, `count_if`, `for_each`, `transform`, and
+comparator `sort` provide the first complete-container clients through ordinary
+overloads and public callable concepts. They do not establish a structural
+range concept: complete-range, readable/writable element, sized-range,
+random-access, and public invalidation capabilities remain missing. A public
+range-first form over arbitrary structural ranges should wait for those
+capabilities instead of teaching the compiler a public container or algorithm
+name.

@@ -819,6 +819,7 @@ struct RowFunctionFacts {
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> parameterTypes;
   std::string spelling;
+  bool concreteSpelling = false;
   bool cLinkage = false;
   bool runtimeBinding = false;
 };
@@ -830,6 +831,16 @@ public:
   [[nodiscard]] std::string typeSpelling(CppStandard standard,
                                          const SemanticType &type) const {
     return cppSemanticTypeSpelling(lowered, standard, type);
+  }
+
+  [[nodiscard]] bool
+  usesDirectClassRepresentation(const SemanticType &type) const {
+    return cppConcreteClassName(lowered, type).has_value();
+  }
+
+  [[nodiscard]] std::string genericParameterName(GenericParameterId id) const {
+    const LoweredGenericParameter *parameter = lowered.findGenericParameter(id);
+    return parameter == nullptr ? std::string() : parameter->name;
   }
 
   [[nodiscard]] std::optional<RowClassFacts> classFacts(ClassId id) const {
@@ -880,18 +891,33 @@ public:
   }
 
   [[nodiscard]] std::optional<RowFunctionFacts>
-  functionFacts(FunctionId id) const {
+  functionFacts(const MirFunctionInstance &instance) const {
     for (const LoweredDeclaration &declaration : lowered.declarations()) {
       const auto *info =
           std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
-      if (info == nullptr || info->id != id) {
+      if (info == nullptr || info->id != instance.declaration) {
         continue;
       }
+      const LoweredFunctionInstance *loweredInstance =
+          lowered.findFunctionInstance(instance.id);
+      const std::optional<std::string> concrete =
+          loweredInstance == nullptr
+              ? std::nullopt
+              : cppConcreteFreeFunctionSpelling(lowered, declaration, *info,
+                                                *loweredInstance, instance);
+      const std::optional<std::string> concreteMember =
+          loweredInstance == nullptr || concrete
+              ? std::nullopt
+              : cppConcreteMemberFunctionSpelling(lowered, declaration, *info,
+                                                  *loweredInstance, instance);
       RowFunctionFacts result{
           .name = declaration.name,
           .namespaceScope = declaration.namespaceScope,
           .genericParameters = info->genericParameters,
-          .spelling = cppFunctionSpelling(*info, declaration.name),
+          .spelling = concrete.value_or(concreteMember.value_or(
+              cppFunctionSpelling(*info, declaration.name))),
+          .concreteSpelling =
+              concrete.has_value() || concreteMember.has_value(),
           .cLinkage = info->linkage == LanguageLinkage::C,
           .runtimeBinding =
               info->definitionKind == MirDefinitionKind::RuntimeBinding};
@@ -1545,7 +1571,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
         continue;
       }
       std::string declarationTypeSpelling;
-      if (record->type != field.type && containsDependentType(record->type)) {
+      if (!facts.usesDirectClassRepresentation(instance.type) &&
+          record->type != field.type && containsDependentType(record->type)) {
         declarationTypeSpelling = facts.typeSpelling(standard, record->type);
         if (declarationTypeSpelling == "void") {
           declarationTypeSpelling.clear();
@@ -1569,8 +1596,7 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     // declarations their exact external names. Only the namespace-scope
     // source-defined GTI form is also a valid call-target spelling; the
     // scalar call family's gates admit exactly that form.
-    const std::optional<RowFunctionFacts> info =
-        facts.functionFacts(function.declaration);
+    const std::optional<RowFunctionFacts> info = facts.functionFacts(function);
     if (!info) {
       continue;
     }
@@ -1616,31 +1642,59 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     // substituted arguments explicitly — exactly like the compatibility
     // call site. Deducible instances keep the bare name so shipped
     // spellings stay byte-stable.
-    if (!function.typeArguments.empty() && !info->genericParameters.empty()) {
-      const auto mentionsParameter = [&](const GenericParameterId parameter) {
-        const auto mentions = [&](const auto &self,
-                                  const SemanticType &type) -> bool {
-          if (type.kind == SemanticType::TypeParameter &&
-              type.genericParameterId == parameter) {
-            return true;
-          }
-          for (const SemanticType &argument : type.arguments) {
-            if (self(self, argument)) {
-              return true;
+    if (!info->concreteSpelling &&
+        (!function.typeArguments.empty() || !function.valueArguments.empty()) &&
+        !info->genericParameters.empty()) {
+      const auto mentionsParameter =
+          [&](const LoweredGenericParameter &parameter) {
+            const auto mentions = [&](const auto &self,
+                                      const SemanticType &type) -> bool {
+              if (!parameter.value &&
+                  type.kind == SemanticType::TypeParameter &&
+                  type.genericParameterId == parameter.id) {
+                return true;
+              }
+              if (parameter.value &&
+                  (type.arrayLengthParameterId == parameter.id ||
+                   std::any_of(
+                       type.valueArguments.begin(), type.valueArguments.end(),
+                       [&](const CompileTimeValue &value) {
+                         return value.kind == CompileTimeValue::Parameter &&
+                                value.parameterId == parameter.id;
+                       }) ||
+                   std::any_of(type.lambdaEnclosingClassValues.begin(),
+                               type.lambdaEnclosingClassValues.end(),
+                               [&](const CompileTimeValue &value) {
+                                 return value.kind ==
+                                            CompileTimeValue::Parameter &&
+                                        value.parameterId == parameter.id;
+                               }) ||
+                   std::any_of(type.lambdaEnclosingFunctionValues.begin(),
+                               type.lambdaEnclosingFunctionValues.end(),
+                               [&](const CompileTimeValue &value) {
+                                 return value.kind ==
+                                            CompileTimeValue::Parameter &&
+                                        value.parameterId == parameter.id;
+                               }))) {
+                return true;
+              }
+              for (const SemanticType &argument : type.arguments) {
+                if (self(self, argument)) {
+                  return true;
+                }
+              }
+              return false;
+            };
+            for (const SemanticType &parameterType : info->parameterTypes) {
+              if (mentions(mentions, parameterType)) {
+                return true;
+              }
             }
-          }
-          return false;
-        };
-        for (const SemanticType &parameterType : info->parameterTypes) {
-          if (mentions(mentions, parameterType)) {
-            return true;
-          }
-        }
-        return false;
-      };
+            return false;
+          };
       bool needsExplicit = false;
       for (const LoweredGenericParameter &parameter : info->genericParameters) {
-        if (!parameter.pack && !mentionsParameter(parameter.id)) {
+        if (!parameter.pack && !mentionsParameter(parameter)) {
           needsExplicit = true;
           break;
         }
@@ -1654,6 +1708,22 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
           }
           spelling +=
               facts.typeSpelling(standard, function.typeArguments[index]);
+        }
+        for (std::size_t index = 0; index < function.valueArguments.size();
+             ++index) {
+          if (index != 0 || !function.typeArguments.empty()) {
+            spelling += ", ";
+          }
+          const CompileTimeValue &argument = function.valueArguments[index];
+          if (argument.kind == CompileTimeValue::UInt64) {
+            spelling += std::to_string(argument.value);
+          } else if (argument.kind == CompileTimeValue::Parameter) {
+            const std::string name =
+                facts.genericParameterName(argument.parameterId);
+            spelling += name.empty() ? "0" : name;
+          } else {
+            spelling += '0';
+          }
         }
         spelling += '>';
       }

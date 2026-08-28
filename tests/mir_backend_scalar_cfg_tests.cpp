@@ -267,34 +267,6 @@ std::string_view memberDefinition(std::string_view generated,
   return {};
 }
 
-std::string_view specializedMemberDefinition(std::string_view generated,
-                                             std::string_view owner,
-                                             std::string_view sourceName) {
-  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineStart = generated.rfind('\n', name);
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    const std::string_view line = generated.substr(
-        lineStart == std::string_view::npos ? 0 : lineStart + 1,
-        lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
-    if (line.find("template <>") == std::string_view::npos ||
-        line.find(owner) == std::string_view::npos) {
-      continue;
-    }
-    if (brace != std::string_view::npos &&
-        (lineEnd == std::string_view::npos || brace < lineEnd)) {
-      const std::size_t end = generated.find("\n  }", brace);
-      return end == std::string_view::npos
-                 ? std::string_view{}
-                 : generated.substr(brace, end - brace + 4);
-    }
-  }
-  return {};
-}
-
 void testSelectedFamily(const std::filesystem::path &fixture) {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze(fixture.string(), readFile(fixture));
@@ -763,28 +735,29 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  // A member of a generic owner publishes per admitted concrete instance
-  // as an explicit member specialization (0.184.0): the deferred template
-  // definition stays for unadmitted instantiations, and the declaration-
-  // keyed substituted-body hazard that once regressed examples 07/17 does
-  // not apply to the per-instance form.
+  // A member of a generic owner publishes per admitted concrete instance on a
+  // GTI-owned ordinary class. The declaration-keyed substituted-body hazard
+  // that once regressed examples 07/17 does not apply to the per-instance
+  // form, and C++ performs no template selection for the executable route.
   const lang::BackendArtifact artifact = emit(
       frontend, optimized.mir, compatibility, optimized.report.transformations);
-  expect(specializedMemberDefinition(artifact.contents, "Wrap<std::int32_t>",
-                                     "matches")
-                 .find(marker) != std::string_view::npos,
+  expect(memberDefinition(artifact.contents, "matches").find(marker) !=
+             std::string_view::npos,
          "the generic owner's admitted member instance should emit one "
-         "specialized verified-MIR body");
+         "concrete verified-MIR body");
   expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
                  .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
              std::string_view::npos,
          "the generic-owner fixture's hosted entry should join the failure "
          "component through its explicit transformed body");
-  expect(artifact.contents.find(
-             "template <> bool __gti_program::Wrap<std::int32_t>::") !=
-             std::string::npos,
-         "the admitted member should publish as the explicit specialization "
-         "of its concrete owner");
+  expect(artifact.contents.find("class __gti_type_") != std::string::npos &&
+             artifact.contents.find("_Wrap") != std::string::npos &&
+             artifact.contents.find("::__gti_member_") != std::string::npos &&
+             artifact.contents.find(
+                 "template <> bool __gti_program::Wrap<std::int32_t>::") ==
+                 std::string::npos,
+         "the admitted member should publish on its ordinary GTI-owned "
+         "concrete owner");
   // The generic owner's per-instance initializer bodies are verified
   // passive (no field carries an initializer stage and the static body is
   // empty), so each emits from MIR alongside the member specialization.

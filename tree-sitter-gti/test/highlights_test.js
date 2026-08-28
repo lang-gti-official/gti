@@ -571,6 +571,25 @@ requireCapture(
   "variable.parameter",
 );
 
+const explicitValueRow = fixtureLines.findIndex((line) =>
+  line.includes("selected_extent_highlight<4>()"),
+);
+requireCapture(
+  explicitValueRow,
+  "selected_extent_highlight",
+  "function.call",
+);
+requireCapture(explicitValueRow, "4", "number");
+requireCapture(explicitValueRow, "<", "punctuation.bracket");
+
+const defaultValueRow = fixtureLines.findIndex((line) =>
+  line.includes("default_extent_highlight<uint64_t N = 3"),
+);
+requireCapture(defaultValueRow, "default_extent_highlight", "function");
+requireCapture(defaultValueRow, "N", "variable.parameter");
+requireCapture(defaultValueRow, "3", "number");
+requireCapture(defaultValueRow, "<", "punctuation.bracket");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

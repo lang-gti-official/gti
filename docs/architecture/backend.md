@@ -403,10 +403,50 @@ reject body emission rather than falling back to native temporary behavior.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
-effects come from the lowered MIR and generated-item contracts. Generic source
-surfaces may be represented as C++ templates and concrete specializations;
-specialization eligibility comes from concrete-instance items, and executable
-specialization text still comes from MIR.
+effects come from the lowered MIR and generated-item contracts. A nameable
+source-defined generic free-function instance emits as one ordinary C++
+function, not a native template specialization. Its backend-private
+`__gti_inst_<digest>_<source-name>` symbol hashes a versioned serialization of
+the lowered qualified declaration identity, generic parameter shape, concrete
+type/value arguments, and MIR return/parameter signature. The identity contains
+no discovery-order `FunctionId`, and the representation snapshot copies that
+exact symbol into every normal or failure-form call row.
+
+A selected, nameable application of an eligible top-level generic class
+similarly emits as an ordinary `__gti_type_<digest>_<source-name>` class. The
+digest owns the nominal primary, source-unit identity, generic parameter shape,
+and exact type/value arguments. Fields, bases, initializers, lifecycle status,
+and constructors come from the matching sealed MIR class instance. An ordinary
+method on that class, and a nameable generic method on an ordinary class, uses
+`__gti_member_<digest>_<source-name>` unless C++ requires the source spelling
+for an operator or virtual override family. Nameable generic constructors on
+ordinary classes publish concrete overloads by their exact signatures. Exact
+class specializations selected by GTI take the same direct-class route; C++
+does not select a specialization. Every member definition and call uses the
+spelling copied into the representation snapshot, while executable text still
+comes only from verified MIR.
+
+The direct-class route deliberately retains a native physical carrier for an
+unused family, a family containing nested type declarations, a compiler or C
+ABI capability, a generic owner whose storage directly contains the private
+unique-owner capability, a program containing an otherwise-unnameable lexical
+closure, or a dependent generic family named by one of those carriers. The
+planner closes that last relation transitively across bases, fields, aliases,
+enumerator payloads, and member/constructor signatures before it emits any
+forward declaration. The ownership exception preserves C++'s delayed incomplete-
+pointee instantiation for recursive shapes such as
+`Node -> std::unique_ptr<Node>`. The closure exception keeps dependent class
+graphs on one ABI until the representation snapshot records an explicit
+carrier closure. A direct class's field-initializer schedule always uses its
+concrete representation row, never a declaration-level `T` or value parameter.
+A selected generic method on a retained carrier keeps its stable
+`__gti_member_` name, but the backend emits the required owner-specialization
+declaration before any use. These carriers consume identities and validity
+already chosen by GTI; they cannot perform lookup, overload selection,
+constraint checking, ownership decisions, failure analysis, or execution
+outside verified MIR. Native overload resolution and template deduction
+therefore provide physical spelling only for the named carrier cases, never
+language semantics.
 
 Closure-typed (unnameable) instances of one generic declaration emit through
 a single deduced-callable template whose body text is canonical per
@@ -610,10 +650,12 @@ for resolved identity and C++-private helpers for spelling.
 
 An exact specialized class arrives with a distinct lowered class identity, its
 generic primary identity, canonical concrete argument key, and canonical
-namespace. The C++ backend emits that already-selected identity as an explicit
-full specialization, forward-declares it before instantiating uses, and orders
-its definition after the primary. It does not match source arguments or choose
-between the primary and specialization.
+namespace. When the family is eligible for direct representation, the C++
+backend emits that already-selected identity as an ordinary digest-named class
+and does not emit a native primary/specialization pair. A retained physical
+carrier instead receives the already-selected full specialization and orders
+it after its primary. Neither route matches source arguments or chooses between
+the primary and specialization.
 
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do

@@ -735,6 +735,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
         instance.declaration != mir.declaration ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
+        instance.valueArguments != mir.valueArguments ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) || !ownerValid ||
         !functionDeclarations.contains(instance.declaration)) {

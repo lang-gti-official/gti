@@ -47,6 +47,15 @@ enum class StructuralConstraintKind : std::uint8_t {
   Subtracts,
   Negates,
   ScalesBy,
+  ReadCallable,
+  MutCallable,
+  OnceCallable,
+  ReadBinaryCallable,
+  MutBinaryCallable,
+  OnceBinaryCallable,
+  OnceAction,
+  IndirectPredicate,
+  IndirectOperation,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -101,7 +110,7 @@ inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 13>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 22>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -118,6 +127,17 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 13>
         {"subtracts", StructuralConstraintKind::Subtracts, 1},
         {"negates", StructuralConstraintKind::Negates, 1},
         {"scales_by", StructuralConstraintKind::ScalesBy, 2},
+        {"read_callable", StructuralConstraintKind::ReadCallable, 3},
+        {"mut_callable", StructuralConstraintKind::MutCallable, 3},
+        {"once_callable", StructuralConstraintKind::OnceCallable, 3},
+        {"read_binary_callable", StructuralConstraintKind::ReadBinaryCallable,
+         4},
+        {"mut_binary_callable", StructuralConstraintKind::MutBinaryCallable, 4},
+        {"once_binary_callable", StructuralConstraintKind::OnceBinaryCallable,
+         4},
+        {"once_action", StructuralConstraintKind::OnceAction, 1},
+        {"indirect_predicate", StructuralConstraintKind::IndirectPredicate, 2},
+        {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

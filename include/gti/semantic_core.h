@@ -152,6 +152,23 @@ struct OwnershipEvent {
                          const OwnershipEvent &) = default;
 };
 
+struct SemanticType;
+
+struct GenericValueExpression {
+  enum Kind {
+    UInt64,
+    Parameter,
+    Binary,
+  };
+
+  Kind kind = UInt64;
+  Token token;
+  std::uint64_t value = 0;
+  GenericParameterId parameterId = 0;
+  std::shared_ptr<const GenericValueExpression> left;
+  std::shared_ptr<const GenericValueExpression> right;
+};
+
 struct GenericParameterInfo {
   GenericParameterId id = 0;
   Token name;
@@ -159,6 +176,8 @@ struct GenericParameterInfo {
   bool value = false;
   GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
+  std::shared_ptr<const SemanticType> defaultType;
+  std::shared_ptr<const GenericValueExpression> defaultValue;
 };
 
 struct CompileTimeValue {

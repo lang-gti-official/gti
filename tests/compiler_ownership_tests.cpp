@@ -3151,8 +3151,10 @@ int main() {
     const lang::BackendArtifact artifact =
         gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
     expect(
-        artifact.contents.find(
-            "::gti_internal::backend::prefix_storage<T> data;") !=
+        concreteBackendSymbols(artifact.contents, "__gti_type_", "Prefixed")
+                    .size() == 1 &&
+            artifact.contents.find("::gti_internal::backend::prefix_storage<"
+                                   "std::int32_t> data;") !=
                 std::string::npos &&
             artifact.contents.find(
                 "::gti_internal::backend::mir_prefix_allocate_v1<"
@@ -3286,8 +3288,8 @@ int main() {
   expect(
       artifact.contents.find("_get__gti_mir_failure(const std::int32_t **") !=
               std::string::npos &&
-          containsMangledFunction(artifact.contents, "::", "get",
-                                  "__gti_mir_failure(const std::int32_t **") &&
+          concreteBackendSymbols(artifact.contents, "__gti_member_", "get")
+                  .size() == 1 &&
           artifact.contents.find("const std::int32_t *__gti_mir_loan_1{};") !=
               std::string::npos &&
           artifact.contents.find("const std::int32_t *__gti_mir_loan_2{};") !=
@@ -5391,16 +5393,27 @@ int main() { return 0; }
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("const T & value") != std::string::npos &&
-             artifact.contents.find("BorrowingIterator(const "
-                                    "BorrowingIterator &) = default") !=
-                 std::string::npos &&
-             artifact.contents.find("BorrowingIterator(BorrowingIterator "
-                                    "&&) = default") != std::string::npos &&
-             artifact.contents.find("operator=(const BorrowingIterator &) = "
-                                    "delete") != std::string::npos,
+  const std::unordered_set<std::string> iteratorTypes = concreteBackendSymbols(
+      artifact.contents, "__gti_type_", "BorrowingIterator");
+  const bool exactIteratorSpecialMembers =
+      !iteratorTypes.empty() &&
+      std::all_of(
+          iteratorTypes.begin(), iteratorTypes.end(),
+          [&](const std::string &name) {
+            return artifact.contents.find("const std::int32_t & value") !=
+                       std::string::npos &&
+                   artifact.contents.find(name + "(const " + name +
+                                          " &) = default") !=
+                       std::string::npos &&
+                   artifact.contents.find(name + "(" + name +
+                                          " &&) = default") !=
+                       std::string::npos &&
+                   artifact.contents.find("operator=(const " + name +
+                                          " &) = delete") != std::string::npos;
+          });
+  expect(exactIteratorSpecialMembers,
          "the C++ backend should preserve read-only storage and frontend "
-         "special-member decisions");
+         "special-member decisions on each concrete iterator application");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-stored-references.gti", R"(
@@ -8782,12 +8795,25 @@ public:
   void update() mut override { this.updates++; }
 };
 
+class OtherLayer : public Layer {
+  mut uint64_t updates = 0;
+
+public:
+  OtherLayer() {}
+  uint64_t id() override { return 8; }
+  void update() mut override { this.updates++; }
+};
+
 int main() {
   mut std::unique_ptr<Layer> layer =
       std::upcast_unique<Layer, DemoLayer>(
           std::make_unique<DemoLayer>());
+  mut std::unique_ptr<Layer> other =
+      std::upcast_unique<Layer, OtherLayer>(
+          std::make_unique<OtherLayer>());
   layer->update();
-  return layer->id() == 7 ? 0 : 1;
+  other->update();
+  return layer->id() == 7 and other->id() == 8 ? 0 : 1;
 }
 )",
                                {standardLibraryPrelude()});
@@ -8834,11 +8860,43 @@ int main() {
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
                             frontend.hir, lang::OptimizationLevel::O0));
+  const std::unordered_set<std::string> upcastMembers =
+      concreteBackendSymbols(artifact.contents, "__gti_member_", "upcast");
+  const auto hasSelectedNativeOwnerSpecialization =
+      [&](std::string_view owner) {
+        const std::string prefix =
+            "template <> bool "
+            "__gti_program::__gti_std::unique_ptr<::__gti_program::" +
+            std::string(owner) + ">::";
+        const std::size_t declaration = artifact.contents.find(prefix);
+        if (declaration == std::string::npos) {
+          return false;
+        }
+        const auto member =
+            std::find_if(upcastMembers.begin(), upcastMembers.end(),
+                         [&](const std::string &candidate) {
+                           return artifact.contents.find(
+                                      prefix + candidate + "__gti_mir_failure(",
+                                      declaration) == declaration;
+                         });
+        if (member == upcastMembers.end()) {
+          return false;
+        }
+        const std::string specialization =
+            prefix + *member + "__gti_mir_failure(";
+        return artifact.contents.find(specialization,
+                                      declaration + specialization.size()) !=
+               std::string::npos;
+      };
   expect(artifact.contents.find("unique_owner_upcast<") != std::string::npos &&
              artifact.contents.find("virtual ~Layer() noexcept = default;") !=
-                 std::string::npos,
+                 std::string::npos &&
+             upcastMembers.size() == 2 &&
+             hasSelectedNativeOwnerSpecialization("DemoLayer") &&
+             hasSelectedNativeOwnerSpecialization("OtherLayer"),
          "the backend should lower the private owner conversion and preserve "
-         "polymorphic destruction");
+         "polymorphic destruction while declaring a selected method on its "
+         "native generic owner before use");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-polymorphic-unique-owner-upcast.gti", R"(
@@ -8968,7 +9026,13 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("::gti_internal::backend::storage<T> data;") !=
+  expect(concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer")
+                     .size() == 2 &&
+             artifact.contents.find(
+                 "::gti_internal::backend::storage<std::int32_t> data;") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "::gti_internal::backend::storage<std::uint8_t> data;") !=
                  std::string::npos &&
              artifact.contents.find(
                  "::gti_internal::backend::mir_allocate_storage_v1<"
@@ -9547,20 +9611,22 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("EmplacingBuffer<::__gti_program::Pair>::"
-                                "__gti_fn_") != std::string::npos &&
-             artifact.contents.find("_emplace__gti_mir_failure(") !=
-                 std::string::npos &&
-             containsMangledFunction(artifact.contents,
-                                     "EmplacingBuffer<::__gti_program::Pair>::",
-                                     "emplace", "__gti_mir_failure(") &&
-             artifact.contents.find(
-                 "mir_storage_construct_v1(__gti_mir_p_6, __gti_mir_v_4, "
-                 "__gti_mir_v_6, __gti_mir_v_8)") != std::string::npos &&
-             artifact.contents.find("forward_pack_argument(args)...") ==
-                 std::string::npos,
-         "the backend should pass each staged concrete pack input directly to "
-         "storage construction without a temporary element or AST forwarding");
+  expect(
+      concreteBackendSymbols(artifact.contents, "__gti_type_",
+                             "EmplacingBuffer")
+                  .size() == 2 &&
+          artifact.contents.find("class Pair {") != std::string::npos &&
+          concreteBackendSymbols(artifact.contents, "__gti_member_", "emplace")
+                  .size() == 2 &&
+          artifact.contents.find("_emplace__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "mir_storage_construct_v1(__gti_mir_p_6, __gti_mir_v_4, "
+              "__gti_mir_v_6, __gti_mir_v_8)") != std::string::npos &&
+          artifact.contents.find("forward_pack_argument(args)...") ==
+              std::string::npos,
+      "the backend should pass each staged concrete pack input directly to "
+      "storage construction without a temporary element or AST forwarding");
 
   const lang::FrontendResult vectorFrontend = lang::Frontend().analyze(
       "standard-vector-emplace.gti", R"(
@@ -9991,40 +10057,42 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(
-      artifact.contents.find("const Buffer<std::int32_t> value") ==
-              std::string::npos &&
-          artifact.contents.find("const Buffer<std::int32_t> buffer") ==
-              std::string::npos &&
-          artifact.contents.find("transfer__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("transfer_nested__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("std::construct_at(__gti_mir_out_result, "
-                                 "std::move(__gti_mir_p_1.get()));") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "scalar-cfg-constructor-failure-v1 constructor-instance 1") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
-              std::string::npos &&
-          artifact.contents.find("mir_allocate_storage_v1<std::int32_t>") !=
-              std::string::npos &&
-          artifact.contents.find("__gti_entry__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("return std::move(value)") ==
-              std::string::npos &&
-          artifact.contents.find("Buffer(const Buffer &) = delete;") !=
-              std::string::npos &&
-          artifact.contents.find("Buffer(Buffer &&) = default;") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "Buffer &operator=(const Buffer &) = delete;") !=
-              std::string::npos &&
-          artifact.contents.find("Buffer &operator=(Buffer &&) = default;") !=
-              std::string::npos,
-      "the backend should keep immutable move-only aggregates transferable");
+  const std::unordered_set<std::string> bufferTypes =
+      concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer");
+  const std::string concreteBuffer =
+      bufferTypes.size() == 1 ? *bufferTypes.begin() : std::string();
+  expect(!concreteBuffer.empty() &&
+             artifact.contents.find("transfer__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("transfer_nested__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("std::construct_at(__gti_mir_out_result, "
+                                    "std::move(__gti_mir_p_1.get()));") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "scalar-cfg-constructor-failure-v1 constructor-instance 1") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
+                 std::string::npos &&
+             artifact.contents.find("mir_allocate_storage_v1<std::int32_t>") !=
+                 std::string::npos &&
+             artifact.contents.find("__gti_entry__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("return std::move(value)") ==
+                 std::string::npos &&
+             artifact.contents.find(concreteBuffer + "(const " +
+                                    concreteBuffer + " &) = delete;") !=
+                 std::string::npos &&
+             artifact.contents.find(concreteBuffer + "(" + concreteBuffer +
+                                    " &&) = default;") != std::string::npos &&
+             artifact.contents.find(concreteBuffer + " &operator=(const " +
+                                    concreteBuffer + " &) = delete;") !=
+                 std::string::npos &&
+             artifact.contents.find(concreteBuffer + " &operator=(" +
+                                    concreteBuffer + " &&) = default;") !=
+                 std::string::npos,
+         "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
       analyzeTrustedPreludeFixture("invalid-aggregate-ownership.gti", R"(
@@ -10369,19 +10437,22 @@ int main() {
       cleanupType == nullptr ? "" : std::to_string(cleanupType->id);
   const std::string cleanupName = "__gti_lifecycle_cleanup_" + lifecycleSuffix;
   const std::string activeName = "__gti_lifecycle_active_" + lifecycleSuffix;
+  const std::unordered_set<std::string> cleanupTypes =
+      concreteBackendSymbols(artifact.contents, "__gti_type_", "CleanupBuffer");
+  const std::string concreteCleanup =
+      cleanupTypes.size() == 1 ? *cleanupTypes.begin() : std::string();
   expect(
-      cleanupType != nullptr &&
-          artifact.contents.find("~CleanupBuffer() noexcept { " + cleanupName +
-                                 "(); }") != std::string::npos &&
+      cleanupType != nullptr && !concreteCleanup.empty() &&
+          artifact.contents.find("~" + concreteCleanup + "() noexcept { " +
+                                 cleanupName + "(); }") != std::string::npos &&
           artifact.contents.find("bool " + activeName + " = true;") !=
               std::string::npos &&
           artifact.contents.find("if (!" + activeName + ") { return true; }") !=
               std::string::npos &&
-          artifact.contents.find("CleanupBuffer(const CleanupBuffer &) = "
-                                 "delete;") != std::string::npos &&
-          artifact.contents.find(
-              "CleanupBuffer(CleanupBuffer &&other) noexcept") !=
-              std::string::npos &&
+          artifact.contents.find(concreteCleanup + "(const " + concreteCleanup +
+                                 " &) = delete;") != std::string::npos &&
+          artifact.contents.find(concreteCleanup + "(" + concreteCleanup +
+                                 " &&other) noexcept") != std::string::npos &&
           artifact.contents.find("other." + activeName + " = false;") !=
               std::string::npos &&
           artifact.contents.find(cleanupName + "();") != std::string::npos &&

@@ -49,23 +49,45 @@ int failures = 0;
                                               std::string_view prefix,
                                               std::string_view sourceName,
                                               std::string_view suffix) {
-  constexpr std::string_view marker = "__gti_fn_";
+  constexpr std::string_view legacyMarker = "__gti_fn_";
+  constexpr std::string_view concreteMarker = "__gti_inst_";
   std::size_t search = 0;
   while (true) {
-    const std::size_t function = text.find(marker, search);
+    const std::size_t legacy = text.find(legacyMarker, search);
+    const std::size_t concrete = text.find(concreteMarker, search);
+    const bool concreteName =
+        concrete != std::string_view::npos &&
+        (legacy == std::string_view::npos || concrete < legacy);
+    const std::size_t function = concreteName ? concrete : legacy;
     if (function == std::string_view::npos) {
       return false;
     }
+    const std::string_view marker =
+        concreteName ? concreteMarker : legacyMarker;
     search = function + marker.size();
     if (function < prefix.size() ||
         text.substr(function - prefix.size(), prefix.size()) != prefix) {
       continue;
     }
     std::size_t tail = search;
-    while (tail < text.size() && text[tail] >= '0' && text[tail] <= '9') {
-      ++tail;
+    if (concreteName) {
+      while (tail < text.size() && tail - search < 64 &&
+             ((text[tail] >= '0' && text[tail] <= '9') ||
+              (text[tail] >= 'a' && text[tail] <= 'f'))) {
+        ++tail;
+      }
+      if (tail - search != 64) {
+        continue;
+      }
+    } else {
+      while (tail < text.size() && text[tail] >= '0' && text[tail] <= '9') {
+        ++tail;
+      }
+      if (tail == search) {
+        continue;
+      }
     }
-    if (tail == search || tail >= text.size() || text[tail] != '_') {
+    if (tail >= text.size() || text[tail] != '_') {
       continue;
     }
     ++tail;
@@ -77,6 +99,29 @@ int failures = 0;
       return true;
     }
   }
+}
+
+[[maybe_unused]] std::unordered_set<std::string>
+concreteBackendSymbols(std::string_view text, std::string_view marker,
+                       std::string_view sourceName) {
+  std::unordered_set<std::string> result;
+  std::size_t search = 0;
+  while ((search = text.find(marker, search)) != std::string_view::npos) {
+    const std::size_t digest = search + marker.size();
+    std::size_t tail = digest;
+    while (tail < text.size() && tail - digest < 64 &&
+           ((text[tail] >= '0' && text[tail] <= '9') ||
+            (text[tail] >= 'a' && text[tail] <= 'f'))) {
+      ++tail;
+    }
+    if (tail - digest == 64 && tail < text.size() && text[tail] == '_' &&
+        text.substr(tail + 1, sourceName.size()) == sourceName) {
+      const std::size_t end = tail + 1 + sourceName.size();
+      result.emplace(text.substr(search, end - search));
+    }
+    search = digest;
+  }
+  return result;
 }
 
 [[maybe_unused]] std::string
