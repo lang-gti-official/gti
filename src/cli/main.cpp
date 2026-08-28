@@ -3,6 +3,7 @@
 #include "gti/driver/artifact.h"
 #include "gti/driver/bindgen_import.h"
 #include "gti/driver/build.h"
+#include "gti/driver/build_report.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -76,12 +77,16 @@ enum class ProjectCommand {
   Check,
   Run,
   Test,
+  Verify,
 };
 
 struct ProjectOptions {
   ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> package;
   std::optional<std::string> target;
+  // The `--target <triple>` cross-compilation selection, distinct from the
+  // manifest build target named by `target`.
+  std::optional<std::string> targetTriple;
   std::string profile = "dev";
   bool profileSelected = false;
   std::optional<std::string> cxx;
@@ -90,6 +95,7 @@ struct ProjectOptions {
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  std::optional<std::filesystem::path> buildReport;
   bool emitMir = false;
   bool buildAll = false;
   std::optional<int> jobs;
@@ -130,6 +136,10 @@ enum class ExitStatus : int {
   Success = 0,
   Usage = 64,
   Compilation = 65,
+  // A rebuild succeeded but no longer matches the recorded provenance. The
+  // distinct code lets a script separate "this tree drifted" from a usage,
+  // build, or I/O failure.
+  Verification = 70,
   Io = 74,
   ToolchainConfiguration = 78,
 };
@@ -143,6 +153,7 @@ void printUsage(std::ostream &stream) {
          "       gti check [target] [--profile <name> | --release]\n"
          "       gti run [target] [options] [-- <program arguments>]\n"
          "       gti test [target] [options]\n"
+         "       gti verify --build-report <path> [options]\n"
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>]\n"
          "       gti fetch [--offline]\n"
@@ -191,6 +202,10 @@ void printUsage(std::ostream &stream) {
          "Project build options:\n"
          "      --package <name> Select a package from the active workspace.\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
+         "      --target <triple>\n"
+         "                       Build for a target triple (default: host).\n"
+         "                       A non-host triple requires a matching\n"
+         "                       [toolchains.<triple>] manifest table.\n"
          "      --release        Shorthand for --profile release.\n"
          "      --all            Build every declared target (gti build "
          "only).\n"
@@ -203,6 +218,9 @@ void printUsage(std::ostream &stream) {
          "semantics.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
          "  -D <name>            Add a valueless project configuration flag.\n"
+         "      --build-report <path>\n"
+         "                       Write a build provenance sidecar (gti build); "
+         "select the record to reproduce (gti verify).\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization instead of building.\n"
          "      --keep-cpp       Retain generated C++ in the intermediate "
@@ -254,6 +272,8 @@ void printUsage(std::ostream &stream) {
          "belong to the program.\n"
          "  test                 Build and run all test targets, or one named "
          "test target.\n"
+         "  verify               Rebuild a recorded --build-report and report "
+         "every recorded fact that no longer matches.\n"
          "  fetch                Acquire pinned git dependencies and write "
          "gti.lock.\n"
          "  clean                Remove the active workspace's build/gti "
@@ -596,13 +616,15 @@ std::string_view projectCommandName(ProjectCommand command) {
     return "run";
   case ProjectCommand::Test:
     return "test";
+  case ProjectCommand::Verify:
+    return "verify";
   }
   return "build";
 }
 
 bool buildsExecutable(ProjectCommand command) {
   return command == ProjectCommand::Build || command == ProjectCommand::Run ||
-         command == ProjectCommand::Test;
+         command == ProjectCommand::Test || command == ProjectCommand::Verify;
 }
 
 ArgumentResult parseProjectArguments(int argc, char *argv[],
@@ -639,6 +661,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.package = argv[index];
       continue;
     }
+    if (argument == "--target") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing target triple after --target\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.targetTriple) {
+        std::cerr << "gti: --target may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.targetTriple = argv[index];
+      continue;
+    }
     if (argument == "--release") {
       if (options.profileSelected) {
         std::cerr << "gti: --release cannot be combined with --profile or "
@@ -647,6 +681,24 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       }
       options.profile = "release";
       options.profileSelected = true;
+      continue;
+    }
+    if (argument == "--build-report") {
+      if (options.command != ProjectCommand::Build &&
+          options.command != ProjectCommand::Verify) {
+        std::cerr << "gti: --build-report is not supported by gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (++index >= argc) {
+        std::cerr << "gti: missing report path after --build-report\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.buildReport) {
+        std::cerr << "gti: --build-report may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.buildReport = std::filesystem::path(argv[index]);
       continue;
     }
     if (argument == "--emit-mir") {
@@ -853,6 +905,30 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.jobs && !options.buildAll) {
     std::cerr << "gti: --jobs requires --all\n";
     return ArgumentResult::ExitFailure;
+  }
+  if (options.buildReport && options.emitMir) {
+    std::cerr << "gti: --build-report requires an executable build\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.buildReport && options.buildAll) {
+    std::cerr << "gti: --build-report describes one target and cannot be "
+                 "combined with --all\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.command == ProjectCommand::Verify) {
+    if (!options.buildReport) {
+      std::cerr << "gti: gti verify requires --build-report <path>\n";
+      return ArgumentResult::ExitFailure;
+    }
+    // The record names the package, target, and profile it describes.
+    // Accepting a contradicting selection here would verify a different
+    // build than the one that was recorded.
+    if (options.target || options.package || options.profileSelected ||
+        options.targetTriple) {
+      std::cerr << "gti: gti verify takes its package, target, profile, and "
+                   "target triple from the recorded report\n";
+      return ArgumentResult::ExitFailure;
+    }
   }
   return ArgumentResult::Run;
 }
@@ -1120,197 +1196,6 @@ bool writeFile(const std::filesystem::path &path, std::string_view contents) {
                     : "gti: failed to write output file: ")
             << path << '\n';
   return false;
-}
-
-std::string jsonEscape(std::string_view value) {
-  std::ostringstream output;
-  for (const unsigned char character : value) {
-    switch (character) {
-    case '"':
-      output << "\\\"";
-      break;
-    case '\\':
-      output << "\\\\";
-      break;
-    case '\b':
-      output << "\\b";
-      break;
-    case '\f':
-      output << "\\f";
-      break;
-    case '\n':
-      output << "\\n";
-      break;
-    case '\r':
-      output << "\\r";
-      break;
-    case '\t':
-      output << "\\t";
-      break;
-    default:
-      if (character < 0x20U) {
-        output << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-               << static_cast<int>(character) << std::dec;
-      } else {
-        output << static_cast<char>(character);
-      }
-      break;
-    }
-  }
-  return output.str();
-}
-
-void writeJsonString(std::ostream &stream, std::string_view value) {
-  stream << '"' << jsonEscape(value) << '"';
-}
-
-void writeOptionalJsonString(std::ostream &stream,
-                             const std::optional<std::string> &value) {
-  if (value) {
-    writeJsonString(stream, *value);
-  } else {
-    stream << "null";
-  }
-}
-
-void writeBuildFileJson(std::ostream &stream,
-                        const lang::driver::BuildFileProvenance &provenance) {
-  stream << "{\"canonical_path\":";
-  writeJsonString(stream, provenance.canonicalPath.string());
-  stream << ",\"bytes\":" << provenance.bytes << ",\"sha256\":";
-  writeJsonString(stream, provenance.sha256);
-  stream << '}';
-}
-
-std::string_view sourceRoleName(lang::SourceUnitRole role) {
-  switch (role) {
-  case lang::SourceUnitRole::Application:
-    return "application";
-  case lang::SourceUnitRole::Prelude:
-    return "prelude";
-  case lang::SourceUnitRole::StandardLibrary:
-    return "standard-library";
-  }
-  return "application";
-}
-
-std::string_view sourceDependencyKindName(lang::SourceDependencyKind kind) {
-  switch (kind) {
-  case lang::SourceDependencyKind::Include:
-    return "include";
-  case lang::SourceDependencyKind::Prelude:
-    return "prelude";
-  case lang::SourceDependencyKind::StandardLibrary:
-    return "standard-library";
-  case lang::SourceDependencyKind::Package:
-    return "package";
-  }
-  return "include";
-}
-
-std::string
-serializeBuildProvenanceJson(const lang::driver::BuildProvenance &provenance) {
-  std::ostringstream stream;
-  stream << "{\n  \"schema\": " << provenance.schema
-         << ",\n  \"producer\": {\n    \"executable\": ";
-  writeBuildFileJson(stream, provenance.producerExecutable);
-  stream << ",\n    \"compiler_build\": {\"state\":";
-  writeJsonString(stream, lang::driver::compilerSourceStateName(
-                              provenance.compilerBuild.state));
-  stream << ",\"commit\":";
-  writeOptionalJsonString(stream, provenance.compilerBuild.commit);
-  stream << "}\n  },\n  \"sources\": {\n    \"entry_root\": "
-         << provenance.source.entryRoot << ",\n    \"prelude_roots\": [";
-  for (std::size_t index = 0; index < provenance.source.preludeRoots.size();
-       ++index) {
-    if (index != 0) {
-      stream << ',';
-    }
-    stream << provenance.source.preludeRoots[index];
-  }
-  stream << "],\n    \"compilation_order\": [";
-  for (std::size_t index = 0; index < provenance.source.compilationOrder.size();
-       ++index) {
-    if (index != 0) {
-      stream << ',';
-    }
-    stream << provenance.source.compilationOrder[index];
-  }
-  stream << "],\n    \"materials_sha256\":";
-  writeJsonString(stream, provenance.source.materialsSha256);
-  stream << ",\n    \"units\": [";
-  for (std::size_t index = 0; index < provenance.source.units.size(); ++index) {
-    const lang::driver::BuildSourceUnitProvenance &unit =
-        provenance.source.units[index];
-    stream << (index == 0 ? "\n      " : ",\n      ") << "{\"id\":" << unit.id
-           << ",\"role\":";
-    writeJsonString(stream, sourceRoleName(unit.role));
-    stream << ",\"logical_identity\":";
-    writeOptionalJsonString(stream, unit.logicalIdentity);
-    stream << ",\"standard_library_name\":";
-    writeOptionalJsonString(stream, unit.standardLibraryName);
-    stream << ",\"package_identity\":";
-    writeOptionalJsonString(stream, unit.packageIdentity);
-    stream << ",\"package_relative_path\":";
-    writeOptionalJsonString(stream, unit.packageRelativePath);
-    stream << ",\"entry\":" << (unit.entry ? "true" : "false")
-           << ",\"prelude\":" << (unit.prelude ? "true" : "false")
-           << ",\"material\":";
-    writeBuildFileJson(stream, unit.material);
-    stream << '}';
-  }
-  if (!provenance.source.units.empty()) {
-    stream << '\n';
-  }
-  stream << "    ],\n    \"dependencies\": [";
-  for (std::size_t index = 0; index < provenance.source.dependencies.size();
-       ++index) {
-    const lang::driver::BuildSourceDependencyProvenance &dependency =
-        provenance.source.dependencies[index];
-    stream << (index == 0 ? "\n      " : ",\n      ")
-           << "{\"source\":" << dependency.source
-           << ",\"target\":" << dependency.target << ",\"kind\":";
-    writeJsonString(stream, sourceDependencyKindName(dependency.kind));
-    stream << ",\"include_spelling\":";
-    writeJsonString(stream, dependency.includeSpelling);
-    stream << ",\"include_occurrence\":" << dependency.includeOccurrence << '}';
-  }
-  if (!provenance.source.dependencies.empty()) {
-    stream << '\n';
-  }
-  stream << "    ]\n  },\n  \"native\": {\n    \"compiler_executable\": ";
-  writeBuildFileJson(stream, provenance.nativeCompilerExecutable);
-  stream << ",\n    \"argv\": [";
-  for (std::size_t index = 0; index < provenance.nativeCommand.size();
-       ++index) {
-    if (index != 0) {
-      stream << ',';
-    }
-    writeJsonString(stream, provenance.nativeCommand[index]);
-  }
-  stream << "],\n    \"runtime\": {\n      \"materials_sha256\":";
-  writeJsonString(stream, provenance.runtime.materialsSha256);
-  stream << ",\n      \"headers\": [";
-  for (std::size_t index = 0; index < provenance.runtime.headers.size();
-       ++index) {
-    const lang::driver::BuildRuntimeHeaderProvenance &header =
-        provenance.runtime.headers[index];
-    stream << (index == 0 ? "\n        " : ",\n        ") << "{\"kind\":";
-    writeJsonString(stream,
-                    lang::driver::buildRuntimeHeaderKindName(header.kind));
-    stream << ",\"logical_identity\":";
-    writeJsonString(stream, header.logicalIdentity);
-    stream << ",\"material\":";
-    writeBuildFileJson(stream, header.material);
-    stream << '}';
-  }
-  if (!provenance.runtime.headers.empty()) {
-    stream << '\n';
-  }
-  stream << "      ],\n      \"archive\": ";
-  writeBuildFileJson(stream, provenance.runtime.archive);
-  stream << "\n    }\n  }\n}\n";
-  return stream.str();
 }
 
 bool writeFileAtomically(const std::filesystem::path &path,
@@ -1670,8 +1555,9 @@ int runDirect(const Options &options, const char *driver) {
                    "not captured\n";
       return exitCode(ExitStatus::Compilation);
     }
-    if (!writeFileAtomically(*options.buildReport, serializeBuildProvenanceJson(
-                                                       *result.provenance))) {
+    if (!writeFileAtomically(
+            *options.buildReport,
+            lang::driver::serializeBuildProvenanceJson(*result.provenance))) {
       return exitCode(ExitStatus::Io);
     }
   }
@@ -1731,9 +1617,102 @@ void reportProjectSuccess(std::ostream &stream, std::string_view action,
          << plan.output().string() << '\n';
 }
 
+// Resolves the project command's selected target. Omitting `--target`
+// keeps the build host, so an existing manifest needs no change. An
+// explicit triple is parsed with the compiler's own vocabulary; a malformed
+// or unsupported spelling is a usage error, and a triple GTI can name but
+// cannot lay out is a toolchain-configuration error.
+struct ProjectTargetSelection {
+  std::optional<lang::TargetInfo> target;
+  int failure = 0;
+};
+
+ProjectTargetSelection selectProjectTarget(const ProjectOptions &options) {
+  if (!options.targetTriple) {
+    return {.target = lang::TargetInfo::host()};
+  }
+  // `run` and `test` execute the produced program on this machine. GTI
+  // models no runner or emulator, so a foreign target is refused here
+  // rather than left to fail as an exec-format error after a full build.
+  if (options.command == ProjectCommand::Run ||
+      options.command == ProjectCommand::Test) {
+    const lang::TargetTripleParseResult requested =
+        lang::parseTargetTripleResult(*options.targetTriple);
+    const lang::TargetInfo host = lang::TargetInfo::host();
+    if (requested.succeeded() &&
+        lang::driver::targetTriple(*requested.target) !=
+            lang::driver::targetTriple(host)) {
+      std::cerr << "gti: " << projectCommandName(options.command)
+                << " executes the built program on this machine and cannot "
+                   "select target '"
+                << *options.targetTriple << "'\n"
+                << "gti: build it with gti build --target "
+                << *options.targetTriple << '\n';
+      return {.failure = exitCode(ExitStatus::Usage)};
+    }
+  }
+  const lang::TargetTripleParseResult parsed =
+      lang::parseTargetTripleResult(*options.targetTriple);
+  if (!parsed.succeeded()) {
+    std::cerr << "gti: invalid --target '" << *options.targetTriple
+              << "': " << lang::targetTripleErrorMessage(parsed.error) << '\n';
+    return {.failure = exitCode(ExitStatus::Usage)};
+  }
+  if (!parsed.target->supported()) {
+    std::cerr << "gti: target '" << *options.targetTriple
+              << "' has no supported GTI data layout\n";
+    return {.failure = exitCode(ExitStatus::ToolchainConfiguration)};
+  }
+  return {.target = *parsed.target};
+}
+
+// `gti check` performs no native compilation, so it analyzes any supported
+// target without a declared toolchain. Every command that publishes a native
+// artifact fails closed instead of reusing host tools.
+lang::driver::ToolchainSelectionPolicy
+projectToolchainPolicy(const ProjectOptions &options) {
+  return options.command == ProjectCommand::Check
+             ? lang::driver::ToolchainSelectionPolicy::HostTools
+             : lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget;
+}
+
+// The project facts a direct compilation has no concept of. They let a
+// recorded report name the exact package, target, profile, and resolved
+// project model that produced it.
+lang::driver::BuildProjectProvenance
+projectProvenance(const lang::driver::ProjectBuildPlan &plan) {
+  return {.packageName = plan.packageName(),
+          .packageVersion = plan.packageVersion(),
+          .targetName = plan.targetName(),
+          .targetKind = std::string(
+              lang::driver::projectTargetKindName(plan.targetKind())),
+          .profileName = plan.profileName(),
+          .targetTriple = lang::driver::targetTriple(plan.target()),
+          .modelIdentity = plan.projectModelIdentity()};
+}
+
 int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                      const ProjectOptions &options,
-                     const lang::driver::ToolchainLayout &toolchain) {
+                     const lang::driver::ToolchainLayout &toolchain,
+                     const char *driver = nullptr,
+                     std::optional<lang::driver::BuildProvenance>
+                         *capturedProvenance = nullptr) {
+  // Configuration precedence: an explicit command-line option, then the
+  // manifest's declared toolchain for the selected target, then the existing
+  // environment/default discovery order. A declared toolchain deliberately
+  // outranks GTI_CXX/CXX, because those describe the host.
+  const lang::driver::ResolvedProjectToolchain &declaredToolchain =
+      plan.toolchain();
+  const std::optional<std::string> selectedCxx =
+      options.cxx ? options.cxx
+      : declaredToolchain.declared()
+          ? std::optional<std::string>(declaredToolchain.cxx)
+          : std::nullopt;
+  const std::optional<std::string> selectedCc =
+      options.cc ? options.cc
+      : declaredToolchain.declared() && !declaredToolchain.cc.empty()
+          ? std::optional<std::string>(declaredToolchain.cc)
+          : std::nullopt;
   std::optional<std::string> cCompiler;
   const bool dependencyCSources =
       std::any_of(plan.nativeInputs().dependencyGroups.begin(),
@@ -1742,7 +1721,7 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                     return !group.cSources.empty();
                   });
   if (!plan.nativeInputs().cSources.empty() || dependencyCSources) {
-    cCompiler = lang::driver::discoverCCompiler(options.cc);
+    cCompiler = lang::driver::discoverCCompiler(selectedCc);
   }
   std::optional<lang::driver::BuildCachePolicy> cache;
   if (options.useCache) {
@@ -1756,6 +1735,17 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
     std::cerr << "gti: cache disabled by --no-cache\n";
   }
 
+  // Provenance capture is only requested when the caller asked for it; the
+  // driver then bypasses whole-program cache reuse so the record always
+  // describes a performed native invocation.
+  std::optional<lang::driver::BuildReportRequest> buildReport;
+  if (options.buildReport && driver != nullptr) {
+    buildReport = lang::driver::BuildReportRequest{
+        .output = *options.buildReport,
+        .producerExecutable = lang::executablePath(driver),
+        .project = projectProvenance(plan)};
+  }
+
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
@@ -1763,13 +1753,17 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
               plan.optimization(), plan.cppStandard(), plan.packageSources(),
               plan.configurationFlags()),
           toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(options.cxx),
+          lang::driver::discoverNativeCompiler(selectedCxx),
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
                                             .outputRoot = plan.workspaceRoot() /
                                                           "build" / "gti"},
-          std::move(cCompiler), std::move(cache)));
-  return reportBuildResult(result, options.verbose);
+          std::move(cCompiler), std::move(cache), std::move(buildReport)));
+  const int status = reportBuildResult(result, options.verbose);
+  if (capturedProvenance != nullptr) {
+    *capturedProvenance = result.provenance;
+  }
+  return status;
 }
 
 // Builds every declared target by delegating each one to a child `gti build
@@ -1790,11 +1784,16 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   const lang::driver::ProjectTargetSetResolutionResult resolution =
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
-          *currentDirectory, std::nullopt, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package, {},
-          lang::driver::RuntimeProfile::Hosted));
+          *currentDirectory, std::nullopt, options.profile, *selection.target,
+          std::move(overrides), options.package, {},
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1817,6 +1816,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
+    }
+    if (options.targetTriple) {
+      command.emplace_back("--target");
+      command.push_back(*options.targetTriple);
     }
     if (options.cxx) {
       command.emplace_back("--cxx");
@@ -1956,13 +1959,18 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
-          *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package,
+          *currentDirectory, options.target, options.profile, *selection.target,
+          std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted));
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2040,7 +2048,9 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return exitCode(ExitStatus::Success);
   }
 
-  const int status = buildProjectPlan(plan, options, toolchain);
+  std::optional<lang::driver::BuildProvenance> provenance;
+  const int status =
+      buildProjectPlan(plan, options, toolchain, driver, &provenance);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -2048,6 +2058,19 @@ int runProject(const ProjectOptions &options, const char *driver) {
   std::ostream &statusStream =
       options.command == ProjectCommand::Run ? std::cerr : std::cout;
   reportProjectSuccess(statusStream, "Built", plan);
+  if (options.buildReport) {
+    if (!provenance) {
+      std::cerr << "gti: internal compiler error: requested build report was "
+                   "not captured\n";
+      return exitCode(ExitStatus::Compilation);
+    }
+    if (!writeFileAtomically(
+            *options.buildReport,
+            lang::driver::serializeBuildProvenanceJson(*provenance))) {
+      return exitCode(ExitStatus::Io);
+    }
+    statusStream << "Build report " << options.buildReport->string() << '\n';
+  }
   if (plan.keepCpp()) {
     statusStream << "Kept C++ " << plan.generatedSource().string() << '\n';
   }
@@ -2069,6 +2092,135 @@ int runProject(const ProjectOptions &options, const char *driver) {
   return exitCode(ExitStatus::Success);
 }
 
+// Re-runs the build a recorded report describes and names every recorded
+// fact the current tree no longer reproduces. The recorded report is read
+// and never written: verification must not be able to repair its own
+// evidence.
+int runProjectVerify(const ProjectOptions &options, const char *driver) {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+
+  const std::filesystem::path &reportPath = *options.buildReport;
+  std::ifstream reportStream(reportPath, std::ios::binary);
+  if (!reportStream) {
+    std::cerr << "gti: failed to read build report '" << reportPath.string()
+              << "'\n";
+    return exitCode(ExitStatus::Io);
+  }
+  const std::string reportText{std::istreambuf_iterator<char>(reportStream),
+                               std::istreambuf_iterator<char>()};
+  std::string parseError;
+  const std::optional<lang::driver::BuildProvenance> recorded =
+      lang::driver::parseBuildProvenanceJson(reportText, parseError);
+  if (!recorded) {
+    std::cerr << "gti: '" << reportPath.string()
+              << "' is not a build report this compiler can verify: "
+              << parseError << '\n';
+    return exitCode(ExitStatus::Usage);
+  }
+  if (!recorded->project) {
+    std::cerr << "gti: '" << reportPath.string()
+              << "' records a direct compilation; gti verify reproduces "
+                 "project builds recorded by gti build --build-report\n";
+    return exitCode(ExitStatus::Usage);
+  }
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.optimization = options.optimization;
+  overrides.cppStandard = options.standard;
+  overrides.executionProfile = options.executionProfile;
+  overrides.keepCpp = options.keepCpp;
+  overrides.configurationFlags = options.configurationFlags;
+  // The record names the target it was built for. Reproducing it on the
+  // build host would verify a different build, so the recorded triple is
+  // parsed back and selected exactly as `gti build --target` selected it.
+  const lang::TargetTripleParseResult recordedTarget =
+      lang::parseTargetTripleResult(recorded->project->targetTriple);
+  if (!recordedTarget.succeeded() || !recordedTarget.target->supported()) {
+    std::cerr << "gti: '" << reportPath.string() << "' records target triple '"
+              << recorded->project->targetTriple
+              << "', which this compiler cannot select\n";
+    return exitCode(ExitStatus::Usage);
+  }
+  const bool recordedHostTarget =
+      lang::driver::targetTriple(*recordedTarget.target) ==
+      lang::driver::targetTriple(lang::TargetInfo::host());
+  lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          *currentDirectory, recorded->project->targetName,
+          recorded->project->profileName, *recordedTarget.target,
+          std::move(overrides), recorded->project->packageName,
+          {.requireLock = true,
+           .allowAcquisition = !(options.offline || options.locked)},
+          lang::driver::RuntimeProfile::Hosted,
+          recordedHostTarget ? lang::driver::ToolchainSelectionPolicy::HostTools
+                             : lang::driver::ToolchainSelectionPolicy::
+                                   DeclaredForNonHostTarget));
+  if (!resolution.succeeded()) {
+    reportDiagnostics(resolution.diagnostics, resolution.sources);
+    std::cerr << "gti: cannot resolve the recorded package '"
+              << recorded->project->packageName << "' target '"
+              << recorded->project->targetName << "' [profile "
+              << recorded->project->profileName << "] from "
+              << currentDirectory->string() << '\n';
+    return exitCode(ExitStatus::Compilation);
+  }
+
+  const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  if (options.verbose) {
+    reportProjectPlan(plan, options.command);
+  }
+  {
+    const int bindgenStatus = generateProjectBindgenImports(
+        plan, resolution.sources, options.verbose, std::cout);
+    if (bindgenStatus != exitCode(ExitStatus::Success)) {
+      return bindgenStatus;
+    }
+  }
+  const lang::driver::ToolchainLayout toolchain =
+      lang::driver::discoverToolchainLayout(driver);
+  std::optional<lang::driver::BuildProvenance> rebuilt;
+  const int status =
+      buildProjectPlan(plan, options, toolchain, driver, &rebuilt);
+  if (status != exitCode(ExitStatus::Success)) {
+    std::cerr << "gti: the recorded build no longer completes; '"
+              << reportPath.string() << "' cannot be reproduced\n";
+    return status;
+  }
+  if (!rebuilt) {
+    std::cerr << "gti: internal compiler error: verification build captured "
+                 "no provenance\n";
+    return exitCode(ExitStatus::Compilation);
+  }
+
+  const std::vector<lang::driver::BuildProvenanceDifference> differences =
+      lang::driver::compareBuildProvenance(*recorded, *rebuilt);
+  if (!differences.empty()) {
+    std::cerr << "gti: build report '" << reportPath.string()
+              << "' does not describe this tree\n";
+    for (const lang::driver::BuildProvenanceDifference &difference :
+         differences) {
+      std::cerr << "gti:   " << difference.subject << ": " << difference.field
+                << "\ngti:     recorded: " << difference.expected
+                << "\ngti:     rebuilt:  " << difference.actual << '\n';
+    }
+    std::cerr << "gti: " << differences.size()
+              << (differences.size() == 1 ? " difference\n" : " differences\n");
+    return exitCode(ExitStatus::Verification);
+  }
+
+  reportProjectSuccess(std::cout, "Verified", plan);
+  std::cout << "Build report " << reportPath.string()
+            << " reproduced: " << recorded->source.units.size()
+            << " source units, " << recorded->runtime.headers.size()
+            << " runtime headers, the runtime archive, the native compiler "
+               "identity, the native command, and the produced artifact\n";
+  return exitCode(ExitStatus::Success);
+}
+
 int runProjectTests(const ProjectOptions &options, const char *driver) {
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
@@ -2082,13 +2234,18 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
-          *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package,
+          *currentDirectory, options.target, options.profile, *selection.target,
+          std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted));
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2566,12 +2723,13 @@ int main(int argc, char *argv[]) {
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
   if (command == "build" || command == "check" || command == "run" ||
-      command == "test") {
+      command == "test" || command == "verify") {
     ProjectOptions options;
-    options.command = command == "check"  ? ProjectCommand::Check
-                      : command == "run"  ? ProjectCommand::Run
-                      : command == "test" ? ProjectCommand::Test
-                                          : ProjectCommand::Build;
+    options.command = command == "check"    ? ProjectCommand::Check
+                      : command == "run"    ? ProjectCommand::Run
+                      : command == "test"   ? ProjectCommand::Test
+                      : command == "verify" ? ProjectCommand::Verify
+                                            : ProjectCommand::Build;
     const ArgumentResult argumentResult =
         parseProjectArguments(argc, argv, options);
     if (argumentResult == ArgumentResult::ExitSuccess) {
@@ -2579,6 +2737,9 @@ int main(int argc, char *argv[]) {
     }
     if (argumentResult == ArgumentResult::ExitFailure) {
       return exitCode(ExitStatus::Usage);
+    }
+    if (options.command == ProjectCommand::Verify) {
+      return runProjectVerify(options, argv[0]);
     }
     if (options.command == ProjectCommand::Test) {
       return runProjectTests(options, argv[0]);

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import os
 import pathlib
@@ -1713,6 +1714,158 @@ def main():
         link_file_second = cache_native_build()
         assert "gti: cache hit " in link_file_second.stderr
 
+        # --- Name-resolved libraries and library search directories ---
+        # A declared -L directory precedes every implicit toolchain directory
+        # on the link line, so the first declared directory holding exactly
+        # one modeled candidate is the file the linker selects. That file's
+        # content, and the full tree identity of every declared search
+        # directory, join the key.
+        cache_ar = shutil.which("ar")
+        if cache_ar is None:
+            raise AssertionError("native cache tests require ar on PATH")
+        resolved_archive = cache_native / "native/lib/libextra.a"
+        # Archives are staged outside the declared search directory so
+        # installing one is a byte-exact copy: `ar` records member timestamps,
+        # so rebuilding would change content that the key correctly tracks.
+        archive_stage = cache_native / "native/archives"
+        archive_stage.mkdir(parents=True, exist_ok=True)
+
+        def stage_resolved_archive(bias):
+            variant = archive_stage / f"bias{bias}.c"
+            variant.write_text(
+                "int native_add(int left, int right) {\n"
+                f"  return left + right + {bias};\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            variant_object = archive_stage / f"bias{bias}.o"
+            run([cache_cc, "-c", str(variant), "-o", str(variant_object)])
+            archive = archive_stage / f"libextra{bias}.a"
+            if archive.exists():
+                archive.unlink()
+            run([cache_ar, "rcs", str(archive), str(variant_object)])
+            return archive
+
+        unbiased_archive = stage_resolved_archive(0)
+        biased_archive = stage_resolved_archive(1)
+
+        def install_resolved_archive(archive):
+            shutil.copyfile(archive, resolved_archive)
+
+        install_resolved_archive(unbiased_archive)
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra"]',
+            ]
+        )
+        resolved_first = cache_native_build()
+        assert "gti: cache miss " in resolved_first.stderr
+        resolved_key = cache_key(resolved_first)
+        resolved_second = cache_native_build()
+        assert "gti: cache hit " in resolved_second.stderr
+        assert cache_key(resolved_second) == resolved_key
+        run([gti, "run"], cwd=cache_native)
+
+        # Staleness safety: the resolved archive's content is part of the key,
+        # so replacing it forces a rebuild that observes the new behavior.
+        install_resolved_archive(biased_archive)
+        restaled = cache_native_build()
+        assert "gti: cache miss " in restaled.stderr
+        assert cache_key(restaled) != resolved_key
+        run([gti, "run"], expected=1, cwd=cache_native)
+        install_resolved_archive(unbiased_archive)
+        rerestored = cache_native_build()
+        assert "gti: cache hit " in rerestored.stderr
+        assert cache_key(rerestored) == resolved_key
+        run([gti, "run"], cwd=cache_native)
+
+        # A name with no candidate in any declared directory would resolve
+        # through the linker's implicit system directories, which the driver
+        # does not model.
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra", "m"]',
+            ]
+        )
+        unresolved_bypass = cache_native_build()
+        assert "gti: cache bypassed" in unresolved_bypass.stderr
+        assert (
+            "native library '-lm' does not resolve inside the declared "
+            "native library search directories"
+        ) in unresolved_bypass.stderr
+
+        # Two modeled candidates in one directory: which file the linker
+        # prefers is a guess, so resolution refuses rather than guessing.
+        resolved_dynamic = cache_native / (
+            "native/lib/libextra."
+            + ("dylib" if sys.platform == "darwin" else "so")
+        )
+        run(
+            [
+                cache_cc,
+                "-shared",
+                "-fPIC",
+                str(cache_native / "native/support.c"),
+                "-I",
+                str(cache_native / "native/include"),
+                "-o",
+                str(resolved_dynamic),
+            ]
+        )
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra"]',
+            ]
+        )
+        ambiguous_bypass = cache_native_build()
+        assert "gti: cache bypassed" in ambiguous_bypass.stderr
+        assert "resolves ambiguously" in ambiguous_bypass.stderr
+
+        # An unambiguous resolution to a file whose bytes do not determine its
+        # contribution to the link still bypasses.
+        resolved_archive.unlink()
+        resolved_dynamic_bypass = cache_native_build()
+        assert "gti: cache bypassed" in resolved_dynamic_bypass.stderr
+        assert (
+            "not a content-complete archive or object"
+            in resolved_dynamic_bypass.stderr
+        )
+
+        # A spelling the driver does not model must make resolution ambiguous
+        # rather than invisible.
+        resolved_dynamic.unlink()
+        install_resolved_archive(unbiased_archive)
+        unmodelled = cache_native / "native/lib/libextra.la"
+        unmodelled.write_text("# libtool archive\n", encoding="utf-8")
+        unmodelled_bypass = cache_native_build()
+        assert "gti: cache bypassed" in unmodelled_bypass.stderr
+        assert "resolves ambiguously" in unmodelled_bypass.stderr
+        unmodelled.unlink()
+
+        if sys.platform == "darwin":
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'library-dirs = ["native/lib"]',
+                    'libraries = ["extra"]',
+                    'frameworks = ["CoreFoundation"]',
+                ]
+            )
+            framework_bypass = cache_native_build()
+            assert "gti: cache bypassed" in framework_bypass.stderr
+            assert (
+                "name-resolved frameworks require framework search resolution"
+                in framework_bypass.stderr
+            )
+
+        resolved_archive.unlink()
+
         # Every remaining bypass reason is reported explicitly.
         shared_library = cache_native / (
             "native/lib/libextra_shared."
@@ -1753,6 +1906,8 @@ def main():
         assert "gti: cache bypassed" in opaque_bypass.stderr
         assert "opaque native argument vectors" in opaque_bypass.stderr
 
+        # Without any declared search directory a named library can only come
+        # from the linker's implicit directories.
         cache_native_manifest(
             [
                 'include-dirs = ["native/include"]',
@@ -1762,8 +1917,14 @@ def main():
         )
         named_bypass = cache_native_build()
         assert "gti: cache bypassed" in named_bypass.stderr
-        assert "name-resolved libraries and frameworks" in named_bypass.stderr
+        assert (
+            "native library '-lm' does not resolve inside the declared "
+            "native library search directories"
+        ) in named_bypass.stderr
 
+        # A declared library search directory joins as a full tree identity,
+        # so it participates instead of bypassing, and any file added below it
+        # changes the key.
         cache_native_manifest(
             [
                 'include-dirs = ["native/include"]',
@@ -1771,9 +1932,23 @@ def main():
                 'library-dirs = ["native/lib"]',
             ]
         )
-        library_dir_bypass = cache_native_build()
-        assert "gti: cache bypassed" in library_dir_bypass.stderr
-        assert "library search directories" in library_dir_bypass.stderr
+        library_dir_first = cache_native_build()
+        assert "gti: cache miss " in library_dir_first.stderr
+        library_dir_key = cache_key(library_dir_first)
+        library_dir_second = cache_native_build()
+        assert "gti: cache hit " in library_dir_second.stderr
+        assert cache_key(library_dir_second) == library_dir_key
+        # Any file appearing below a declared search directory changes the
+        # key, which is what makes the directory exact: a file dropped there
+        # could otherwise shadow a library the toolchain resolves implicitly.
+        added_library_file = cache_native / "native/lib/added.txt"
+        added_library_file.write_text("added", encoding="utf-8")
+        library_dir_shadowed = cache_native_build()
+        assert cache_key(library_dir_shadowed) != library_dir_key
+        added_library_file.unlink()
+        library_dir_restored = cache_native_build()
+        assert "gti: cache hit " in library_dir_restored.stderr
+        assert cache_key(library_dir_restored) == library_dir_key
 
         cache_native_manifest(
             [
@@ -1832,6 +2007,138 @@ def main():
         assert "ignored corrupt build cache entry" in malformed_metadata.stderr
         assert "gti: cache recovered " in malformed_metadata.stderr
         assert "gti: cache hit " in cache_native_build().stderr
+
+        # --- Dependency native groups in the whole-program cache ---
+        # A dependency composes only its own include directories, validated
+        # exact -D/-U macro definitions, and declared sources, so the same
+        # preprocessor discovery that makes the selected package's native
+        # sources exact applies unchanged to a group's.
+        dep_native = root / "cache-dependency-native"
+        dep_app = dep_native / "packages/app"
+        dep_lib = dep_native / "packages/nativedep"
+        (dep_native / "src").mkdir(parents=True)
+        (dep_app / "src").mkdir(parents=True)
+        (dep_lib / "src").mkdir(parents=True)
+        (dep_lib / "native/include").mkdir(parents=True)
+        (dep_native / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (dep_native / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "cache_dependency_root"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.root]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[workspace]\n"
+            'members = ["packages/nativedep", "packages/app"]\n',
+            encoding="utf-8",
+        )
+        (dep_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "app"\n'
+            'version = "1.0.0"\n\n'
+            "[dependencies]\n"
+            'nativedep = { path = "../nativedep" }\n\n'
+            "[targets.app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (dep_app / "src/main.gti").write_text(
+            "#include <nativedep/api>\n"
+            "int main() { return nativedep::scaled(21) == 42 ? 0 : 1; }\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "nativedep"\n'
+            'version = "2.0.0"\n\n'
+            "[package.native]\n"
+            'include-dirs = ["native/include"]\n'
+            'c-sources = ["native/dep.c"]\n',
+            encoding="utf-8",
+        )
+        dep_header = dep_lib / "native/include/dep.h"
+        dep_header.write_text(
+            "#define DEP_FACTOR 2\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "native/dep.c").write_text(
+            '#include "dep.h"\n'
+            "int dep_scale(int value) { return value * DEP_FACTOR; }\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "src/api.gti").write_text(
+            'extern "C" {\n'
+            "int dep_scale(int value);\n"
+            "}\n\n"
+            "namespace nativedep {\n"
+            "int scaled(int value) { return dep_scale(value); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        def dep_native_build(expected=0):
+            return run(
+                [
+                    gti,
+                    "build",
+                    "--package",
+                    "app",
+                    "--verbose",
+                    "--cc",
+                    cache_cc,
+                    "--cxx",
+                    cache_cxx,
+                ],
+                expected=expected,
+                cwd=dep_native,
+            )
+
+        dep_first = dep_native_build()
+        assert "gti: cache miss " in dep_first.stderr
+        dep_key = cache_key(dep_first)
+        dep_second = dep_native_build()
+        assert "gti: cache hit " in dep_second.stderr
+        assert cache_key(dep_second) == dep_key
+        assert not any(
+            line.startswith("+ ") for line in dep_second.stderr.splitlines()
+        )
+        run([gti, "run", "--package", "app"], cwd=dep_native)
+
+        # A header discovered only through the dependency's own preprocessor
+        # probe is part of the key.
+        dep_header.write_text(
+            "#define DEP_FACTOR 3\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        dep_revised = dep_native_build()
+        assert "gti: cache miss " in dep_revised.stderr
+        assert cache_key(dep_revised) != dep_key
+        run([gti, "run", "--package", "app"], expected=1, cwd=dep_native)
+        dep_header.write_text(
+            "#define DEP_FACTOR 2\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        dep_restored = dep_native_build()
+        assert "gti: cache hit " in dep_restored.stderr
+        assert cache_key(dep_restored) == dep_key
+
+        # A dependency's own time-and-date macro use still bypasses.
+        (dep_lib / "native/dep.c").write_text(
+            '#include "dep.h"\n'
+            "int dep_scale(int value) {\n"
+            "  return value * DEP_FACTOR + (__TIME__[0] == 0);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        dep_time_macro = dep_native_build()
+        assert "gti: cache bypassed" in dep_time_macro.stderr
+        assert "time-and-date preprocessor macros" in dep_time_macro.stderr
 
         # --- Multi-target parallel builds ---
         multi_project = root / "multi-target"
@@ -2036,10 +2343,10 @@ def main():
         composed_build = run(
             [gti, "build", "--verbose"], cwd=composed_app
         )
-        assert (
-            "dependency native inputs require compiler dependency discovery"
-            in composed_build.stderr
-        )
+        # Dependency native groups reach the same preprocessor discovery as
+        # the selected package's own sources, so a plan carrying them joins
+        # cache identity instead of bypassing.
+        assert "gti: cache miss " in composed_build.stderr
         wrapper_compile = next(
             line
             for line in composed_build.stderr.splitlines()
@@ -2206,6 +2513,118 @@ def main():
             "int base_value(void) { return 40; }\n", encoding="utf-8"
         )
         run([gti, "run"], cwd=chained_native_app)
+
+
+        # --- A git dependency that vendors a C library ---
+        # The portability claim this proves: a consumer clones nothing by hand,
+        # installs no system library, and still builds and runs. The dependency
+        # carries the C source and header, generates its own GTI bindings for
+        # them, and the consumer reaches the library only through the
+        # dependency's GTI wrapper -- bindgen aliases do not leak to dependents.
+        vendored_upstream = root / "vendored-c-upstream"
+        (vendored_upstream / "native").mkdir(parents=True)
+        (vendored_upstream / "src").mkdir(parents=True)
+        (vendored_upstream / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "checksum"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'include-dirs = ["native"]\n'
+            'c-sources = ["native/checksum.c"]\n\n'
+            "[bindgen.checksum_c]\n"
+            'header = "native/checksum.h"\n',
+            encoding="utf-8",
+        )
+        (vendored_upstream / "native/checksum.h").write_text(
+            "#ifndef CHECKSUM_H\n"
+            "#define CHECKSUM_H\n"
+            "#include <stdint.h>\n"
+            "#define CHECKSUM_SEED 17\n"
+            "int32_t checksum_of(const uint8_t *bytes, int32_t count);\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        (vendored_upstream / "native/checksum.c").write_text(
+            '#include "checksum.h"\n'
+            "int32_t checksum_of(const uint8_t *bytes, int32_t count) {\n"
+            "  int32_t total = CHECKSUM_SEED;\n"
+            "  for (int32_t index = 0; index < count; index++) {\n"
+            "    total = total + (int32_t)bytes[index];\n"
+            "  }\n"
+            "  return total;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (vendored_upstream / "src/lib.gti").write_text(
+            "#include <checksum_c/bindings>\n"
+            "\n"
+            "// Wrapped so dependents never touch the raw C ABI.\n"
+            "int32_t checksum_of_bytes(uint8_t* bytes, int32_t count) {\n"
+            "  unsafe {\n"
+            "    return checksum_of(bytes, count);\n"
+            "  }\n"
+            "}\n"
+            "\n"
+            "int32_t checksum_seed() {\n"
+            "  return CHECKSUM_SEED;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([git, "init", "-q", str(vendored_upstream)])
+        git_in(vendored_upstream, "add", "-A")
+        git_in(vendored_upstream, "commit", "-qm", "vendored checksum library")
+        vendored_revision = git_in(
+            vendored_upstream, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        vendored_app = root / "vendored-c-app"
+        (vendored_app / "src").mkdir(parents=True)
+        (vendored_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "vendored-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            f'checksum = {{ git = "{vendored_upstream}", rev = '
+            f'"{vendored_revision}" }}\n\n'
+            "[targets.vendored-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (vendored_app / "src/main.gti").write_text(
+            "#include <checksum/lib>\n"
+            "\n"
+            "int main() {\n"
+            "  mut uint8_t data[3] = {uint8_t(1), uint8_t(2), uint8_t(3)};\n"
+            "  unsafe {\n"
+            "    int32_t total = checksum_of_bytes(&data[0], 3);\n"
+            "    if (total != 23) {\n"
+            "      return 1;\n"
+            "    }\n"
+            "  }\n"
+            "  return checksum_seed() == 17 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([gti, "fetch"], cwd=vendored_app)
+        vendored_build = run([gti, "build"], cwd=vendored_app)
+        # The dependency's own bindgen import generated inside its checkout.
+        assert "Generated bindings checksum_c" in vendored_build.stdout
+        # `run` exits 0 only if the vendored C actually computed 17+1+2+3.
+        run([gti, "run"], cwd=vendored_app)
+        # The consumer must not reach the dependency's bindgen alias.
+        (vendored_app / "src/main.gti").write_text(
+            "#include <checksum_c/bindings>\n"
+            "\n"
+            "int main() {\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        leaked = run([gti, "build"], expected=65, cwd=vendored_app)
+        assert "checksum_c" in leaked.stderr
 
         # --- Manifest-declared bindgen imports (BUILD-01) ---
         clang = shutil.which("clang")
@@ -2406,6 +2825,266 @@ def main():
         )
         assert "constexpr double POINTS_SCALE = 1.5;" in policy_bindings
         run([gti, "run"], cwd=policy_project)
+
+        # Cross compilation. `--target` selects the build target for project
+        # commands; a target that is not the build host must resolve a
+        # declared [toolchains.<triple>] table rather than silently reuse
+        # host tools.
+        cross_triple = (
+            "x86_64-unknown-linux-gnu"
+            if host_target_os() != "linux"
+            else "arm64-apple-macos"
+        )
+        cross_project = root / "cross"
+        (cross_project / "src").mkdir(parents=True)
+        (cross_project / "sysroot").mkdir(parents=True)
+        (cross_project / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        host_only_manifest = manifest(
+            '[targets.cross]\nkind = "executable"\nroot = "src/main.gti"\n'
+        )
+        (cross_project / "gti.toml").write_text(
+            host_only_manifest, encoding="utf-8"
+        )
+
+        # The host build of an unchanged manifest keeps working.
+        run([gti, "build"], cwd=cross_project)
+
+        # Fail closed: no declared toolchain for a non-host target.
+        missing = run(
+            [gti, "build", "--target", cross_triple],
+            expected=65,
+            cwd=cross_project,
+        )
+        assert "GTI-B1904" in missing.stderr, missing.stderr
+        assert "[toolchains." in missing.stderr, missing.stderr
+
+        # A malformed triple is a usage error, not a build failure.
+        malformed = run(
+            [gti, "build", "--target", "not a triple"],
+            expected=64,
+            cwd=cross_project,
+        )
+        assert "invalid --target" in malformed.stderr, malformed.stderr
+
+        # `check` performs no native compilation, so it analyzes another
+        # supported target without a declared toolchain.
+        checked = run(
+            [gti, "check", "--target", cross_triple], cwd=cross_project
+        )
+        assert "Checked cross" in checked.stdout, checked.stdout
+
+        # `run` executes on this machine and refuses a foreign target.
+        refused = run(
+            [gti, "run", "--target", cross_triple],
+            expected=64,
+            cwd=cross_project,
+        )
+        assert "gti build --target" in refused.stderr, refused.stderr
+
+        if sys.platform != "win32":
+            # A declared toolchain reaches the native invocation. The stub
+            # compiler records its exact argument vector, so the assertions
+            # below are about the command GTI built, not about having a real
+            # cross toolchain installed on the test machine.
+            record = cross_project / "native-commands.txt"
+            stub = cross_project / "stub-c++"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib, sys\n"
+                f"record = pathlib.Path(r{str(record)!r})\n"
+                "arguments = sys.argv[1:]\n"
+                'record.open("a", encoding="utf-8").write('
+                '"\\n".join(arguments) + "\\n")\n'
+                'if "--version" in arguments:\n'
+                '    print("gti stub cross compiler 1.0")\n'
+                "    sys.exit(0)\n"
+                "output = None\n"
+                "for index, value in enumerate(arguments):\n"
+                '    if value == "-o" and index + 1 < len(arguments):\n'
+                "        output = arguments[index + 1]\n"
+                "if output is not None:\n"
+                "    produced = pathlib.Path(output)\n"
+                "    produced.parent.mkdir(parents=True, exist_ok=True)\n"
+                '    produced.write_bytes(b"#!/bin/sh\\nexit 0\\n")\n'
+                "    produced.chmod(0o755)\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            (cross_project / "gti.toml").write_text(
+                host_only_manifest
+                + f"\n[toolchains.{cross_triple}]\n"
+                + f'cxx = "{stub}"\n'
+                + 'sysroot = "sysroot"\n'
+                + f'native-target = "{cross_triple}"\n',
+                encoding="utf-8",
+            )
+            run([gti, "build", "--target", cross_triple], cwd=cross_project)
+            recorded = record.read_text(encoding="utf-8").splitlines()
+            assert f"--target={cross_triple}" in recorded, recorded
+            sysroot = (cross_project / "sysroot").resolve()
+            assert f"--sysroot={sysroot}" in recorded, recorded
+
+            # The cross artifact publishes beside, not over, the host one.
+            cross_directories = sorted(
+                path.name
+                for path in (cross_project / "build/gti/dev").iterdir()
+                if path.is_dir()
+            )
+            assert len(cross_directories) == 2, cross_directories
+
+            # An unknown toolchain field is rejected by the shared manifest
+            # field validator.
+            (cross_project / "gti.toml").write_text(
+                host_only_manifest
+                + f"\n[toolchains.{cross_triple}]\n"
+                + f'cxx = "{stub}"\n'
+                + 'linker = "ld"\n',
+                encoding="utf-8",
+            )
+            unknown = run(
+                [gti, "build", "--target", cross_triple],
+                expected=65,
+                cwd=cross_project,
+            )
+            assert "GTI-B1001" in unknown.stderr, unknown.stderr
+        # --- Recorded build provenance and verification ---
+        verify_project = root / "verify-project"
+        (verify_project / "src").mkdir(parents=True)
+        (verify_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "verify-project"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.verify-project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (verify_project / "src/support.gti").write_text(
+            "int support_value() { return 0; }\n", encoding="utf-8"
+        )
+        (verify_project / "src/main.gti").write_text(
+            '#include "support.gti"\n'
+            "int main() { return support_value(); }\n",
+            encoding="utf-8",
+        )
+        report = verify_project / "provenance.json"
+        recorded = run(
+            [gti, "build", "--build-report", str(report)], cwd=verify_project
+        )
+        assert "Build report" in recorded.stdout
+        record = json.loads(report.read_text(encoding="utf-8"))
+        assert record["schema"] == 2
+        project_section = record["project"]
+        assert project_section["package_name"] == "verify-project"
+        assert project_section["package_version"] == "0.1.0"
+        assert project_section["target_name"] == "verify-project"
+        assert project_section["target_kind"] == "executable"
+        assert project_section["profile_name"] == "dev"
+        # The record names the target it was built for, so `gti verify` can
+        # reproduce a cross build instead of assuming the build host.
+        recorded_triple = recorded.stdout.split("[dev, ", 1)[1].split("]", 1)[0]
+        assert project_section["target_triple"] == recorded_triple
+        assert project_section["model_identity"]
+        verify_built = executable_named(
+            verify_project / "build/gti/dev", "verify-project"
+        )
+        assert record["artifact"]["sha256"] == hashlib.sha256(
+            verify_built.read_bytes()
+        ).hexdigest()
+
+        # An unchanged tree reproduces every recorded identity, and
+        # verification never rewrites the record it is checking.
+        preserved_record = report.read_bytes()
+        verified = run(
+            [gti, "verify", "--build-report", str(report), "-v"],
+            cwd=verify_project,
+        )
+        assert "Verified verify-project [dev," in verified.stdout
+        assert "reproduced:" in verified.stdout
+        # Capture always performs the native invocation it describes.
+        assert "cache bypassed" in verified.stderr
+        assert report.read_bytes() == preserved_record
+
+        # A changed source unit is named with its recorded and rebuilt
+        # content identities, and the rebuilt executable differs too.
+        (verify_project / "src/support.gti").write_text(
+            "int support_value() { return 0; }\n"
+            "int support_extra() { return 1; }\n",
+            encoding="utf-8",
+        )
+        diverged = run(
+            [gti, "verify", "--build-report", str(report)],
+            expected=70,
+            cwd=verify_project,
+        )
+        assert "does not describe this tree" in diverged.stderr
+        assert "src/support.gti" in diverged.stderr
+        assert "source materials: aggregate sha256" in diverged.stderr
+        assert "built artifact: content" in diverged.stderr
+        assert "src/main.gti" not in diverged.stderr
+        assert report.read_bytes() == preserved_record
+
+        # The record names the selection, so a contradicting one is refused,
+        # and the option only belongs to commands that build one executable.
+        run([gti, "verify"], expected=64, cwd=verify_project)
+        run(
+            [gti, "verify", "--build-report", str(report), "verify-project"],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "verify", "--build-report", str(report), "--release"],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "build", "--all", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "check", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        run(
+            [gti, "build", "--emit-mir", "--build-report", str(report)],
+            expected=64,
+            cwd=verify_project,
+        )
+        unreadable_record = verify_project / "unreadable.json"
+        unreadable_record.write_text("{}\n", encoding="utf-8")
+        malformed = run(
+            [gti, "verify", "--build-report", str(unreadable_record)],
+            expected=64,
+            cwd=verify_project,
+        )
+        assert "is not a build report this compiler can verify" in (
+            malformed.stderr
+        )
+        assert report.read_bytes() == preserved_record
+
+        # `gti verify` takes every selection from the record, the target
+        # triple included; a contradicting one would verify another build.
+        rejected_triple = run(
+            [
+                gti,
+                "verify",
+                "--target",
+                recorded_triple,
+                "--build-report",
+                str(report),
+            ],
+            expected=64,
+            cwd=verify_project,
+        )
+        assert "takes its package, target, profile, and target triple" in (
+            rejected_triple.stderr
+        ), rejected_triple.stderr
 
 
 if __name__ == "__main__":

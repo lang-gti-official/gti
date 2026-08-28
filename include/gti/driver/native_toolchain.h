@@ -87,6 +87,28 @@ struct NativeDependencyGroup {
   std::vector<NativeLinkOperand> linkOperands;
 };
 
+// Driver-owned cross-compilation policy for one native invocation. A host
+// build leaves this empty. `--target` and `--sysroot` are rejected in every
+// user-supplied native argument vector precisely because they select the
+// target and the platform SDK, so the driver is the only layer allowed to
+// emit them, and it emits only what a resolved toolchain declared.
+struct NativeTargetPolicy {
+  // Emitted as `--target=<triple>` when non-empty. Deliberately the native
+  // toolchain's own spelling rather than GTI's normalized triple: a
+  // target-prefixed cross compiler must not be told a target at all.
+  std::string triple;
+  // Emitted as `--sysroot=<path>` when non-empty.
+  std::filesystem::path sysroot;
+
+  [[nodiscard]] bool empty() const { return triple.empty() && sysroot.empty(); }
+
+  bool operator==(const NativeTargetPolicy &) const = default;
+};
+
+// Appends a target policy's driver-owned arguments to a native command.
+void appendNativeTargetPolicy(std::vector<std::string> &command,
+                              const NativeTargetPolicy &policy);
+
 struct NativeInputs {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> compilerArguments;
@@ -107,6 +129,8 @@ struct NativeInputs {
   // dependency closure, in dependents-before-dependencies order. Only
   // project resolution populates this; direct mode has no package graph.
   std::vector<NativeDependencyGroup> dependencyGroups;
+  // Resolved cross-compilation policy. Empty for a host build.
+  NativeTargetPolicy targetPolicy;
 };
 
 // Native escape hatches may add ordinary compiler/linker policy, but they may
@@ -147,7 +171,8 @@ public:
                         std::filesystem::path output, CStandard standard,
                         OptimizationLevel optimization,
                         std::vector<std::filesystem::path> includeDirectories,
-                        std::vector<std::string> compilerArguments);
+                        std::vector<std::string> compilerArguments,
+                        NativeTargetPolicy targetPolicy = {});
 
   [[nodiscard]] const std::string &compiler() const;
   [[nodiscard]] const std::filesystem::path &source() const;
@@ -157,6 +182,7 @@ public:
   [[nodiscard]] const std::vector<std::filesystem::path> &
   includeDirectories() const;
   [[nodiscard]] const std::vector<std::string> &compilerArguments() const;
+  [[nodiscard]] const NativeTargetPolicy &targetPolicy() const;
 
 private:
   std::string compilerExecutable;
@@ -166,6 +192,7 @@ private:
   OptimizationLevel optimizationLevel;
   std::vector<std::filesystem::path> nativeIncludeDirectories;
   std::vector<std::string> nativeCompilerArguments;
+  NativeTargetPolicy nativeTargetPolicy;
 };
 
 class NativeCppCompileRequest final {
@@ -174,7 +201,8 @@ public:
                           std::filesystem::path output, CppStandard standard,
                           OptimizationLevel optimization,
                           std::vector<std::filesystem::path> includeDirectories,
-                          std::vector<std::string> compilerArguments);
+                          std::vector<std::string> compilerArguments,
+                          NativeTargetPolicy targetPolicy = {});
 
   [[nodiscard]] const std::string &compiler() const;
   [[nodiscard]] const std::filesystem::path &source() const;
@@ -184,6 +212,7 @@ public:
   [[nodiscard]] const std::vector<std::filesystem::path> &
   includeDirectories() const;
   [[nodiscard]] const std::vector<std::string> &compilerArguments() const;
+  [[nodiscard]] const NativeTargetPolicy &targetPolicy() const;
 
 private:
   std::string compilerExecutable;
@@ -193,6 +222,7 @@ private:
   OptimizationLevel optimizationLevel;
   std::vector<std::filesystem::path> nativeIncludeDirectories;
   std::vector<std::string> nativeCompilerArguments;
+  NativeTargetPolicy nativeTargetPolicy;
 };
 
 using NativeProcessResult = ProcessResult;

@@ -110,6 +110,43 @@ struct ProjectBindgenImport {
   SourceSpan headerDeclaration;
 };
 
+// One declared cross-compilation toolchain: `[toolchains.<triple>]`. The
+// table key names the target the entry configures and is normalized through
+// the compiler's own triple vocabulary, so a manifest never introduces a
+// second spelling table. Selection compares only the OS, vendor, and
+// architecture; the data layout always comes from the resolved build target.
+struct ProjectToolchain {
+  // The triple exactly as spelled in the manifest. Retained for diagnostics
+  // and for a relocation-stable project model identity.
+  std::string declaredTriple;
+  // The normalized target the key selects.
+  TargetInfo target;
+  // Native C++ compiler and linker for this target. Required, because a
+  // declared toolchain that named no compiler would silently fall back to
+  // host discovery and link host objects into a cross build.
+  std::string cxx;
+  // Native C compiler. Optional here and required only when the resolved
+  // build actually compiles C sources.
+  std::string cc;
+  // Resolved platform sysroot, or empty when the entry declares none. A
+  // package-contained relative spelling resolves against the package root;
+  // an absolute spelling is taken as declared.
+  std::filesystem::path sysroot;
+  // The sysroot exactly as spelled, for model identity.
+  std::string declaredSysroot;
+  // Optional native triple spelling passed to the compiler as
+  // `--target=<value>`. Omitted for a target-prefixed cross compiler that
+  // already knows its target; required for a multi-target Clang. GTI cannot
+  // verify that this spelling agrees with the selected target, so it is an
+  // explicit declaration in the same sense as a native argument vector.
+  std::string nativeTarget;
+  SourceSpan declaration;
+  SourceSpan cxxDeclaration;
+  SourceSpan ccDeclaration;
+  SourceSpan sysrootDeclaration;
+  SourceSpan nativeTargetDeclaration;
+};
+
 enum class ProjectTargetKind {
   Executable,
   Test,
@@ -149,7 +186,8 @@ public:
       std::vector<ProjectDependency> dependencies = {},
       std::optional<ProjectWorkspaceManifest> workspace = std::nullopt,
       ProjectBuildSettings build = {},
-      std::vector<ProjectBindgenImport> bindgenImports = {});
+      std::vector<ProjectBindgenImport> bindgenImports = {},
+      std::vector<ProjectToolchain> toolchains = {});
 
   [[nodiscard]] const std::filesystem::path &path() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -161,6 +199,11 @@ public:
   workspace() const;
   [[nodiscard]] const ProjectBuildSettings &build() const;
   [[nodiscard]] const std::vector<ProjectBindgenImport> &bindgen() const;
+  [[nodiscard]] const std::vector<ProjectToolchain> &toolchains() const;
+  // Finds the declared toolchain whose normalized key selects `target`.
+  // Only the OS, vendor, and architecture participate.
+  [[nodiscard]] const ProjectToolchain *
+  findToolchain(const TargetInfo &target) const;
   [[nodiscard]] const ProjectTarget *findTarget(std::string_view name) const;
   [[nodiscard]] const ProjectProfile *findProfile(std::string_view name) const;
 
@@ -174,6 +217,7 @@ private:
   std::optional<ProjectWorkspaceManifest> workspaceManifest;
   ProjectBuildSettings projectBuildSettings;
   std::vector<ProjectBindgenImport> projectBindgenImports;
+  std::vector<ProjectToolchain> projectToolchains;
 };
 
 enum class ManifestDiscoveryStatus {

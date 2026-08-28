@@ -65,6 +65,44 @@ enum class NativeLinkInputClass {
 [[nodiscard]] NativeLinkInputClass
 classifyNativeLinkInput(const std::filesystem::path &path);
 
+enum class NativeLibraryResolutionStatus {
+  // Exactly one modeled library file for the name exists in the first
+  // declared search directory that holds any candidate for it.
+  Resolved,
+  // No declared search directory holds a candidate, so the name would resolve
+  // through the linker's implicit system directories instead.
+  Unresolved,
+  // A directory holds more than one modeled candidate, or a spelling this
+  // driver does not model. Which file the linker would select is a guess.
+  Ambiguous,
+  // The name is not a plain library name (a `-l:file` exact-name selection or
+  // a path separator), whose meaning differs between linkers.
+  UnsupportedSpelling,
+  // A declared search directory cannot be enumerated, so absence of a
+  // candidate cannot be established.
+  DirectoryUnreadable,
+};
+
+struct NativeLibraryResolution {
+  NativeLibraryResolutionStatus status =
+      NativeLibraryResolutionStatus::Unresolved;
+  // The resolved file, when the status is Resolved.
+  std::filesystem::path file;
+  // The directory that produced the status, when one did.
+  std::filesystem::path directory;
+};
+
+// Resolves one `-l<name>` operand against the declared native library search
+// directories, in the exact order the link command emits them. A declared
+// `-L` directory precedes every implicit toolchain directory on the command
+// line, so the first declared directory holding a candidate is the directory
+// the linker would select from. Any directory holding more than one modeled
+// candidate, or a spelling outside the modeled set, resolves ambiguously
+// rather than guessing which file the linker would prefer.
+[[nodiscard]] NativeLibraryResolution resolveNativeLibraryName(
+    std::string_view name,
+    const std::vector<std::filesystem::path> &searchDirectories);
+
 // Deterministic preprocessing policy: __DATE__, __TIME__, and __TIMESTAMP__
 // make object content depend on ambient build time, which no input content
 // identity can record. The check is a conservative byte scan; a spelling in a
@@ -79,7 +117,10 @@ struct BuildCacheResult {
   std::optional<std::string> warning;
 };
 
-inline constexpr int currentBuildProvenanceSchema = 1;
+// Schema 2 adds the produced artifact's content identity and the optional
+// project section that `gti build --build-report` records. Schema 1 records
+// carry neither, so verification does not interpret them.
+inline constexpr int currentBuildProvenanceSchema = 2;
 
 enum class CompilerSourceState {
   Clean,
@@ -155,19 +196,45 @@ struct BuildRuntimeProvenance {
   std::string materialsSha256;
 };
 
+// Project-mode selection facts. Direct mode has no concept of them, so the
+// section is absent from a direct record. `gti verify` re-resolves exactly
+// this package, target, and profile before rebuilding, and compares the
+// project model identity that produced the recorded request.
+struct BuildProjectProvenance {
+  std::string packageName;
+  std::string packageVersion;
+  std::string targetName;
+  // "executable" or "test"; spelled as a string so the record stays
+  // independent of the manifest model's enumeration.
+  std::string targetKind;
+  std::string profileName;
+  // Normalized GTI triple of the selected target. `gti verify` re-resolves
+  // the recorded build from this rather than assuming the build host, so a
+  // cross build stays verifiable.
+  std::string targetTriple;
+  std::string modelIdentity;
+};
+
 struct BuildProvenance {
   int schema = currentBuildProvenanceSchema;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
+  std::optional<BuildProjectProvenance> project;
   BuildSourceProvenance source;
   BuildFileProvenance nativeCompilerExecutable;
   std::vector<std::string> nativeCommand;
   BuildRuntimeProvenance runtime;
+  // Content identity of the published executable. Captured after the native
+  // link and publication, so it describes the exact bytes this invocation
+  // produced.
+  BuildFileProvenance artifact;
 };
 
 struct BuildReportRequest {
   std::filesystem::path output;
   std::filesystem::path producerExecutable;
+  // Supplied by project commands; direct compilation leaves it empty.
+  std::optional<BuildProjectProvenance> project;
 };
 
 class ExecutableBuildRequest final {

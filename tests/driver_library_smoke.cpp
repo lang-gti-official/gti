@@ -99,7 +99,7 @@ int main() {
 
   return buildRequest.output() == "program" &&
                  !buildRequest.keepGeneratedSource() &&
-                 lang::driver::currentBuildProvenanceSchema == 1 &&
+                 lang::driver::currentBuildProvenanceSchema == 2 &&
                  !lang::driver::compilerSourceStateName(buildIdentity.state)
                       .empty()
              ? 0

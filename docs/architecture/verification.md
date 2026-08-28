@@ -171,7 +171,9 @@ consume the driver's versioned `--build-report` sidecar, whose source closure
 is the exact loaded `SourceGraph`/`SourceManager` snapshot and whose runtime
 closure comes from the real generated-C++ invocation's depfile. The runner
 validates the recorded bytes and SHA-256 values, exact native command, runtime
-archive, compiler executables, and sidecar producer binding.
+archive, compiler executables, produced artifact, and sidecar producer
+binding. A benchmark record must describe a direct compilation, so its
+`project` section is required to be absent.
 
 `exact_head_evidence.exact` is true only when the repository commit exists and
 matches before and after measurement, both repository states are clean, every

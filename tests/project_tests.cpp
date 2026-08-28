@@ -2439,6 +2439,302 @@ void testBindgenImportPolicyDiagnostics() {
   }
 }
 
+// A target that is not this build host, used to prove cross-target
+// resolution without depending on which machine runs the tests.
+lang::TargetInfo nonHostTarget() {
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  const lang::TargetTripleParseResult linux =
+      lang::parseTargetTripleResult("x86_64-unknown-linux-gnu");
+  const lang::TargetTripleParseResult macos =
+      lang::parseTargetTripleResult("arm64-apple-macos");
+  const lang::TargetInfo &candidate =
+      lang::driver::targetTriple(*linux.target) ==
+              lang::driver::targetTriple(host)
+          ? *macos.target
+          : *linux.target;
+  return candidate;
+}
+
+void testCrossToolchainManifest() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  const lang::TargetInfo target = nonHostTarget();
+  const std::string triple = lang::driver::targetTriple(target);
+  expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n"),
+         "the cross-toolchain project source should be writable");
+  std::filesystem::create_directories(root / "sysroots/target");
+  expect(writeFile(root / "gti.toml",
+                   validManifest() + "\n[toolchains." + triple +
+                       "]\ncxx = \"target-c++\"\ncc = \"target-cc\"\n"
+                       "sysroot = \"sysroots/target\"\n"
+                       "native-target = \"vendor-native-triple\"\n"),
+         "the cross-toolchain manifest should be writable");
+
+  const lang::driver::ManifestLoadResult loaded =
+      lang::driver::loadProjectManifest(root / "gti.toml");
+  expect(loaded.succeeded() && loaded.manifest &&
+             loaded.manifest->toolchains().size() == 1,
+         "a [toolchains.<triple>] table should parse into the manifest model");
+  if (loaded.manifest && loaded.manifest->toolchains().size() == 1) {
+    const lang::driver::ProjectToolchain &toolchain =
+        loaded.manifest->toolchains().front();
+    expect(toolchain.declaredTriple == triple &&
+               toolchain.cxx == "target-c++" && toolchain.cc == "target-cc" &&
+               toolchain.nativeTarget == "vendor-native-triple" &&
+               toolchain.declaredSysroot == "sysroots/target" &&
+               toolchain.sysroot ==
+                   std::filesystem::canonical(root / "sysroots/target"),
+           "declared toolchain fields should resolve into the manifest model");
+    expect(loaded.manifest->findToolchain(target) == &toolchain &&
+               loaded.manifest->findToolchain(
+                   lang::TargetInfo{.os = "nosuchos",
+                                    .vendor = "nosuchvendor",
+                                    .arch = "nosucharch"}) == nullptr,
+           "toolchain lookup should select by normalized OS, vendor, and "
+           "architecture");
+  }
+
+  // A cross build resolves the declared toolchain into the plan, the native
+  // target policy, and the model identity.
+  const lang::driver::ProjectResolutionResult cross =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", target, {}, std::nullopt, {},
+          lang::driver::RuntimeProfile::Hosted,
+          lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget));
+  expect(cross.succeeded(),
+         "a non-host build with a declared toolchain should resolve");
+  if (cross.plan) {
+    const lang::driver::ProjectBuildPlan &plan = *cross.plan;
+    expect(plan.toolchain().declared() &&
+               plan.toolchain().cxx == "target-c++" &&
+               plan.toolchain().cc == "target-cc",
+           "the declared compilers should reach the build plan");
+    expect(plan.nativeInputs().targetPolicy.triple == "vendor-native-triple" &&
+               plan.nativeInputs().targetPolicy.sysroot ==
+                   std::filesystem::canonical(root / "sysroots/target"),
+           "the declared native target and sysroot should reach the native "
+           "target policy");
+    expect(plan.output().parent_path().filename() == triple,
+           "cross artifacts should publish under the selected triple");
+    const std::string identity = plan.projectModelIdentity();
+    expect(identity.find("target:" + triple) != std::string::npos &&
+               identity.find("toolchain:" + triple + "|cxx=target-c++") !=
+                   std::string::npos &&
+               identity.find("|sysroot=sysroots/target") != std::string::npos &&
+               identity.find("|native-target=vendor-native-triple") !=
+                   std::string::npos,
+           "the selected target and its toolchain should participate in the "
+           "project model identity");
+  }
+
+  // The host build of the same package keeps working unchanged, and cannot
+  // share a model identity with the cross build.
+  const lang::driver::ProjectResolutionResult host =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted,
+          lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget));
+  expect(host.succeeded() && host.plan && !host.plan->toolchain().declared() &&
+             host.plan->nativeInputs().targetPolicy.empty(),
+         "a host build needs no declared toolchain and emits no cross policy");
+  if (host.plan && cross.plan) {
+    expect(host.plan->projectModelIdentity() !=
+               cross.plan->projectModelIdentity(),
+           "a host build and a cross build must not share a cache identity");
+  }
+
+  // A manifest key spelled differently but normalizing to the same target
+  // still selects the entry, so a second spelling table cannot appear.
+  {
+    TemporaryDirectory alternate;
+    expect(writeFile(alternate.root() / "src/main.gti",
+                     "int main() { return 0; }\n"),
+           "the alternate-spelling source should be writable");
+    const lang::TargetTripleParseResult spelled =
+        lang::parseTargetTripleResult("aarch64-apple-darwin");
+    expect(writeFile(alternate.root() / "gti.toml",
+                     validManifest() + "\n[toolchains.aarch64-apple-darwin]\n"
+                                       "cxx = \"aarch64-apple-c++\"\n"),
+           "the alternate-spelling manifest should be writable");
+    const lang::driver::ManifestLoadResult alternateLoad =
+        lang::driver::loadProjectManifest(alternate.root() / "gti.toml");
+    expect(alternateLoad.succeeded() && alternateLoad.manifest &&
+               spelled.succeeded() &&
+               alternateLoad.manifest->findToolchain(*spelled.target) !=
+                   nullptr,
+           "a toolchain key should be matched through the normalized target "
+           "vocabulary, not by literal spelling");
+  }
+}
+
+void testCrossToolchainFailClosed() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  const lang::TargetInfo target = nonHostTarget();
+  const std::string triple = lang::driver::targetTriple(target);
+  expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n"),
+         "the fail-closed project source should be writable");
+  expect(writeFile(root / "gti.toml", validManifest()),
+         "the fail-closed manifest should be writable");
+
+  const lang::driver::ProjectResolutionResult missing =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", target, {}, std::nullopt, {},
+          lang::driver::RuntimeProfile::Hosted,
+          lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget));
+  expect(!missing.succeeded() &&
+             findDiagnostic(missing.diagnostics, "GTI-B1904") != nullptr,
+         "a non-host build with no declared toolchain must fail closed rather "
+         "than silently reuse host tools");
+  if (const lang::Diagnostic *diagnostic =
+          findDiagnostic(missing.diagnostics, "GTI-B1904")) {
+    expect(diagnostic->message.find("[toolchains." + triple + "]") !=
+               std::string::npos,
+           "the fail-closed diagnostic should name the missing table");
+  }
+
+  // The library contract is unchanged: a caller that supplies its own
+  // toolchain, and `gti check`, analyze any supported target.
+  const lang::driver::ProjectResolutionResult analysis =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", target, {}, std::nullopt, {},
+          lang::driver::RuntimeProfile::Hosted,
+          lang::driver::ToolchainSelectionPolicy::HostTools));
+  expect(analysis.succeeded() && analysis.plan &&
+             !analysis.plan->toolchain().declared(),
+         "host-tools resolution should analyze a non-host target without a "
+         "declared toolchain");
+
+  // Tests and whole-package builds fail closed on the same rule.
+  const lang::driver::ProjectTargetSetResolutionResult all =
+      lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", target, {}, std::nullopt, {},
+          lang::driver::RuntimeProfile::Hosted,
+          lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget));
+  expect(!all.succeeded() &&
+             findDiagnostic(all.diagnostics, "GTI-B1904") != nullptr,
+         "building every target for a non-host triple must fail closed too");
+
+  // A declared toolchain without `cc` cannot build declared C sources.
+  {
+    TemporaryDirectory cPackage;
+    expect(
+        writeFile(cPackage.root() / "src/main.gti",
+                  "int main() { return 0; }\n") &&
+            writeFile(cPackage.root() / "native/support.c", "int gti(void);\n"),
+        "the C-source fixture should be writable");
+    expect(
+        writeFile(cPackage.root() / "gti.toml",
+                  validManifest() +
+                      "\n[package.native]\nc-sources = [\"native/support.c\"]\n"
+                      "\n[toolchains." +
+                      triple + "]\ncxx = \"target-c++\"\n"),
+        "the cc-less cross manifest should be writable");
+    const lang::driver::ProjectResolutionResult withoutCc =
+        lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+            cPackage.root(), std::nullopt, "dev", target, {}, std::nullopt, {},
+            lang::driver::RuntimeProfile::Hosted,
+            lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget));
+    expect(!withoutCc.succeeded() &&
+               findDiagnostic(withoutCc.diagnostics, "GTI-B1905") != nullptr,
+           "a declared toolchain with no 'cc' must reject a build that "
+           "compiles native C sources");
+  }
+}
+
+void testCrossToolchainManifestDiagnostics() {
+  const auto loadWith = [](std::string_view toolchains,
+                           const std::filesystem::path &root) {
+    writeFile(root / "src" / "main.gti", "int main() { return 0; }\n");
+    writeFile(root / "gti.toml", validManifest() + std::string(toolchains));
+    return lang::driver::loadProjectManifest(root / "gti.toml");
+  };
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.definitely-not-a-triple]\ncxx = \"c++\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1900") != nullptr,
+           "a toolchain key that is not a supported triple should be "
+           "rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.aarch64-apple-darwin]\ncxx = \"a\"\n"
+                 "\n[toolchains.arm64-apple-macos]\ncxx = \"b\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1901") != nullptr,
+           "two keys normalizing to one target should be rejected rather "
+           "than silently ordered");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.x86_64-unknown-linux-gnu]\ncc = \"cc\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1902") != nullptr,
+           "a toolchain table without 'cxx' should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.x86_64-unknown-linux-gnu]\ncxx = \"-flto\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1902") != nullptr,
+           "a toolchain compiler spelled as an option should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.x86_64-unknown-linux-gnu]\ncxx = \"c++\"\n"
+                 "sysroot = \"../outside\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1903") != nullptr,
+           "a relative sysroot escaping the package should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.x86_64-unknown-linux-gnu]\ncxx = \"c++\"\n"
+                 "sysroot = \"sysroots/missing\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1903") != nullptr,
+           "a sysroot that names no existing directory should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[toolchains.x86_64-unknown-linux-gnu]\ncxx = \"c++\"\n"
+                 "linker = \"ld\"\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1001") != nullptr,
+           "an unknown toolchain field should be rejected by the shared "
+           "field validator");
+  }
+  {
+    // Written without the profile suffix so the scalar stays top-level.
+    TemporaryDirectory temporary;
+    writeFile(temporary.root() / "src" / "main.gti",
+              "int main() { return 0; }\n");
+    writeFile(temporary.root() / "gti.toml",
+              "manifest-version = 1\ntoolchains = \"host\"\n\n[package]\n"
+              "name = \"engine_tools\"\nversion = \"0.1.0\"\n");
+    const lang::driver::ManifestLoadResult loaded =
+        lang::driver::loadProjectManifest(temporary.root() / "gti.toml");
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1004") != nullptr,
+           "a non-table 'toolchains' value should be rejected");
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -2461,6 +2757,9 @@ int main() {
   testBindgenImportManifestDiagnostics();
   testBindgenImportPolicyManifest();
   testBindgenImportPolicyDiagnostics();
+  testCrossToolchainManifest();
+  testCrossToolchainFailClosed();
+  testCrossToolchainManifestDiagnostics();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

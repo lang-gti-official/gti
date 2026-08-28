@@ -112,7 +112,13 @@ def main():
         )
         assert "Build report" in reported.stdout and str(build_report) in reported.stdout
         sidecar = json.loads(build_report.read_text(encoding="utf-8"))
-        assert sidecar["schema"] == 1
+        assert sidecar["schema"] == 2
+        # A direct compilation has no project selection to record, and the
+        # produced executable's identity is part of the record.
+        assert sidecar["project"] is None
+        assert sidecar["artifact"]["sha256"] == hashlib.sha256(
+            reported_executable.read_bytes()
+        ).hexdigest()
         producer = sidecar["producer"]
         producer_file = producer["executable"]
         assert pathlib.Path(producer_file["canonical_path"]) == gti_executable

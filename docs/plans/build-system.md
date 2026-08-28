@@ -57,8 +57,14 @@ loaded source graph before moving frontend inputs and its actual runtime/header
 closure from a depfile emitted by the real generated-C++ native invocation;
 the CLI atomically serializes the typed result after collision checks. The
 record includes exact native argv, runtime archive, producer/native compiler
-hashes, and the compiler's build-time commit plus clean/dirty/unavailable state.
-Project-mode exposure remains outside the completed slice.
+hashes, the produced artifact's content identity, and the compiler's build-time
+commit plus clean/dirty/unavailable state. `gti build --build-report` now
+records the same sidecar with the resolved package, target, profile, selected
+target triple, and project model identity, and `gti verify --build-report
+<path>` rebuilds a recorded project build for the target the record names and
+reports every recorded identity the tree no longer reproduces. See
+[`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md)
+for exactly what that verification proves and does not prove.
 
 Manifest schema version 1 also accepts `[workspace].members`, optional
 `[package].source-root`, and source-only `[dependencies]` path tables.
@@ -81,13 +87,15 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 and writes artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
 package-qualified workspace layout above), with verified-payload whole-program
-cache entries beneath `build/gti/cache/v2/`. Declared native C/C++ sources,
-declared include directories, and content-complete exact link files now join
-cache identity through native dependency discovery; opaque native argument
-vectors, name-resolved libraries/frameworks, native library search
-directories, non-content-complete link inputs, and dependency-injecting
-native environment search paths still bypass the cache until their exact
-inputs can be identified. `gti build --all [--jobs <count>]` builds every
+cache entries beneath `build/gti/cache/v2/`. Declared native C/C++ sources
+(including a dependency group's), declared include and library search
+directories, content-complete exact link files, and `-l` names resolving to
+exactly one content-complete file inside a declared search directory now join
+cache identity through native dependency discovery and full-tree identity;
+opaque native argument vectors, frameworks, unresolved or ambiguous `-l`
+names, non-content-complete link inputs, and dependency-injecting native
+environment search paths still bypass the cache until their exact inputs can
+be identified. `gti build --all [--jobs <count>]` builds every
 declared target through bounded concurrent child builds with deterministic
 name-ordered output and byte-identical serial/parallel artifacts. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
@@ -144,9 +152,9 @@ compiled with a separately resolved C compiler; declared `.cpp`, `.cc`, and
 become managed link objects. Structured paths are validated within the package;
 exact argument arrays use the documented trusted escape-hatch policy. Eligible
 project build/run/test requests use the whole-program cache unless `--no-cache`
-is selected; declared native sources, native search directories, opaque native
-argument vectors, native link operands, and name-resolved
-libraries/frameworks bypass it.
+is selected; opaque native argument vectors, frameworks, and `-l` names that
+do not resolve to exactly one content-complete file inside a declared search
+directory bypass it.
 
 Pinned git dependencies are implemented:
 `alias = { git = "<url>", rev = "<full 40-hex commit>" }` is the only accepted
@@ -158,11 +166,11 @@ checksums and locked package identity before source loading. `--offline` and
 missing checkout. Branch/tag selectors and registry ranges remain rejected.
 Package-level native inputs on a dependency are rejected until native
 dependency composition is defined.
-is selected; declared native sources, include directories, and
-content-complete exact link files join cache identity through native
-dependency discovery, while opaque native argument vectors, native search
-directories, name-resolved libraries/frameworks, and other link operands
-still bypass it. Git/registry dependency declarations and fetch
+is selected; declared native sources, include and library search
+directories, content-complete exact link files, and resolvable `-l` names
+join cache identity through native dependency discovery and full-tree
+identity, while opaque native argument vectors, frameworks, unresolved or
+ambiguous `-l` names, and non-content-complete link inputs still bypass it. Git/registry dependency declarations and fetch
 options are not implemented and are rejected. A `gti.lock` file is not yet
 consumed or authoritative; its presence has no effect. Package-level native
 inputs on a dependency compose into every dependent build as isolated
@@ -177,8 +185,11 @@ declared native sources — never to the root package's sources, another
 package's sources, or the generated whole-program translation unit — and link
 operands append in deterministic dependents-before-dependencies order.
 Dependency target-scope native tables do not compose; they apply only when
-that package builds directly. Plans carrying dependency native groups bypass
-the whole-program cache until dependency discovery covers group sources.
+that package builds directly. A composed group joins whole-program cache
+identity on the same terms as the selected package's own native inputs: its
+sources reach the same preprocessor discovery probe under the group's own
+include scope and macros, and its search directories and link operands reach
+the same tree identity and link-input classification.
 
 ## Decision Summary
 
@@ -526,6 +537,7 @@ gti run ...                     project build-and-run mode
 gti new <path> ...              new executable package scaffolding
 gti init [path] ...             existing-directory package scaffolding
 gti test ...                    project test mode
+gti verify ...                  recorded-provenance verification mode
 gti clean ...                   project cleanup mode
 gti fetch ...                   dependency acquisition mode
 gti metadata ...                machine-readable project description
@@ -844,11 +856,14 @@ is defined as: any declared source or discovered dependency spelling
 `__DATE__`, `__TIME__`, or `__TIMESTAMP__` bypasses the cache. Declared
 include directories join the key as full sorted content trees, and exact link
 files/file operands join with content identity when their magic classifies
-them as content-complete regular archives or relocatable objects. Thin
-archives, linker scripts, shared libraries, unrecognized link-input formats,
-name-resolved libraries/frameworks, native library search directories, and
-opaque argument vectors still bypass, because a name or script resolves to
-files the driver has not identified exactly. Narrowing a bypass must always
+them as content-complete regular archives or relocatable objects. Declared
+library search directories join as the same full sorted content trees, and a
+`-l` name joins when searching those directories in link order finds exactly
+one modeled candidate whose classification is content-complete. Thin archives,
+linker scripts, shared libraries, unrecognized link-input formats, frameworks,
+`-l` names resolving outside the declared directories or ambiguously within
+one, and opaque argument vectors still bypass, because a name or script
+resolves to files the driver has not identified exactly. Narrowing a bypass must always
 come from establishing exact identity, never from widening what the key
 trusts.
 
@@ -1280,8 +1295,10 @@ Acceptance criteria:
   object code and final links end-to-end, including transitive chains;
 - **Passed:** unselected platform fragments compose nothing and reject
   nothing;
-- **Passed:** plans with dependency native groups bypass the whole-program
-  cache with an explicit reason rather than risking a stale hit.
+- **Passed:** plans with dependency native groups join the whole-program
+  cache through the group's own preprocessor discovery, and a change to a
+  group-discovered header changes the key rather than restoring a stale
+  executable.
 
 ### Milestone 7: Git resolution and lockfile
 
@@ -1313,6 +1330,53 @@ Acceptance criteria:
   extracted blob-by-blob from a bare database (no checkout, hooks, filters,
   or submodules), and symbolic links, gitlinks, unsafe paths, and
   case-folded collisions reject the tree.
+
+### Post-Milestone 7 addition: declared cross-compilation toolchains
+
+Status: complete for the declared-toolchain scope; a per-target GTI runtime
+archive and a `gti run`/`gti test` runner concept remain out of scope.
+
+Cross-target builds were listed above as a case the direct driver cannot
+express. Project mode now expresses it.
+
+- **Complete:** `--target <triple>` on `build`, `check`, `run`, and `test`,
+  parsed with the compiler's own `parseTargetTripleResult` so project mode
+  and `gti bindgen` share one spelling vocabulary. Omitting it selects the
+  host, and `gti build --all` forwards the selection to each child build.
+- **Complete:** a `[toolchains.<triple>]` manifest table declaring `cxx`,
+  optional `cc`, optional `sysroot`, and an optional `native-target` native
+  triple spelling. Keys normalize through the target vocabulary, duplicates
+  that select one target are rejected, and entries sort by declared spelling
+  for deterministic identity.
+- **Complete:** the resolved sysroot and native triple become one
+  driver-owned target policy emitted as `--sysroot=`/`--target=` on the
+  whole-program link, on every declared C and C++ object compile, and on the
+  cache's dependency-discovery probes. These are exactly the options every
+  user-supplied native argument vector rejects, so the driver is their only
+  source.
+- **Complete:** the selected triple and resolved toolchain join the project
+  model identity, and the target policy joins the whole-program cache key.
+- The GTI runtime archive and runtime headers are still discovered once for
+  the host toolchain. Supplying a runtime built for the selected target uses
+  the existing `GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE` overrides; a
+  per-target manifest field waits for that need to be demonstrated together
+  with a cross-built runtime.
+
+Acceptance criteria:
+
+- **Passed:** an unchanged manifest still builds for the host, and a host
+  build carries no cross policy;
+- **Passed:** a `build`, `run`, or `test` for a target that is not the build
+  host, with no matching `[toolchains.<triple>]`, fails with `GTI-B1904`
+  naming the missing table instead of reusing host tools;
+- **Passed:** `gti check` analyzes any supported target without a declared
+  toolchain, because it compiles nothing native;
+- **Passed:** `gti run` and `gti test` refuse a non-host `--target` rather
+  than building a program this machine cannot execute;
+- **Passed:** a declared toolchain without `cc` rejects a build that compiles
+  native C sources rather than reaching for host `cc`;
+- **Passed:** a host plan and a cross plan of one package never share a
+  project model identity.
 
 ## Testing Strategy
 
