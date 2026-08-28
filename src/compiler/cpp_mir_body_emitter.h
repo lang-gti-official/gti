@@ -456,13 +456,13 @@ std::optional<std::vector<CppMirCopyParameterFieldBinding>>
 cppMirCopyParameterFieldBindings(const MirProgram &program,
                                  const MirConstructorInstance &constructor);
 
-// An explicit class-typed field initializer whose single argument is one exact
-// ordinary `Construct` of the field's own type from copy-loads of this
-// constructor's scalar parameters. C++17 guaranteed elision makes
-// `field(Type(parameter...))` in the native member-initializer list the exact
-// representation of MIR's construct-then-publish schedule: the field is
-// constructed once, in place, with no intermediate object and no invented copy
-// or move.
+// An explicit class-typed field initializer whose value is one exact ordinary
+// `Construct` of the field's own type from copy-loads of this constructor's
+// scalar parameters or exact source scalar literals. C++17
+// guaranteed elision makes `field(Type(argument...))` in the native
+// member-initializer list the exact representation of MIR's
+// construct-then-publish schedule: the field is constructed once, in place,
+// with no intermediate object and no invented copy or move.
 //
 // The proof is deliberately whole-constructor. Because C++ initializes members
 // in declaration order, one hoisted initializer could otherwise be reordered
@@ -477,12 +477,18 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 // `Value` obligation, its `Reparent` into the field's `ConstructionRollback`
 // obligation, and one unconditional transfer-out at normal completion. Every
 // other initializer-expression shape stays in the MIR body schedule.
+struct CppMirConstructedFieldInitializerArgument {
+  SemanticType type = SemanticType::Unknown;
+  std::optional<std::size_t> parameter;
+  std::optional<Literal> literal;
+};
+
 struct CppMirConstructedFieldInitializerBinding {
   std::size_t initializer = 0;
   SymbolId field = 0;
   SemanticType fieldType = SemanticType::Unknown;
   HirConstructorInstanceId constructor = 0;
-  std::vector<std::size_t> parameters;
+  std::vector<CppMirConstructedFieldInitializerArgument> arguments;
   MirValueId constructedValue = 0;
   MirInstructionId constructInstruction = 0;
   std::vector<MirInstructionId> argumentInstructions;

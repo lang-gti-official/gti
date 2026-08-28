@@ -3428,6 +3428,7 @@ private:
       call.callSite = value.id;
     }
     std::optional<MirOperand> sourceReceiver;
+    std::optional<HirValueId> sourceReceiverValue;
     std::vector<MirOperand> sourceArguments;
     std::vector<MirDropObligationId> preparedParameterDrops;
     std::vector<MirLoanId> temporaryArgumentLoans;
@@ -3437,6 +3438,7 @@ private:
     if (value.callPlan) {
       if (value.callPlan->receiver) {
         const HirCallReceiver &receiver = *value.callPlan->receiver;
+        sourceReceiverValue = receiver.value;
         const AccessMode access =
             receiver.kind == HirCallInputKind::MutableBorrow ||
                     receiver.kind == HirCallInputKind::MutableTemporaryBorrow
@@ -3459,6 +3461,7 @@ private:
       }
     } else if (const std::optional<HirValueId> receiver =
                    receiverValue(value)) {
+      sourceReceiverValue = *receiver;
       const AccessMode access = receiverAccess(value);
       const HirValue *receiverSource = findValue(*receiver);
       const bool expectedTemporaryExtraction =
@@ -3874,6 +3877,9 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
       removeLoanFromState(*loan, scopes, bindingLoans);
+    }
+    if (sourceReceiverValue) {
+      endConsumedCallResultLoans({*sourceReceiverValue}, value);
     }
   }
 
@@ -4372,6 +4378,18 @@ private:
         const MirLoan &candidate = output.loans[loan - 1];
         if (candidate.kind != MirLoanKind::CallResult ||
             !candidate.carriers.empty() || candidate.escapes) {
+          break;
+        }
+        const bool hasActiveChild = std::any_of(
+            output.loans.begin(), output.loans.end(),
+            [&](const MirLoan &other) {
+              return other.parent == loan && loanIsActive(scopes, other.id);
+            });
+        if (hasActiveChild) {
+          // `loanForValue` can name an inner expression's origin while a
+          // later call-result reborrow is the receiver actually consumed by
+          // this call. Leave that parent to the selected full-expression
+          // endpoint; ending it here would violate child-before-parent order.
           break;
         }
         const MirLoanId parent = candidate.parent;
