@@ -515,14 +515,18 @@ unchanged.
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
 content-addressed whole-program cache by default. Declared native C and C++
-sources, declared native include directories, and content-complete exact link
-files (regular non-thin archives and relocatable objects) participate in cache
-identity exactly and no longer force a bypass. The remaining conservative
-bypasses are opaque native argument vectors, name-resolved libraries and
-frameworks, native library search directories, link inputs that are not
-content-complete (thin archives, linker scripts, shared libraries, and
-unrecognized formats), dependency-injecting native environment search paths,
-and any input whose exact identity cannot be established. Direct
+sources, declared native include directories, declared native library search
+directories, content-complete exact link files (regular non-thin archives and
+relocatable objects), and `-l` names that resolve to exactly one
+content-complete file inside a declared search directory participate in cache
+identity exactly and no longer force a bypass. A dependency package's composed
+native group participates on the same terms as the selected package's own
+native inputs. The remaining conservative bypasses are opaque native argument
+vectors, name-resolved frameworks, `-l` names that do not resolve inside the
+declared search directories or resolve ambiguously within one, link inputs
+that are not content-complete (thin archives, linker scripts, shared
+libraries, and unrecognized formats), dependency-injecting native environment
+search paths, and any input whose exact identity cannot be established. Direct
 `gti source.gti` mode and `gti check` remain uncached. `--no-cache` disables
 both lookup and publication for one project build/run/test command; under
 `--verbose`, the CLI reports the cache identity and whether the request hit,
@@ -552,6 +556,20 @@ The current key includes:
 - declared native include directories as full sorted tree identities, so
   adding, removing, or editing any file below a declared include root changes
   the key and header shadowing cannot restore a stale executable;
+- declared native library search directories as the same full sorted tree
+  identities, so any file appearing, changing, or disappearing below a
+  declared `-L` root changes the key and a dropped file cannot shadow an
+  implicitly resolved library behind a stale entry;
+- for every `-l<name>` operand, the concrete file it resolves to: the driver
+  searches the declared library directories in the exact order the link
+  command emits them, and joins the resolved file's path and content identity;
+- for every composed dependency native group, in composed order: the
+  contributing package identity, its include and library search directories as
+  full tree identities, its validated exact `-D`/`-U` macro spellings, its
+  selected C standard, its declared C/C++ sources with the same native
+  dependency discovery probe applied under the group's own include scope and
+  macros, and its ordered link operands under the same content-complete and
+  name-resolution rules;
 - for every declared C or C++ source, a native dependency discovery probe: the
   driver runs the exact object-compile argument vector with `-E -MD -MF`,
   consumes the compiler's own make-style dependency report for the exact
@@ -604,21 +622,53 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
+Three narrowings hold by an exact-identity argument, stated here because each
+one moved an input out of the bypass list.
+
+- A declared native library search directory is exact for the same reason a
+  declared include directory is: its full sorted tree identity records every
+  file below it, so any file that could answer a name — the project's own or
+  one the toolchain resolves implicitly — is part of the key before the linker
+  ever sees it.
+- A `-l<name>` operand is exact when the driver searches the declared
+  directories in the order the link command emits them and finds exactly one
+  modeled candidate: a declared `-L` directory precedes every implicit
+  toolchain directory on the command line, so the first declared directory
+  holding a candidate is the directory the linker selects from, and that
+  file's own content identity then joins the key. Resolution deliberately
+  refuses more than it accepts. A directory holding two modeled candidates, or
+  any `lib<name>.*` spelling outside the modeled set, is ambiguous rather than
+  guessed; a name with no candidate in any declared directory would resolve
+  through implicit system directories and bypasses; a `-l:file` exact-name
+  selection or a path-bearing spelling means different things to different
+  linkers and is never resolved; a search directory that cannot be enumerated
+  bypasses rather than being reported as empty. A resolved file still passes
+  the content-complete classification, so a name answering with a shared
+  library or stub bypasses exactly as an explicit one does.
+- A dependency native group is exact because composition already restricts it
+  to inputs the driver can identify: package resolution rejects a dependency's
+  linker and raw argument vectors outright and admits only exact `-D`/`-U`
+  macro spellings, so a group carries declared sources, its own include and
+  library directories, and ordered link operands — every one of which reaches
+  the same discovery probe, tree identity, and link-input classification the
+  selected package's inputs reach. The probe repeats the group's own include
+  scope and macros, which is exactly what its object compile uses.
+
 The remaining bypasses are exact-identity boundaries, not native-source
 boundaries. Opaque `c-compile-args`, `compile-args`, `link-args`, and
 `raw-args` bypass because options such as `-include` and linker scripts can
 introduce undeclared inputs outside the probed translation units and the final
-generated-C++ link. Named libraries/frameworks, non-file ordered link
-operands, and native library search directories bypass because the driver
-does not model the linker's search algorithm and must not guess which file a
-name would resolve to. A link file that is not a content-complete regular
-archive or relocatable object (thin archives, linker scripts, shared
-libraries, unrecognized formats) bypasses because its bytes do not determine
-its full contribution to the link. Non-empty compiler/SDK/include/library
-search environment variables likewise bypass: hashing `CPATH=/path`, for
-example, does not identify a transitive or subsequently mutated header below
-that path. Narrowing any of these requires establishing exact identity first;
-widening what the key trusts is never an acceptable way to obtain a hit.
+generated-C++ link. Named frameworks bypass because a framework resolves
+through undeclared `-F` and system framework roots to a bundle whose binary,
+headers, and re-exported dependencies no declared path determines. A link file
+that is not a content-complete regular archive or relocatable object (thin
+archives, linker scripts, shared libraries, unrecognized formats) bypasses
+because its bytes do not determine its full contribution to the link.
+Non-empty compiler/SDK/include/library search environment variables likewise
+bypass: hashing `CPATH=/path`, for example, does not identify a transitive or
+subsequently mutated header below that path. Narrowing any of these requires
+establishing exact identity first; widening what the key trusts is never an
+acceptable way to obtain a hit.
 
 Cacheable builds still consume implicit C++ standard-library and platform SDK
 headers/libraries selected by the native compiler. The bounded toolchain
@@ -663,9 +713,7 @@ The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
 Git dependencies support pinned full revisions only; registry ranges, branch
 or tag selectors, replacement/override authority, arbitrary native build
-scripts, and a package registry are not implemented. Dependency native groups
-are composed into builds, but plans containing them bypass the whole-program
-cache until dependency discovery covers their source and link inputs.
+scripts, and a package registry are not implemented.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

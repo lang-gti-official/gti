@@ -1713,6 +1713,158 @@ def main():
         link_file_second = cache_native_build()
         assert "gti: cache hit " in link_file_second.stderr
 
+        # --- Name-resolved libraries and library search directories ---
+        # A declared -L directory precedes every implicit toolchain directory
+        # on the link line, so the first declared directory holding exactly
+        # one modeled candidate is the file the linker selects. That file's
+        # content, and the full tree identity of every declared search
+        # directory, join the key.
+        cache_ar = shutil.which("ar")
+        if cache_ar is None:
+            raise AssertionError("native cache tests require ar on PATH")
+        resolved_archive = cache_native / "native/lib/libextra.a"
+        # Archives are staged outside the declared search directory so
+        # installing one is a byte-exact copy: `ar` records member timestamps,
+        # so rebuilding would change content that the key correctly tracks.
+        archive_stage = cache_native / "native/archives"
+        archive_stage.mkdir(parents=True, exist_ok=True)
+
+        def stage_resolved_archive(bias):
+            variant = archive_stage / f"bias{bias}.c"
+            variant.write_text(
+                "int native_add(int left, int right) {\n"
+                f"  return left + right + {bias};\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            variant_object = archive_stage / f"bias{bias}.o"
+            run([cache_cc, "-c", str(variant), "-o", str(variant_object)])
+            archive = archive_stage / f"libextra{bias}.a"
+            if archive.exists():
+                archive.unlink()
+            run([cache_ar, "rcs", str(archive), str(variant_object)])
+            return archive
+
+        unbiased_archive = stage_resolved_archive(0)
+        biased_archive = stage_resolved_archive(1)
+
+        def install_resolved_archive(archive):
+            shutil.copyfile(archive, resolved_archive)
+
+        install_resolved_archive(unbiased_archive)
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra"]',
+            ]
+        )
+        resolved_first = cache_native_build()
+        assert "gti: cache miss " in resolved_first.stderr
+        resolved_key = cache_key(resolved_first)
+        resolved_second = cache_native_build()
+        assert "gti: cache hit " in resolved_second.stderr
+        assert cache_key(resolved_second) == resolved_key
+        run([gti, "run"], cwd=cache_native)
+
+        # Staleness safety: the resolved archive's content is part of the key,
+        # so replacing it forces a rebuild that observes the new behavior.
+        install_resolved_archive(biased_archive)
+        restaled = cache_native_build()
+        assert "gti: cache miss " in restaled.stderr
+        assert cache_key(restaled) != resolved_key
+        run([gti, "run"], expected=1, cwd=cache_native)
+        install_resolved_archive(unbiased_archive)
+        rerestored = cache_native_build()
+        assert "gti: cache hit " in rerestored.stderr
+        assert cache_key(rerestored) == resolved_key
+        run([gti, "run"], cwd=cache_native)
+
+        # A name with no candidate in any declared directory would resolve
+        # through the linker's implicit system directories, which the driver
+        # does not model.
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra", "m"]',
+            ]
+        )
+        unresolved_bypass = cache_native_build()
+        assert "gti: cache bypassed" in unresolved_bypass.stderr
+        assert (
+            "native library '-lm' does not resolve inside the declared "
+            "native library search directories"
+        ) in unresolved_bypass.stderr
+
+        # Two modeled candidates in one directory: which file the linker
+        # prefers is a guess, so resolution refuses rather than guessing.
+        resolved_dynamic = cache_native / (
+            "native/lib/libextra."
+            + ("dylib" if sys.platform == "darwin" else "so")
+        )
+        run(
+            [
+                cache_cc,
+                "-shared",
+                "-fPIC",
+                str(cache_native / "native/support.c"),
+                "-I",
+                str(cache_native / "native/include"),
+                "-o",
+                str(resolved_dynamic),
+            ]
+        )
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'library-dirs = ["native/lib"]',
+                'libraries = ["extra"]',
+            ]
+        )
+        ambiguous_bypass = cache_native_build()
+        assert "gti: cache bypassed" in ambiguous_bypass.stderr
+        assert "resolves ambiguously" in ambiguous_bypass.stderr
+
+        # An unambiguous resolution to a file whose bytes do not determine its
+        # contribution to the link still bypasses.
+        resolved_archive.unlink()
+        resolved_dynamic_bypass = cache_native_build()
+        assert "gti: cache bypassed" in resolved_dynamic_bypass.stderr
+        assert (
+            "not a content-complete archive or object"
+            in resolved_dynamic_bypass.stderr
+        )
+
+        # A spelling the driver does not model must make resolution ambiguous
+        # rather than invisible.
+        resolved_dynamic.unlink()
+        install_resolved_archive(unbiased_archive)
+        unmodelled = cache_native / "native/lib/libextra.la"
+        unmodelled.write_text("# libtool archive\n", encoding="utf-8")
+        unmodelled_bypass = cache_native_build()
+        assert "gti: cache bypassed" in unmodelled_bypass.stderr
+        assert "resolves ambiguously" in unmodelled_bypass.stderr
+        unmodelled.unlink()
+
+        if sys.platform == "darwin":
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'library-dirs = ["native/lib"]',
+                    'libraries = ["extra"]',
+                    'frameworks = ["CoreFoundation"]',
+                ]
+            )
+            framework_bypass = cache_native_build()
+            assert "gti: cache bypassed" in framework_bypass.stderr
+            assert (
+                "name-resolved frameworks require framework search resolution"
+                in framework_bypass.stderr
+            )
+
+        resolved_archive.unlink()
+
         # Every remaining bypass reason is reported explicitly.
         shared_library = cache_native / (
             "native/lib/libextra_shared."
@@ -1753,6 +1905,8 @@ def main():
         assert "gti: cache bypassed" in opaque_bypass.stderr
         assert "opaque native argument vectors" in opaque_bypass.stderr
 
+        # Without any declared search directory a named library can only come
+        # from the linker's implicit directories.
         cache_native_manifest(
             [
                 'include-dirs = ["native/include"]',
@@ -1762,8 +1916,14 @@ def main():
         )
         named_bypass = cache_native_build()
         assert "gti: cache bypassed" in named_bypass.stderr
-        assert "name-resolved libraries and frameworks" in named_bypass.stderr
+        assert (
+            "native library '-lm' does not resolve inside the declared "
+            "native library search directories"
+        ) in named_bypass.stderr
 
+        # A declared library search directory joins as a full tree identity,
+        # so it participates instead of bypassing, and any file added below it
+        # changes the key.
         cache_native_manifest(
             [
                 'include-dirs = ["native/include"]',
@@ -1771,9 +1931,23 @@ def main():
                 'library-dirs = ["native/lib"]',
             ]
         )
-        library_dir_bypass = cache_native_build()
-        assert "gti: cache bypassed" in library_dir_bypass.stderr
-        assert "library search directories" in library_dir_bypass.stderr
+        library_dir_first = cache_native_build()
+        assert "gti: cache miss " in library_dir_first.stderr
+        library_dir_key = cache_key(library_dir_first)
+        library_dir_second = cache_native_build()
+        assert "gti: cache hit " in library_dir_second.stderr
+        assert cache_key(library_dir_second) == library_dir_key
+        # Any file appearing below a declared search directory changes the
+        # key, which is what makes the directory exact: a file dropped there
+        # could otherwise shadow a library the toolchain resolves implicitly.
+        added_library_file = cache_native / "native/lib/added.txt"
+        added_library_file.write_text("added", encoding="utf-8")
+        library_dir_shadowed = cache_native_build()
+        assert cache_key(library_dir_shadowed) != library_dir_key
+        added_library_file.unlink()
+        library_dir_restored = cache_native_build()
+        assert "gti: cache hit " in library_dir_restored.stderr
+        assert cache_key(library_dir_restored) == library_dir_key
 
         cache_native_manifest(
             [
@@ -1832,6 +2006,138 @@ def main():
         assert "ignored corrupt build cache entry" in malformed_metadata.stderr
         assert "gti: cache recovered " in malformed_metadata.stderr
         assert "gti: cache hit " in cache_native_build().stderr
+
+        # --- Dependency native groups in the whole-program cache ---
+        # A dependency composes only its own include directories, validated
+        # exact -D/-U macro definitions, and declared sources, so the same
+        # preprocessor discovery that makes the selected package's native
+        # sources exact applies unchanged to a group's.
+        dep_native = root / "cache-dependency-native"
+        dep_app = dep_native / "packages/app"
+        dep_lib = dep_native / "packages/nativedep"
+        (dep_native / "src").mkdir(parents=True)
+        (dep_app / "src").mkdir(parents=True)
+        (dep_lib / "src").mkdir(parents=True)
+        (dep_lib / "native/include").mkdir(parents=True)
+        (dep_native / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (dep_native / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "cache_dependency_root"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.root]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[workspace]\n"
+            'members = ["packages/nativedep", "packages/app"]\n',
+            encoding="utf-8",
+        )
+        (dep_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "app"\n'
+            'version = "1.0.0"\n\n'
+            "[dependencies]\n"
+            'nativedep = { path = "../nativedep" }\n\n'
+            "[targets.app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (dep_app / "src/main.gti").write_text(
+            "#include <nativedep/api>\n"
+            "int main() { return nativedep::scaled(21) == 42 ? 0 : 1; }\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "nativedep"\n'
+            'version = "2.0.0"\n\n'
+            "[package.native]\n"
+            'include-dirs = ["native/include"]\n'
+            'c-sources = ["native/dep.c"]\n',
+            encoding="utf-8",
+        )
+        dep_header = dep_lib / "native/include/dep.h"
+        dep_header.write_text(
+            "#define DEP_FACTOR 2\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "native/dep.c").write_text(
+            '#include "dep.h"\n'
+            "int dep_scale(int value) { return value * DEP_FACTOR; }\n",
+            encoding="utf-8",
+        )
+        (dep_lib / "src/api.gti").write_text(
+            'extern "C" {\n'
+            "int dep_scale(int value);\n"
+            "}\n\n"
+            "namespace nativedep {\n"
+            "int scaled(int value) { return dep_scale(value); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        def dep_native_build(expected=0):
+            return run(
+                [
+                    gti,
+                    "build",
+                    "--package",
+                    "app",
+                    "--verbose",
+                    "--cc",
+                    cache_cc,
+                    "--cxx",
+                    cache_cxx,
+                ],
+                expected=expected,
+                cwd=dep_native,
+            )
+
+        dep_first = dep_native_build()
+        assert "gti: cache miss " in dep_first.stderr
+        dep_key = cache_key(dep_first)
+        dep_second = dep_native_build()
+        assert "gti: cache hit " in dep_second.stderr
+        assert cache_key(dep_second) == dep_key
+        assert not any(
+            line.startswith("+ ") for line in dep_second.stderr.splitlines()
+        )
+        run([gti, "run", "--package", "app"], cwd=dep_native)
+
+        # A header discovered only through the dependency's own preprocessor
+        # probe is part of the key.
+        dep_header.write_text(
+            "#define DEP_FACTOR 3\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        dep_revised = dep_native_build()
+        assert "gti: cache miss " in dep_revised.stderr
+        assert cache_key(dep_revised) != dep_key
+        run([gti, "run", "--package", "app"], expected=1, cwd=dep_native)
+        dep_header.write_text(
+            "#define DEP_FACTOR 2\n" "int dep_scale(int value);\n",
+            encoding="utf-8",
+        )
+        dep_restored = dep_native_build()
+        assert "gti: cache hit " in dep_restored.stderr
+        assert cache_key(dep_restored) == dep_key
+
+        # A dependency's own time-and-date macro use still bypasses.
+        (dep_lib / "native/dep.c").write_text(
+            '#include "dep.h"\n'
+            "int dep_scale(int value) {\n"
+            "  return value * DEP_FACTOR + (__TIME__[0] == 0);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        dep_time_macro = dep_native_build()
+        assert "gti: cache bypassed" in dep_time_macro.stderr
+        assert "time-and-date preprocessor macros" in dep_time_macro.stderr
 
         # --- Multi-target parallel builds ---
         multi_project = root / "multi-target"
@@ -2036,10 +2342,10 @@ def main():
         composed_build = run(
             [gti, "build", "--verbose"], cwd=composed_app
         )
-        assert (
-            "dependency native inputs require compiler dependency discovery"
-            in composed_build.stderr
-        )
+        # Dependency native groups reach the same preprocessor discovery as
+        # the selected package's own sources, so a plan carrying them joins
+        # cache identity instead of bypassing.
+        assert "gti: cache miss " in composed_build.stderr
         wrapper_compile = next(
             line
             for line in composed_build.stderr.splitlines()
