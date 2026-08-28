@@ -57,8 +57,14 @@ loaded source graph before moving frontend inputs and its actual runtime/header
 closure from a depfile emitted by the real generated-C++ native invocation;
 the CLI atomically serializes the typed result after collision checks. The
 record includes exact native argv, runtime archive, producer/native compiler
-hashes, and the compiler's build-time commit plus clean/dirty/unavailable state.
-Project-mode exposure remains outside the completed slice.
+hashes, the produced artifact's content identity, and the compiler's build-time
+commit plus clean/dirty/unavailable state. `gti build --build-report` now
+records the same sidecar with the resolved package, target, profile, and
+project model identity, and `gti verify --build-report <path>` rebuilds a
+recorded project build and reports every recorded identity the tree no longer
+reproduces. See
+[`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md)
+for exactly what that verification proves and does not prove.
 
 Manifest schema version 1 also accepts `[workspace].members`, optional
 `[package].source-root`, and source-only `[dependencies]` path tables.
@@ -518,6 +524,7 @@ gti run ...                     project build-and-run mode
 gti new <path> ...              new executable package scaffolding
 gti init [path] ...             existing-directory package scaffolding
 gti test ...                    project test mode
+gti verify ...                  recorded-provenance verification mode
 gti clean ...                   project cleanup mode
 gti fetch ...                   dependency acquisition mode
 gti metadata ...                machine-readable project description

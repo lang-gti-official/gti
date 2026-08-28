@@ -856,9 +856,18 @@ def load_build_provenance(
         raise BenchmarkError(f"failed to parse GTI build report '{path}': {error}") from error
     if not isinstance(report, dict):
         raise BenchmarkError(f"GTI build report '{path}' must contain an object")
-    require_exact_keys(report, {"schema", "producer", "sources", "native"}, "GTI build report")
-    if report["schema"] != 1 or isinstance(report["schema"], bool):
-        raise BenchmarkError("GTI build report requires schema 1")
+    require_exact_keys(
+        report,
+        {"schema", "producer", "project", "sources", "native", "artifact"},
+        "GTI build report",
+    )
+    if report["schema"] != 2 or isinstance(report["schema"], bool):
+        raise BenchmarkError("GTI build report requires schema 2")
+    # Benchmarks build one entry source directly, so the record must carry no
+    # project selection; a project section here would mean the measured
+    # command was not the one this harness issued.
+    if report["project"] is not None:
+        raise BenchmarkError("GTI benchmark build report must record a direct compilation")
 
     producer = report["producer"]
     if not isinstance(producer, dict):
@@ -992,6 +1001,7 @@ def load_build_provenance(
         validate_build_file(header["material"], f"{context}.material")
     if not saw_runtime:
         raise BenchmarkError("GTI runtime provenance contains no runtime header")
+    validate_build_file(report["artifact"], "GTI built artifact")
     archive = validate_build_file(runtime["archive"], "GTI runtime archive")
     if not native_argv_contains_file(
         argv,
