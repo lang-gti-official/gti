@@ -541,15 +541,19 @@ A `MirBody` owns:
   exactly that canonical outcome set and one matching artifact assignment/site;
   an eligible detector must name exactly one producer record and preserve it
   through its `Invoke`, failure parameter, and `PropagateFailure` endpoint;
-- one bounded failure-control-flow family for a failure-capable scalar
-  `Compute`, `Load`, or `Call` that is itself a selected full-expression root,
-  plus an exact scalar selected as an indexed ordinary-call argument after at
-  least one earlier owning parameter has been prepared. The nested operation is
-  either a local `Compute`/`Load` detector or a static direct `Call` propagation
-  with no local site, nested owning-parameter transfer, or owning result. Every
-  eligible operation has no destination, loan, ownership event, reference
-  result, or active-drop result and occurs in a function or lambda body. The
-  operation is the final instruction in an `Invoke` block. Its normal
+- one bounded failure-control-flow family for every eligible failure-capable
+  scalar `Compute`, `Load`, or `Call` in a full-expression root or nested value
+  position, including an exact scalar selected as an indexed ordinary-call
+  argument after at least one earlier owning parameter has been prepared. The
+  nested operation is either a local `Compute`/`Load` detector or a static
+  direct `Call` propagation with no local site, nested owning-parameter
+  transfer, or active-drop result. A passive `Expected<scalar, E>` call result
+  is also eligible before a contextual condition conversion: its transformed
+  value out-parameter publishes only on success and carries no MIR drop to arm.
+  Every eligible operation has no destination, loan, state-changing ownership
+  event, reference result, or active-drop result and occurs in a
+  failure-control-flow body. The operation is the final instruction in an
+  `Invoke` block. Its normal
   successor has no failure state; its dedicated failure successor receives one
   body-local `MirFailureRecord` parameter, ends active loans, destroys active
   full-expression temporaries, prepared caller-owned parameters, and lexical
