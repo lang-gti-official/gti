@@ -766,11 +766,15 @@ void testStandardLibraryImports() {
 
   const std::string generated = gti_test::emitCppText(imported);
   expect(generated.find("namespace __gti_std") != std::string::npos &&
-             generated.find("class array") != std::string::npos &&
-             generated.find("std::array<T, N> values") != std::string::npos &&
-             generated.find("__gti_std::array<std::int32_t, 3>") !=
-                 std::string::npos,
-         "std::array should remain source-defined over fixed-array lowering");
+             generated.find("_array {") != std::string::npos &&
+             generated.find("std::array<std::int32_t, 3> values") !=
+                 std::string::npos &&
+             generated.find("::__gti_program::__gti_std::__gti_type_") !=
+                 std::string::npos &&
+             generated.find("template <typename T, std::uint64_t N>\n"
+                            "    class array") == std::string::npos,
+         "std::array should remain source-defined while its selected "
+         "application emits as one concrete GTI-owned class");
 
   const lang::FrontendResult distinctStandardNamespace =
       lang::Frontend().analyze(

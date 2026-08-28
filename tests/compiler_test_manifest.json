@@ -110,6 +110,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testNativeGenericCarrierClosure",
+      "suite": "declarations"
+    },
+    {
       "name": "testExactQualifiedClassSpecializations",
       "suite": "declarations"
     },

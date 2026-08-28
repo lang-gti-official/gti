@@ -2334,15 +2334,13 @@ name recognition.
 
 ### L-GEN-01: Production Generic Function System
 
-- **State/role:** in progress; systems-readiness language and standard-library
-  capability. The current implementation already owns generic declaration
-  syntax, exact type inference and explicit type arguments, inferred
-  fixed-array `uint64_t` values, bounded type packs, source concepts and
-  trailing requirements, concrete semantic reanalysis, HIR/MIR instance
-  identity, ownership/effects, and verified-MIR execution. It is not yet the
-  production boundary because several source surfaces remain intentionally
-  disconnected and generic representation still relies on native template
-  mechanics after GTI has selected the concrete instances.
+- **State/role:** done; systems-readiness language and standard-library
+  capability. GTI owns generic declaration syntax, exact type inference and
+  explicit type/value arguments, inferred fixed-array `uint64_t` values,
+  bounded type packs, declaration defaults and dependent value expressions,
+  source concepts and trailing requirements, concrete semantic reanalysis,
+  HIR/MIR/lowered instance identity, ownership/effects, verified-MIR execution,
+  public callable relations, and deterministic concrete backend identity.
 - **User-facing unlock:** reusable source-defined standard-library algorithms,
   containers, allocators, and concurrency utilities can state their complete
   type/value/callable requirements, instantiate deterministically, and retain
@@ -2368,20 +2366,30 @@ name recognition.
      accepted exact read/mut/once contract. Comparator `sort`, whole-vector
      predicate/operation clients, constrained numeric reducers, and
      `std::invoke_once` use them without ranking or backend validity;
-  4. **In progress:** `E-SYM-01`/`E-INST-01` now give every nameable
-     source-defined generic free-function instance a deterministic GTI-owned
-     symbol derived from lowered declaration plus concrete type/value/signature
-     identity, and emit/call it as an ordinary function. It is independent of
-     discovery-order IDs and native template deduction. Generic
-     class/member/constructor families remain to migrate. A narrowly deduced
-     native template remains only where an unnameable lexical closure is the
-     physical ABI carrier; it consumes one GTI-selected concrete callable
-     contract and cannot perform validity, lookup, overload, ownership, or
-     failure decisions; and
-  5. close the production conformance matrix across direct and project builds,
-     installed stdlib clients, invalid/constrained/ownership/failure cases,
-     HIR/MIR verifier mutations, O0/O1/O3 and C++20/C++23 execution, formatter,
-     Tree-sitter/Neovim, and LSP hover/completion/signature help.
+  4. **Completed:** `E-SYM-01`/`E-INST-01` give every nameable source-defined
+     generic free-function instance, eligible top-level class application, and
+     ordinary member instance a deterministic GTI-owned symbol derived from
+     lowered nominal plus concrete type/value/signature identity. Selected
+     constructors emit as ordinary concrete overloads, and exact class
+     specializations emit as already-selected ordinary classes. Symbols remain
+     byte-identical when unrelated declarations shift discovery-order IDs. A
+     native physical carrier remains only for an unused family, nested type
+     family, direct private unique-owner storage, compiler/C ABI capability, or
+     a program containing an unnameable lexical closure, together with the
+     transitive dependent generic families required to spell those carriers.
+     Concrete initializer rows and selected native-owner member
+     specializations remain instance-exact. These carriers consume GTI-selected
+     facts and cannot perform validity, lookup, overload, ownership, failure,
+     or execution decisions; and
+  5. **Completed:** the production conformance matrix covers direct and project
+     driver workflows plus installed CLI/library smoke clients; concrete valid,
+     invalid, constrained, ownership, borrow, move-only, variadic, cleanup, and
+     failure cases; HIR/MIR and backend mutation gates; O0/O1/O3 and
+     C++20/C++23 execution; formatter; Tree-sitter/Neovim; and LSP hover,
+     completion, and signature help. The named executable evidence includes
+     explicit value generics, the generic algorithm cluster, public callable
+     concepts, reference-parameter ranges, mixed-capture carriers, standard
+     containers, and the installed generic CLI corpus.
 - **Durable boundaries:** exact unique-match overload resolution, explicit
   ownership transfer, no ADL or implicit call conversions, validity-only
   requirements, frontend-owned substitution, and verified-MIR execution do
@@ -3375,8 +3383,8 @@ it is not a competing active queue.
 
 | ID | State | Scope and dependency |
 | --- | --- | --- |
-| `E-SYM-01` | in progress under `L-GEN-01`; free-function family complete | Nameable source generic free functions now use a SHA-256 symbol over versioned lowered declaration plus concrete type/value/signature identity, never counter-shaped `FunctionId` or TypeContext pointer identity. Apply the same deterministic identity boundary to generic classes, members, and constructors as those families migrate. |
-| `E-INST-01` | in progress; free-function family complete | `M-BACK-01` is complete. Nameable generic free functions now emit as ordinary concrete functions and every verified-MIR call names the GTI-selected symbol directly. Migrate generic class/member/constructor families one at a time; retain a deduced physical carrier only for an otherwise-unnameable lexical closure and never as semantic authority. |
+| `E-SYM-01` | done under `L-GEN-01` | Nameable source generic free functions, eligible top-level class applications, and ordinary member instances use SHA-256 symbols over versioned lowered nominal plus concrete type/value/signature identity, never counter-shaped IDs or TypeContext pointers. Constructors use already-selected concrete signatures. Discovery-order perturbation tests cover function, class, and member families. |
+| `E-INST-01` | done | Nameable generic functions, eligible classes, members, constructors, and exact class specializations emit as ordinary concrete C++ declarations, and every verified-MIR call names the GTI-selected route directly. Native templates remain only as audited physical carriers for unnameable lexical closures, incomplete-pointee ownership wrappers, unused families, nested types, compiler/C ABI capabilities, and their transitive dependent generic families; they have no semantic authority. |
 | `E-EMBED-01` | bounded-first | After `M-FAIL-01` and the allowlisted entry's closed-call-graph `M-BACK-02` slice, generate one host-callable containment wrapper over an allowlisted signature. The row itself owns context validity/poisoning, descriptor lifetime, observer configuration, record return, invocation cleanup, native-exception firewalling, and same-process re-entry tests; it is not yet the stable GTI ABI. |
 | `E-ABI-01` | later breadth | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
 
@@ -3473,7 +3481,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Production generic functions | type/value/pack declarations, exact type inference and explicit type/value expressions, inferred array extents, declaration defaults, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, public callable relations, verified-MIR execution, and deterministic ordinary-function emission for nameable free instances are implemented; generic class/member/constructor representation and the final production stdlib/tooling matrix remain | `L-GEN-01` -> remaining `E-SYM-01`/`E-INST-01` families, sharing the remaining `L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Production generic functions | **complete bounded production system:** type/value/pack declarations, exact inference and explicit expressions, inferred array extents, defaults/dependent values, bounded concepts/requirements, concrete reanalysis, HIR/MIR/lowered identity, callable confinement and public relations, verified-MIR execution, deterministic ordinary free/class/member/constructor emission, ownership/failure evidence, and the stdlib/tooling/runtime matrix are implemented | `L-GEN-01`, `E-SYM-01`, and `E-INST-01` done; general requires-expressions, partial specialization, subsumption/ranking, nested-type direct emission, and removal of the audited closure/incomplete-owner physical carriers remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

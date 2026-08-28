@@ -2785,18 +2785,19 @@ int main(mut int argc, mut arguments_type argv) {
       mainInfo == nullptr
           ? nullptr
           : valid.semantics.findFunction(mainInfo->entryArgumentAppendFunction);
+  const std::unordered_set<std::string> appendNames =
+      concreteBackendSymbols(generated, "__gti_member_", "push_back");
   const std::string appendName =
-      append == nullptr
-          ? std::string{}
-          : "__gti_fn_" + std::to_string(append->id) + "_push_back";
+      appendNames.size() == 1 ? *appendNames.begin() : std::string{};
   expect(generated.find(
              "int main(int __gti_native_argc, char **__gti_native_argv)") !=
                  std::string::npos &&
              generated.find("std::string_view("
                             "__gti_native_argv[__gti_index])") !=
                  std::string::npos &&
-             !appendName.empty() &&
-             generated.find(appendName) != std::string::npos &&
+             !appendName.empty() && append != nullptr &&
+             generated.find("__gti_arguments." + appendName +
+                            "__gti_mir_failure(") != std::string::npos &&
              generated.find("std::move(__gti_arguments)") != std::string::npos,
          "the C++ backend should isolate native argc/argv in an owned GTI "
          "entry adapter");

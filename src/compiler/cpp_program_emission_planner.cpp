@@ -87,7 +87,10 @@ public:
     loweredNamespaceStaticSymbols.clear();
     loweredDeferredStaticFields.clear();
     loweredDeferredMembers.clear();
+    loweredDeferredMemberIds.clear();
     loweredDeferredLifecycleClasses.clear();
+    loweredConcreteLifecycleInstances.clear();
+    loweredNativePrimaryClasses.clear();
     loweredEmittedTypes.clear();
     loweredConstexprAggregateClasses.clear();
 
@@ -476,6 +479,30 @@ public:
     return result;
   }
 
+  [[nodiscard]] bool loweredConstructorInstanceIsNameable(
+      const MirConstructorInstance &instance) const {
+    const MirClassInstance *owner = mir.findClassInstance(instance.owner);
+    const LoweredConstructorInstance *lowered =
+        loweredProgram.findConstructorInstance(instance.id);
+    return owner != nullptr && lowered != nullptr &&
+           loweredTypeIsNameable(owner->type) &&
+           std::all_of(instance.parameterTypes.begin(),
+                       instance.parameterTypes.end(),
+                       [&](const SemanticType &type) {
+                         return loweredTypeIsNameable(type);
+                       }) &&
+           std::all_of(lowered->typeArguments.begin(),
+                       lowered->typeArguments.end(),
+                       [&](const SemanticType &type) {
+                         return loweredTypeIsNameable(type);
+                       }) &&
+           std::all_of(lowered->valueArguments.begin(),
+                       lowered->valueArguments.end(),
+                       [](const CompileTimeValue &value) {
+                         return value.kind == CompileTimeValue::UInt64;
+                       });
+  }
+
   [[nodiscard]] std::optional<LoweredClassInitializerSelection>
   loweredClassInitializers(const LoweredClassDeclaration &declaration) const {
     std::vector<const MirClassInstance *> instances;
@@ -529,6 +556,24 @@ public:
     if (!result.fieldsSupported) {
       result.fields.clear();
     }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<LoweredClassInitializerSelection>
+  loweredClassInitializers(const MirClassInstance &instance) const {
+    LoweredClassInitializerSelection result;
+    result.instances.push_back(instance.id);
+    const CppMirInitializerScheduleText fields = generalMirInitializerSchedule(
+        {.kind = MirBodyKind::FieldInitializers, .owner = instance.id});
+    result.fieldsSupported = fields.supported;
+    if (fields.supported) {
+      for (const CppMirFieldInitializerSpelling &field : fields.fields) {
+        result.fields.emplace(field.field, field.spelling);
+      }
+    }
+    const CppMirInitializerScheduleText statics = generalMirInitializerSchedule(
+        {.kind = MirBodyKind::StaticFieldInitializers, .owner = instance.id});
+    result.staticsVerifiedEmpty = statics.supported && statics.fields.empty();
     return result;
   }
 
@@ -631,6 +676,26 @@ public:
     }
   }
 
+  [[nodiscard]] std::string
+  loweredFunctionInstanceSpelling(const LoweredDeclaration &row,
+                                  const LoweredFunctionDeclaration &function,
+                                  const MirFunctionInstance *instance) const {
+    std::string name = cppFunctionSpelling(function, row.name);
+    if (instance == nullptr || !instance->owner) {
+      return name;
+    }
+    const LoweredFunctionInstance *concrete =
+        loweredFunctionInstance(instance->id);
+    if (concrete != nullptr) {
+      if (const std::optional<std::string> direct =
+              cppConcreteMemberFunctionSpelling(loweredProgram, row, function,
+                                                *concrete, *instance)) {
+        name = *direct;
+      }
+    }
+    return name;
+  }
+
   void emitLoweredFunctionSignature(const LoweredDeclaration &row,
                                     const LoweredFunctionDeclaration &function,
                                     const MirFunctionInstance *instance,
@@ -658,7 +723,8 @@ public:
     if (!owner.empty()) {
       output << owner << "::";
     }
-    const std::string name = cppFunctionSpelling(function, row.name);
+    const std::string name =
+        loweredFunctionInstanceSpelling(row, function, instance);
     output << (failure ? cppMirFailureSiblingSpelling(name) : name);
     if (!failure && explicitGenericArguments && instance != nullptr) {
       const LoweredFunctionInstance *concrete =
@@ -858,6 +924,10 @@ public:
                  << loweredNativeQualifiedName(*declaration) << ";\n";
           continue;
         }
+        if (!type->genericParameters.empty() &&
+            !loweredClassNeedsNativePrimary(*type)) {
+          continue;
+        }
         if (!type->genericParameters.empty()) {
           emitLoweredTemplateDeclaration(type->genericParameters);
         }
@@ -917,6 +987,9 @@ public:
       if (type == nullptr || type->exactSpecializationPrimary == 0) {
         continue;
       }
+      if (!loweredConcreteClassInstances(type->id).empty()) {
+        continue;
+      }
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(row.namespaceScope);
       writeIndent();
@@ -926,6 +999,30 @@ public:
                  : type->kind == ClassKind::Union ? "union "
                                                   : "class ")
              << row.name << loweredExactClassArguments(*type) << ";\n";
+      emitLoweredNamespaceClose(namespaceCount);
+    }
+  }
+
+  void emitLoweredConcreteClassForwardDeclarations() {
+    std::unordered_set<std::string> emitted;
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      const std::optional<std::string> name =
+          cppConcreteClassName(loweredProgram, instance.type);
+      const LoweredDeclaration *row = loweredClassRow(instance.declaration);
+      const auto *declaration =
+          row == nullptr ? nullptr
+                         : std::get_if<LoweredClassDeclaration>(&row->payload);
+      if (!name || row == nullptr || declaration == nullptr ||
+          !emitted.insert(*name).second) {
+        continue;
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(row->namespaceScope);
+      writeIndent();
+      output << (declaration->kind == ClassKind::Struct  ? "struct "
+                 : declaration->kind == ClassKind::Union ? "union "
+                                                         : "class ")
+             << *name << ";\n";
       emitLoweredNamespaceClose(namespaceCount);
     }
   }
@@ -997,6 +1094,207 @@ public:
                        [&](const SemanticType &argument) {
                          return loweredTypeIsNameable(argument);
                        });
+  }
+
+  [[nodiscard]] bool
+  loweredClassUsesDirectRepresentation(const MirClassInstance &instance) const {
+    return cppConcreteClassName(loweredProgram, instance.type).has_value();
+  }
+
+  [[nodiscard]] bool
+  loweredClassUsesDirectRepresentation(HirClassInstanceId instance) const {
+    const MirClassInstance *row = mir.findClassInstance(instance);
+    return row != nullptr && loweredClassUsesDirectRepresentation(*row);
+  }
+
+  [[nodiscard]] bool loweredClassSeedsNativePrimary(
+      const LoweredClassDeclaration &declaration) const {
+    const auto containsLexicalClosure = [&](const auto &self,
+                                            const SemanticType &type) -> bool {
+      return type.kind == SemanticType::Lambda ||
+             std::any_of(type.arguments.begin(), type.arguments.end(),
+                         [&](const SemanticType &argument) {
+                           return self(self, argument);
+                         });
+    };
+    const bool lexicalCarrier = std::any_of(
+        mir.functionInstances().begin(), mir.functionInstances().end(),
+        [&](const MirFunctionInstance &function) {
+          const auto lexical = [&](const SemanticType &type) {
+            return containsLexicalClosure(containsLexicalClosure, type);
+          };
+          return lexical(function.returnType) ||
+                 std::any_of(function.typeArguments.begin(),
+                             function.typeArguments.end(), lexical) ||
+                 std::any_of(function.parameterTypes.begin(),
+                             function.parameterTypes.end(), lexical);
+        });
+    if (lexicalCarrier && !declaration.genericParameters.empty()) {
+      return true;
+    }
+    bool discovered = false;
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      if (instance.declaration != declaration.id) {
+        continue;
+      }
+      discovered = true;
+      if (!loweredClassUsesDirectRepresentation(instance)) {
+        return true;
+      }
+    }
+    // An unused generic declaration has no concrete execution ABI to migrate.
+    // Keep its source template available for dependent declarations and
+    // tooling-facing emitted artifacts; every discovered nameable instance
+    // still takes the direct path below.
+    return !discovered;
+  }
+
+  void collectLoweredNativePrimaryTypeDependencies(
+      const SemanticType &type,
+      std::unordered_set<ClassId> &dependencies) const {
+    if (type.kind == SemanticType::Class ||
+        type.kind == SemanticType::TypeName) {
+      const LoweredClassDeclaration *referenced =
+          loweredProgram.findClassDeclaration(type.classId);
+      if (referenced != nullptr) {
+        if (referenced->exactSpecializationPrimary != 0) {
+          referenced = loweredProgram.findClassDeclaration(
+              referenced->exactSpecializationPrimary);
+        }
+        if (referenced != nullptr && !referenced->genericParameters.empty()) {
+          dependencies.insert(referenced->id);
+        }
+      }
+    }
+    for (const SemanticType &argument : type.arguments) {
+      collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
+    }
+    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+      collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
+    }
+    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+      collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
+    }
+  }
+
+  void collectLoweredNativePrimaryDeclarationDependencies(
+      const LoweredDeclaration &row,
+      std::unordered_set<ClassId> &dependencies) const {
+    if (const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload)) {
+      for (const LoweredClassBase &base : type->bases) {
+        collectLoweredNativePrimaryTypeDependencies(base.type, dependencies);
+      }
+    } else if (const auto *function =
+                   std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+      collectLoweredNativePrimaryTypeDependencies(function->returnType,
+                                                  dependencies);
+      for (const LoweredParameter &parameter : function->parameters) {
+        collectLoweredNativePrimaryTypeDependencies(parameter.type,
+                                                    dependencies);
+      }
+      for (const LoweredConceptRequirement &requirement :
+           function->requirements) {
+        for (const SemanticType &argument : requirement.arguments) {
+          collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
+        }
+      }
+      for (const LoweredCallableParameter &callable :
+           function->callableParameters) {
+        collectLoweredNativePrimaryTypeDependencies(callable.callableType,
+                                                    dependencies);
+        for (const LoweredCallableSignature &signature : callable.signatures) {
+          collectLoweredNativePrimaryTypeDependencies(signature.returnType,
+                                                      dependencies);
+          for (const SemanticType &parameter : signature.parameterTypes) {
+            collectLoweredNativePrimaryTypeDependencies(parameter,
+                                                        dependencies);
+          }
+        }
+      }
+    } else if (const auto *constructor =
+                   std::get_if<LoweredConstructorDeclaration>(&row.payload)) {
+      for (const LoweredParameter &parameter : constructor->parameters) {
+        collectLoweredNativePrimaryTypeDependencies(parameter.type,
+                                                    dependencies);
+      }
+      for (const LoweredConceptRequirement &requirement :
+           constructor->requirements) {
+        for (const SemanticType &argument : requirement.arguments) {
+          collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
+        }
+      }
+    } else if (const auto *storage =
+                   std::get_if<LoweredStorageDeclaration>(&row.payload)) {
+      collectLoweredNativePrimaryTypeDependencies(storage->type, dependencies);
+    } else if (const auto *enumeration =
+                   std::get_if<LoweredEnumDeclaration>(&row.payload)) {
+      collectLoweredNativePrimaryTypeDependencies(enumeration->underlyingType,
+                                                  dependencies);
+      for (const LoweredEnumerator &enumerator : enumeration->enumerators) {
+        for (const SemanticType &payload : enumerator.payloadTypes) {
+          collectLoweredNativePrimaryTypeDependencies(payload, dependencies);
+        }
+      }
+    } else if (const auto *alias =
+                   std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+      collectLoweredNativePrimaryTypeDependencies(alias->type, dependencies);
+    }
+
+    for (const LoweredDeclaration *child : loweredChildren(row.id)) {
+      collectLoweredNativePrimaryDeclarationDependencies(*child, dependencies);
+    }
+  }
+
+  void prepareLoweredNativePrimaryClasses() {
+    loweredNativePrimaryClasses.clear();
+    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+      const auto *declaration =
+          std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (declaration != nullptr &&
+          declaration->exactSpecializationPrimary == 0 &&
+          !declaration->genericParameters.empty() &&
+          loweredClassSeedsNativePrimary(*declaration)) {
+        loweredNativePrimaryClasses.insert(declaration->id);
+      }
+    }
+
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      const std::vector<ClassId> nativeClasses(
+          loweredNativePrimaryClasses.begin(),
+          loweredNativePrimaryClasses.end());
+      for (const ClassId classId : nativeClasses) {
+        const LoweredDeclaration *row = loweredClassRow(classId);
+        if (row == nullptr) {
+          throw std::logic_error(
+              "native generic carrier lost its lowered declaration");
+        }
+        std::unordered_set<ClassId> dependencies;
+        collectLoweredNativePrimaryDeclarationDependencies(*row, dependencies);
+        for (const ClassId dependency : dependencies) {
+          changed =
+              loweredNativePrimaryClasses.insert(dependency).second || changed;
+        }
+      }
+    }
+  }
+
+  [[nodiscard]] bool loweredClassNeedsNativePrimary(
+      const LoweredClassDeclaration &declaration) const {
+    return loweredNativePrimaryClasses.contains(declaration.id);
+  }
+
+  [[nodiscard]] std::vector<const MirClassInstance *>
+  loweredConcreteClassInstances(ClassId declaration) const {
+    std::vector<const MirClassInstance *> result;
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      if (instance.declaration == declaration &&
+          loweredClassUsesDirectRepresentation(instance)) {
+        result.push_back(&instance);
+      }
+    }
+    return result;
   }
 
   void emitLoweredExplicitArguments(const LoweredFunctionInstance &instance) {
@@ -1615,6 +1913,12 @@ public:
     output << "); }\n";
   }
 
+  void deferLoweredMember(const LoweredDeclaration &row) {
+    if (loweredDeferredMemberIds.insert(row.id).second) {
+      loweredDeferredMembers.push_back(&row);
+    }
+  }
+
   void emitLoweredMemberFunctionDeclaration(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const LoweredDeclaration &classRow) {
@@ -1628,22 +1932,47 @@ public:
     const bool generic = !function.genericParameters.empty();
     const bool threadTaskTemplate =
         generic && loweredFunctionNeedsThreadTaskTemplate(instances);
-    if (generic) {
+    const bool hasCallableTemplateNormal =
+        generic &&
+        !loweredCallableTemplateBody(function, instances, false).empty();
+    const bool retainPrimary =
+        !generic || hasCallableTemplateNormal ||
+        function.definitionKind != MirDefinitionKind::Source;
+    if (generic && retainPrimary) {
       emitLoweredTemplateDeclaration(function.genericParameters,
                                      threadTaskTemplate);
     }
-    writeIndent();
-    emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
-                                 generic);
     const auto *owner = std::get_if<LoweredClassDeclaration>(&classRow.payload);
     const bool genericOwner =
         owner != nullptr && !owner->genericParameters.empty();
-    if (function.pureVirtual ||
-        (owner != nullptr && owner->kind == ClassKind::Interface)) {
-      output << " = 0;\n";
-    } else {
-      output << ";\n";
-      loweredDeferredMembers.push_back(&row);
+    if (retainPrimary) {
+      writeIndent();
+      emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
+                                   generic);
+      if (function.pureVirtual ||
+          (owner != nullptr && owner->kind == ClassKind::Interface)) {
+        output << " = 0;\n";
+      } else {
+        output << ";\n";
+      }
+    }
+
+    if (generic) {
+      for (const MirFunctionInstance *instance : instances) {
+        const LoweredFunctionInstance *concrete =
+            loweredFunctionInstance(instance->id);
+        if (concrete == nullptr || !instance->owner ||
+            !cppConcreteMemberFunctionSpelling(loweredProgram, row, function,
+                                               *concrete, *instance)) {
+          continue;
+        }
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, instance, false, true);
+        output << (function.pureVirtual ? " = 0;\n" : ";\n");
+      }
+    }
+    if (!function.pureVirtual) {
+      deferLoweredMember(row);
     }
 
     const bool hasCallableTemplateFailure =
@@ -1672,7 +2001,12 @@ public:
                                        true);
           output << ";\n";
         }
-        std::vector<std::pair<std::vector<SemanticType>, SemanticType>> emitted;
+        struct EmittedFailureSignature {
+          std::string spelling;
+          std::vector<SemanticType> parameters;
+          SemanticType returnType = SemanticType::Unknown;
+        };
+        std::vector<EmittedFailureSignature> emitted;
         for (const MirFunctionInstance *instance : instances) {
           if (!loweredFailureBodySupported(*instance) || !instance->owner) {
             continue;
@@ -1690,10 +2024,18 @@ public:
                            })) {
             continue;
           }
-          const auto signature =
-              std::make_pair(*parameters, instance->returnType);
-          if (std::find(emitted.begin(), emitted.end(), signature) !=
-              emitted.end()) {
+          const EmittedFailureSignature signature{
+              .spelling =
+                  loweredFunctionInstanceSpelling(row, function, instance),
+              .parameters = *parameters,
+              .returnType = instance->returnType};
+          if (std::any_of(emitted.begin(), emitted.end(),
+                          [&](const EmittedFailureSignature &candidate) {
+                            return candidate.spelling == signature.spelling &&
+                                   candidate.parameters ==
+                                       signature.parameters &&
+                                   candidate.returnType == signature.returnType;
+                          })) {
             continue;
           }
           emitted.push_back(signature);
@@ -1705,6 +2047,68 @@ public:
     }
     emitLoweredStructuralOperatorAdapter(row, function, classRow);
     emitLoweredCallableAdapter(row, function, classRow);
+  }
+
+  [[nodiscard]] LoweredFunctionDeclaration loweredConcreteFunctionDeclaration(
+      const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance) const {
+    LoweredFunctionDeclaration concrete = function;
+    concrete.returnType = instance.returnType;
+    concrete.genericParameters.clear();
+    concrete.parameters.clear();
+    const std::optional<std::vector<SemanticType>> parameters =
+        cppMirFlattenConcreteParameterTypes(instance.parameterTypes);
+    if (!parameters) {
+      throw std::logic_error(
+          "concrete generic member has an unspellable parameter pack");
+    }
+    concrete.parameters.reserve(parameters->size());
+    for (std::size_t index = 0; index < parameters->size(); ++index) {
+      concrete.parameters.push_back(
+          {.name = "__gti_mir_arg_" + std::to_string(index),
+           .type = (*parameters)[index]});
+    }
+    return concrete;
+  }
+
+  void emitLoweredConcreteMemberFunctionDeclaration(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const LoweredDeclaration &classRow,
+      const MirClassInstance &ownerInstance) {
+    emitLoweredBoundaryMarkers(row, function);
+    if (function.definitionKind == MirDefinitionKind::RuntimeBinding ||
+        function.intrinsic != IntrinsicKind::None) {
+      return;
+    }
+
+    bool emitted = false;
+    for (const MirFunctionInstance *instance :
+         loweredFunctionInstances(function.id)) {
+      if (instance->owner != ownerInstance.id) {
+        continue;
+      }
+      const LoweredFunctionDeclaration concrete =
+          loweredConcreteFunctionDeclaration(function, *instance);
+      writeIndent();
+      emitLoweredFunctionSignature(row, function, instance, false, true);
+      output << (function.pureVirtual ||
+                         std::get<LoweredClassDeclaration>(classRow.payload)
+                                 .kind == ClassKind::Interface
+                     ? " = 0;\n"
+                     : ";\n");
+      if (loweredFailureBodySupported(*instance) ||
+          loweredVirtualFailureContractRetained(function.id)) {
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, instance, true, true);
+        output << (function.pureVirtual ? " = 0;\n" : ";\n");
+      }
+      emitLoweredStructuralOperatorAdapter(row, concrete, classRow);
+      emitLoweredCallableAdapter(row, concrete, classRow);
+      emitted = true;
+    }
+    if (emitted && !function.pureVirtual) {
+      deferLoweredMember(row);
+    }
   }
 
   [[nodiscard]] std::optional<std::string>
@@ -1802,7 +2206,8 @@ public:
 
   void
   emitLoweredContainedConstructorBody(const LoweredDeclaration &owner,
-                                      const MirConstructorInstance &instance) {
+                                      const MirConstructorInstance &instance,
+                                      std::string_view concreteName = {}) {
     if (loweredContainedConstructorRepresentation(instance.id) == nullptr ||
         !generalMirBodyPlan(
              {.kind = MirBodyKind::Constructor, .owner = instance.id})
@@ -1816,7 +2221,7 @@ public:
       throw std::logic_error(
           "contained constructor has an unspellable parameter pack");
     }
-    output << " : " << owner.name << '('
+    output << " : " << (concreteName.empty() ? owner.name : concreteName) << '('
            << cppMirFailureConstructorTagSpelling(instance.id) << "{}";
     for (std::size_t index = 0; index < parameters->size(); ++index) {
       output << ", ";
@@ -1860,16 +2265,37 @@ public:
     if (constructor.specifier) {
       return;
     }
-    if (!constructor.genericParameters.empty()) {
+    const std::vector<const MirConstructorInstance *> instances =
+        loweredConstructorInstances(constructor.id);
+    const bool generic = !constructor.genericParameters.empty();
+    const bool retainPrimary =
+        !generic || instances.empty() ||
+        std::any_of(instances.begin(), instances.end(),
+                    [&](const MirConstructorInstance *instance) {
+                      return !loweredConstructorInstanceIsNameable(*instance);
+                    });
+    if (generic && retainPrimary) {
       emitLoweredTemplateDeclaration(constructor.genericParameters);
     }
-    writeIndent();
-    output << "explicit " << classRow.name << '(';
-    emitLoweredParameters(constructor.parameters);
-    output << ");\n";
-    loweredDeferredMembers.push_back(&row);
-    for (const MirConstructorInstance *instance :
-         loweredConstructorInstances(constructor.id)) {
+    if (retainPrimary) {
+      writeIndent();
+      output << "explicit " << classRow.name << '(';
+      emitLoweredParameters(constructor.parameters);
+      output << ");\n";
+    }
+    if (generic) {
+      for (const MirConstructorInstance *instance : instances) {
+        if (!loweredConstructorInstanceIsNameable(*instance)) {
+          continue;
+        }
+        writeIndent();
+        output << "explicit " << classRow.name << '(';
+        emitLoweredMirParameters(instance->parameterTypes);
+        output << ");\n";
+      }
+    }
+    deferLoweredMember(row);
+    for (const MirConstructorInstance *instance : instances) {
       const bool genericOwnerPrimary =
           loweredGenericOwnerConstructorBodyText(constructor, *instance, true)
               .has_value();
@@ -1908,6 +2334,54 @@ public:
     }
   }
 
+  void emitLoweredConcreteConstructorDeclaration(
+      const LoweredDeclaration &row,
+      const LoweredConstructorDeclaration &constructor,
+      const LoweredDeclaration &classRow,
+      const MirClassInstance &ownerInstance) {
+    if (constructor.specifier) {
+      return;
+    }
+    bool emitted = false;
+    for (const MirConstructorInstance *instance :
+         loweredConstructorInstances(constructor.id)) {
+      if (instance->owner != ownerInstance.id ||
+          instance->definitionKind != MirDefinitionKind::Source) {
+        continue;
+      }
+      writeIndent();
+      output << "explicit " << classRow.name << '(';
+      emitLoweredMirParameters(instance->parameterTypes);
+      output << ");\n";
+      const MirBodyAddress address{.kind = MirBodyKind::Constructor,
+                                   .owner = instance->id};
+      if (instance->mayRaiseDefinedFailure &&
+          generalMirBodyPlan(address).supportsFailureText()) {
+        writeIndent();
+        output << "explicit " << classRow.name << '('
+               << cppMirFailureConstructorTagSpelling(instance->id);
+        if (!instance->parameterTypes.empty()) {
+          output << ", ";
+        }
+        emitLoweredMirParameters(instance->parameterTypes);
+        output << ", bool *__gti_mir_constructor_success, "
+                  "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+        if (loweredContainedConstructorRepresentation(instance->id) !=
+            nullptr) {
+          writeIndent();
+          output << "explicit " << classRow.name << '(';
+          emitLoweredContainedConstructorParameters(constructor, *instance,
+                                                    false);
+          output << ");\n";
+        }
+      }
+      emitted = true;
+    }
+    if (emitted) {
+      deferLoweredMember(row);
+    }
+  }
+
   void emitLoweredDestructorDeclaration(
       const LoweredDeclaration &row,
       const LoweredDestructorDeclaration &destructor,
@@ -1921,7 +2395,24 @@ public:
       output << "virtual ";
     }
     output << '~' << classRow.name << "() noexcept;\n";
-    loweredDeferredMembers.push_back(&row);
+    deferLoweredMember(row);
+  }
+
+  void emitLoweredConcreteDestructorDeclaration(
+      const LoweredDeclaration &row,
+      const LoweredDestructorDeclaration &destructor,
+      const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &classDeclaration,
+      const MirClassInstance &ownerInstance) {
+    if (destructor.specifier || !ownerInstance.destructor) {
+      return;
+    }
+    writeIndent();
+    if (classDeclaration.polymorphic) {
+      output << "virtual ";
+    }
+    output << '~' << classRow.name << "() noexcept;\n";
+    deferLoweredMember(row);
   }
 
   [[nodiscard]] std::vector<const MirDestructorInstance *>
@@ -2114,7 +2605,7 @@ public:
         output << "bool " << lifecycleFailureBodyName()
                << "(::gti_failure_record_v1 *);\n";
       }
-      loweredDeferredLifecycleClasses.push_back(&classRow);
+      loweredDeferredLifecycleClasses.push_back(classRow);
     }
 
     if (indentation > 0) {
@@ -2277,13 +2768,27 @@ public:
 
   void emitLoweredConstexprAggregateFactory(
       const LoweredDeclaration &classRow,
-      const LoweredClassDeclaration &declaration,
-      AccessModifier originalAccess) {
+      const LoweredClassDeclaration &declaration, AccessModifier originalAccess,
+      const MirClassInstance *concreteInstance = nullptr) {
     if (!loweredConstexprAggregateClasses.contains(declaration.id)) {
       return;
     }
     const std::vector<const LoweredDeclaration *> fields =
         loweredConstexprAggregateFields(classRow);
+    const auto fieldType = [&](const LoweredDeclaration &field) {
+      const auto &storage = std::get<LoweredStorageDeclaration>(field.payload);
+      if (concreteInstance == nullptr) {
+        return storage.type;
+      }
+      const auto found =
+          std::find_if(concreteInstance->declaredFields.begin(),
+                       concreteInstance->declaredFields.end(),
+                       [&](const MirClassFieldInfo &candidate) {
+                         return candidate.symbol == storage.symbol;
+                       });
+      return found == concreteInstance->declaredFields.end() ? storage.type
+                                                             : found->type;
+    };
     const auto emitAccess = [&](AccessModifier access) {
       if (indentation > 0) {
         --indentation;
@@ -2299,10 +2804,8 @@ public:
     writeIndent();
     output << "constexpr " << classRow.name << "(__gti_constexpr_value_tag_v1";
     for (std::size_t index = 0; index < fields.size(); ++index) {
-      const auto &storage =
-          std::get<LoweredStorageDeclaration>(fields[index]->payload);
       output << ", ";
-      emitSemanticType(storage.type);
+      emitSemanticType(fieldType(*fields[index]));
       output << " __gti_constexpr_field_" << index;
     }
     output << ')';
@@ -2325,9 +2828,7 @@ public:
       if (index != 0) {
         output << ", ";
       }
-      const auto &storage =
-          std::get<LoweredStorageDeclaration>(fields[index]->payload);
-      emitSemanticType(storage.type);
+      emitSemanticType(fieldType(*fields[index]));
       output << " __gti_constexpr_field_" << index;
     }
     output << ") { return " << classRow.name
@@ -2339,12 +2840,17 @@ public:
     emitAccess(originalAccess);
   }
 
-  void emitLoweredClassDefinition(const LoweredDeclaration &classRow,
-                                  const LoweredClassDeclaration &declaration) {
+  void emitLoweredClassDefinitionBody(
+      const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &declaration,
+      const MirClassInstance *concreteInstance = nullptr) {
     loweredEmittedTypes.insert(classRow.id);
     const std::optional<LoweredClassInitializerSelection> initializers =
-        loweredClassInitializers(declaration);
+        concreteInstance == nullptr
+            ? loweredClassInitializers(declaration)
+            : loweredClassInitializers(*concreteInstance);
     const bool hasInstance =
+        concreteInstance != nullptr ||
         std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [&](const MirClassInstance &instance) {
                       return instance.declaration == declaration.id;
@@ -2383,7 +2889,10 @@ public:
       return;
     }
 
-    if (declaration.exactSpecializationPrimary != 0) {
+    if (concreteInstance != nullptr) {
+      // A concrete GTI class is an ordinary native class. All substitution and
+      // exact selection have already happened in semantics/HIR/MIR.
+    } else if (declaration.exactSpecializationPrimary != 0) {
       writeIndent();
       output << "template <>\n";
     } else {
@@ -2416,7 +2925,8 @@ public:
       output << "public:\n";
       access = AccessModifier::Public;
     }
-    emitLoweredConstexprAggregateFactory(classRow, declaration, access);
+    emitLoweredConstexprAggregateFactory(classRow, declaration, access,
+                                         concreteInstance);
     for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
       if (const auto *value =
               std::get_if<LoweredAccessDeclaration>(&member->payload)) {
@@ -2433,20 +2943,50 @@ public:
       static_cast<void>(access);
       if (const auto *storage =
               std::get_if<LoweredStorageDeclaration>(&member->payload)) {
-        emitLoweredStorageDeclaration(*member, *storage, true, &declaration,
+        LoweredStorageDeclaration concreteStorage = *storage;
+        if (concreteInstance != nullptr && !storage->staticStorage) {
+          const auto field =
+              std::find_if(concreteInstance->declaredFields.begin(),
+                           concreteInstance->declaredFields.end(),
+                           [&](const MirClassFieldInfo &candidate) {
+                             return candidate.symbol == storage->symbol;
+                           });
+          if (field == concreteInstance->declaredFields.end()) {
+            throw std::logic_error(
+                "concrete generic class lost a declared field type");
+          }
+          concreteStorage.type = field->type;
+        }
+        emitLoweredStorageDeclaration(*member, concreteStorage, true,
+                                      &declaration,
                                       initializers ? &*initializers : nullptr);
       } else if (const auto *function = std::get_if<LoweredFunctionDeclaration>(
                      &member->payload)) {
-        emitLoweredMemberFunctionDeclaration(*member, *function, classRow);
+        if (concreteInstance == nullptr) {
+          emitLoweredMemberFunctionDeclaration(*member, *function, classRow);
+        } else {
+          emitLoweredConcreteMemberFunctionDeclaration(
+              *member, *function, classRow, *concreteInstance);
+        }
       } else if (const auto *constructor =
                      std::get_if<LoweredConstructorDeclaration>(
                          &member->payload)) {
-        emitLoweredConstructorDeclaration(*member, *constructor, classRow);
+        if (concreteInstance == nullptr) {
+          emitLoweredConstructorDeclaration(*member, *constructor, classRow);
+        } else {
+          emitLoweredConcreteConstructorDeclaration(
+              *member, *constructor, classRow, *concreteInstance);
+        }
       } else if (const auto *destructor =
                      std::get_if<LoweredDestructorDeclaration>(
                          &member->payload)) {
-        emitLoweredDestructorDeclaration(*member, *destructor, classRow,
-                                         declaration);
+        if (concreteInstance == nullptr) {
+          emitLoweredDestructorDeclaration(*member, *destructor, classRow,
+                                           declaration);
+        } else {
+          emitLoweredConcreteDestructorDeclaration(
+              *member, *destructor, classRow, declaration, *concreteInstance);
+        }
       } else if (const auto *enumeration =
                      std::get_if<LoweredEnumDeclaration>(&member->payload)) {
         emitLoweredEnumDefinition(*member, *enumeration);
@@ -2488,6 +3028,56 @@ public:
       }
     }
     emitLoweredClassAssertions(classRow, declaration);
+  }
+
+  void emitLoweredClassDefinition(const LoweredDeclaration &classRow,
+                                  const LoweredClassDeclaration &declaration) {
+    const bool genericFamily = !declaration.genericParameters.empty() ||
+                               declaration.exactSpecializationPrimary != 0;
+    if (!genericFamily) {
+      emitLoweredClassDefinitionBody(classRow, declaration);
+      return;
+    }
+
+    if (declaration.exactSpecializationPrimary == 0 &&
+        loweredClassNeedsNativePrimary(declaration)) {
+      emitLoweredClassDefinitionBody(classRow, declaration);
+    }
+
+    for (const MirClassInstance *instance :
+         loweredConcreteClassInstances(declaration.id)) {
+      const std::optional<std::string> name =
+          cppConcreteClassName(loweredProgram, instance->type);
+      if (!name) {
+        throw std::logic_error(
+            "nameable concrete class lost its stable representation");
+      }
+      LoweredDeclaration concreteRow = classRow;
+      concreteRow.name = *name;
+      LoweredClassDeclaration concrete = declaration;
+      concrete.exactSpecializationPrimary = 0;
+      concrete.exactTypeArguments.clear();
+      concrete.exactValueArguments.clear();
+      concrete.genericParameters.clear();
+      concrete.traits = instance->traits;
+      concrete.defaultConstructor = instance->defaultConstructor;
+      concrete.copyConstructor = instance->copyConstructor;
+      concrete.moveConstructor = instance->moveConstructor;
+      concrete.copyAssignment = instance->copyAssignment;
+      concrete.moveAssignment = instance->moveAssignment;
+      concrete.destructor = instance->destructorStatus;
+      concrete.requiresActiveDropState = instance->requiresActiveDropState;
+      for (std::size_t index = 0;
+           index < concrete.bases.size() && index < instance->bases.size();
+           ++index) {
+        concrete.bases[index].type = instance->bases[index].type;
+      }
+      concreteRow.payload = concrete;
+      loweredConcreteLifecycleInstances.insert_or_assign(*name, instance->id);
+      emitLoweredClassDefinitionBody(
+          concreteRow, std::get<LoweredClassDeclaration>(concreteRow.payload),
+          instance);
+    }
   }
 
   void
@@ -2717,6 +3307,16 @@ public:
       }
       std::vector<ClassId> dependencies =
           loweredClassDefinitionDependencies(row, *declaration);
+      if (!loweredConcreteClassInstances(declaration->id).empty()) {
+        std::vector<ClassId> concreteDependencies =
+            loweredConcreteSpecializationDependencies(*declaration);
+        dependencies.insert(dependencies.end(), concreteDependencies.begin(),
+                            concreteDependencies.end());
+        std::sort(dependencies.begin(), dependencies.end());
+        dependencies.erase(
+            std::unique(dependencies.begin(), dependencies.end()),
+            dependencies.end());
+      }
       std::sort(dependencies.begin(), dependencies.end(),
                 [&](ClassId left, ClassId right) {
                   const auto leftAt = classSchedule.find(left);
@@ -3329,6 +3929,25 @@ public:
     return spelling;
   }
 
+  [[nodiscard]] std::string
+  loweredConcreteClassLeafName(HirClassInstanceId instance) const {
+    const MirClassInstance *owner = mir.findClassInstance(instance);
+    if (owner == nullptr) {
+      throw std::logic_error(
+          "lowered concrete class name lost its MIR instance");
+    }
+    if (const std::optional<std::string> direct =
+            cppConcreteClassName(loweredProgram, owner->type)) {
+      return *direct;
+    }
+    const LoweredDeclaration *row = loweredClassRow(owner->declaration);
+    if (row == nullptr) {
+      throw std::logic_error(
+          "lowered concrete class name lost its declaration row");
+    }
+    return row->name;
+  }
+
   void emitLoweredStaticFieldDefinitions() {
     for (const LoweredDeclaration *row : loweredDeferredStaticFields) {
       const auto *storage =
@@ -3388,6 +4007,19 @@ public:
               !loweredTypeIsNameable(ownerInstance->type)) {
             continue;
           }
+          if (loweredClassUsesDirectRepresentation(*ownerInstance)) {
+            continue;
+          }
+          const LoweredFunctionInstance *concrete =
+              loweredFunctionInstance(instance->id);
+          const bool selectedMember =
+              concrete != nullptr &&
+              cppConcreteMemberFunctionSpelling(loweredProgram, *row, *function,
+                                                *concrete, *instance)
+                  .has_value();
+          if (!loweredOwnerIsGeneric(*owner) && selectedMember) {
+            continue;
+          }
           const std::string ownerSpelling =
               loweredConcreteClassName(*instance->owner);
           if (loweredFailureBodySupported(*instance) &&
@@ -3410,9 +4042,9 @@ public:
               ordinaryBoundaryWrapper) {
             writeIndent();
             output << "template <> ";
-            emitLoweredFunctionSignature(*row, *function, instance, false,
-                                         false, ownerSpelling, false,
-                                         !function->genericParameters.empty());
+            emitLoweredFunctionSignature(
+                *row, *function, instance, false, false, ownerSpelling, false,
+                !selectedMember && !function->genericParameters.empty());
             output << ";\n";
           }
         }
@@ -3428,6 +4060,14 @@ public:
               mir.findClassInstance(instance->owner);
           if (ownerInstance == nullptr ||
               !loweredTypeIsNameable(ownerInstance->type)) {
+            continue;
+          }
+          if (loweredClassUsesDirectRepresentation(*ownerInstance)) {
+            continue;
+          }
+          if (!loweredOwnerIsGeneric(*owner) &&
+              !constructor->genericParameters.empty() &&
+              loweredConstructorInstanceIsNameable(*instance)) {
             continue;
           }
           const std::string ownerSpelling =
@@ -3459,6 +4099,9 @@ public:
               !loweredTypeIsNameable(instance.type)) {
             continue;
           }
+          if (loweredClassUsesDirectRepresentation(instance)) {
+            continue;
+          }
           writeIndent();
           output << "template <> " << loweredConcreteClassName(instance.id)
                  << "::~" << owner->name << "() noexcept;\n";
@@ -3470,7 +4113,7 @@ public:
     for (std::size_t index = firstDeferredLifecycleClass;
          index < lastDeferredLifecycleClass; ++index) {
       const LoweredDeclaration *classRow =
-          loweredDeferredLifecycleClasses[index];
+          &loweredDeferredLifecycleClasses[index];
       const auto *declaration =
           std::get_if<LoweredClassDeclaration>(&classRow->payload);
       if (declaration == nullptr || !loweredOwnerIsGeneric(*classRow)) {
@@ -3486,6 +4129,9 @@ public:
         if (cleanup == nullptr || cleanup->ownerClass != declaration->id ||
             cleanup->form !=
                 CppMirLifecycleCleanupForm::ConcreteSpecialization) {
+          continue;
+        }
+        if (loweredClassUsesDirectRepresentation(cleanup->classInstance)) {
           continue;
         }
         const std::string ownerSpelling =
@@ -3620,7 +4266,7 @@ public:
       output << "std::move(*this).";
     }
     output << cppMirFailureSiblingSpelling(
-                  cppFunctionSpelling(function, row.name))
+                  loweredFunctionInstanceSpelling(row, function, &instance))
            << '(';
     for (std::size_t index = 0; index < instance.parameterTypes.size();
          ++index) {
@@ -3696,7 +4342,7 @@ public:
     writeIndent();
     output << "if (!"
            << cppMirFailureSiblingSpelling(
-                  cppFunctionSpelling(function, row.name))
+                  loweredFunctionInstanceSpelling(row, function, &instance))
            << '(';
     for (std::size_t index = 0; index < instance.parameterTypes.size();
          ++index) {
@@ -3832,7 +4478,25 @@ public:
         continue;
       }
       std::string ownerSpelling = loweredPrimaryClassSpelling(owner);
-      if (generic) {
+      const bool directOwner =
+          instance->owner &&
+          loweredClassUsesDirectRepresentation(*instance->owner);
+      const LoweredFunctionInstance *concreteInstance =
+          loweredFunctionInstance(instance->id);
+      const bool directMember =
+          concreteInstance != nullptr &&
+          cppConcreteMemberFunctionSpelling(loweredProgram, row, function,
+                                            *concreteInstance, *instance)
+              .has_value();
+      // A selected generic method on an ordinary class is an ordinary hashed
+      // member. The same selected method inside a retained source class
+      // template still needs an explicit specialization of that native owner;
+      // its stable name does not turn the owner into a direct class.
+      const bool directRepresentation =
+          directOwner || (directMember && !genericOwner);
+      if (directOwner) {
+        ownerSpelling = loweredConcreteClassName(*instance->owner);
+      } else if (generic) {
         if (!instance->owner) {
           throw std::logic_error(
               "generic lowered member function lost its owner instance");
@@ -3841,8 +4505,9 @@ public:
       }
       const auto emitPrefix = [&](bool failureForm) {
         writeIndent();
-        if (genericOwner ||
-            (!failureForm && !function.genericParameters.empty())) {
+        if (!directRepresentation &&
+            (genericOwner ||
+             (!failureForm && !function.genericParameters.empty()))) {
           output << "template <> ";
         }
       };
@@ -3853,16 +4518,18 @@ public:
         output << ' ';
         emitLoweredFailureFunctionBody(*instance);
         if (instance->virtualMethod) {
-          emitLoweredVirtualFailureBoundaryWrapper(row, function, *instance,
-                                                   ownerSpelling, generic);
+          emitLoweredVirtualFailureBoundaryWrapper(
+              row, function, *instance, ownerSpelling,
+              generic && !directRepresentation);
         } else if (!loweredNormalBodySupported(*instance) &&
                    ((cppMirBodyStatusCannotFail(instance->body) &&
                      cppMirNeedsFailureFreeBoundaryWrapper(
                          mir, *generalEmissionMap, instance->id)) ||
                     cppMirNeedsTerminalSubscriptBoundaryWrapper(
                         mir, *generalEmissionMap, instance->id))) {
-          emitLoweredOrdinaryFailureBoundaryWrapper(row, function, *instance,
-                                                    ownerSpelling, generic);
+          emitLoweredOrdinaryFailureBoundaryWrapper(
+              row, function, *instance, ownerSpelling,
+              generic && !directRepresentation);
         }
       }
       if (loweredNormalBodySupported(*instance) &&
@@ -3871,7 +4538,8 @@ public:
         emitPrefix(false);
         emitLoweredFunctionSignature(row, function, instance, false, false,
                                      ownerSpelling, false,
-                                     !function.genericParameters.empty());
+                                     !directRepresentation && !directMember &&
+                                         !function.genericParameters.empty());
         output << ' ';
         emitLoweredNormalFunctionBody(*instance);
       }
@@ -3962,6 +4630,13 @@ public:
               : std::nullopt;
       const MirClassInstance *ownerInstance =
           mir.findClassInstance(instance->owner);
+      const bool directOwner =
+          ownerInstance != nullptr &&
+          loweredClassUsesDirectRepresentation(*ownerInstance);
+      const bool directConstructor =
+          directOwner ||
+          (!genericOwner && !constructor.genericParameters.empty() &&
+           loweredConstructorInstanceIsNameable(*instance));
       const bool unnameableOwner = ownerInstance != nullptr &&
                                    !loweredTypeIsNameable(ownerInstance->type);
       if (unnameableOwner) {
@@ -4031,14 +4706,18 @@ public:
             "source lowered constructor has no admitted MIR body");
       }
       const std::string ownerSpelling =
-          generic ? loweredConcreteClassName(instance->owner)
-                  : loweredPrimaryClassSpelling(owner);
+          directOwner ? loweredConcreteClassName(instance->owner)
+          : generic   ? loweredConcreteClassName(instance->owner)
+                      : loweredPrimaryClassSpelling(owner);
+      const std::string constructorName =
+          directOwner ? loweredConcreteClassLeafName(instance->owner)
+                      : owner.name;
       const auto emitSignature = [&](bool failureForm) {
         writeIndent();
-        if (genericOwner || (generic && !failureForm)) {
+        if (!directConstructor && (genericOwner || (generic && !failureForm))) {
           output << "template <> ";
         }
-        output << ownerSpelling << "::" << owner.name << '(';
+        output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredConstructorParameters(*instance, failureForm);
         output << ')';
       };
@@ -4054,14 +4733,14 @@ public:
               "contained constructor has no admitted failure body");
         }
         writeIndent();
-        if (genericOwner) {
+        if (genericOwner && !directConstructor) {
           output << "template <> ";
         }
-        output << ownerSpelling << "::" << owner.name << '(';
+        output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredContainedConstructorParameters(constructor, *instance,
                                                   false);
         output << ')';
-        emitLoweredContainedConstructorBody(owner, *instance);
+        emitLoweredContainedConstructorBody(owner, *instance, constructorName);
       }
       if (normal) {
         emitSignature(false);
@@ -4100,13 +4779,20 @@ public:
         continue;
       }
       const std::string ownerSpelling =
-          generic ? loweredConcreteClassName(classInstance.id)
-                  : loweredPrimaryClassSpelling(owner);
+          loweredClassUsesDirectRepresentation(classInstance)
+              ? loweredConcreteClassName(classInstance.id)
+          : generic ? loweredConcreteClassName(classInstance.id)
+                    : loweredPrimaryClassSpelling(owner);
+      const bool directOwner =
+          loweredClassUsesDirectRepresentation(classInstance);
+      const std::string destructorName =
+          directOwner ? loweredConcreteClassLeafName(classInstance.id)
+                      : owner.name;
       writeIndent();
-      if (generic) {
+      if (generic && !directOwner) {
         output << "template <> ";
       }
-      output << ownerSpelling << "::~" << owner.name << "() noexcept ";
+      output << ownerSpelling << "::~" << destructorName << "() noexcept ";
       if (!classDeclaration->requiresActiveDropState) {
         throw std::logic_error(
             "declared lowered destructor has no lifecycle cleanup adapter");
@@ -4126,7 +4812,9 @@ public:
   }
 
   void emitLoweredLifecycleDefinitions() {
-    for (const LoweredDeclaration *classRow : loweredDeferredLifecycleClasses) {
+    for (const LoweredDeclaration &deferredClass :
+         loweredDeferredLifecycleClasses) {
+      const LoweredDeclaration *classRow = &deferredClass;
       const auto *classDeclaration =
           std::get_if<LoweredClassDeclaration>(&classRow->payload);
       if (classDeclaration == nullptr) {
@@ -4135,6 +4823,8 @@ public:
       }
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(classRow->namespaceScope);
+      const auto direct =
+          loweredConcreteLifecycleInstances.find(classRow->name);
       bool emitted = false;
       for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
         if (thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
@@ -4143,6 +4833,10 @@ public:
         const auto *cleanup =
             std::get_if<CppMirLifecycleCleanupThunk>(&thunk.payload);
         if (cleanup == nullptr || cleanup->ownerClass != classDeclaration->id) {
+          continue;
+        }
+        if (direct != loweredConcreteLifecycleInstances.end() &&
+            cleanup->classInstance != direct->second) {
           continue;
         }
         const MirDestructorInstance *destructor =
@@ -4156,12 +4850,14 @@ public:
         }
         const bool concrete =
             cleanup->form == CppMirLifecycleCleanupForm::ConcreteSpecialization;
+        const bool directConcrete =
+            direct != loweredConcreteLifecycleInstances.end();
         const std::string ownerSpelling =
             concrete ? loweredConcreteClassName(cleanup->classInstance)
                      : loweredPrimaryClassSpelling(*classRow);
         const auto emitPrefix = [&] {
           writeIndent();
-          if (concrete) {
+          if (concrete && !directConcrete) {
             output << "template <> ";
           }
         };
@@ -4250,7 +4946,8 @@ public:
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted && (!loweredOwnerIsGeneric(*classRow) ||
+      if (!emitted && (direct != loweredConcreteLifecycleInstances.end() ||
+                       !loweredOwnerIsGeneric(*classRow) ||
                        loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
@@ -4324,6 +5021,7 @@ public:
 
   void buildLoweredProgramTail(CppProgramEmissionPlan &plan) {
     indexLoweredDeclarations();
+    prepareLoweredNativePrimaryClasses();
     prepareLoweredConstexprAggregateClasses();
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle,
             [&] { emitLoweredPublicOpaqueHandleForwardDeclarations(); });
@@ -4333,6 +5031,7 @@ public:
       output << "namespace __gti_program {\n";
       ++indentation;
       emitLoweredTypeForwardDeclarations(0);
+      emitLoweredConcreteClassForwardDeclarations();
       emitLoweredExactClassSpecializationForwardDeclarations();
       emitLoweredAliasForwardDeclarations(0);
       emitLoweredFunctionForwardDeclarations(0);
@@ -5432,6 +6131,8 @@ public:
       throw std::logic_error(
           "lowered owned-arguments startup lost an exact target");
     }
+    const std::string appendSpelling =
+        loweredFunctionInstanceSpelling(*appendRow, *appendDeclaration, append);
 
     output << "\nint main(int __gti_native_argc, "
               "char **__gti_native_argv) {\n";
@@ -5504,8 +6205,7 @@ public:
       output << "}\n";
       writeIndent();
       output << "if (!__gti_arguments."
-             << cppMirFailureSiblingSpelling(
-                    cppFunctionSpelling(*appendDeclaration, appendRow->name))
+             << cppMirFailureSiblingSpelling(appendSpelling)
              << "(std::move(__gti_argument), &__gti_failure_record)) {\n";
       ++indentation;
       emitHostedFailureTermination();
@@ -5514,8 +6214,7 @@ public:
       output << "}\n";
     } else {
       writeIndent();
-      output << "__gti_arguments."
-             << cppFunctionSpelling(*appendDeclaration, appendRow->name) << '(';
+      output << "__gti_arguments." << appendSpelling << '(';
       emitSemanticType(entry->parameterTypes[1].arguments.front());
       output << "(std::string_view(__gti_native_argv[__gti_index])));\n";
     }
@@ -5857,7 +6556,11 @@ public:
   std::unordered_set<SymbolId> loweredNamespaceStaticSymbols;
   std::vector<const LoweredDeclaration *> loweredDeferredStaticFields;
   std::vector<const LoweredDeclaration *> loweredDeferredMembers;
-  std::vector<const LoweredDeclaration *> loweredDeferredLifecycleClasses;
+  std::vector<LoweredDeclaration> loweredDeferredLifecycleClasses;
+  std::unordered_map<std::string, HirClassInstanceId>
+      loweredConcreteLifecycleInstances;
+  std::unordered_set<ClassId> loweredNativePrimaryClasses;
+  std::unordered_set<LoweredDeclarationId> loweredDeferredMemberIds;
   std::unordered_set<LoweredDeclarationId> loweredEmittedTypes;
   std::unordered_set<ClassId> loweredConstexprAggregateClasses;
   mutable std::optional<CppMirBodyEmitter> generalBodyEmitter;

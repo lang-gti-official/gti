@@ -776,16 +776,22 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
-  const std::string transformedDefinition =
-      "bool __gti_program::Total::__gti_fn_" +
-      std::to_string(member->declaration) + "_add__gti_mir_failure(";
+  const std::string transformedPrefix =
+      "bool __gti_program::Total::__gti_member_";
+  const std::size_t transformed = text.find(transformedPrefix);
+  const std::size_t transformedName =
+      transformed == std::string::npos
+          ? std::string::npos
+          : text.find("_add__gti_mir_failure(", transformed);
+  const bool concreteName =
+      transformedName != std::string::npos &&
+      transformedName == transformed + transformedPrefix.size() + 64;
   expect(text.find("function-instance " + std::to_string(entry->id) + "\n") !=
                  std::string::npos &&
              text.find("function-instance " + std::to_string(member->id) +
                        "\n") != std::string::npos &&
-             text.find(transformedDefinition) != std::string::npos &&
-             text.find("template <> " + transformedDefinition) ==
-                 std::string::npos,
+             concreteName &&
+             text.find("template <> " + transformedPrefix) == std::string::npos,
          "production emission should define the concrete transformed member "
          "overload with ordinary-owner C++ syntax");
 }

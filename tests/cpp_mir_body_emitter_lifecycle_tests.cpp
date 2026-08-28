@@ -197,6 +197,8 @@ int main() {
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   std::size_t arrays = 0;
   std::size_t wrappers = 0;
+  std::unordered_set<std::string> arraySpellings;
+  std::unordered_set<std::string> wrapperSpellings;
   for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
     const lang::ClassTypeInfo *info =
         frontend.semantics.findClassType(instance.declaration);
@@ -217,20 +219,26 @@ int main() {
     }
     const std::string &spelling = schedule.fields.front().spelling;
     if (info->declaration->name().lexeme == "StaticArray") {
-      expect(spelling == "std::array<T, N>{}",
-             "all concrete StaticArray instances should project one dependent "
+      expect((spelling == "std::array<std::int32_t, 4>{}" ||
+              spelling == "std::array<std::int32_t, 8>{}"),
+             "each direct StaticArray instance should project its concrete "
              "aggregate spelling");
+      arraySpellings.insert(spelling);
       ++arrays;
     } else {
-      expect(spelling.find("StaticArray<T, N>{}") != std::string::npos,
-             "all concrete WrappedArray instances should project one "
-             "dependent default-construction spelling");
+      expect(spelling.find("::__gti_type_") != std::string::npos &&
+                 spelling.find("_StaticArray{}") != std::string::npos &&
+                 spelling.find("<T, N>") == std::string::npos,
+             "each direct WrappedArray instance should project its concrete "
+             "nested-class default-construction spelling");
+      wrapperSpellings.insert(spelling);
       ++wrappers;
     }
   }
-  expect(arrays == 2 && wrappers == 2,
+  expect(arrays == 2 && wrappers == 2 && arraySpellings.size() == 2 &&
+             wrapperSpellings.size() == 2,
          "the dependent initializer fixture should exercise both concrete "
-         "instances of each class template");
+         "instances and spell each physical representation distinctly");
 }
 
 void testContainedOwningFieldConstructor() {
@@ -1889,10 +1897,13 @@ int main() {
   const auto contains = [&](std::string_view needle) {
     return artifact.contents.find(needle) != std::string::npos;
   };
-  expect(contains("const T **__gti_mir_out_result") &&
-             contains("const std::int32_t **__gti_mir_out_result"),
-         "the primary generic member and its concrete specialization should "
-         "publish references through pointer carriers");
+  expect(!contains("const T **__gti_mir_out_result") &&
+             contains("const std::int32_t **__gti_mir_out_result") &&
+             contains("__gti_type_") && contains("_box") &&
+             contains("__gti_member_") && contains("_get__gti_mir_failure"),
+         "the selected direct generic class member should publish its "
+         "concrete reference through the pointer carrier without retaining a "
+         "native dependent primary");
   expect(contains("scalar-cfg-failure-v1 function-instance " +
                   std::to_string(getter->id)) &&
              contains("scalar-cfg-failure-v1 function-instance " +
@@ -1984,10 +1995,9 @@ int main() {
          "the selected constructor should carry its verified-MIR banner");
 }
 
-// A constructor of a generic class publishes per admitted concrete
-// instance as an explicit specialization carrying the same verified
-// schedule — declaration after the class, definition beside the deferred
-// template, stores-reference initializer list included.
+// A constructor of a generic class publishes inside its GTI-owned concrete
+// class and carries the same verified schedule. The concrete declaration must
+// still precede any later class initializer that constructs the application.
 
 void testGenericOwnerConstructorSpecialization() {
   const lang::FrontendResult frontend = analyze("cpp-mir-generic-ctor.gti", R"(
@@ -2036,21 +2046,23 @@ int main() {
   const auto contains = [&](std::string_view needle) {
     return artifact.contents.find(needle) != std::string::npos;
   };
-  expect(contains("template <> __gti_program::wrapper<std::int32_t>::"
-                  "wrapper(const std::int32_t & __gti_mir_arg_0);"),
-         "the specialization should declare after the class definition");
-  const std::size_t readingSpecialization = artifact.contents.find(
-      "template <> __gti_program::reading<std::int32_t>::reading(");
+  expect(contains("_wrapper(const std::int32_t & __gti_mir_arg_0);") &&
+             contains("class __gti_type_") &&
+             !contains("template <> __gti_program::wrapper"),
+         "the selected wrapper constructor should declare on its ordinary "
+         "GTI-owned concrete class");
+  const std::size_t readingDeclaration =
+      artifact.contents.find("_reading(std::int32_t __gti_mir_arg_0);");
   const std::size_t dashboardDefinition =
       artifact.contents.find("class dashboard {");
-  expect(readingSpecialization != std::string::npos &&
+  expect(readingDeclaration != std::string::npos &&
              dashboardDefinition != std::string::npos &&
-             readingSpecialization < dashboardDefinition,
-         "a generic constructor specialization should be declared before a "
-         "later class initializer can instantiate the primary template");
+             readingDeclaration < dashboardDefinition,
+         "a direct generic constructor should be declared before a later "
+         "class initializer uses its concrete application");
   expect(contains(" : target(__gti_mir_arg_0) "),
-         "the specialization should bind the reference field in its member "
-         "initializer list");
+         "the concrete constructor should bind the reference field in its "
+         "member initializer list");
 }
 
 // Generic source constructors and generic members use concrete private

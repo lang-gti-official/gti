@@ -5,6 +5,7 @@
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/SHA256.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -90,6 +91,104 @@ enumDeclarationRow(const LoweredProgram &program, EnumId id) {
     }
   }
   return nullptr;
+}
+
+[[nodiscard]] const LoweredClassDeclaration *
+concreteClassPrimary(const LoweredProgram &program,
+                     const LoweredClassDeclaration &declaration) {
+  return declaration.exactSpecializationPrimary == 0
+             ? &declaration
+             : program.findClassDeclaration(
+                   declaration.exactSpecializationPrimary);
+}
+
+[[nodiscard]] const LoweredDeclaration *
+concreteClassPrimaryRow(const LoweredProgram &program,
+                        const LoweredClassDeclaration &declaration) {
+  const LoweredClassDeclaration *primary =
+      concreteClassPrimary(program, declaration);
+  return primary == nullptr ? nullptr
+                            : classDeclarationRow(program, primary->id);
+}
+
+[[nodiscard]] bool concreteClassSupportsDirectRepresentation(
+    const LoweredProgram &program, const LoweredClassDeclaration &declaration,
+    const LoweredDeclaration &primaryRow) {
+  if (declaration.compilerCapability != CompilerCapabilityTypeKind::None ||
+      declaration.cOpaqueHandle || declaration.cAbiRecord) {
+    return false;
+  }
+  const LoweredDeclaration *parent = program.findDeclaration(primaryRow.parent);
+  if (parent != nullptr &&
+      std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
+    return false;
+  }
+  for (const LoweredDeclaration &candidate : program.declarations()) {
+    if (candidate.parent != primaryRow.id) {
+      continue;
+    }
+    if (const auto *storage =
+            std::get_if<LoweredStorageDeclaration>(&candidate.payload)) {
+      const auto containsUniqueOwner = [&](const auto &self,
+                                           const SemanticType &type) -> bool {
+        return type.kind == SemanticType::UniqueOwner ||
+               std::any_of(type.arguments.begin(), type.arguments.end(),
+                           [&](const SemanticType &argument) {
+                             return self(self, argument);
+                           });
+      };
+      if (containsUniqueOwner(containsUniqueOwner, storage->type)) {
+        // C++ unique ownership deliberately supports an incomplete pointee.
+        // A direct concrete wrapper would eagerly default its native special
+        // members and instantiate std::unique_ptr<T>'s deletion contract
+        // before T is complete. Keep these ownership carriers as source
+        // templates so native instantiation retains the same delayed-complete
+        // behavior, including recursive Node -> unique_ptr<Node> layouts.
+        return false;
+      }
+    }
+    if (std::holds_alternative<LoweredClassDeclaration>(candidate.payload) ||
+        std::holds_alternative<LoweredEnumDeclaration>(candidate.payload) ||
+        std::holds_alternative<LoweredTypeAliasDeclaration>(
+            candidate.payload)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+semanticTypeContainsLexicalClosure(const SemanticType &type) {
+  return type.kind == SemanticType::Lambda ||
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     semanticTypeContainsLexicalClosure);
+}
+
+[[nodiscard]] bool
+concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
+                                       const SemanticType &type) {
+  static_cast<void>(type);
+  for (const MirFunctionInstance &instance :
+       program.mir().functionInstances()) {
+    const bool lexicalClosure =
+        semanticTypeContainsLexicalClosure(instance.returnType) ||
+        std::any_of(instance.parameterTypes.begin(),
+                    instance.parameterTypes.end(),
+                    semanticTypeContainsLexicalClosure) ||
+        std::any_of(instance.typeArguments.begin(),
+                    instance.typeArguments.end(),
+                    semanticTypeContainsLexicalClosure);
+    if (!lexicalClosure) {
+      continue;
+    }
+    // One lexical closure requires a source-template overlay whose dependent
+    // class graph can transitively mention other generic classes (for example
+    // vector<T>::iterator). Until that overlay records an explicit concrete
+    // carrier closure, keep the program's class family on the one audited
+    // native carrier path rather than mixing direct and dependent class ABIs.
+    return true;
+  }
+  return false;
 }
 
 [[nodiscard]] bool appendConcreteTypeIdentity(std::vector<std::uint8_t> &output,
@@ -367,6 +466,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         CompilerCapabilityTypeKind::ThreadHandle) {
       return "::gti_internal::backend::thread_handle";
     }
+    if (const std::optional<std::string> concrete =
+            cppConcreteClassTypeSpelling(program, type)) {
+      return *concrete;
+    }
     std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
                                                  classInfo->cOpaqueHandle);
     const std::vector<SemanticType> &typeArguments =
@@ -470,6 +573,83 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   default:
     return "void";
   }
+}
+
+std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,
+                                                const SemanticType &type) {
+  if (type.kind != SemanticType::Class || type.classId == 0) {
+    return std::nullopt;
+  }
+  const LoweredClassDeclaration *declaration =
+      program.findClassDeclaration(type.classId);
+  if (declaration == nullptr) {
+    return std::nullopt;
+  }
+  const LoweredClassDeclaration *primary =
+      concreteClassPrimary(program, *declaration);
+  const LoweredDeclaration *primaryRow =
+      concreteClassPrimaryRow(program, *declaration);
+  if (primary == nullptr || primaryRow == nullptr ||
+      primary->genericParameters.empty() ||
+      !concreteClassSupportsDirectRepresentation(program, *declaration,
+                                                 *primaryRow) ||
+      concreteClassIsCallableTemplateCarrier(program, type)) {
+    return std::nullopt;
+  }
+
+  const std::vector<SemanticType> &arguments =
+      declaration->exactSpecializationPrimary == 0
+          ? type.arguments
+          : declaration->exactTypeArguments;
+  const std::vector<CompileTimeValue> &values =
+      declaration->exactSpecializationPrimary == 0
+          ? type.valueArguments
+          : declaration->exactValueArguments;
+
+  std::vector<std::uint8_t> identity;
+  appendIdentityText(identity, "GTI-CONCRETE-CLASS-V1");
+  appendIdentityText(identity, primary->qualifiedName);
+  appendIdentityText(identity, primaryRow->source.source);
+  appendIdentityInteger(identity, primary->genericParameters.size());
+  for (const LoweredGenericParameter &parameter : primary->genericParameters) {
+    appendIdentityInteger(identity, parameter.value ? 1 : 0);
+    appendIdentityInteger(identity, parameter.pack ? 1 : 0);
+  }
+  appendIdentityInteger(identity, arguments.size());
+  for (const SemanticType &argument : arguments) {
+    if (!appendConcreteTypeIdentity(identity, program, argument)) {
+      return std::nullopt;
+    }
+  }
+  appendIdentityInteger(identity, values.size());
+  for (const CompileTimeValue &value : values) {
+    if (!appendConcreteValueIdentity(identity, value)) {
+      return std::nullopt;
+    }
+  }
+  return "__gti_type_" + identityDigestHex(identity) + "_" + primaryRow->name;
+}
+
+std::optional<std::string>
+cppConcreteClassTypeSpelling(const LoweredProgram &program,
+                             const SemanticType &type) {
+  const std::optional<std::string> name = cppConcreteClassName(program, type);
+  const LoweredClassDeclaration *declaration =
+      type.kind == SemanticType::Class
+          ? program.findClassDeclaration(type.classId)
+          : nullptr;
+  const LoweredClassDeclaration *primary =
+      declaration == nullptr ? nullptr
+                             : concreteClassPrimary(program, *declaration);
+  if (!name || primary == nullptr) {
+    return std::nullopt;
+  }
+  const std::size_t separator = primary->qualifiedName.rfind("::");
+  const std::string qualified =
+      separator == std::string::npos
+          ? *name
+          : primary->qualifiedName.substr(0, separator + 2) + *name;
+  return cppLoweredQualifiedName(qualified, false);
 }
 
 std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
@@ -621,6 +801,74 @@ cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
     }
   }
   return "__gti_inst_" + identityDigestHex(identity) + "_" + row.name;
+}
+
+std::optional<std::string>
+cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
+                                  const LoweredDeclaration &row,
+                                  const LoweredFunctionDeclaration &function,
+                                  const LoweredFunctionInstance &instance,
+                                  const MirFunctionInstance &mirInstance) {
+  const auto *rowFunction =
+      std::get_if<LoweredFunctionDeclaration>(&row.payload);
+  if (rowFunction == nullptr || rowFunction->id != function.id ||
+      function.id == 0 || function.ownerClass == 0 ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.linkage != LanguageLinkage::Gti ||
+      function.intrinsic != IntrinsicKind::None || !instance.owner ||
+      !mirInstance.owner || instance.declaration != function.id ||
+      mirInstance.declaration != function.id ||
+      !cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance)) {
+    return std::nullopt;
+  }
+  const MirClassInstance *owner =
+      program.mir().findClassInstance(*mirInstance.owner);
+  if (owner == nullptr || owner->id != *instance.owner ||
+      (!cppConcreteClassName(program, owner->type) &&
+       function.genericParameters.empty())) {
+    return std::nullopt;
+  }
+  if (function.overloadedOperator || function.virtualMethod) {
+    return cppFunctionSpelling(function, row.name);
+  }
+
+  std::vector<std::uint8_t> identity;
+  appendIdentityText(identity, "GTI-CONCRETE-MEMBER-FUNCTION-V1");
+  if (!appendConcreteTypeIdentity(identity, program, owner->type)) {
+    return std::nullopt;
+  }
+  appendIdentityText(identity, function.qualifiedName);
+  appendIdentityText(identity, row.name);
+  appendIdentityInteger(
+      identity, static_cast<std::uint64_t>(function.receiverMutability));
+  appendIdentityInteger(identity, function.staticMember ? 1 : 0);
+  appendIdentityInteger(identity, function.genericParameters.size());
+  for (const LoweredGenericParameter &parameter : function.genericParameters) {
+    appendIdentityInteger(identity, parameter.value ? 1 : 0);
+    appendIdentityInteger(identity, parameter.pack ? 1 : 0);
+  }
+  appendIdentityInteger(identity, instance.typeArguments.size());
+  for (const SemanticType &argument : instance.typeArguments) {
+    if (!appendConcreteTypeIdentity(identity, program, argument)) {
+      return std::nullopt;
+    }
+  }
+  appendIdentityInteger(identity, instance.valueArguments.size());
+  for (const CompileTimeValue &argument : instance.valueArguments) {
+    if (!appendConcreteValueIdentity(identity, argument)) {
+      return std::nullopt;
+    }
+  }
+  if (!appendConcreteTypeIdentity(identity, program, mirInstance.returnType)) {
+    return std::nullopt;
+  }
+  appendIdentityInteger(identity, mirInstance.parameterTypes.size());
+  for (const SemanticType &parameter : mirInstance.parameterTypes) {
+    if (!appendConcreteTypeIdentity(identity, program, parameter)) {
+      return std::nullopt;
+    }
+  }
+  return "__gti_member_" + identityDigestHex(identity) + "_" + row.name;
 }
 
 // Ported verbatim from the compatibility emitter's
