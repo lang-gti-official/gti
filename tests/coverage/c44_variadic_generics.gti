@@ -1,0 +1,26 @@
+// Variadic generic packs: forwarding, expansion and mixed explicit arguments.
+class Anchor { public: int32_t id() { return 0; } };
+
+void consume<Args...>(Args... values) {}
+
+void forward<Args...>(Args... values) {
+  consume(values...);
+  consume(0, values...);
+}
+
+T keep_first<T, Rest...>(T first, Rest... rest) {
+  forward(rest...);
+  return first;
+}
+
+int main() {
+  forward();
+  forward(1, true, "gti");
+
+  int32_t inferred = keep_first(7, false, "tail");
+  int32_t explicit_types = keep_first<int32_t, std::string_view>(9, "tail");
+
+  std::print(inferred); std::print(" ");
+  std::println(explicit_types);
+  return 0;
+}

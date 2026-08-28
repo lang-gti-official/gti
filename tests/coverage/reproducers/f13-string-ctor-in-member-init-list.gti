@@ -1,0 +1,8 @@
+#include <std/string>
+class Holder {
+  mut std::string s;
+public:
+  Holder() : s(std::string("lit")) {}
+  std::size_t size() { return this.s.size(); }
+};
+int main() { mut Holder h = Holder(); std::println(int32_t(h.size())); return 0; }

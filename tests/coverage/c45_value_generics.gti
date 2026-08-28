@@ -1,0 +1,40 @@
+// Generic classes and functions parameterized by values, and contextual arrays.
+class Anchor { public: int32_t id() { return 0; } };
+
+class Ring<T, uint64_t N> {
+  mut T slots[N];
+  mut uint64_t used = uint64_t(0);
+public:
+  Ring() : slots({}) {}
+  uint64_t capacity() { return N; }
+  bool push(T value) mut {
+    if (this.used >= N) { return false; }
+    this.slots[this.used] = std::move(value);
+    this.used = this.used + uint64_t(1);
+    return true;
+  }
+  T& at(uint64_t index) { return this.slots[index]; }
+  uint64_t size() { return this.used; }
+};
+
+int32_t total<uint64_t N>(int32_t values[N]) {
+  mut int32_t sum = 0;
+  for (mut uint64_t i = uint64_t(0); i < N; i++) { sum = sum + values[i]; }
+  return sum;
+}
+
+int main() {
+  mut Ring<int32_t, 3> ring = Ring<int32_t, 3>();
+  std::print(ring.push(4) ? 1 : 0);
+  std::print(ring.push(5) ? 1 : 0);
+  std::print(ring.push(6) ? 1 : 0);
+  std::print(ring.push(7) ? 1 : 0);
+  std::print(" ");
+  std::print(int32_t(ring.capacity())); std::print(" ");
+  std::print(int32_t(ring.size())); std::print(" ");
+  std::print(ring.at(uint64_t(1))); std::print(" ");
+
+  int32_t fixed[4] = {1, 2, 3, 4};
+  std::println(total(fixed));
+  return 0;
+}

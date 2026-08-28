@@ -1,0 +1,34 @@
+// Move-only types, sink parameters, owning containers and explicit transfer.
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+class Buffer {
+  mut std::string data;
+public:
+  Buffer(std::string_view text) : data(std::string(text)) {}
+  Buffer(Buffer& other) = delete;
+  Buffer(Buffer&& other) = default;
+  std::size_t size() { return this.data.size(); }
+};
+
+std::size_t consume(Buffer taken) { return taken.size(); }
+
+Buffer produce(std::string_view text) { return Buffer(text); }
+
+int main() {
+  mut Buffer local = produce("abcdef");
+  std::print(int32_t(local.size())); std::print(" ");
+  std::print(int32_t(consume(std::move(local)))); std::print(" ");
+
+  mut std::vector<Buffer> owned = std::vector<Buffer>();
+  owned.push_back(produce("xy"));
+  owned.push_back(produce("z"));
+  std::print(int32_t(owned.size())); std::print(" ");
+
+  mut std::unique_ptr<Buffer> boxed = std::make_unique<Buffer>("boxed");
+  std::print(int32_t(boxed->size())); std::print(" ");
+  mut std::unique_ptr<Buffer> moved = std::move(boxed);
+  std::println(moved == nullptr ? 0 : 1);
+  return 0;
+}

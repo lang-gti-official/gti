@@ -1,0 +1,37 @@
+// C-ABI records: layout queries and extern "C" declarations over them.
+//
+// A [[c_abi]] record cannot be constructed in GTI (no constructors, no field
+// initializers), so this exercises the surface that is reachable: exact
+// layout, nesting, pointer fields, and native declarations.
+[[c_abi]]
+struct Vec3 {
+  mut float x;
+  mut float y;
+  mut float z;
+};
+
+[[c_abi]]
+struct Frame {
+  mut uint64_t id;
+  mut Vec3 origin;
+  mut void* opaque;
+};
+
+extern "C" {
+  Vec3 host_scale(Vec3 value, float factor);
+  void host_offset(Vec3* value, float dx);
+  uint64_t host_frame_id(Frame* frame);
+}
+
+int main() {
+  constexpr uint64_t vec_size = sizeof(Vec3);
+  constexpr uint64_t vec_align = alignof(Vec3);
+  constexpr uint64_t frame_size = sizeof(Frame);
+  constexpr uint64_t frame_align = alignof(Frame);
+
+  std::print(int32_t(vec_size)); std::print(" ");
+  std::print(int32_t(vec_align)); std::print(" ");
+  std::print(int32_t(frame_size)); std::print(" ");
+  std::println(int32_t(frame_align));
+  return 0;
+}
