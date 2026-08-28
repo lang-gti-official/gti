@@ -1,0 +1,21 @@
+#include <std/vector>
+interface Scorer<T> {
+  int32_t score(T& value);
+};
+class Doubler : public Scorer<int32_t> {
+public:
+  Doubler() {}
+  int32_t score(int32_t& value) override { return value * 2; }
+};
+int32_t total_score(mut Scorer<int32_t>& scorer, std::vector<int32_t>& values) {
+  mut int32_t total = 0;
+  for (auto& v : values) { total = total + scorer.score(v); }
+  return total;
+}
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(1); v.push_back(2); v.push_back(3);
+  mut Doubler d = Doubler();
+  std::println(total_score(d, v));
+  return 0;
+}

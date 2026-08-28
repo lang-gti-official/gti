@@ -1,0 +1,15 @@
+#include <std/array>
+// A class must be present for a file-scope static_assert to resolve today;
+// see the findings report for the visibility defect this works around.
+class Anchor { public: int32_t id() { return 1; } };
+constexpr int32_t square(int32_t v) { return v * v; }
+static_assert(sizeof(int32_t) == uint64_t(4), "int32_t is four bytes");
+static_assert(alignof(int64_t) == uint64_t(8), "int64_t aligns to eight");
+int main() {
+  constexpr int32_t folded = square(5);
+  static_assert(folded == 25, "constexpr call folds inside a function");
+  mut Anchor a = Anchor();
+  std::print(folded); std::print(" ");
+  std::println(int32_t(sizeof(int64_t)) + a.id());
+  return 0;
+}

@@ -1,0 +1,39 @@
+// Scoped enums, switch coverage, conditional expressions, do/while and loops.
+enum class Direction : uint8_t {
+  north,
+  south,
+  east,
+  west,
+};
+
+int32_t delta_x(Direction d) {
+  switch (d) {
+  case Direction::north: return 0;
+  case Direction::south: return 0;
+  case Direction::east: return 1;
+  case Direction::west: return -1;
+  default: return 0;
+  }
+}
+
+int main() {
+  mut int32_t x = 0;
+  mut int32_t steps = 0;
+  do {
+    x = x + delta_x(Direction::east);
+    steps++;
+  } while (steps < 3);
+
+  for (mut int32_t i = 0; i < 3; i++) {
+    if (i == 1) { continue; }
+    x = x + delta_x(Direction::west);
+  }
+
+  mut int32_t guard = 0;
+  while (true) {
+    guard++;
+    if (guard > 2) { break; }
+  }
+  std::println(x * 10 + guard);
+  return 0;
+}

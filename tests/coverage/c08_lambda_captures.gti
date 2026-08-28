@@ -1,0 +1,32 @@
+// Lambda capture forms, stateful callables, and callable parameters.
+#include <std/vector>
+#include <std/algorithm>
+#include <std/string>
+
+class Counter {
+  mut int32_t seen = 0;
+public:
+  Counter() {}
+  bool operator()(int32_t& value) mut { this.seen++; return value > 1; }
+  int32_t count() { return this.seen; }
+};
+
+int32_t apply_once<Operation>(mut Operation op, int32_t start) {
+  return op(start);
+}
+
+int main() {
+  int32_t offset = 10;
+  auto add_offset = [offset](int32_t v) -> int32_t { return v + offset; };
+  std::println(apply_once(std::move(add_offset), 1));
+
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(0); values.push_back(2); values.push_back(5);
+  std::ptrdiff_t big = std::count_if(values.begin(), values.end(), Counter());
+  std::println(int32_t(big));
+
+  std::string owned = std::string("captured");
+  auto describe = [moved = std::move(owned)]() -> std::size_t { return moved.size(); };
+  std::println(int32_t(describe()));
+  return 0;
+}

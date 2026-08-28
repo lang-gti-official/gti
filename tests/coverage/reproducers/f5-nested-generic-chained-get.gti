@@ -1,0 +1,12 @@
+class Box<T> {
+  mut T value;
+public:
+  Box(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+};
+T unwrap_twice<T>(Box<Box<T>>& outer) requires std::copyable<T> { return outer.get().get(); }
+int main() {
+  mut Box<Box<int32_t>> nested = Box<Box<int32_t>>(Box<int32_t>(7));
+  std::println(unwrap_twice(nested));
+  return 0;
+}

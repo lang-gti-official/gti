@@ -1,0 +1,31 @@
+// Interface dispatch through unique_ptr upcast and a polymorphic collection.
+#include <std/vector>
+
+interface Shape {
+  int32_t area();
+  int32_t sides();
+};
+
+class Square : public Shape {
+  int32_t side;
+public:
+  Square(int32_t side) : side(side) {}
+  int32_t area() override { return this.side * this.side; }
+  int32_t sides() override { return 4; }
+};
+
+class Rect : public Shape {
+  int32_t w;
+  int32_t h;
+public:
+  Rect(int32_t w, int32_t h) : w(w), h(h) {}
+  int32_t area() override { return this.w * this.h; }
+  int32_t sides() override { return 4; }
+};
+
+int main() {
+  mut std::unique_ptr<Shape> a = std::upcast_unique<Shape, Square>(std::make_unique<Square>(3));
+  mut std::unique_ptr<Shape> b = std::upcast_unique<Shape, Rect>(std::make_unique<Rect>(2, 5));
+  std::println(a->area() + b->area() + a->sides());
+  return 0;
+}

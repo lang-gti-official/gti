@@ -1,0 +1,26 @@
+// Defined integer arithmetic modes, gcd/lcm, accumulate and lerp.
+#include <std/numeric>
+#include <std/string>
+#include <std/vector>
+
+int main() {
+  int32_t w = std::wrapping_add(int32_t(2147483647), int32_t(1));
+  int32_t s = std::saturating_add(int32_t(2147483647), int32_t(1));
+  mut auto c = std::checked_add(int32_t(2147483647), int32_t(1));
+  std::print(w); std::print(" "); std::print(s); std::print(" ");
+  std::println(c.has_value() ? 0 : 1);
+
+  std::print(std::gcd(int32_t(12), int32_t(18)));
+  std::print(" ");
+  std::println(std::lcm(int32_t(4), int32_t(6)));
+
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1); values.push_back(2); values.push_back(3);
+  std::println(std::accumulate(values.begin(), values.end(), 0));
+
+  float lo = 0.0;
+  float hi = 10.0;
+  float mid = std::lerp(lo, hi, 0.25);
+  std::println(int32_t(mid));
+  return 0;
+}

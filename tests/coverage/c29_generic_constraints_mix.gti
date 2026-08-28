@@ -1,0 +1,24 @@
+#include <std/vector>
+#include <std/string>
+T largest<std::totally_ordered T>(std::vector<T>& values, T fallback)
+  requires std::copyable<T> {
+  if (values.size() == std::size_t(0)) { return std::move(fallback); }
+  mut T best = values[std::size_t(0)];
+  for (mut std::size_t i = std::size_t(1); i < values.size(); i++) {
+    T candidate = values[i];
+    if (best < candidate) { best = candidate; }
+  }
+  return std::move(best);
+}
+int32_t sum_all<std::numeric T>(std::vector<T>& values) requires std::copyable<T> {
+  mut int32_t total = 0;
+  for (auto& v : values) { total = total + int32_t(v); }
+  return total;
+}
+int main() {
+  mut std::vector<int32_t> ints = std::vector<int32_t>();
+  ints.push_back(3); ints.push_back(9); ints.push_back(5);
+  std::print(largest(ints, 0)); std::print(" ");
+  std::println(sum_all(ints));
+  return 0;
+}

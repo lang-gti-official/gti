@@ -1,0 +1,13 @@
+#include <std/vector>
+struct Point { int32_t x; int32_t y; Point(int32_t x, int32_t y) : x(x), y(y) {} };
+int main() {
+  mut int32_t[2] pair = {3, 4};
+  auto [a, b] = pair;
+  mut auto v = std::vector<int32_t>();
+  v.push_back(a); v.push_back(b);
+  auto total = a + b;
+  mut auto scaled = total * 2;
+  scaled = scaled + int32_t(v.size());
+  std::println(scaled);
+  return 0;
+}
