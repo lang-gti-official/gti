@@ -406,20 +406,22 @@ failure on a safe widening conversion; drifts the origin/site; and stales or
 duplicates the producer record. It also checks exact producer records,
 dedicated fixed-record failure successors, active-loan ending,
 reverse-construction temporary and lexical cleanup, and byte-for-byte record
-propagation for eligible full-expression-root scalar operations. It checks
-caller-owned class-value stages and normal-edge-only
-initialization for one cleanup-owning ordinary-call result. An exact local scalar
-argument detector after two prepared owners must branch before invocation, drop
-both stages in reverse order, and resume normal setup without duplicate
-evaluation. An ownership-free static direct call in the same argument position
-must propagate an un-sited record unchanged, perform the same caller cleanup,
-and feed its result into exactly one normal-path outer input. A direct call that
-stages its own owning parameter remains excluded. Verifier mutations reject
-removed invokes, rewritten records, reordered cleanup, detached local or call
-results, omitted prepared-stage cleanup, missing parameter transfer, and missing
-success initialization. Other compound argument failures, nested owning calls,
-borrowed and remaining owning results, constructors, containment, runtime
-records, and backend execution remain outside this gate.
+propagation for eligible scalar operations in full-expression-root and nested
+value positions, including a passive `Expected<scalar, E>` call consumed by a
+contextual condition conversion. It checks caller-owned class-value stages and
+normal-edge-only initialization for one cleanup-owning ordinary-call result. An
+exact local scalar argument detector after two prepared owners must branch
+before invocation, drop both stages in reverse order, and resume normal setup
+without duplicate evaluation. An ownership-free static direct call in the same
+argument position must propagate an un-sited record unchanged, perform the same
+caller cleanup, and feed its result into exactly one normal-path outer input. A
+direct call that stages its own owning parameter remains excluded. Verifier
+mutations reject removed invokes, rewritten records, reordered cleanup,
+detached local or call results, omitted prepared-stage cleanup, missing
+parameter transfer, and missing success initialization. Other compound
+argument failures, nested owning calls, borrowed and cleanup-bearing owning
+results, constructors, containment, runtime records, and backend execution
+remain outside this gate.
 
 M-OWN-02 now supplies indexed-place implementation evidence for the directly
 owned fixed-array slice. `compiler_pipeline` covers equal and both prefix

@@ -52,6 +52,12 @@ expected<int, int> sum(bool first, bool second) {
   return ?scalar(first, 11, 20) + ?scalar(second, 12, 22);
 }
 
+expected<bool, int> condition_value(mut int value, bool payload) {
+  int checked = value + 1;
+  if (checked == 0) { return false; }
+  return payload;
+}
+
 expected<int, int> marked_value(bool fail) {
   if (fail) { return unexpected(21); }
   return 49;
@@ -181,6 +187,9 @@ expected<int, MoveError> forward_named_move_error(bool fail) {
 }
 
 int main() {
+  if (!condition_value(1, false)) { return 21; }
+  if (!condition_value(1, true)) { return 22; }
+
   expected<int, int> success = sum(false, false);
   if (!success.has_value() || success.value() != 42 || scalar_state != 2) {
     return 1;
