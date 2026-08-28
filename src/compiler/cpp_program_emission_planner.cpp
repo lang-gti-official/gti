@@ -1059,6 +1059,41 @@ public:
     output << ')';
   }
 
+  void emitLoweredConcreteFreeFunctionSignature(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance, bool failure) {
+    const LoweredFunctionInstance *lowered =
+        loweredFunctionInstance(instance.id);
+    const std::optional<std::string> name =
+        lowered == nullptr
+            ? std::nullopt
+            : cppConcreteFreeFunctionSpelling(loweredProgram, row, function,
+                                              *lowered, instance);
+    if (!name) {
+      throw std::logic_error(
+          "lowered concrete free function lost its stable instance identity");
+    }
+    if (failure) {
+      output << "bool ";
+    } else {
+      emitSemanticType(instance.returnType);
+      if (instance.returnType.kind != SemanticType::Reference) {
+        output << ' ';
+      }
+    }
+    output << (failure ? cppMirFailureSiblingSpelling(*name) : *name) << '(';
+    const std::size_t parameterCount =
+        emitLoweredMirParameters(instance.parameterTypes);
+    if (failure) {
+      if (parameterCount != 0) {
+        output << ", ";
+      }
+      emitLoweredFailureResultParameter(instance.returnType);
+      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+    }
+    output << ')';
+  }
+
   void emitLoweredExternCBlock(const LoweredDeclaration &linkage) {
     writeIndent();
     output << "extern \"C\" {\n";
@@ -1114,21 +1149,28 @@ public:
       const bool generic = !function->genericParameters.empty();
       const bool threadTaskTemplate =
           generic && loweredFunctionNeedsThreadTaskTemplate(instances);
-      if (generic) {
-        emitLoweredTemplateDeclaration(function->genericParameters,
-                                       threadTaskTemplate);
+      const bool hasTemplateNormal =
+          generic && function->definitionKind == MirDefinitionKind::Source &&
+          !loweredCallableTemplateBody(*function, instances, false).empty();
+      const bool hasTemplateFailure =
+          generic && function->definitionKind == MirDefinitionKind::Source &&
+          !loweredCallableTemplateBody(*function, instances, true).empty();
+      const bool retainPrimaryDeclaration =
+          generic && function->definitionKind != MirDefinitionKind::Source;
+      if (!generic || hasTemplateNormal || retainPrimaryDeclaration) {
+        if (generic) {
+          emitLoweredTemplateDeclaration(function->genericParameters,
+                                         threadTaskTemplate);
+        }
+        writeIndent();
+        emitLoweredFunctionSignature(*declaration, *function, nullptr, false,
+                                     false, {}, generic);
+        output << ";\n";
       }
-      writeIndent();
-      emitLoweredFunctionSignature(*declaration, *function, nullptr, false,
-                                   false, {}, generic);
-      output << ";\n";
       const bool hasFailure = std::any_of(
           instances.begin(), instances.end(), [&](const auto *instance) {
             return loweredFailureBodySupported(*instance);
           });
-      const bool hasTemplateFailure =
-          generic &&
-          !loweredCallableTemplateBody(*function, instances, true).empty();
       if (hasTemplateFailure) {
         emitLoweredTemplateDeclaration(function->genericParameters,
                                        threadTaskTemplate);
@@ -1158,14 +1200,14 @@ public:
         }
         if (loweredNormalBodySupported(*instance)) {
           writeIndent();
-          emitLoweredFreeFunctionSpecializationSignature(
-              *declaration, *function, *instance, false);
+          emitLoweredConcreteFreeFunctionSignature(*declaration, *function,
+                                                   *instance, false);
           output << ";\n";
         }
         if (loweredFailureBodySupported(*instance)) {
           writeIndent();
-          emitLoweredFreeFunctionSpecializationSignature(
-              *declaration, *function, *instance, true);
+          emitLoweredConcreteFreeFunctionSignature(*declaration, *function,
+                                                   *instance, true);
           output << ";\n";
         }
       }
@@ -2772,17 +2814,6 @@ public:
   }
 
   [[nodiscard]] static bool
-  loweredContainsUnnameableType(const SemanticType &type) {
-    if (type.kind == SemanticType::Lambda ||
-        type.kind == SemanticType::TypeParameter ||
-        type.kind == SemanticType::TypePack) {
-      return true;
-    }
-    return std::any_of(type.arguments.begin(), type.arguments.end(),
-                       loweredContainsUnnameableType);
-  }
-
-  [[nodiscard]] static bool
   loweredContainsLambdaType(const SemanticType &type) {
     if (type.kind == SemanticType::Lambda) {
       return true;
@@ -2794,13 +2825,8 @@ public:
   [[nodiscard]] bool loweredFunctionInstanceIsNameable(
       const LoweredFunctionInstance &instance,
       const MirFunctionInstance &mirInstance) const {
-    static_cast<void>(instance);
-    const std::optional<std::vector<SemanticType>> flattened =
-        cppMirFlattenConcreteParameterTypes(mirInstance.parameterTypes);
-    return flattened &&
-           std::none_of(flattened->begin(), flattened->end(),
-                        loweredContainsUnnameableType) &&
-           !loweredContainsUnnameableType(mirInstance.returnType);
+    return cppConcreteFunctionInstanceIsNameable(loweredProgram, instance,
+                                                 mirInstance);
   }
 
   [[nodiscard]] bool loweredFunctionNeedsThreadTaskTemplate(
@@ -3164,15 +3190,15 @@ public:
       }
       if (loweredFailureBodySupported(*instance)) {
         writeIndent();
-        emitLoweredFreeFunctionSpecializationSignature(row, function, *instance,
-                                                       true);
+        emitLoweredConcreteFreeFunctionSignature(row, function, *instance,
+                                                 true);
         output << ' ';
         emitLoweredFailureFunctionBody(*instance);
       }
       if (loweredNormalBodySupported(*instance)) {
         writeIndent();
-        emitLoweredFreeFunctionSpecializationSignature(row, function, *instance,
-                                                       false);
+        emitLoweredConcreteFreeFunctionSignature(row, function, *instance,
+                                                 false);
         output << ' ';
         emitLoweredNormalFunctionBody(*instance);
       }

@@ -2505,12 +2505,15 @@ int main() {
              generated.find("template <typename T>\n  class Box {") !=
                  std::string::npos,
          "generic classes should lower with matching C++ forward declarations");
-  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
-                 std::string::npos &&
-             generated.find("_identity(T __gti_mir_arg_0)") !=
-                 std::string::npos &&
-             generated.find("_unbox(") != std::string::npos,
-         "generic functions should lower as C++ function templates");
+  expect(generated.find("__gti_inst_") != std::string::npos &&
+             containsMangledFunction(generated, "", "identity",
+                                     "(std::int32_t __gti_mir_arg_0)") &&
+             containsMangledFunction(generated, "", "identity",
+                                     "__gti_mir_failure(std::string_view "
+                                     "__gti_mir_arg_0") &&
+             containsMangledFunction(generated, "", "unbox", ""),
+         "nameable generic functions should lower as GTI-selected concrete "
+         "functions");
   expect(
       generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
               std::string::npos &&
@@ -2956,18 +2959,18 @@ int main() {
          "the AST should retain the qualified generic constraint path");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
-                 std::string::npos &&
-             generated.find("_minimum(T __gti_mir_arg_0, T __gti_mir_arg_1)") !=
-                 std::string::npos &&
-             generated.find(
-                 "_minimum<std::int32_t>(std::int32_t __gti_mir_arg_0") !=
-                 std::string::npos &&
-             generated.find("mir_checked_multiply_v1<std::int32_t>") !=
-                 std::string::npos &&
-             generated.find("requires __gti_std::") == std::string::npos,
-         "constraints should remain frontend metadata while generic numeric "
-         "conversions lower through checked backend casts");
+  expect(
+      generated.find("template <typename T>\n  T __gti_fn_") ==
+              std::string::npos &&
+          containsMangledFunction(generated, "", "minimum",
+                                  "(std::int32_t __gti_mir_arg_0, std::int32_t "
+                                  "__gti_mir_arg_1)") &&
+          generated.find("_minimum<std::int32_t>(") == std::string::npos &&
+          generated.find("mir_checked_multiply_v1<std::int32_t>") !=
+              std::string::npos &&
+          generated.find("requires __gti_std::") == std::string::npos,
+      "constraints should remain frontend metadata while generic numeric "
+      "conversions lower through checked backend casts");
   expect(generated.find("static_cast<std::uint64_t>(0)") != std::string::npos &&
              generated.find("static_cast<std::uint8_t>(3)") !=
                  std::string::npos,
@@ -5872,13 +5875,15 @@ int main() {
 
   const std::string generated = gti_test::emitCppText(frontend);
   expect(generated.find("std::initializer_list") == std::string::npos &&
-             generated.find("template <std::size_t N>") != std::string::npos &&
+             generated.find("template <std::size_t N>\n  bool __gti_fn_") ==
+                 std::string::npos &&
              generated.find("std::array<std::int32_t, 3>{__gti_mir_v_") !=
                  std::string::npos &&
              generated.find("std::array<std::int32_t, 2>{__gti_mir_v_") !=
                  std::string::npos &&
-             generated.find("__gti_fn_1_total__gti_mir_failure(std::array<std::"
-                            "int32_t, 3>") != std::string::npos,
+             containsMangledFunction(
+                 generated, "", "total",
+                 "__gti_mir_failure(std::array<std::int32_t, 3>"),
          "the backend should materialize an explicit std::array value and "
          "never delegate list semantics to C++ overload resolution");
 
@@ -6026,34 +6031,18 @@ int main() {
          "concrete MIR parameter roles across equivalent pack groupings");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("template <typename... Args>") != std::string::npos &&
-             generated.find("Args... __gti_mir_arg_0") != std::string::npos &&
-             generated.find("_consume__gti_mir_failure("
-                            "std::int32_t __gti_mir_arg_0, bool "
-                            "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "consume",
-                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+  expect(containsMangledFunction(
+             generated, "", "consume",
+             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+             "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
-  expect(generated.find("_consume__gti_mir_failure("
-                        "std::int32_t __gti_mir_arg_0, std::int32_t "
-                        "__gti_mir_arg_1, bool __gti_mir_arg_2, "
-                        "std::string_view __gti_mir_arg_3") !=
-                 std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "consume",
-                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
-                 "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
-                 "std::string_view __gti_mir_arg_3"),
+  expect(containsMangledFunction(
+             generated, "", "consume",
+             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
+             "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
+             "std::string_view __gti_mir_arg_3"),
          "a final symbolic pack should compose with concrete pack elements");
-  expect(generated.find("template <typename T, typename... Rest>") !=
-                 std::string::npos &&
-             generated.find("_first__gti_mir_failure("
-                            "std::int32_t __gti_mir_arg_0, bool "
-                            "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos &&
+  expect(generated.find("Rest... __gti_mir_arg_1") == std::string::npos &&
              containsMangledFunction(
                  generated, "", "first",
                  "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
@@ -6336,9 +6325,8 @@ int main() {
 
   const std::string foldGenerated = gti_test::emitCppText(foldFrontend);
   expect(resolvedFold != nullptr &&
-             foldGenerated.find(
-                 "__gti_fn_" + std::to_string(resolvedFold->function) +
-                 "_touch__gti_mir_failure(__gti_mir_p_") != std::string::npos &&
+             containsMangledFunction(foldGenerated, "", "touch",
+                                     "__gti_mir_failure(__gti_mir_p_") &&
              foldGenerated.find("_touch(count, values), ...") ==
                  std::string::npos,
          "the C++ backend should emit the one compiler-selected fold target "
@@ -7657,15 +7645,16 @@ int main() {
   expect(generated.find("namespace gfx = engine::graphics;") !=
              std::string::npos,
          "emitter should preserve namespace aliases");
-  expect(generated.find("::__gti_program::engine::graphics::Renderer "
-                        "__gti_fn_3_createRenderer();") != std::string::npos &&
+  expect(containsMangledFunction(generated,
+                                 "::__gti_program::engine::graphics::Renderer ",
+                                 "createRenderer", "();") &&
              generated.find("namespace gfx = engine::graphics;") !=
                  std::string::npos,
          "qualified types should parse and emit through namespace aliases");
-  expect(generated.find("engine::graphics::__gti_fn_1_render();") !=
-                 std::string::npos &&
-             generated.find("engine::graphics::__gti_fn_2_renderTwice();") !=
-                 std::string::npos,
+  expect(containsMangledFunction(generated, "engine::graphics::", "render",
+                                 "();") &&
+             containsMangledFunction(
+                 generated, "engine::graphics::", "renderTwice", "();"),
          "emitter should preserve qualified calls");
 
   auto invalidTokens = lexer.scan(R"(
@@ -7799,16 +7788,15 @@ int main() { return native_like(7); }
   expect(ordinaryPrototype.canGenerateCode(),
          "ordinary GTI bodyless functions should remain valid declarations");
   const std::string ordinaryCpp = gti_test::emitCppText(ordinaryPrototype);
-  expect(ordinaryCpp.find("extern \"C\"") == std::string::npos &&
-             ordinaryCpp.find(
-                 "std::int32_t __gti_fn_1_native_like(const std::int32_t "
-                 "value);") != std::string::npos &&
-             ordinaryCpp.find("__gti_fn_1_native_like(__gti_mir_v_") !=
-                 std::string::npos &&
-             ordinaryCpp.find("native_like__gti_mir_failure") ==
-                 std::string::npos,
-         "ordinary prototypes should retain GTI mangling unless linkage is "
-         "explicitly C");
+  expect(
+      ordinaryCpp.find("extern \"C\"") == std::string::npos &&
+          containsMangledFunction(ordinaryCpp, "std::int32_t ", "native_like",
+                                  "(const std::int32_t value);") &&
+          containsMangledFunction(ordinaryCpp, "", "native_like",
+                                  "(__gti_mir_v_") &&
+          ordinaryCpp.find("native_like__gti_mir_failure") == std::string::npos,
+      "ordinary prototypes should retain GTI mangling unless linkage is "
+      "explicitly C");
 
   const lang::FrontendResult runtime =
       analyzeTrustedStandalonePreludeFixture("extern-runtime.gti", R"(
