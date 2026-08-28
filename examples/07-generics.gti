@@ -30,6 +30,12 @@ T remainder<std::integral T>(T value, T divisor) {
   return T(value % divisor);
 }
 
+// Value arguments can be supplied explicitly when no runtime argument can
+// infer them. They are part of the exact GTI function instance identity.
+constexpr uint64_t selected_extent<uint64_t N>() {
+  return N;
+}
+
 class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
@@ -48,9 +54,10 @@ int main() {
   int smaller = minimum(21, 34);
   int product = multiply(6, 7);
   int leftover = remainder(23, 5);
+  uint64_t explicit_extent = selected_extent<4>();
   StaticArray<int, 4> values{};
   if (value == 21 and smaller == 21 and product == 42 and leftover == 3 and
-      values.size() == 4) {
+      explicit_extent == 4 and values.size() == 4) {
     std::println("generic code keeps its type information");
     return 0;
   }

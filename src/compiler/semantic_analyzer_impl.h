@@ -1586,6 +1586,7 @@ private:
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren);
 
@@ -1599,6 +1600,7 @@ private:
   bool applyFunctionTypeArguments(
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren);
 
@@ -1609,15 +1611,15 @@ private:
       GenericParameterId *conflictingParameter = nullptr,
       bool *conflictingValueParameter = nullptr);
 
-  [[nodiscard]] bool
-  tryInstantiateFunction(const CallableCandidate &candidate,
-                         const std::vector<SemanticType> &explicitTypeArguments,
-                         const std::vector<SemanticType> &argumentTypes,
-                         const ExprList &expressions,
-                         CallableCandidate &resolved,
-                         std::vector<SemanticType> &resolvedTypeArguments,
-                         std::vector<CompileTimeValue> &resolvedValueArguments,
-                         ConstraintFailure *constraintFailure = nullptr);
+  [[nodiscard]] bool tryInstantiateFunction(
+      const CallableCandidate &candidate,
+      const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<CompileTimeValue> &explicitValueArguments,
+      const std::vector<SemanticType> &argumentTypes,
+      const ExprList &expressions, CallableCandidate &resolved,
+      std::vector<SemanticType> &resolvedTypeArguments,
+      std::vector<CompileTimeValue> &resolvedValueArguments,
+      ConstraintFailure *constraintFailure = nullptr);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
 

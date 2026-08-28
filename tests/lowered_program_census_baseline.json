@@ -91,9 +91,9 @@
       }
     },
     "07-generics.gti": {
-      "declarations": 157,
-      "bodies": 42,
-      "generated_items": 9,
+      "declarations": 158,
+      "bodies": 43,
+      "generated_items": 10,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -102,7 +102,7 @@
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
-        "thread_task_adapter": 7
+        "thread_task_adapter": 8
       }
     },
     "08-expected.gti": {
@@ -1112,8 +1112,8 @@
     }
   },
   "totals": {
-    "declarations": 14629,
-    "bodies": 4416,
-    "generated_items": 669
+    "declarations": 14630,
+    "bodies": 4417,
+    "generated_items": 670
   }
 }

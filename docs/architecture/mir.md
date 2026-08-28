@@ -94,8 +94,12 @@ rejects represented synchronization in the single-threaded profile. Thus an
 unused `<std/thread>` import remains valid without granting a backend or
 transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v51`/`mir-body-v45`.
-Program v51 extends the version-28 benign-event rule to the trivial-commit
+The deterministic serialization is currently `mir-v52`/`mir-body-v45`.
+Program v52 serializes ordered type and `uint64_t` value arguments on every
+concrete function row. HIR-to-MIR lowering and the detached lowered verifier
+exact-compare both vectors, so a nondeducible value-only function or method
+cannot collapse into another instance or delegate identity recovery to native
+parameter types. Program v51 extends the version-28 benign-event rule to the trivial-commit
 assignment: a `Reinitialize` that leaves an always-available, trivially
 destroyed destination available on a reachable edge is equally
 state-preserving, because the checked write helper leaves the destination

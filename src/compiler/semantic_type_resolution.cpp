@@ -3829,24 +3829,6 @@ auto SemanticVisitor::Impl::validateFunctionPacks(
       genericParameters.begin(), genericParameters.end(),
       [](const GenericParameterInfo &parameter) { return parameter.value; });
   for (std::size_t index = 0; index < genericParameters.size(); ++index) {
-    if (genericParameters[index].value && !instanceAnalysisActive) {
-      const bool inferable = std::any_of(
-          function.parameters().begin(), function.parameters().end(),
-          [&](const Parameter &parameter) {
-            const SemanticType type = typeOf(parameter);
-            return !parameter.type.reference && !parameter.pack &&
-                   type.kind == SemanticType::Array &&
-                   type.arrayLengthParameterId == genericParameters[index].id;
-          });
-      if (!inferable) {
-        report(genericParameters[index].name,
-               "Function value parameter '" +
-                   genericParameters[index].name.lexeme +
-                   "' must be the extent of a by-value fixed-array "
-                   "parameter so calls can infer it exactly.",
-               "GTI-S2026");
-      }
-    }
     if (!genericParameters[index].pack) {
       continue;
     }

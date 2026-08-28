@@ -923,14 +923,21 @@ auto SemanticVisitor::Impl::reportConstraintFailure(
 auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
     CallableCandidate &function,
     const std::vector<SemanticType> &explicitTypeArguments,
+    const std::vector<CompileTimeValue> &explicitValueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren) -> bool {
+  if (!explicitValueArguments.empty()) {
+    report(paren, "Variadic functions do not admit value generic arguments.",
+           "GTI-S2026");
+    return false;
+  }
   CallableCandidate resolved;
   std::vector<SemanticType> resolvedTypeArguments;
   std::vector<CompileTimeValue> resolvedValueArguments;
   ConstraintFailure constraintFailure;
-  if (tryInstantiateFunction(function, explicitTypeArguments, argumentTypes,
-                             arguments, resolved, resolvedTypeArguments,
+  if (tryInstantiateFunction(function, explicitTypeArguments,
+                             explicitValueArguments, argumentTypes, arguments,
+                             resolved, resolvedTypeArguments,
                              resolvedValueArguments, &constraintFailure)) {
     function = std::move(resolved);
     return true;
@@ -1128,15 +1135,17 @@ auto SemanticVisitor::Impl::inferTypeArguments(
 auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     CallableCandidate &function,
     const std::vector<SemanticType> &explicitTypeArguments,
+    const std::vector<CompileTimeValue> &explicitValueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren) -> bool {
   if (function.parameterPack) {
     return applyVariadicFunctionTypeArguments(function, explicitTypeArguments,
+                                              explicitValueArguments,
                                               argumentTypes, arguments, paren);
   }
   bool valid = true;
   if (function.record().genericParameters.empty()) {
-    if (!explicitTypeArguments.empty()) {
+    if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
       report(paren, "Non-generic functions do not take generic arguments.");
       valid = false;
     }
@@ -1144,19 +1153,37 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   }
 
   GenericSubstitution substitution;
-  if (!explicitTypeArguments.empty()) {
+  if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
     const std::size_t typeParameterCount =
         genericTypeParameterCount(function.record().genericParameters);
     if (explicitTypeArguments.size() != typeParameterCount) {
-      report(
-          paren,
-          "Generic function called with the wrong number of type arguments.");
+      report(paren,
+             "Generic function called with the wrong number of type arguments.",
+             "GTI-S2026");
+      valid = false;
+    }
+    const std::size_t valueParameterCount =
+        genericValueParameterCount(function.record().genericParameters);
+    if (!explicitValueArguments.empty() &&
+        explicitValueArguments.size() != valueParameterCount) {
+      report(paren,
+             "Generic function called with the wrong number of explicit "
+             "value arguments.",
+             "GTI-S2026");
       valid = false;
     }
     std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter :
          function.record().genericParameters) {
-      if (parameter.value || typeIndex >= explicitTypeArguments.size()) {
+      if (parameter.value) {
+        if (valueIndex < explicitValueArguments.size()) {
+          substitution.values.emplace(parameter.id,
+                                      explicitValueArguments[valueIndex++]);
+        }
+        continue;
+      }
+      if (typeIndex >= explicitTypeArguments.size()) {
         continue;
       }
       substitution.types.emplace(parameter.id,
@@ -1183,7 +1210,8 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
              "Cannot infer generic " +
                  std::string(parameter.value ? "value" : "type") +
                  " parameter '" + parameter.name.lexeme +
-                 (parameter.value ? "' from a fixed-array argument extent."
+                 (parameter.value ? "' from a fixed-array argument extent; "
+                                    "provide every value argument explicitly."
                                   : "'; provide explicit type arguments."),
              parameter.value ? "GTI-S2026" : "GTI-S2023");
       valid = false;
@@ -1343,6 +1371,7 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
 auto SemanticVisitor::Impl::tryInstantiateFunction(
     const CallableCandidate &candidate,
     const std::vector<SemanticType> &explicitTypeArguments,
+    const std::vector<CompileTimeValue> &explicitValueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &expressions,
     CallableCandidate &resolved,
     std::vector<SemanticType> &resolvedTypeArguments,
@@ -1352,7 +1381,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
   resolvedTypeArguments.clear();
   resolvedValueArguments.clear();
   if (candidate.record().genericParameters.empty()) {
-    if (!explicitTypeArguments.empty() ||
+    if (!explicitTypeArguments.empty() || !explicitValueArguments.empty() ||
         !acceptsArgumentShape(candidate, argumentTypes)) {
       return false;
     }
@@ -1376,17 +1405,32 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       !acceptsArgumentShape(candidate, argumentTypes)) {
     return false;
   }
-  if (!explicitTypeArguments.empty()) {
+  if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
     if (pack == nullptr && explicitTypeArguments.size() != fixedGenerics) {
       return false;
     }
     if (pack != nullptr && explicitTypeArguments.size() < fixedGenerics) {
       return false;
     }
+    const std::size_t valueGenerics =
+        genericValueParameterCount(candidate.record().genericParameters);
+    if ((!explicitValueArguments.empty() &&
+         explicitValueArguments.size() != valueGenerics) ||
+        (pack != nullptr && !explicitValueArguments.empty())) {
+      return false;
+    }
     std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter :
          candidate.record().genericParameters) {
-      if (parameter.value || typeIndex >= explicitTypeArguments.size()) {
+      if (parameter.value) {
+        if (valueIndex < explicitValueArguments.size()) {
+          substitution.values.emplace(parameter.id,
+                                      explicitValueArguments[valueIndex++]);
+        }
+        continue;
+      }
+      if (typeIndex >= explicitTypeArguments.size()) {
         continue;
       }
       substitution.types.emplace(parameter.id,

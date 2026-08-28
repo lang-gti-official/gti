@@ -1,0 +1,52 @@
+constexpr uint64_t selected_extent<uint64_t N>() { return N; }
+
+T default_value<std::default_initializable T>() { return T(); }
+
+constexpr uint64_t mixed_extent<T, uint64_t N>() { return N; }
+
+int sum_values<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+T first_value<T, uint64_t N>(T values[N]) { return values[0]; }
+
+int relay_sum<uint64_t N>(int values[N]) {
+  return sum_values<N>(values);
+}
+
+class Accumulator {
+  int initial;
+
+public:
+  Accumulator(int value) : initial(value) {}
+
+  int add<uint64_t N>(int values[N]) {
+    return this.initial + sum_values<N>(values);
+  }
+
+  uint64_t selected<uint64_t N>() { return N; }
+};
+
+int main() {
+  constexpr uint64_t three = 3;
+  int literal = sum_values<3>({1, 2, 3});
+  int named_constant = sum_values<three>({4, 5, 6});
+  int mixed = first_value<int, 2>({7, 8});
+  int relayed = relay_sum<2>({9, 10});
+  uint64_t extent = selected_extent<4>();
+  int defaulted = default_value<int>();
+  uint64_t mixed_selected = mixed_extent<int, 5>();
+  Accumulator accumulator = Accumulator(20);
+  int method = accumulator.add<2>({11, 12});
+  uint64_t method_selected = accumulator.selected<6>();
+  if (literal == 6 and named_constant == 15 and mixed == 7 and
+      relayed == 19 and extent == 4 and defaulted == 0 and
+      mixed_selected == 5 and method == 43 and method_selected == 6) {
+    return 0;
+  }
+  return 1;
+}

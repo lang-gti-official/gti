@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v51 valid=" << program.valid() << '\n';
+    output << "mir-v52 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -413,7 +413,21 @@ public:
 
     for (const MirFunctionInstance &instance : program.functionInstances()) {
       output << "function @" << instance.id
-             << " declaration=" << instance.declaration << " owner=";
+             << " declaration=" << instance.declaration << " type-arguments=[";
+      for (std::size_t index = 0; index < instance.typeArguments.size();
+           ++index) {
+        separator(index);
+        type(instance.typeArguments[index]);
+      }
+      output << "] value-arguments=[";
+      for (std::size_t index = 0; index < instance.valueArguments.size();
+           ++index) {
+        separator(index);
+        const CompileTimeValue &argument = instance.valueArguments[index];
+        output << '{' << number(argument.kind) << ':' << argument.value << ':'
+               << argument.parameterId << '}';
+      }
+      output << "] owner=";
       optional(instance.owner);
       output << " static=" << instance.staticMember
              << " entry=" << number(instance.entryKind) << ':'
