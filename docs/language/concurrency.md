@@ -64,6 +64,13 @@ failure record is re-raised by join. See
 [Execution section 4.9](execution.md#49-concurrency-boundary) for the complete
 failure and cleanup boundary.
 
+`Result` may be a transfer-safe owned class. A successful explicit `join()`
+returns `expected<Result, thread_errc>` and owns the completed result until it
+is extracted, for example with `std::move(joined).value()`. Cleanup-owning
+results are armed exactly once when join succeeds; extraction transfers that
+obligation to the destination, while an unobserved result is destroyed during
+automatic handle cleanup.
+
 ## Atomic Scalar Domain
 
 `<std/atomic>` provides `std::atomic<T>` when `T` satisfies

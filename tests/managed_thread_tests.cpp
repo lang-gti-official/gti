@@ -422,6 +422,96 @@ int main() {
          "ownership transitions");
 }
 
+void testClassTypedResultPipeline() {
+  const lang::FrontendResult frontend =
+      analyze("managed-thread-class-result.gti", R"(
+#include <std/thread>
+
+class result_value {
+  int32_t value;
+public:
+  result_value(int32_t value) : value(value) {}
+  result_value(result_value& other) = delete;
+  result_value(result_value&& other) = default;
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  mut std::thread_result<result_value> worker =
+      std::thread_result<result_value>();
+  auto started = worker.start([]() -> result_value {
+    return result_value(42);
+  });
+  if (!started.has_value()) { return 1; }
+  auto joined = worker.join();
+  if (!joined.has_value()) { return 2; }
+  mut result_value result = std::move(joined).value();
+  if (result.read() != 42) { return 3; }
+  return 0;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "class-valued result tasks should retain exact semantic, HIR, and "
+         "MIR contracts");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  expect(frontend.mir.threadTaskAdapters().size() == 1 &&
+             frontend.mir.threadTaskAdapters().front().resultType.kind ==
+                 lang::SemanticType::Class,
+         "a class-valued closure task should retain one exact result adapter");
+  bool foundClassJoinInvoke = false;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(frontend.mir)) {
+    const lang::MirBody *body = lang::findMirBody(frontend.mir, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Invoke ||
+          block.instructions.empty()) {
+        continue;
+      }
+      const lang::MirInstruction &instruction = block.instructions.back();
+      foundClassJoinInvoke =
+          foundClassJoinInvoke ||
+          (instruction.id == block.terminator.invokeInstruction &&
+           instruction.intrinsic == lang::IntrinsicKind::ThreadJoin &&
+           instruction.info.type.kind == lang::SemanticType::Expected &&
+           instruction.info.type.arguments.size() == 2 &&
+           instruction.info.type.arguments.front().kind ==
+               lang::SemanticType::Class &&
+           instruction.definedFailure.propagation ==
+               lang::FailurePropagationKind::TaskJoin);
+    }
+  }
+  expect(foundClassJoinInvoke,
+         "class-valued join should retain an exact Invoke for worker failure "
+         "handoff");
+
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, frontend.mir, frontend.mir, concurrentTarget());
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "class-valued task results should retain lowered-program authority");
+  const std::string cpp20 =
+      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
+  const std::string cpp23 =
+      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+  expect(cpp20.find("managed_thread_spawn_value<") != std::string::npos &&
+             cpp20.find("managed_thread_take_join_result<") !=
+                 std::string::npos &&
+             cpp23.find("mir_expected_value_move_v1") != std::string::npos,
+         "both C++ standards should place, join, and extract a class result "
+         "without default construction");
+}
+
 void expectThreadRejection(std::string_view name, std::string source,
                            std::string_view message,
                            bool requireRelatedCause = false) {
@@ -784,6 +874,7 @@ int main() {
   testDormantImportInSingleThreadedProfile();
   testPublicPipelineAndInventory();
   testTypedResultPipeline();
+  testClassTypedResultPipeline();
   testSemanticRejections();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;

@@ -1311,6 +1311,15 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
     add_test(
+      NAME managed_thread_tsan
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/managed_thread_class_result.gti"
+              "${CMAKE_CXX_COMPILER}"
+    )
+    set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
+    add_test(
       NAME atomic_end_to_end
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/atomic_runtime_test.py"
@@ -1434,8 +1443,9 @@ if(Python3_Interpreter_FOUND)
         mir_backend_scalar_failure_callgraph_runtime_3of3
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
-      string_owned_output_runtime managed_thread_end_to_end atomic_end_to_end
-      atomic_tsan mutex_end_to_end mutex_tsan
+      string_owned_output_runtime managed_thread_end_to_end
+      managed_thread_tsan atomic_end_to_end atomic_tsan mutex_end_to_end
+      mutex_tsan
       domain_operator_runtime
       PROPERTIES ENVIRONMENT
         "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"

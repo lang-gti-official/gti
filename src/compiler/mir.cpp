@@ -4121,6 +4121,24 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.info.traits.drop == DropKind::Lexical) {
     return true;
   }
+  // A typed thread join returns Expected<Result, thread_errc> while also
+  // carrying the joined worker's defined-failure channel. When Result is a
+  // class and the join is returned directly from the private wrapper, HIR has
+  // no temporary drop identity to arm: the backend's placement result owns
+  // the successful value. The Invoke is still mandatory so a worker failure
+  // reaches the wrapper's failure record instead of being mistaken for an
+  // ordinary Expected error.
+  if (position == MirFailureControlFlowPosition::FullExpressionRoot &&
+      instruction.kind == MirInstructionKind::Call && instruction.result &&
+      instruction.intrinsic == IntrinsicKind::ThreadJoin &&
+      instruction.definedFailure.propagation ==
+          FailurePropagationKind::TaskJoin &&
+      instruction.info.type.kind == SemanticType::Expected &&
+      instruction.info.type.arguments.size() == 2 &&
+      instruction.info.type.arguments.front().kind == SemanticType::Class &&
+      instruction.info.traits.drop == DropKind::Lexical) {
+    return true;
+  }
   // A class-valued call used as the full-expression of a Return has no MIR
   // drop identity: on success its value is transferred directly to the
   // caller. It still needs an Invoke so failure can unwind live parameters

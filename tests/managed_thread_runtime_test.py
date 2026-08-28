@@ -96,6 +96,62 @@ int main() {
 }
 """
 
+TYPED_CLASS_RESULT_SOURCE = """\
+#include <std/thread>
+
+class result_value {
+  int32_t value;
+public:
+  result_value(int32_t value) : value(value) {}
+  result_value(result_value& other) = delete;
+  result_value(result_value&& other) = default;
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  mut std::thread_result<result_value> worker =
+      std::thread_result<result_value>();
+  auto started = worker.start([]() -> result_value {
+    return result_value(42);
+  });
+  if (!started.has_value()) { return 1; }
+  auto joined = worker.join();
+  if (!joined.has_value()) { return 2; }
+  mut result_value result = std::move(joined).value();
+  if (result.read() != 42) { return 3; }
+  return 0;
+}
+"""
+
+TYPED_CLASS_RESULT_CLEANUP_SOURCE = """\
+#include <std/thread>
+
+[[unsafe_transfer]] class result_value {
+  int32_t value;
+public:
+  result_value(int32_t value) : value(value) {}
+  result_value(result_value& other) = delete;
+  result_value(result_value&& other) = default;
+  int32_t read() { return this.value; }
+  ~result_value() { std::println(this.value); }
+};
+
+int main() {
+  mut std::thread_result<result_value> worker =
+      std::thread_result<result_value>();
+  auto started = worker.start([]() -> result_value {
+    return result_value(9);
+  });
+  if (!started.has_value()) { return 1; }
+  auto joined = worker.join();
+  if (!joined.has_value()) { return 2; }
+  mut result_value result = std::move(joined).value();
+  if (result.read() != 9) { return 3; }
+  std::println("after extraction");
+  return 0;
+}
+"""
+
 TYPED_RESULT_CLEANUP_SOURCE = """\
 #include <std/thread>
 
@@ -480,6 +536,44 @@ def test_typed_result_matrix(
             expect_process(binary, code=0, stdout="", stderr="")
 
 
+def test_typed_class_result_matrix(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    for standard in ("c++20", "c++23"):
+        for optimization in ("-O0", "-O3"):
+            suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
+            binary = build(
+                compiler,
+                root,
+                f"managed_thread_class_result_{suffix}",
+                TYPED_CLASS_RESULT_SOURCE,
+                standard=standard,
+                optimization=optimization,
+            )
+            expect_process(binary, code=0, stdout="", stderr="")
+
+
+def test_typed_class_result_cleanup(
+    compiler: pathlib.Path, root: pathlib.Path
+) -> None:
+    for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+        suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
+        binary = build(
+            compiler,
+            root,
+            f"managed_thread_class_result_cleanup_{suffix}",
+            TYPED_CLASS_RESULT_CLEANUP_SOURCE,
+            standard=standard,
+            optimization=optimization,
+        )
+        expect_process(
+            binary,
+            code=0,
+            stdout="after extraction\n9\n",
+            stderr="",
+        )
+
+
 def test_typed_result_cleanup(
     compiler: pathlib.Path, root: pathlib.Path
 ) -> None:
@@ -735,6 +829,8 @@ def main() -> int:
         root = pathlib.Path(scratch)
         test_success_matrix(compiler, root)
         test_typed_result_matrix(compiler, root)
+        test_typed_class_result_matrix(compiler, root)
+        test_typed_class_result_cleanup(compiler, root)
         test_typed_result_cleanup(compiler, root)
         test_typed_result_failure(compiler, root)
         test_failure_handoff(compiler, root)
