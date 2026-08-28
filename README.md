@@ -279,6 +279,18 @@ environment search paths conservatively bypass. Use
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
 artifacts whether built serially or in parallel.
 
+`gti build --build-report <path>` records a versioned provenance sidecar: the
+resolved package, target, and profile, the SHA-256 content identity of every
+consumed GTI source unit and toolchain material, the native compiler identity
+and exact command, and the produced executable's own bytes.
+`gti verify --build-report <path>` rebuilds what that record describes and
+names every recorded identity the tree no longer reproduces, exiting `70` on
+any divergence. A successful verification proves that this tree, with this
+compiler on this host, consumed exactly the recorded inputs and produced a
+byte-identical executable. It is not a hermeticity proof: implicit C++
+standard-library and platform SDK headers are still treated as stable for an
+unchanged native compiler identity.
+
 Create a new manifest-driven executable package with:
 
 ```sh
