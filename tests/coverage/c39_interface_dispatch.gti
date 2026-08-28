@@ -1,0 +1,39 @@
+// Interfaces, implementations, dynamic dispatch and owning polymorphism.
+#include <std/memory>
+#include <std/vector>
+
+interface Shape {
+  int32_t area();
+  int32_t sides();
+};
+
+class Square : public Shape {
+  mut int32_t side = 0;
+public:
+  Square(int32_t side) : side(side) {}
+  int32_t area() override { return this.side * this.side; }
+  int32_t sides() override { return 4; }
+};
+
+class Rect : public Shape {
+  mut int32_t w = 0;
+  mut int32_t h = 0;
+public:
+  Rect(int32_t w, int32_t h) : w(w), h(h) {}
+  int32_t area() override { return this.w * this.h; }
+  int32_t sides() override { return 4; }
+};
+
+int32_t describe(Shape& s) { return s.area() + s.sides(); }
+
+int main() {
+  Square sq = Square(3);
+  Rect r = Rect(2, 5);
+  std::print(describe(sq)); std::print(" ");
+  std::print(describe(r)); std::print(" ");
+
+  mut std::unique_ptr<Square> concrete = std::make_unique<Square>(4);
+  mut std::unique_ptr<Shape> owned = std::upcast_unique<Shape, Square>(std::move(concrete));
+  std::println(owned->area());
+  return 0;
+}

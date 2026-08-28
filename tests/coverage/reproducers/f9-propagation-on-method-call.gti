@@ -1,0 +1,14 @@
+class A { public: int32_t i() { return 0; } };
+enum class e { bad };
+class Src {
+  mut int32_t n = 1;
+public:
+  Src() {}
+  expected<int32_t, e> take() mut { this.n++; return this.n; }
+};
+expected<int32_t, e> use() {
+  mut Src s = Src();
+  int32_t a = ?s.take();
+  return a;
+}
+int main() { mut auto r = use(); std::println(r.has_value() ? r.value() : -1); return 0; }
