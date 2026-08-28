@@ -65,6 +65,44 @@ enum class NativeLinkInputClass {
 [[nodiscard]] NativeLinkInputClass
 classifyNativeLinkInput(const std::filesystem::path &path);
 
+enum class NativeLibraryResolutionStatus {
+  // Exactly one modeled library file for the name exists in the first
+  // declared search directory that holds any candidate for it.
+  Resolved,
+  // No declared search directory holds a candidate, so the name would resolve
+  // through the linker's implicit system directories instead.
+  Unresolved,
+  // A directory holds more than one modeled candidate, or a spelling this
+  // driver does not model. Which file the linker would select is a guess.
+  Ambiguous,
+  // The name is not a plain library name (a `-l:file` exact-name selection or
+  // a path separator), whose meaning differs between linkers.
+  UnsupportedSpelling,
+  // A declared search directory cannot be enumerated, so absence of a
+  // candidate cannot be established.
+  DirectoryUnreadable,
+};
+
+struct NativeLibraryResolution {
+  NativeLibraryResolutionStatus status =
+      NativeLibraryResolutionStatus::Unresolved;
+  // The resolved file, when the status is Resolved.
+  std::filesystem::path file;
+  // The directory that produced the status, when one did.
+  std::filesystem::path directory;
+};
+
+// Resolves one `-l<name>` operand against the declared native library search
+// directories, in the exact order the link command emits them. A declared
+// `-L` directory precedes every implicit toolchain directory on the command
+// line, so the first declared directory holding a candidate is the directory
+// the linker would select from. Any directory holding more than one modeled
+// candidate, or a spelling outside the modeled set, resolves ambiguously
+// rather than guessing which file the linker would prefer.
+[[nodiscard]] NativeLibraryResolution resolveNativeLibraryName(
+    std::string_view name,
+    const std::vector<std::filesystem::path> &searchDirectories);
+
 // Deterministic preprocessing policy: __DATE__, __TIME__, and __TIMESTAMP__
 // make object content depend on ambient build time, which no input content
 // identity can record. The check is a conservative byte scan; a spelling in a

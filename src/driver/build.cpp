@@ -710,6 +710,20 @@ nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
                             CppStandard standard,
                             const NativeInputs &additional);
 
+struct ResolvedNativeLibrary {
+  std::string name;
+  std::filesystem::path file;
+};
+
+// The concrete files a native link configuration resolved to, established
+// before any cache key exists. `nativeCacheBypassDetail` fills this in while
+// deciding whether every link input has an exact identity; `buildCacheKey`
+// then records the resolution so a `-l` name that would answer with a
+// different file cannot reuse an entry.
+struct NativeLinkIdentityPlan {
+  std::vector<ResolvedNativeLibrary> libraries;
+};
+
 // Runs one native preprocessor probe and folds the compiler's own dependency
 // report into the cache identity: every file the preprocessor opened joins
 // with content identity, and the preprocessed translation unit itself is
@@ -791,6 +805,7 @@ bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
 std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          const CompilationInputs &inputs,
                                          const BuildCachePolicy &policy,
+                                         const NativeLinkIdentityPlan &linkPlan,
                                          std::string &errorMessage,
                                          std::string &policyBypassDetail) {
   IdentityBuilder identity;
@@ -872,7 +887,14 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                            errorMessage)) {
     return std::nullopt;
   }
-  if (!request.nativeInputs().cSources.empty()) {
+  const bool anyNativeCSources =
+      !request.nativeInputs().cSources.empty() ||
+      std::any_of(request.nativeInputs().dependencyGroups.begin(),
+                  request.nativeInputs().dependencyGroups.end(),
+                  [](const NativeDependencyGroup &group) {
+                    return !group.cSources.empty();
+                  });
+  if (anyNativeCSources) {
     if (!request.cCompiler() || request.cCompiler()->empty()) {
       errorMessage = "native C inputs have no selected C compiler";
       return std::nullopt;
@@ -949,7 +971,64 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!native.cSources.empty() || !native.cppSources.empty()) {
+  // The file each `-l<name>` operand resolved to inside the declared search
+  // directories. Those directories already join as full tree identities, so
+  // this records which of their hashed files the linker selects.
+  identity.add("native.resolved-library.count",
+               static_cast<std::uint64_t>(linkPlan.libraries.size()));
+  for (const ResolvedNativeLibrary &library : linkPlan.libraries) {
+    identity.add("native.resolved-library.name", library.name);
+    if (!addFileIdentity(identity, "native.resolved-library.file", library.file,
+                         true, errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  identity.add("native.dependency-group.count",
+               static_cast<std::uint64_t>(native.dependencyGroups.size()));
+  for (const NativeDependencyGroup &group : native.dependencyGroups) {
+    identity.add("native.dependency-group.package", group.packageIdentity);
+    if (!addPathDirectorySequence(
+            identity, "native.dependency-group.include-directory",
+            group.includeDirectories, true, errorMessage) ||
+        !addPathFileSequence(identity, "native.dependency-group.c-source",
+                             group.cSources, true, errorMessage) ||
+        !addPathFileSequence(identity, "native.dependency-group.cpp-source",
+                             group.cppSources, true, errorMessage) ||
+        !addPathDirectorySequence(
+            identity, "native.dependency-group.library-directory",
+            group.libraryDirectories, true, errorMessage)) {
+      return std::nullopt;
+    }
+    addScalarSequence(identity, "native.dependency-group.c-macro",
+                      group.cMacroDefinitions);
+    addScalarSequence(identity, "native.dependency-group.cpp-macro",
+                      group.cppMacroDefinitions);
+    identity.add("native.dependency-group.c-standard",
+                 static_cast<std::uint64_t>(group.cStandard));
+    identity.add("native.dependency-group.link-operands",
+                 static_cast<std::uint64_t>(group.linkOperands.size()));
+    for (const NativeLinkOperand &operand : group.linkOperands) {
+      identity.add("native.dependency-group.link-operand.kind",
+                   static_cast<std::uint64_t>(operand.kind));
+      identity.add("native.dependency-group.link-operand.value", operand.value);
+      if (operand.kind == NativeLinkOperandKind::File &&
+          !addFileIdentity(
+              identity, "native.dependency-group.link-operand.file",
+              std::filesystem::path(operand.value), true, errorMessage)) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  const bool anyNativeSources =
+      !native.cSources.empty() || !native.cppSources.empty() ||
+      std::any_of(native.dependencyGroups.begin(),
+                  native.dependencyGroups.end(),
+                  [](const NativeDependencyGroup &group) {
+                    return !group.cSources.empty() || !group.cppSources.empty();
+                  });
+  if (anyNativeSources) {
     std::error_code temporaryError;
     const std::filesystem::path temporaryRoot =
         std::filesystem::temp_directory_path(temporaryError);
@@ -960,49 +1039,92 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       return std::nullopt;
     }
     const NativeToolchain nativeToolchain;
+    // Every probe must repeat the exact include search and argument vector
+    // the object compile will use, or discovery would report a different
+    // input set than the build consumes.
+    const auto discover =
+        [&](const std::filesystem::path &source, std::string_view label,
+            bool cSource,
+            const std::vector<std::filesystem::path> &includeDirectories,
+            const std::vector<std::string> &arguments, CStandard cStandard) {
+          const std::filesystem::path preprocessed = stagedArtifactPath(
+              temporaryRoot / (source.stem().string() + ".gti-discovery.i"));
+          const std::filesystem::path depfile = stagedArtifactPath(
+              temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
+          TemporaryArtifact preprocessedCleanup(preprocessed, true);
+          TemporaryArtifact depfileCleanup(depfile, true);
+          const std::vector<std::string> probeCommand =
+              cSource ? nativeToolchain.preprocessCommand(
+                            NativeCCompileRequest(
+                                *request.cCompiler(), source, preprocessed,
+                                cStandard, request.compilation().optimization(),
+                                includeDirectories, arguments,
+                                native.targetPolicy),
+                            depfile)
+                      : nativeToolchain.preprocessCommand(
+                            NativeCppCompileRequest(
+                                request.nativeCompiler(), source, preprocessed,
+                                request.compilation().cppStandard(),
+                                request.compilation().optimization(),
+                                includeDirectories, arguments,
+                                native.targetPolicy),
+                            depfile);
+          return addNativeSourceDiscovery(identity, label, probeCommand, source,
+                                          preprocessed, depfile, errorMessage,
+                                          policyBypassDetail);
+        };
+
     std::vector<std::filesystem::path> cIncludeDirectories{
         request.toolchain().runtimeInclude};
     append(cIncludeDirectories, native.includeDirectories);
     const std::vector<std::filesystem::path> cppIncludeDirectories =
         nativeCppIncludeDirectories(
             request.toolchain(), request.compilation().cppStandard(), native);
-    const auto discover = [&](const std::filesystem::path &source,
-                              std::string_view label, bool cSource) {
-      const std::filesystem::path preprocessed = stagedArtifactPath(
-          temporaryRoot / (source.stem().string() + ".gti-discovery.i"));
-      const std::filesystem::path depfile = stagedArtifactPath(
-          temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
-      TemporaryArtifact preprocessedCleanup(preprocessed, true);
-      TemporaryArtifact depfileCleanup(depfile, true);
-      const std::vector<std::string> probeCommand =
-          cSource ? nativeToolchain.preprocessCommand(
-                        NativeCCompileRequest(
-                            *request.cCompiler(), source, preprocessed,
-                            native.cStandard.value_or(CStandard::C17),
-                            request.compilation().optimization(),
-                            cIncludeDirectories, native.cCompilerArguments,
-                            native.targetPolicy),
-                        depfile)
-                  : nativeToolchain.preprocessCommand(
-                        NativeCppCompileRequest(
-                            request.nativeCompiler(), source, preprocessed,
-                            request.compilation().cppStandard(),
-                            request.compilation().optimization(),
-                            cppIncludeDirectories, native.compilerArguments,
-                            native.targetPolicy),
-                        depfile);
-      return addNativeSourceDiscovery(identity, label, probeCommand, source,
-                                      preprocessed, depfile, errorMessage,
-                                      policyBypassDetail);
-    };
     for (const std::filesystem::path &source : native.cSources) {
-      if (!discover(source, "native.c-source.discovery", true)) {
+      if (!discover(source, "native.c-source.discovery", true,
+                    cIncludeDirectories, native.cCompilerArguments,
+                    native.cStandard.value_or(CStandard::C17))) {
         return std::nullopt;
       }
     }
     for (const std::filesystem::path &source : native.cppSources) {
-      if (!discover(source, "native.cpp-source.discovery", false)) {
+      if (!discover(source, "native.cpp-source.discovery", false,
+                    cppIncludeDirectories, native.compilerArguments,
+                    CStandard::C17)) {
         return std::nullopt;
+      }
+    }
+
+    // Dependency-group sources compile with only their own include
+    // directories and validated macro definitions, so their probes use the
+    // same scoping the object compiles do.
+    for (const NativeDependencyGroup &group : native.dependencyGroups) {
+      identity.add("native.dependency-group.discovery.package",
+                   group.packageIdentity);
+      std::vector<std::filesystem::path> groupCIncludes{
+          request.toolchain().runtimeInclude};
+      append(groupCIncludes, group.includeDirectories);
+      for (const std::filesystem::path &source : group.cSources) {
+        if (!discover(source, "native.dependency-group.c-source.discovery",
+                      true, groupCIncludes, group.cMacroDefinitions,
+                      group.cStandard)) {
+          return std::nullopt;
+        }
+      }
+      std::vector<std::filesystem::path> groupCppIncludes{
+          request.toolchain().runtimeInclude};
+      if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
+          request.toolchain().vendorInclude !=
+              request.toolchain().runtimeInclude) {
+        groupCppIncludes.push_back(request.toolchain().vendorInclude);
+      }
+      append(groupCppIncludes, group.includeDirectories);
+      for (const std::filesystem::path &source : group.cppSources) {
+        if (!discover(source, "native.dependency-group.cpp-source.discovery",
+                      false, groupCppIncludes, group.cppMacroDefinitions,
+                      CStandard::C17)) {
+          return std::nullopt;
+        }
       }
     }
   }
@@ -1308,38 +1430,114 @@ loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
          "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
+// The declared native library search directories in the exact order the link
+// command emits them, which is the order the linker searches them: the
+// selected package's own directories first, then each dependency group's in
+// composed order. `effectiveNativeInputs` builds the same sequence.
+std::vector<std::filesystem::path>
+nativeLibrarySearchDirectories(const NativeInputs &inputs) {
+  std::vector<std::filesystem::path> directories = inputs.libraryDirectories;
+  for (const NativeDependencyGroup &group : inputs.dependencyGroups) {
+    append(directories, group.libraryDirectories);
+  }
+  return directories;
+}
+
 // Returns the reason a native configuration must bypass the cache, or
-// nullopt when every native input can join the identity exactly. Declared C
-// and C++ sources and include directories are cacheable through dependency
-// discovery and full-tree identity; the remaining bypasses are inputs the
-// driver cannot resolve to exact content identities. Narrowing a bypass here
-// must never widen what the key trusts: an unidentifiable input bypasses.
-std::optional<std::string> nativeCacheBypassDetail(const NativeInputs &inputs) {
+// nullopt when every native input can join the identity exactly, filling
+// `plan` with the concrete files that named libraries resolved to. Declared
+// C and C++ sources and include directories are cacheable through dependency
+// discovery and full-tree identity, including a dependency group's, because a
+// group composes only validated exact `-D`/`-U` macro definitions. Declared
+// library search directories join as full tree identities, so the linker's
+// choice among them is a function of hashed content; a `-l` name joins only
+// when it resolves to exactly one content-complete file inside them. The
+// remaining bypasses are inputs the driver cannot resolve to exact content
+// identities. Narrowing a bypass here must never widen what the key trusts:
+// an unidentifiable input bypasses.
+std::optional<std::string>
+nativeCacheBypassDetail(const NativeInputs &inputs,
+                        NativeLinkIdentityPlan &plan) {
+  plan = {};
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
     return "opaque native argument vectors can introduce undeclared "
            "compiler and linker inputs";
   }
-  const bool namedOperands =
-      !inputs.libraries.empty() || !inputs.frameworks.empty() ||
-      std::any_of(inputs.orderedLinkOperands.begin(),
-                  inputs.orderedLinkOperands.end(),
-                  [](const NativeLinkOperand &operand) {
-                    return operand.kind != NativeLinkOperandKind::File;
-                  });
-  if (namedOperands) {
-    return "name-resolved libraries and frameworks require linker search "
-           "resolution";
-  }
-  if (!inputs.libraryDirectories.empty()) {
-    return "native library search directories require linker search "
-           "resolution";
+
+  // Mirror the link composition `effectiveNativeInputs` performs: the ordered
+  // operand vector is authoritative once anything populates it, and the
+  // category vectors are the link only when nothing does.
+  const bool groupLinkContribution = std::any_of(
+      inputs.dependencyGroups.begin(), inputs.dependencyGroups.end(),
+      [](const NativeDependencyGroup &group) {
+        return !group.linkOperands.empty() || !group.libraryDirectories.empty();
+      });
+  std::vector<std::filesystem::path> linkFiles;
+  std::vector<std::string> namedLibraries;
+  bool namedFramework = false;
+  const auto collectOperands =
+      [&](const std::vector<NativeLinkOperand> &operands) {
+        for (const NativeLinkOperand &operand : operands) {
+          switch (operand.kind) {
+          case NativeLinkOperandKind::File:
+            linkFiles.emplace_back(operand.value);
+            break;
+          case NativeLinkOperandKind::Library:
+            namedLibraries.push_back(operand.value);
+            break;
+          case NativeLinkOperandKind::Framework:
+            namedFramework = true;
+            break;
+          }
+        }
+      };
+  if (inputs.orderedLinkOperands.empty() && !groupLinkContribution) {
+    linkFiles = inputs.libraryFiles;
+    namedLibraries = inputs.libraries;
+    namedFramework = !inputs.frameworks.empty();
+  } else {
+    collectOperands(inputs.orderedLinkOperands);
+    for (const NativeDependencyGroup &group : inputs.dependencyGroups) {
+      collectOperands(group.linkOperands);
+    }
   }
 
-  std::vector<std::filesystem::path> linkFiles = inputs.libraryFiles;
-  for (const NativeLinkOperand &operand : inputs.orderedLinkOperands) {
-    linkFiles.emplace_back(operand.value);
+  if (namedFramework) {
+    // A framework resolves through undeclared `-F` and system framework
+    // directories to a bundle whose binary, headers, and re-exported
+    // dependencies are not determined by any declared path.
+    return "name-resolved frameworks require framework search resolution";
   }
+
+  const std::vector<std::filesystem::path> searchDirectories =
+      nativeLibrarySearchDirectories(inputs);
+  for (const std::string &library : namedLibraries) {
+    const NativeLibraryResolution resolution =
+        resolveNativeLibraryName(library, searchDirectories);
+    switch (resolution.status) {
+    case NativeLibraryResolutionStatus::Resolved:
+      plan.libraries.push_back({.name = library, .file = resolution.file});
+      linkFiles.push_back(resolution.file);
+      break;
+    case NativeLibraryResolutionStatus::Unresolved:
+      return "native library '-l" + library +
+             "' does not resolve inside the declared native library search "
+             "directories";
+    case NativeLibraryResolutionStatus::Ambiguous:
+      return "native library '-l" + library +
+             "' resolves ambiguously in native library search directory '" +
+             resolution.directory.string() + "'";
+    case NativeLibraryResolutionStatus::UnsupportedSpelling:
+      return "native library name '" + library +
+             "' is not a plain library name the driver can resolve";
+    case NativeLibraryResolutionStatus::DirectoryUnreadable:
+      return "native library search directory '" +
+             resolution.directory.string() +
+             "' cannot be enumerated for cache identity";
+    }
+  }
+
   for (const std::filesystem::path &linkFile : linkFiles) {
     switch (classifyNativeLinkInput(linkFile)) {
     case NativeLinkInputClass::StaticArchive:
@@ -1775,6 +1973,107 @@ classifyNativeLinkInput(const std::filesystem::path &path) {
   return NativeLinkInputClass::RequiresDependencyDiscovery;
 }
 
+namespace {
+
+// The file names a linker considers for `-l<name>`, in the order it prefers
+// them inside one directory. Only these spellings are modeled; anything else
+// that could plausibly answer the name makes resolution ambiguous.
+std::vector<std::string> nativeLibraryFileNames(std::string_view name) {
+  const std::string owned(name);
+#if defined(_WIN32)
+  return {owned + ".lib", "lib" + owned + ".a", "lib" + owned + ".dll.a"};
+#elif defined(__APPLE__)
+  return {"lib" + owned + ".dylib", "lib" + owned + ".tbd",
+          "lib" + owned + ".a"};
+#else
+  return {"lib" + owned + ".so", "lib" + owned + ".a"};
+#endif
+}
+
+// Deliberately wider than the modeled candidate set: a spelling this driver
+// does not model must make resolution ambiguous, never invisible.
+bool namesNativeLibraryCandidate(std::string_view fileName,
+                                 std::string_view library) {
+  const std::string prefix = "lib" + std::string(library) + ".";
+  if (fileName.size() > prefix.size() &&
+      fileName.substr(0, prefix.size()) == prefix) {
+    return true;
+  }
+#if defined(_WIN32)
+  const std::string bare = std::string(library) + ".";
+  if (fileName.size() > bare.size() &&
+      fileName.substr(0, bare.size()) == bare) {
+    return true;
+  }
+#endif
+  return false;
+}
+
+} // namespace
+
+NativeLibraryResolution resolveNativeLibraryName(
+    std::string_view name,
+    const std::vector<std::filesystem::path> &searchDirectories) {
+  NativeLibraryResolution resolution;
+  if (name.empty() || name.front() == ':' ||
+      name.find('/') != std::string_view::npos ||
+      name.find('\\') != std::string_view::npos) {
+    resolution.status = NativeLibraryResolutionStatus::UnsupportedSpelling;
+    return resolution;
+  }
+  const std::vector<std::string> candidates = nativeLibraryFileNames(name);
+  for (const std::filesystem::path &directory : searchDirectories) {
+    std::error_code error;
+    std::filesystem::directory_iterator entry(directory, error);
+    const std::filesystem::directory_iterator end;
+    if (error) {
+      resolution.status = NativeLibraryResolutionStatus::DirectoryUnreadable;
+      resolution.directory = directory;
+      return resolution;
+    }
+    std::vector<std::filesystem::path> matches;
+    bool unmodelledCandidate = false;
+    while (entry != end) {
+      const std::filesystem::path candidate = entry->path();
+      const std::string fileName = candidate.filename().string();
+      if (namesNativeLibraryCandidate(fileName, name)) {
+        if (std::find(candidates.begin(), candidates.end(), fileName) ==
+            candidates.end()) {
+          unmodelledCandidate = true;
+        } else {
+          matches.push_back(candidate);
+        }
+      }
+      entry.increment(error);
+      if (error) {
+        resolution.status = NativeLibraryResolutionStatus::DirectoryUnreadable;
+        resolution.directory = directory;
+        return resolution;
+      }
+    }
+    if (unmodelledCandidate || matches.size() > 1) {
+      resolution.status = NativeLibraryResolutionStatus::Ambiguous;
+      resolution.directory = directory;
+      return resolution;
+    }
+    if (matches.size() == 1) {
+      std::error_code fileError;
+      if (!std::filesystem::is_regular_file(matches.front(), fileError) ||
+          fileError) {
+        resolution.status = NativeLibraryResolutionStatus::Ambiguous;
+        resolution.directory = directory;
+        return resolution;
+      }
+      resolution.status = NativeLibraryResolutionStatus::Resolved;
+      resolution.file = matches.front();
+      resolution.directory = directory;
+      return resolution;
+    }
+  }
+  resolution.status = NativeLibraryResolutionStatus::Unresolved;
+  return resolution;
+}
+
 bool containsTimeSensitivePreprocessorUse(std::string_view text) {
   return text.find("__DATE__") != std::string_view::npos ||
          text.find("__TIME__") != std::string_view::npos ||
@@ -2024,19 +2323,17 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
   std::optional<std::filesystem::path> cacheEntry;
   bool corruptCacheEntry = false;
+  NativeLinkIdentityPlan linkIdentityPlan;
   if (request.cache()) {
     if (request.buildReport()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
           "build-report capture requires a real native invocation";
     } else if (const std::optional<std::string> bypassDetail =
-                   nativeCacheBypassDetail(request.nativeInputs())) {
+                   nativeCacheBypassDetail(request.nativeInputs(),
+                                           linkIdentityPlan)) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
-    } else if (!request.nativeInputs().dependencyGroups.empty()) {
-      result.cache.status = BuildCacheStatus::Bypassed;
-      result.cache.detail =
-          "dependency native inputs require compiler dependency discovery";
     } else if (hasDependencyInjectingNativeEnvironment()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
@@ -2057,9 +2354,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
       std::string cacheIdentityError;
       std::string cachePolicyBypass;
-      const std::optional<std::string> key =
-          buildCacheKey(request, compilationInputs, *request.cache(),
-                        cacheIdentityError, cachePolicyBypass);
+      const std::optional<std::string> key = buildCacheKey(
+          request, compilationInputs, *request.cache(), linkIdentityPlan,
+          cacheIdentityError, cachePolicyBypass);
       if (!key) {
         result.cache.status = BuildCacheStatus::Bypassed;
         result.cache.detail =

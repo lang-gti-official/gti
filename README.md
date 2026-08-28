@@ -262,12 +262,15 @@ registry remains a later phase.
 Project `build`, `run`, and `test` commands use a verified local whole-program
 cache under `build/gti/cache/v2`. An unchanged eligible build restores the
 executable without rerunning the frontend/backend or native compiler. Declared
-native C/C++ sources, declared include directories, and exact archive/object
-link files participate in the cache through compiler dependency discovery;
-opaque native argument vectors, name-resolved libraries and frameworks,
-library search directories, non-content-complete link inputs (thin archives,
-linker scripts, shared libraries), time-and-date preprocessor macros, and
-dependency-injecting environment search paths conservatively bypass. Use
+native C/C++ sources — including a dependency package's — declared include and
+library search directories, exact archive/object link files, and `-l` names
+that resolve to exactly one content-complete file inside a declared search
+directory participate in the cache through compiler dependency discovery and
+full-tree identity; opaque native argument vectors, frameworks, `-l` names
+that resolve outside the declared search directories or ambiguously within
+them, non-content-complete link inputs (thin archives, linker scripts, shared
+libraries), time-and-date preprocessor macros, and dependency-injecting
+environment search paths conservatively bypass. Use
 `--verbose` to see the cache identity and hit/miss/bypass reason, or
 `--no-cache` to bypass both lookup and publication for verification. Direct
 `gti file.gti` compilation and `gti check` remain uncached.
