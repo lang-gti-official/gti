@@ -1,0 +1,23 @@
+#include <std/vector>
+#include <std/string>
+mut int32_t drops = 0;
+class Owner {
+  mut int32_t id;
+public:
+  Owner(int32_t id) : id(id) {}
+  ~Owner() { drops = drops + 1; }
+  int32_t value() { return this.id; }
+};
+Owner relay(mut Owner value) { return std::move(value); }
+int main() {
+  mut int32_t observed = 0;
+  {
+    mut Owner a = Owner(4);
+    mut Owner b = relay(std::move(a));
+    observed = b.value();
+  }
+  mut std::vector<std::string> names = std::vector<std::string>();
+  names.push_back(std::string("one"));
+  std::print(observed); std::print(" "); std::println(drops);
+  return 0;
+}

@@ -1,0 +1,26 @@
+// Value-parameter generics with fixed arrays and std::array.
+#include <std/array>
+
+class Grid<T, uint64_t N> {
+  mut T[N] cells = {};
+public:
+  Grid() {}
+  void set(std::size_t i, T value) mut { this.cells[i] = value; }
+  T get(std::size_t i) { return this.cells[i]; }
+  uint64_t extent() { return N; }
+};
+
+int main() {
+  mut Grid<int32_t, 3> g = Grid<int32_t, 3>();
+  g.set(std::size_t(0), 10);
+  g.set(std::size_t(2), 30);
+  mut int32_t[4] raw = {1, 2, 3, 4};
+  mut int32_t total = 0;
+  for (auto& v : raw) { total = total + v; }
+  mut std::array<int32_t, 3> arr = std::array<int32_t, 3>();
+  arr.fill(7);
+  std::print(g.get(std::size_t(2)) + total);
+  std::print(" ");
+  std::println(arr[std::size_t(1)] + int32_t(g.extent()));
+  return 0;
+}

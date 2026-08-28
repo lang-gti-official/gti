@@ -1,0 +1,16 @@
+class Anchor { public: int32_t id() { return 0; } };
+int32_t read_through(int32_t* p) {
+  unsafe { return *p; }
+}
+int main() {
+  mut int32_t value = 41;
+  mut int32_t* p = nullptr;
+  unsafe { p = &value; }
+  mut int32_t got = 0;
+  unsafe {
+    *p = *p + 1;
+    got = *p;
+  }
+  std::println(got + read_through(p) - 42);
+  return 0;
+}

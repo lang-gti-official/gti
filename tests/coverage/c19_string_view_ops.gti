@@ -1,0 +1,18 @@
+#include <std/string>
+class Anchor { public: int32_t id() { return 0; } };
+int32_t count_char(std::string_view text, char target) {
+  mut int32_t seen = 0;
+  for (mut std::size_t i = std::size_t(0); i < text.size(); i++) {
+    if (uint8_t(text[i]) == uint8_t(target)) { seen++; }
+  }
+  return seen;
+}
+int main() {
+  std::string_view greeting = "hello world";
+  mut std::string owned = std::string("hello world");
+  std::print(count_char(greeting, 'l')); std::print(" ");
+  std::print(int32_t(greeting.size())); std::print(" ");
+  std::print(greeting.empty() ? 1 : 0); std::print(" ");
+  std::println(count_char(owned.view(), 'o'));
+  return 0;
+}

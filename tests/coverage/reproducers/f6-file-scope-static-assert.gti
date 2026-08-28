@@ -1,0 +1,3 @@
+constexpr int32_t limit = 8;
+static_assert(limit == 8, "limit must be 8");
+int main() { std::println(limit); return 0; }

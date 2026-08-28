@@ -247,6 +247,21 @@ syntax, or compiler semantics. The MIR census and cutover corpus oracle review
 the two additional ordinary GTI bodies wherever `<std/string>` enters the
 example graph.
 
+## Language coverage corpus
+
+`tests/coverage/` holds a breadth sweep that is deliberately **not** a
+registered CI suite. It compiles and runs a set of ordinary GTI programs
+chosen to combine as much syntax and stdlib surface as possible, on the
+premise that feature-owned tests exercise each construct in isolation and so
+miss defects that only appear in combination. Run it manually with
+`tests/coverage/run_coverage.sh build/gti`.
+
+It is excluded from ctest because several of its programs currently fail;
+`tests/coverage/FINDINGS.md` records each failure with a minimal reproducer.
+As those defects are fixed the corpus becomes a candidate for registration.
+Programs added here should be valid GTI — a failure is a compiler finding, not
+a corpus expectation to be edited away.
+
 For exact qualified class specializations, `compiler_pipeline` owns qualified
 syntax, canonical type/value keys, declaration-order independence, primary
 fallback, generic-substitution selection, distinct semantic/HIR class identity,
