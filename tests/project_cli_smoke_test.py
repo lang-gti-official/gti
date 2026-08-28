@@ -2207,6 +2207,118 @@ def main():
         )
         run([gti, "run"], cwd=chained_native_app)
 
+
+        # --- A git dependency that vendors a C library ---
+        # The portability claim this proves: a consumer clones nothing by hand,
+        # installs no system library, and still builds and runs. The dependency
+        # carries the C source and header, generates its own GTI bindings for
+        # them, and the consumer reaches the library only through the
+        # dependency's GTI wrapper -- bindgen aliases do not leak to dependents.
+        vendored_upstream = root / "vendored-c-upstream"
+        (vendored_upstream / "native").mkdir(parents=True)
+        (vendored_upstream / "src").mkdir(parents=True)
+        (vendored_upstream / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "checksum"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'include-dirs = ["native"]\n'
+            'c-sources = ["native/checksum.c"]\n\n'
+            "[bindgen.checksum_c]\n"
+            'header = "native/checksum.h"\n',
+            encoding="utf-8",
+        )
+        (vendored_upstream / "native/checksum.h").write_text(
+            "#ifndef CHECKSUM_H\n"
+            "#define CHECKSUM_H\n"
+            "#include <stdint.h>\n"
+            "#define CHECKSUM_SEED 17\n"
+            "int32_t checksum_of(const uint8_t *bytes, int32_t count);\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        (vendored_upstream / "native/checksum.c").write_text(
+            '#include "checksum.h"\n'
+            "int32_t checksum_of(const uint8_t *bytes, int32_t count) {\n"
+            "  int32_t total = CHECKSUM_SEED;\n"
+            "  for (int32_t index = 0; index < count; index++) {\n"
+            "    total = total + (int32_t)bytes[index];\n"
+            "  }\n"
+            "  return total;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (vendored_upstream / "src/lib.gti").write_text(
+            "#include <checksum_c/bindings>\n"
+            "\n"
+            "// Wrapped so dependents never touch the raw C ABI.\n"
+            "int32_t checksum_of_bytes(uint8_t* bytes, int32_t count) {\n"
+            "  unsafe {\n"
+            "    return checksum_of(bytes, count);\n"
+            "  }\n"
+            "}\n"
+            "\n"
+            "int32_t checksum_seed() {\n"
+            "  return CHECKSUM_SEED;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([git, "init", "-q", str(vendored_upstream)])
+        git_in(vendored_upstream, "add", "-A")
+        git_in(vendored_upstream, "commit", "-qm", "vendored checksum library")
+        vendored_revision = git_in(
+            vendored_upstream, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        vendored_app = root / "vendored-c-app"
+        (vendored_app / "src").mkdir(parents=True)
+        (vendored_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "vendored-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            f'checksum = {{ git = "{vendored_upstream}", rev = '
+            f'"{vendored_revision}" }}\n\n'
+            "[targets.vendored-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (vendored_app / "src/main.gti").write_text(
+            "#include <checksum/lib>\n"
+            "\n"
+            "int main() {\n"
+            "  mut uint8_t data[3] = {uint8_t(1), uint8_t(2), uint8_t(3)};\n"
+            "  unsafe {\n"
+            "    int32_t total = checksum_of_bytes(&data[0], 3);\n"
+            "    if (total != 23) {\n"
+            "      return 1;\n"
+            "    }\n"
+            "  }\n"
+            "  return checksum_seed() == 17 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([gti, "fetch"], cwd=vendored_app)
+        vendored_build = run([gti, "build"], cwd=vendored_app)
+        # The dependency's own bindgen import generated inside its checkout.
+        assert "Generated bindings checksum_c" in vendored_build.stdout
+        # `run` exits 0 only if the vendored C actually computed 17+1+2+3.
+        run([gti, "run"], cwd=vendored_app)
+        # The consumer must not reach the dependency's bindgen alias.
+        (vendored_app / "src/main.gti").write_text(
+            "#include <checksum_c/bindings>\n"
+            "\n"
+            "int main() {\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        leaked = run([gti, "build"], expected=65, cwd=vendored_app)
+        assert "checksum_c" in leaked.stderr
+
         # --- Manifest-declared bindgen imports (BUILD-01) ---
         clang = shutil.which("clang")
         if clang is None:
