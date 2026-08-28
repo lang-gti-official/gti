@@ -421,6 +421,44 @@ only when that package is built directly. Plans that carry dependency native
 groups bypass the whole-program cache with an explicit reason until dependency
 discovery covers group sources.
 
+### Vendored Native Dependencies
+
+The composition rules above and the bindgen imports below combine into one
+workflow worth naming, because it is what makes a GTI project portable: a
+dependency may **vendor a C library** and a consumer needs no system
+prerequisite at all.
+
+```toml
+# In the dependency package.
+[package.native]
+include-dirs = ["native"]
+c-sources = ["native/checksum.c"]
+
+[bindgen.checksum_c]
+header = "native/checksum.h"
+```
+
+The dependency carries the C source and header in its own tree, generates its
+own GTI declarations for them, and exposes the library through ordinary GTI
+functions. The consumer declares only the package dependency — path or pinned
+git — and `gti build` acquires it, generates the dependency's bindings inside
+its checkout, compiles the vendored C into the dependent build as an isolated
+native group, and links it. Nothing is installed on the machine, and nothing
+is found by search.
+
+Two existing rules do the load-bearing work and are worth restating here.
+Bindgen aliases are per-package, so a consumer cannot reach
+`#include <checksum_c/bindings>`; it sees only what the dependency chose to
+expose in GTI, which keeps the raw C ABI an implementation detail of the
+package that vendors it. And a dependency's native group scopes its include
+directories and macros to its own declared sources, so a vendored library
+cannot leak header search state into the consumer's sources or into the
+generated whole-program translation unit.
+
+`project_cli_workflow` covers the whole path end to end over a pinned git
+dependency, including the negative case that the consumer cannot reach the
+dependency's bindgen alias.
+
 ### Locked Git Dependencies
 
 `alias = { git = "<url>", rev = "<full 40-hex commit>" }` declares a pinned
