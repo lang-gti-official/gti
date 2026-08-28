@@ -1039,6 +1039,15 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(mixed_capture_callable_template_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME generic_owner_callable_variants_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/generic_owner_callable_variants_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/generic_owner_callable_variants.gti"
+    )
+    set_tests_properties(generic_owner_callable_variants_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
       NAME class_move_assignment_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/class_move_assignment_runtime_test.py"
@@ -1364,6 +1373,7 @@ if(Python3_Interpreter_FOUND)
         owner_tied_by_value_argument_runtime
         moved_loop_local_runtime
         mixed_capture_callable_template_runtime
+        generic_owner_callable_variants_runtime
         class_move_assignment_runtime
         class_prvalue_assignment_runtime
         mutable_temporary_receiver_runtime

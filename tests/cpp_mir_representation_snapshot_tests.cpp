@@ -1271,6 +1271,98 @@ int main() {
          "the overlay-proven callable program should produce a complete plan");
 }
 
+void testGenericOwnerCallableTemplateProjection() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("snapshot-owner-callable-overlay.gti", R"(
+class calculator<T> {
+  T apply<Operation>(mut Operation operation, T value) {
+    return operation(value);
+  }
+
+public:
+  T add(T value, T operand) {
+    return this.apply([operand](T observed) -> T {
+      return observed;
+    }, value);
+  }
+};
+
+int main() {
+  calculator<int32_t> value{};
+  return value.add(5, 2) - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic-owner callable projection fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  const lang::MirFunctionInstance *callable = nullptr;
+  for (const lang::MirFunctionInstance &instance :
+       lowered.mir().functionInstances()) {
+    if (instance.owner && std::any_of(instance.parameterTypes.begin(),
+                                      instance.parameterTypes.end(),
+                                      [](const lang::SemanticType &type) {
+                                        return type.kind ==
+                                               lang::SemanticType::Lambda;
+                                      })) {
+      callable = &instance;
+      break;
+    }
+  }
+  const lang::LoweredFunctionDeclaration *declaration =
+      callable == nullptr
+          ? nullptr
+          : lowered.findFunctionDeclaration(callable->declaration);
+  expect(callable != nullptr && declaration != nullptr,
+         "the fixture should retain one callable member on a concrete owner");
+  if (callable == nullptr || declaration == nullptr) {
+    return;
+  }
+
+  const std::optional<lang::CppMirCallableTemplateSignature> signature =
+      lang::cppMirCallableTemplateSignature(lowered, *declaration, *callable);
+  expect(signature && signature->returnType == lang::SemanticType::Int32 &&
+             signature->parameterTypes.size() == 2 &&
+             signature->parameterTypes[0].kind ==
+                 lang::SemanticType::TypeParameter &&
+             signature->parameterTypes[1] == lang::SemanticType::Int32,
+         "the callable template signature should keep the method parameter "
+         "dependent while substituting the owner parameter to int32_t");
+  if (!signature) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows rows =
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+  const std::optional<std::size_t> overlays =
+      lang::cppMirApplyCallableTemplateTypeOverlays(
+          rows, lowered, lang::CppStandard::Cpp23, *declaration, *callable);
+  expect(overlays && *overlays > 0,
+         "the generic-owner callable instance should admit an exact overlay");
+  const lang::LoweredGenericParameter *operation =
+      declaration->genericParameters.empty()
+          ? nullptr
+          : &declaration->genericParameters.front();
+  const auto lambdaRow =
+      std::find_if(rows.types.begin(), rows.types.end(), [&](const auto &row) {
+        return row.type == callable->parameterTypes.front();
+      });
+  expect(operation != nullptr && lambdaRow != rows.types.end() &&
+             lambdaRow->spelling == operation->name &&
+             std::none_of(rows.types.begin(), rows.types.end(),
+                          [](const auto &row) {
+                            return row.type == lang::SemanticType::Int32 &&
+                                   row.spelling == "T";
+                          }),
+         "the overlay should rename only the callable type and must not "
+         "reintroduce the owner's out-of-scope T");
+}
+
 void testAtomicBackendRouteAndIncoherentRejection() {
   const lang::FrontendResult frontend = analyzeRichProgram();
   if (!frontend.canGenerateCode()) {
@@ -2249,6 +2341,7 @@ int main() {
   testMissingAndStaleFactsFailClosed();
   testRuntimeBindingRole();
   testDeducedCallableOverlayPreflight();
+  testGenericOwnerCallableTemplateProjection();
   testAtomicBackendRouteAndIncoherentRejection();
   testRepresentationSpellingAuthorities();
   testClosureAndCallableRows();

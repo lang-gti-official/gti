@@ -2430,9 +2430,13 @@ name recognition.
      a program containing an unnameable lexical closure, together with the
      transitive dependent generic families required to spell those carriers.
      Concrete initializer rows and selected native-owner member
-     specializations remain instance-exact. These carriers consume GTI-selected
-     facts and cannot perform validity, lookup, overload, ownership, failure,
-     or execution decisions; and
+     specializations remain instance-exact. Deduced callable members on a
+     generic owner compare canonical MIR only within one concrete owner and
+     project signatures by substituting owner parameters while retaining the
+     method parameters; the multi-owner `int32_t`/`uint8_t` regression executes
+     in all four native modes. These carriers consume GTI-selected facts and
+     cannot perform validity, lookup, overload, ownership, failure, or
+     execution decisions; and
   5. **Completed:** the production conformance matrix covers direct and project
      driver workflows plus installed CLI/library smoke clients; concrete valid,
      invalid, constrained, ownership, borrow, move-only, variadic, cleanup, and
