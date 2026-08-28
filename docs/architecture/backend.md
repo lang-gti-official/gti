@@ -461,6 +461,16 @@ template type parameter (or be the exact thread-task parameter). Any variance
 the dispatch cannot express fails closed rather than merging inconsistent
 bodies.
 
+For a callable member template on a generic owner, that canonical comparison
+is partitioned by the exact owner instance, matching the owner-specialized C++
+definition that will consume it. Its projected signature substitutes every
+owner type/value parameter while retaining only the member template's own
+parameters as dependent C++ names. Thus two owners such as `container<int32_t>`
+and `container<uint8_t>` neither masquerade as one canonical MIR body nor leak
+an out-of-scope owner `T` into an explicit owner specialization. Identity,
+substitution completeness, and the fully concrete MIR signature are checked
+before the projection is admitted; incompatible rows still fail closed.
+
 Lowered declarations retain an explicit default-constructor or destructor
 specifier for source/coherence and tooling inventory. Because that policy has
 no source body, the emitter does not publish a separate member definition; it

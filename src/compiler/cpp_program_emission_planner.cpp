@@ -450,6 +450,43 @@ public:
     }
   }
 
+  void emitLoweredCallableTemplateParameter(const LoweredParameter &parameter,
+                                            const SemanticType &projectedType,
+                                            std::string_view name) {
+    const bool reference = projectedType.kind == SemanticType::Reference;
+    const bool pointerRepresentation =
+        projectedType.kind == SemanticType::RawPointer ||
+        projectedType.kind == SemanticType::CString;
+    const LoweredSymbol *symbol =
+        parameter.symbol == 0 ? nullptr
+                              : loweredProgram.findSymbol(parameter.symbol);
+    const bool moveOnly =
+        (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
+        projectedType.kind == SemanticType::UniqueOwner ||
+        projectedType.kind == SemanticType::Storage ||
+        projectedType.kind == SemanticType::PrefixStorage ||
+        parameter.type.kind == SemanticType::TypeParameter ||
+        parameter.type.kind == SemanticType::TypePack;
+    if (!reference && parameter.mutability == Mutability::Immutable &&
+        !parameter.pack && !moveOnly && !pointerRepresentation &&
+        !parameter.explicitlyMoved) {
+      output << "const ";
+    }
+    const std::string spelling =
+        cppSemanticTypeSpelling(loweredProgram, standard, projectedType);
+    if (spelling.empty()) {
+      throw std::logic_error(
+          "lowered callable template has an unspellable projected parameter");
+    }
+    output << spelling;
+    if (parameter.pack) {
+      output << "...";
+    }
+    if (!name.empty()) {
+      output << ' ' << name;
+    }
+  }
+
   void emitLoweredExactCallValueType(const SemanticType &type) {
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
       emitSemanticType(type.arguments.front());
@@ -746,16 +783,30 @@ public:
         });
   }
 
-  void emitLoweredFailureResultParameter(const SemanticType &returnType) {
+  void emitLoweredFailureResultParameter(const SemanticType &returnType,
+                                         bool callableTemplate = false) {
+    const auto emitType = [&](const SemanticType &type) {
+      if (!callableTemplate) {
+        emitSemanticType(type);
+        return;
+      }
+      const std::string spelling =
+          cppSemanticTypeSpelling(loweredProgram, standard, type);
+      if (spelling.empty()) {
+        throw std::logic_error(
+            "lowered callable template has an unspellable projected result");
+      }
+      output << spelling;
+    };
     if (returnType.kind == SemanticType::Reference &&
         returnType.arguments.size() == 1) {
       if (returnType.referenceAccess == AccessMode::ReadOnly) {
         output << "const ";
       }
-      emitSemanticType(returnType.arguments.front());
+      emitType(returnType.arguments.front());
       output << " **__gti_mir_out_result, ";
     } else if (returnType != SemanticType::Void) {
-      emitSemanticType(returnType);
+      emitType(returnType);
       output << " *__gti_mir_out_result, ";
     }
   }
@@ -787,6 +838,15 @@ public:
                                     std::string_view owner = {},
                                     bool sourceParameterTypes = false,
                                     bool explicitGenericArguments = false) {
+    std::optional<CppMirCallableTemplateSignature> callableSignature;
+    if (instance != nullptr && sourceParameterTypes) {
+      callableSignature =
+          cppMirCallableTemplateSignature(loweredProgram, function, *instance);
+      if (!callableSignature) {
+        throw std::logic_error(
+            "lowered callable template has no coherent projected signature");
+      }
+    }
     if (insideClass && function.staticMember) {
       output << "static ";
     }
@@ -798,8 +858,20 @@ public:
       output << "bool ";
     } else {
       const SemanticType &returnType =
-          instance == nullptr ? function.returnType : instance->returnType;
-      emitSemanticType(returnType);
+          callableSignature     ? callableSignature->returnType
+          : instance == nullptr ? function.returnType
+                                : instance->returnType;
+      if (callableSignature) {
+        const std::string spelling =
+            cppSemanticTypeSpelling(loweredProgram, standard, returnType);
+        if (spelling.empty()) {
+          throw std::logic_error(
+              "lowered callable template has an unspellable projected result");
+        }
+        output << spelling;
+      } else {
+        emitSemanticType(returnType);
+      }
       if (returnType.kind != SemanticType::Reference) {
         output << ' ';
       }
@@ -822,7 +894,19 @@ public:
     }
     output << '(';
     std::size_t parameterCount = 0;
-    if (instance != nullptr && !sourceParameterTypes) {
+    if (callableSignature) {
+      for (std::size_t index = 0;
+           index < callableSignature->parameterTypes.size(); ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        emitLoweredCallableTemplateParameter(
+            function.parameters[index],
+            callableSignature->parameterTypes[index],
+            "__gti_mir_arg_" + std::to_string(index));
+      }
+      parameterCount = callableSignature->parameterTypes.size();
+    } else if (instance != nullptr && !sourceParameterTypes) {
       parameterCount = emitLoweredMirParameters(instance->parameterTypes);
     } else {
       emitLoweredParameters(function.parameters, sourceParameterTypes);
@@ -833,7 +917,10 @@ public:
         output << ", ";
       }
       emitLoweredFailureResultParameter(
-          instance == nullptr ? function.returnType : instance->returnType);
+          callableSignature     ? callableSignature->returnType
+          : instance == nullptr ? function.returnType
+                                : instance->returnType,
+          callableSignature.has_value());
       output << "::gti_failure_record_v1 *__gti_mir_failure_record";
     }
     output << ')';
@@ -2003,6 +2090,40 @@ public:
     }
   }
 
+  [[nodiscard]] bool loweredMemberCallableTemplateBodyExists(
+      const LoweredFunctionDeclaration &function,
+      const std::vector<const MirFunctionInstance *> &instances, bool failure,
+      bool genericOwner) const {
+    if (!genericOwner) {
+      return !loweredCallableTemplateBody(function, instances, failure).empty();
+    }
+
+    bool exists = false;
+    std::vector<HirClassInstanceId> owners;
+    for (const MirFunctionInstance *instance : instances) {
+      if (instance == nullptr || !instance->owner) {
+        throw std::logic_error(
+            "lowered generic member callable instance lost its owner");
+      }
+      if (std::find(owners.begin(), owners.end(), *instance->owner) !=
+          owners.end()) {
+        continue;
+      }
+      owners.push_back(*instance->owner);
+      std::vector<const MirFunctionInstance *> ownerInstances;
+      std::copy_if(instances.begin(), instances.end(),
+                   std::back_inserter(ownerInstances),
+                   [&](const MirFunctionInstance *candidate) {
+                     return candidate != nullptr &&
+                            candidate->owner == instance->owner;
+                   });
+      exists = !loweredCallableTemplateBody(function, ownerInstances, failure)
+                    .empty() ||
+               exists;
+    }
+    return exists;
+  }
+
   void emitLoweredMemberFunctionDeclaration(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const LoweredDeclaration &classRow) {
@@ -2014,11 +2135,14 @@ public:
     const std::vector<const MirFunctionInstance *> instances =
         loweredFunctionInstances(function.id);
     const bool generic = !function.genericParameters.empty();
+    const auto *owner = std::get_if<LoweredClassDeclaration>(&classRow.payload);
+    const bool genericOwner =
+        owner != nullptr && !owner->genericParameters.empty();
     const bool threadTaskTemplate =
         generic && loweredFunctionNeedsThreadTaskTemplate(instances);
     const bool hasCallableTemplateNormal =
-        generic &&
-        !loweredCallableTemplateBody(function, instances, false).empty();
+        generic && loweredMemberCallableTemplateBodyExists(function, instances,
+                                                           false, genericOwner);
     const bool retainPrimary =
         !generic || hasCallableTemplateNormal ||
         function.definitionKind != MirDefinitionKind::Source;
@@ -2026,9 +2150,6 @@ public:
       emitLoweredTemplateDeclaration(function.genericParameters,
                                      threadTaskTemplate);
     }
-    const auto *owner = std::get_if<LoweredClassDeclaration>(&classRow.payload);
-    const bool genericOwner =
-        owner != nullptr && !owner->genericParameters.empty();
     if (retainPrimary) {
       writeIndent();
       emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
@@ -2060,8 +2181,8 @@ public:
     }
 
     const bool hasCallableTemplateFailure =
-        generic &&
-        !loweredCallableTemplateBody(function, instances, true).empty();
+        generic && loweredMemberCallableTemplateBodyExists(function, instances,
+                                                           true, genericOwner);
     const bool hasFailure =
         hasCallableTemplateFailure ||
         loweredVirtualFailureContractRetained(function.id) ||

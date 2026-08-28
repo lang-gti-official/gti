@@ -1,0 +1,37 @@
+class calculator<std::integral T> {
+  T apply<Update>(mut Update update, T observed) {
+    return update(observed);
+  }
+
+public:
+  T add(T value, T operand) {
+    return this.apply([operand](T observed) -> T {
+      return T(observed + operand);
+    }, value);
+  }
+
+  T subtract(T value, T operand) {
+    return this.apply([operand](T observed) -> T {
+      return T(observed - operand);
+    }, value);
+  }
+
+  T bit_xor(T value, T operand) {
+    return this.apply([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, value);
+  }
+};
+
+int main() {
+  calculator<int32_t> words{};
+  calculator<uint8_t> bytes{};
+
+  if (words.add(10, 2) != 12 || words.subtract(10, 2) != 8 ||
+      words.bit_xor(12, 10) != 6 ||
+      bytes.add(uint8_t(3), uint8_t(1)) != uint8_t(4) ||
+      bytes.bit_xor(uint8_t(3), uint8_t(1)) != uint8_t(2)) {
+    return 1;
+  }
+  return 0;
+}

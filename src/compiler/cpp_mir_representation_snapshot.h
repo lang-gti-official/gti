@@ -36,6 +36,18 @@ struct CppMirRepresentationSnapshotBuild {
   }
 };
 
+// The declaration signature one deduced-callable C++ template may spell.
+// Generic-owner arguments are substituted to the exact concrete owner while
+// the function's own generic parameters remain dependent. This is distinct
+// from both the source declaration and the fully concrete MIR signature.
+struct CppMirCallableTemplateSignature {
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+
+  friend bool operator==(const CppMirCallableTemplateSignature &,
+                         const CppMirCallableTemplateSignature &) = default;
+};
+
 // Builds and privately seals the complete C++ representation inventory from
 // the compiler-owned backend contract. Support and generated-item claims are
 // derived here; no boolean/capability input can bless a row.
@@ -65,6 +77,14 @@ cppMirApplyCallableTemplateTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
     CppStandard standard, const LoweredFunctionDeclaration &declaration,
     const MirFunctionInstance &instance);
+
+// Projects the exact declaration signature used by a deduced-callable
+// template instance. nullopt means the LoweredProgram/MIR identities or owner
+// substitution are not coherent enough to emit a source-level template.
+[[nodiscard]] std::optional<CppMirCallableTemplateSignature>
+cppMirCallableTemplateSignature(const LoweredProgram &program,
+                                const LoweredFunctionDeclaration &declaration,
+                                const MirFunctionInstance &instance);
 
 [[nodiscard]] std::optional<std::size_t>
 cppMirApplyGenericOwnerConstructorTypeOverlays(
