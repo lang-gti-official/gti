@@ -308,6 +308,14 @@ analyzeTrustedPreludeFixture(const std::string &name, const std::string &source,
 }
 
 [[maybe_unused]] lang::FrontendResult
+analyzeTrustedMemoryFixture(const std::string &name, const std::string &source,
+                            lang::FrontendOptions options = {}) {
+  return analyzeTrustedPreludeFixture(
+      name, std::string("#include <std/memory>\n") + source,
+      std::move(options));
+}
+
+[[maybe_unused]] lang::FrontendResult
 analyzeTrustedStandalonePreludeFixture(const std::string &name,
                                        const std::string &source,
                                        lang::FrontendOptions options = {}) {

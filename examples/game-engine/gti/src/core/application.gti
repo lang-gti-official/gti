@@ -1,4 +1,5 @@
 #include "layer_stack.gti"
+#include <std/memory>
 
 namespace psych {
 enum class ApplicationState : uint8_t {

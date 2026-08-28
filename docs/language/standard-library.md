@@ -21,11 +21,14 @@ create a namespace alias to the root `gti_internal` namespace; semantic
 diagnostic `GTI-S2058` rejects each such attempt.
 
 Compiler-capability types and operations bind by an exact selected declaration
-identity, never by qualified spelling or a public wrapper name. Most such
-identities live in the trusted prelude; managed-thread and atomic identities
-live only in the exact trusted `<std/thread>` and `<std/atomic>` source units so
-unrelated programs do not carry their private declaration inventories. Aliases
-preserve an identity.
+identity, never by qualified spelling or a public wrapper name. Shared prefix
+storage, text, and core constraint identities live in the trusted prelude.
+Module-specific identities live only in their exact trusted source units:
+unique ownership and sparse storage in `<std/memory>`, managed threads in
+`<std/thread>`, atomics in `<std/atomic>`, mutexes in `<std/mutex>`, defined
+integer arithmetic in `<std/numeric>`, iterators in `<std/iterator>`, and
+callable relations in `<std/functional>`. Unrelated programs therefore do not
+carry those private declaration inventories. Aliases preserve an identity.
 Declarations whose exposed semantic type contains a private capability are not
 published to application source, so a trusted unit cannot leak a private
 handle through an otherwise public constructor, function, field, or alias.
@@ -49,9 +52,6 @@ public surface includes:
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
 | `std::string_view` | Counted read-only view over static literal storage |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
-| `std::unique_ptr<T>` | Nominal move-only unique owner with explicit null construction, reset, null assignment, and checked explicit base upcast |
-| `std::make_unique<T>` | Ordinary generic unique-owner factory |
-| `std::upcast_unique<Base, Derived>` | Explicit consuming conversion to a public polymorphic base owner |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
 | `std::copy_constructible<T>` | Copy construction is available; copy assignment is not implied |
@@ -67,6 +67,10 @@ source. An optional unit does not automatically re-export its own dependencies.
 
 The current implemented foundation includes:
 
+- `<std/memory>` `std::unique_ptr<T>` as a nominal move-only unique owner with
+  explicit null construction, reset, null assignment, and checked explicit
+  base upcast, plus the ordinary generic `std::make_unique<T>` and consuming
+  `std::upcast_unique<Base, Derived>` functions; and
 - `std::array<T, N>` over checked fixed-array storage, including front/back
   access and copyable-element fill; and
 - `std::string` as a move-only owner over private character storage, including

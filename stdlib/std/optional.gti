@@ -3,6 +3,8 @@
 // declaration-only constructor syntax. The owner provides the empty state;
 // checked single-slot storage remains to be implemented.
 
+#include <std/memory>
+
 namespace std {
   class optional<T> {
   public:

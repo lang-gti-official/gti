@@ -1,4 +1,5 @@
 #include <std/vector>
+#include <std/memory>
 
 class Reading {
   int32_t measurement;

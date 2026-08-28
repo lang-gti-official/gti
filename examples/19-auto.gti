@@ -1,3 +1,5 @@
+#include <std/memory>
+
 struct Reading {
   int value = 0;
 

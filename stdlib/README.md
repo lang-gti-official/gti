@@ -29,6 +29,9 @@ The prelude also defines transparent aliases `std::size_t = uint64_t` and
 `std::ptrdiff_t = int64_t`. Public container sizes, capacities, and indexes use
 `std::size_t`; signed differences use `std::ptrdiff_t`. Native C/C++ size types
 remain checked ABI-boundary representations rather than GTI source semantics.
+Unique ownership is not injected implicitly: source that names
+`std::unique_ptr`, `std::make_unique`, or `std::upcast_unique` imports
+`<std/memory>` directly.
 
 Native runtime entries are low-level target services, not user-facing
 built-ins. Add formatting and other portable behavior in GTI, then cross the
@@ -58,7 +61,8 @@ behind the compiler-private implementation detail
 `gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
 private as a second factory-boundary check. Application source cannot name the
 handle or the adopting constructor; only compiler-trusted standard-library
-source can construct it. Both the TCP handle and the prelude file handle use
+source can construct it. Both the TCP handle and the `<std/cstdio>` file
+handle use
 `[[no_transfer, no_share]]`, so their native thread affinity is explicit even
 though each current representation is only an integer descriptor.
 
@@ -259,8 +263,9 @@ capabilities. The compiler recognizes the capabilities by trusted semantic
 identity; it should not hard-code public wrapper names such as
 `std::unique_ptr` or `std::vector` into a backend.
 
-`std::unique_ptr<T>` now follows this structure. Its source-defined operators
-wrap `gti_internal::unique_owner<T>`, and `std::make_unique<T>(args...)` is a
+`<std/memory>` owns `std::unique_ptr<T>` and its related functions. Its
+source-defined operators wrap `gti_internal::unique_owner<T>`, and
+`std::make_unique<T>(args...)` is a
 source-defined variadic factory resolved through the same generic machinery as
 application functions. Concrete HIR instantiation validates its nested owner
 allocation and constructor call; C++ emission calls the resolved stdlib
@@ -308,13 +313,18 @@ The public types are ordinary GTI wrappers: neither compiler nor backend
 recognizes their names, and no raw address or manual deallocation is exposed.
 
 Intrinsic behavior is restricted to exact compiler-trusted declaration
-identities. Most are prelude-owned; the managed-thread identities are owned by
-the exact installed `<std/thread>` source unit and are absent when that module
-is not imported. The root `gti_internal` namespace and declarations whose
-exposed signatures contain its private capabilities are visible only to
-compiler-trusted prelude and physical standard-library source. Application
-declarations, direct references, aliases, and tooling queries cannot enter that
-surface; public wrappers such as `std::FILE` and `std::unique_ptr` remain the
+identities. Shared prefix-storage, text, and core constraints remain
+prelude-owned. Unique-owner and sparse-storage identities belong to
+`<std/memory>`; managed-thread and defined-integer identities belong to the
+exact installed `<std/thread>` and `<std/numeric>` units. Atomic, iterator, and
+callable constraints likewise live in their canonical units, so none of these
+module inventories are present when the module is not imported. The root
+`gti_internal` namespace and
+declarations whose exposed signatures contain its private capabilities are
+visible only to compiler-trusted prelude and physical standard-library source.
+Application declarations, direct references, aliases, and tooling queries
+cannot enter that surface; public wrappers such as `std::FILE` and
+`std::unique_ptr` remain the
 supported boundary. A future explicitly opt-in low-level API may expose
 selected capabilities, but its spelling and manual-lifetime contract remain
 undecided.
@@ -352,7 +362,7 @@ is recognized by the backend.
 | `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
-| `<std/memory>` | Implemented typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
+| `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |

@@ -1,9 +1,12 @@
+// The implicit prelude contains only language-wide vocabulary, compiler-bound
+// capabilities shared by several standard units, and the minimal hosted output
+// surface used by ordinary programs. Module-owned policy belongs in its
+// canonical <std/...> unit.
 namespace gti_internal {
   // Compiler capability type declarations are deliberately empty. Semantics
   // binds their trusted declaration identities to private representations;
   // application declarations with the same spelling remain ordinary types.
-  class unique_owner<T> {};
-  class storage<T> {}; // Prefix-initialized storage (P-STORAGE-01): the live elements always form
+  // Prefix-initialized storage (P-STORAGE-01): the live elements always form
   // the prefix [0, length). Construction appends exactly at the live length,
   // destruction removes exactly the last live element, relocation transfers
   // the complete prefix, and reads check the logical prefix.
@@ -25,50 +28,11 @@ namespace gti_internal {
   @compiler_constraint("default_initializable") concept default_initializable_capability<T>;
   @compiler_constraint("equality_comparable") concept equality_comparable_capability<T>;
   @compiler_constraint("relationally_ordered") concept relationally_ordered_capability<T>;
-  @compiler_constraint("atomic_scalar") concept atomic_scalar_capability<T>;
-  @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
-  @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
-  @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
-  @compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
-  @compiler_constraint("writes_to") concept writes_to_capability<I, T>;
-  @compiler_constraint("bidirectional_iterator") concept bidirectional_iterator_capability<I>;
-  @compiler_constraint("random_access_iterator") concept random_access_iterator_capability<I>;
-  @compiler_constraint("subscripts_to_mut") concept subscripts_to_mut_capability<I, T>;
-  @compiler_constraint("sized_sentinel_for") concept sized_sentinel_for_capability<S, I>;
   @compiler_constraint("adds") concept adds_capability<T>;
   @compiler_constraint("subtracts") concept subtracts_capability<T>;
   @compiler_constraint("negates") concept negates_capability<T>;
   @compiler_constraint("scales_by") concept scales_by_capability<T, S>;
-  @compiler_constraint("read_callable") concept read_callable_capability<Callable, Argument, Result>;
-  @compiler_constraint("mut_callable") concept mut_callable_capability<Callable, Argument, Result>;
-  @compiler_constraint("once_callable") concept once_callable_capability<Callable, Argument, Result>;
-  @compiler_constraint("read_binary_callable") concept read_binary_callable_capability<Callable, Left, Right, Result>;
-  @compiler_constraint("mut_binary_callable") concept mut_binary_callable_capability<Callable, Left, Right, Result>;
-  @compiler_constraint("once_binary_callable") concept once_binary_callable_capability<Callable, Left, Right, Result>;
-  @compiler_constraint("once_action") concept once_action_capability<Callable>;
-  @compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
-  @compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
-
-  gti_internal::unique_owner<T> allocate_unique_owner<T, Args...>(Args... args);
-  T & unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
-  mut T & unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
-  bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
-  gti_internal::unique_owner<Base> unique_owner_upcast<Base, Derived>(gti_internal::unique_owner<Derived> owner);
-
-  gti_internal::storage<T> allocate_storage<T>(uint64_t count);
-  int32_t storage_try_allocate<T>(mut gti_internal::storage<T>& destination,
-                                  uint64_t count,
-                                  uint64_t minimum_alignment);
-  uint64_t storage_capacity<T>(gti_internal::storage<T>& storage);
-  bool storage_initialized<T>(gti_internal::storage<T>& storage,
-                              uint64_t index);
-  void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage, uint64_t index, Args... args);
-  T & storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
-  mut T & storage_read_mut<T>(mut gti_internal::storage<T>& storage, uint64_t index);
-  void storage_destroy<T>(mut gti_internal::storage<T>& storage, uint64_t index);
-  void storage_relocate<T>(mut gti_internal::storage<T>& source, mut gti_internal::storage<T>& destination, uint64_t count);
-  void storage_shift_right<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
-  void storage_shift_left<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last); // The identity-bound public logical-size check: raises index_out_of_bounds
+  // The identity-bound public logical-size check raises index_out_of_bounds
   // when `index >= size`, so container indexing reports the logical bound
   // rather than leaking the private storage invariant.
   void index_bounds_check(uint64_t index, uint64_t size);
@@ -86,45 +50,10 @@ namespace gti_internal {
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
   gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
 
-  T integer_wrapping_add<T>(T left, T right);
-  T integer_wrapping_sub<T>(T left, T right);
-  T integer_wrapping_mul<T>(T left, T right);
-  T integer_saturating_add<T>(T left, T right);
-  T integer_saturating_sub<T>(T left, T right);
-  T integer_saturating_mul<T>(T left, T right);
-  Result integer_checked_add<Result, T>(T left, T right);
-  Result integer_checked_sub<Result, T>(T left, T right);
-  Result integer_checked_mul<Result, T>(T left, T right);
-
-  [[no_transfer, no_share]] class file_handle {
-    mut int64_t descriptor = -1;
-
-  public:
-    file_handle(int64_t value) : descriptor(value) {}
-
-    bool is_valid() {
-      return this.descriptor >= 0;
-    }
-
-    int64_t get() {
-      return this.descriptor;
-    }
-
-    int64_t release() mut {
-      int64_t value = this.descriptor;
-      this.descriptor = -1;
-      return value;
-    }
-  };
-
   namespace runtime {
     extern "C" {
       int32_t gti_rt_write_stdout(gti_internal::text_view value);
       int32_t gti_rt_write_stdout_byte(uint8_t value);
-      int32_t gti_rt_read_stdin_byte();
-      int64_t gti_rt_open_file_read(gti_internal::text_view path);
-      int32_t gti_rt_read_file_byte(int64_t descriptor);
-      int32_t gti_rt_close_file(int64_t descriptor);
     }
 
     void write_stdout(gti_internal::text_view value) {
@@ -135,21 +64,6 @@ namespace gti_internal {
       return gti_rt_write_stdout_byte(value);
     }
 
-    int32_t read_stdin_byte() {
-      return gti_rt_read_stdin_byte();
-    }
-
-    int64_t open_file_read(gti_internal::text_view path) {
-      return gti_rt_open_file_read(path);
-    }
-
-    int32_t read_file_byte(int64_t descriptor) {
-      return gti_rt_read_file_byte(descriptor);
-    }
-
-    int32_t close_file(int64_t descriptor) {
-      return gti_rt_close_file(descriptor);
-    }
   }
 }
 
@@ -171,13 +85,6 @@ namespace std {
   concept signed_integral<T> = gti_internal::signed_integral_capability<T> && std::integral<T> && std::signed_numeric<T>;
   concept unsigned_integral<T> = gti_internal::unsigned_integral_capability<T> && std::integral<T>;
   concept floating_point<T> = gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
-  /// A scalar domain with a stable public atomic contract: bool and the
-  /// fixed-width signed and unsigned integer types.
-  concept atomic_scalar<T> =
-      gti_internal::atomic_scalar_capability<T> && std::copyable<T> &&
-      std::default_initializable<T> && std::transferable<T> &&
-      std::shareable<T>;
-
   /// Domain-value operator capabilities (L-OP-01). Each proves one exact
   /// public read-only member returning an owned value of the domain type,
   /// so a generic body may use the operator without importing ADL, free
@@ -203,67 +110,6 @@ namespace std {
 
   /// Transfers `value` into an owned result and leaves the source moved from.
   T move<T>(T& value);
-
-  /// Exclusive ownership of one dynamically allocated `T`.
-  class unique_ptr<T> {
-    mut gti_internal::unique_owner<T> owner = nullptr;
-
-  public:
-    unique_ptr(nullptr_t empty) : owner(nullptr) {}
-
-    unique_ptr(gti_internal::unique_owner<T> value) : owner(std::move(value)) {}
-
-    void reset() mut {
-      this.owner = nullptr;
-    }
-
-    void operator=(nullptr_t empty) mut {
-      this.reset();
-    }
-
-    unique_ptr<Base> upcast<Base>() mut {
-      mut gti_internal::unique_owner<Base> converted = gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
-      this.owner = nullptr;
-      return unique_ptr<Base>(std::move(converted));
-    }
-
-    T& operator*() {
-      return gti_internal::unique_owner_borrow(this.owner);
-    }
-
-    mut T& operator*() mut {
-      return gti_internal::unique_owner_borrow_mut(this.owner);
-    }
-
-    T& operator->() {
-      return gti_internal::unique_owner_borrow(this.owner);
-    }
-
-    mut T& operator->() mut {
-      return gti_internal::unique_owner_borrow_mut(this.owner);
-    }
-
-    operator bool() {
-      return !gti_internal::unique_owner_is_null(this.owner);
-    }
-
-    bool operator==(nullptr_t other) {
-      return gti_internal::unique_owner_is_null(this.owner);
-    }
-
-    bool operator!=(nullptr_t other) {
-      return !gti_internal::unique_owner_is_null(this.owner);
-    }
-  };
-
-  /// Allocates a `T` from `args` and returns its exclusive owner.
-  unique_ptr<T> make_unique<T, Args...>(Args... args) {
-    return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
-  }
-
-  unique_ptr<Base> upcast_unique<Base, Derived>(mut unique_ptr<Derived> owner) {
-    return owner.upcast<Base>();
-  }
 
   /// Writes `value` to standard output without adding a newline.
   void print(string_view value) {

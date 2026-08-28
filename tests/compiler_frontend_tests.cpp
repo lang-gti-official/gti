@@ -604,6 +604,58 @@ void testStandardLibraryImports() {
          "compiler trust should come only from prelude or physical standard-"
          "library provenance");
 
+  const std::string uniqueOwnerSource =
+      "class Value { public: Value() {} };\n"
+      "int main() { auto owner = std::make_unique<Value>(); return 0; }\n";
+  const lang::FrontendResult missingMemory = lang::Frontend().analyze(
+      root / "missing-memory.gti", uniqueOwnerSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingMemory.canGenerateCode() &&
+             hasDiagnosticCode(missingMemory.diagnostics, "GTI-S2000") &&
+             hasDiagnostic(missingMemory.diagnostics,
+                           "Undefined qualified name 'std::make_unique'"),
+         "unique ownership should not remain ambient in the implicit prelude");
+
+  const lang::FrontendResult indirectMemory = lang::Frontend().analyze(
+      root / "indirect-memory.gti",
+      "#include <std/cstdio>\n" + uniqueOwnerSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(!indirectMemory.canGenerateCode() &&
+             hasDiagnosticCode(indirectMemory.diagnostics, "GTI-S2024") &&
+             hasDiagnostic(indirectMemory.diagnostics,
+                           "include its file directly"),
+         "a standard unit should not re-export its memory dependency");
+
+  const lang::FrontendResult directMemory = lang::Frontend().analyze(
+      root / "direct-memory.gti", "#include <std/memory>\n" + uniqueOwnerSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(directMemory.canGenerateCode(),
+         "the canonical memory import should expose unique ownership");
+
+  const std::vector<std::pair<std::string, std::string>> moduleConcepts = {
+      {"std/atomic", "atomic_scalar"},
+      {"std/iterator", "input_iterator"},
+      {"std/functional", "once_action"},
+  };
+  for (const auto &[header, conceptName] : moduleConcepts) {
+    const std::string conceptSource =
+        "concept selected<T> = std::" + conceptName + "<T>;\n";
+    const lang::FrontendResult missingConcept = lang::Frontend().analyze(
+        root / ("missing-" + conceptName + ".gti"), conceptSource,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!missingConcept.canGenerateCode() &&
+               hasDiagnostic(missingConcept.diagnostics,
+                             "Unknown concept 'std::" + conceptName + "'"),
+           "a module-owned compiler concept should not remain ambient");
+
+    const lang::FrontendResult directConcept = lang::Frontend().analyze(
+        root / ("direct-" + conceptName + ".gti"),
+        "#include <" + header + ">\n" + conceptSource,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(directConcept.canGenerateCode(),
+           "the canonical import should expose its public compiler concept");
+  }
+
   lang::SourceLoader directStandardLoader;
   const lang::SourceGraph directStandard = directStandardLoader.load(
       standardLibraryRoot() / "std/../std/array.gti",
@@ -660,7 +712,7 @@ void testStandardLibraryImports() {
   const std::string privateSource =
       "namespace gti_internal { class forged {}; }\n"
       "namespace private_alias = gti_internal;\n"
-      "using forged_storage = gti_internal::storage<int>;\n"
+      "using forged_storage = gti_internal::prefix_storage<int>;\n"
       "int main() { gti_internal::runtime::write_stdout(\"x\"); return 0; }\n";
   const lang::FrontendResult privateAccess = lang::Frontend().analyze(
       root / "private-access.gti", privateSource, {standardLibraryPrelude()},
@@ -702,7 +754,7 @@ void testStandardLibraryImports() {
       "int main() { auto [capability] = std::Leaky(); return 0; }\n",
       {standardLibraryPrelude()},
       {{leakyKey, "namespace std { struct Leaky { public: "
-                  "gti_internal::storage<int> capability; }; }\n"}},
+                  "gti_internal::prefix_storage<int> capability; }; }\n"}},
       {standardLibraryRoot()});
   expect(!leakyDecomposition.canGenerateCode() &&
              countDiagnosticCode(leakyDecomposition.diagnostics, "GTI-S2058") ==
@@ -711,14 +763,14 @@ void testStandardLibraryImports() {
          "structured bindings must not launder a public field whose selected "
          "type is a compiler-private capability");
 
-  const lang::FrontendResult leakyAlias =
-      lang::Frontend().analyze(root / "leaky-alias.gti",
-                               "#include <std/array>\n"
-                               "std::leaked value;\nint main() { return 0; }\n",
-                               {standardLibraryPrelude()},
-                               {{leakyKey, "namespace std { using leaked = "
-                                           "gti_internal::storage<int>; }\n"}},
-                               {standardLibraryRoot()});
+  const lang::FrontendResult leakyAlias = lang::Frontend().analyze(
+      root / "leaky-alias.gti",
+      "#include <std/array>\n"
+      "std::leaked value;\nint main() { return 0; }\n",
+      {standardLibraryPrelude()},
+      {{leakyKey, "namespace std { using leaked = "
+                  "gti_internal::prefix_storage<int>; }\n"}},
+      {standardLibraryRoot()});
   expect(!leakyAlias.canGenerateCode() &&
              countDiagnosticCode(leakyAlias.diagnostics, "GTI-S2058") == 1 &&
              !hasDiagnostic(leakyAlias.diagnostics, "Unknown type"),
@@ -732,15 +784,15 @@ void testStandardLibraryImports() {
       "int main() { std::Mixed value = std::Mixed(); "
       "return value.select(1.0); }\n",
       {standardLibraryPrelude()},
-      {{leakyKey,
-        "namespace std { class Mixed { public: Mixed() {} "
-        "int select(int value) { return value; } "
-        "int select(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+      {{leakyKey, "namespace std { class Mixed { public: Mixed() {} "
+                  "int select(int value) { return value; } "
+                  "int select(gti_internal::prefix_storage<int> value) { "
+                  "return 0; } }; }\n"}},
       {standardLibraryRoot()});
   expect(!mixedOverload.canGenerateCode() &&
              countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2012") == 1 &&
              !hasRelatedDiagnostic(mixedOverload.diagnostics,
-                                   "gti_internal::storage"),
+                                   "gti_internal::prefix_storage"),
          "application overload diagnostics must preserve public siblings "
          "without presenting compiler-private signature candidates");
 
@@ -753,7 +805,8 @@ void testStandardLibraryImports() {
       {standardLibraryPrelude()},
       {{leakyKey,
         "namespace std { class PrivateBase { public: PrivateBase() {} "
-        "int select(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+        "int select(gti_internal::prefix_storage<int> value) { return 0; } }; "
+        "}\n"}},
       {standardLibraryRoot()});
   expect(inheritedMixedOverload.canGenerateCode(),
          "a public overload added by a derived application class must remain "
@@ -768,7 +821,8 @@ void testStandardLibraryImports() {
       {standardLibraryPrelude()},
       {{leakyKey,
         "namespace std { class PrivateMethod { public: PrivateMethod() {} "
-        "int secret(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+        "int secret(gti_internal::prefix_storage<int> value) { return 0; } }; "
+        "}\n"}},
       {standardLibraryRoot()});
   const lang::SourceUnitId privateMemberUnit =
       privateMemberOccurrence.sourceGraph.entryUnit();
@@ -1307,6 +1361,8 @@ int main() { return run() - 4; }
 
 void testConditionalExpressions() {
   const std::string source = R"(
+#include <std/memory>
+
 int choose(bool condition, int left, int right) {
   return condition ? left : right;
 }
@@ -1349,7 +1405,8 @@ int main() {
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "conditional-expression.gti", source, {standardLibraryPrelude()});
+      "conditional-expression.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected conditional-expression diagnostic: "
@@ -1465,8 +1522,10 @@ int main() {
       "the C++ backend should emit scalar conditional control flow from "
       "verified MIR while preserving explicit ownership transfer");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-conditional-expression.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-conditional-expression.gti", R"(
+#include <std/memory>
+
 int invalid_condition() { return 1 ? 2 : 3; }
 bool mismatched_arms(bool condition) { return condition ? 1 : false; }
 struct Item {};
@@ -1477,7 +1536,7 @@ std::unique_ptr<Item> implicit_copy(
   return condition ? left : right;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              hasDiagnostic(invalid.diagnostics,
                            "Conditional expression condition must be bool") &&
@@ -1486,8 +1545,10 @@ std::unique_ptr<Item> implicit_copy(
          "conditional expressions should diagnose non-bool conditions, "
          "inexact arm types, and implicit move-only copies");
 
-  const lang::FrontendResult maybeMoved =
-      lang::Frontend().analyze("conditional-move-state.gti", R"(
+  const lang::FrontendResult maybeMoved = lang::Frontend().analyze(
+      "conditional-move-state.gti", R"(
+#include <std/memory>
+
 struct Item {
   int value;
   Item(int initial) : value(initial) {}
@@ -1499,7 +1560,7 @@ int inspect(bool condition) {
   return owner->value;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!maybeMoved.canGenerateCode() &&
              hasDiagnostic(maybeMoved.diagnostics,
                            "may have been moved on another control-flow path"),

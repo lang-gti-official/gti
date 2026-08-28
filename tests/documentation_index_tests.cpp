@@ -32,11 +32,15 @@ public:
 namespace gti_internal {
 @compiler_constraint("copyable") concept copyable_capability<T>;
 }
+
+namespace std {
+concept copyable<T> = gti_internal::copyable_capability<T>;
+}
 )");
     write(root / "std/sample.gti", R"(
 namespace std {
 /// Requires a copyable value.
-concept sample_copyable<T> = gti_internal::copyable_capability<T>;
+concept sample_copyable<T> = std::copyable<T>;
 
 /// A "quoted" widget.
 /// Second line.
@@ -176,12 +180,12 @@ int main() {
   const lang::DocumentationDeclaration *conceptEntry =
       findDeclaration(projected.index, "std::sample_copyable",
                       lang::DocumentationKind::Concept);
-  expect(
-      conceptEntry != nullptr &&
-          conceptEntry->signature == "concept std::sample_copyable<T> = "
-                                     "gti_internal::copyable_capability<T>" &&
-          conceptEntry->documentationMarkdown == "Requires a copyable value.",
-      "concepts should retain their exact source composition and docs");
+  expect(conceptEntry != nullptr &&
+             conceptEntry->signature == "concept std::sample_copyable<T> = "
+                                        "std::copyable<T>" &&
+             conceptEntry->documentationMarkdown ==
+                 "Requires a copyable value.",
+         "concepts should retain their exact source composition and docs");
 
   const lang::DocumentationDeclaration *method = findDeclaration(
       projected.index, "std::widget::value", lang::DocumentationKind::Method);

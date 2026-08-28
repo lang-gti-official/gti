@@ -223,9 +223,18 @@ int main() {
          "an opaque string_view parameter must not be retained in global "
          "storage without an expressible dependency graph");
 
-  const lang::FrontendResult nestedTextView =
-      analyzeTrustedPreludeFixture("nested-string-view-storage.gti", R"(
+  const lang::FrontendResult nestedTextView = lang::Frontend().analyze(
+      standardLibraryRoot() / "std/memory.gti", R"(
 #include <std/string>
+
+namespace gti_internal {
+class storage<T> {};
+gti_internal::storage<T> allocate_storage<T>(uint64_t count);
+void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage,
+                                   uint64_t index,
+                                   Args... args);
+}
+
 int main() {
   mut std::string text = std::string("abc");
   mut gti_internal::storage<std::string_view> stored =
@@ -233,7 +242,8 @@ int main() {
   gti_internal::storage_construct(stored, uint64_t(0), text.view());
   return 0;
 }
-)");
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!nestedTextView.canGenerateCode() &&
              hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
              hasDiagnostic(nestedTextView.diagnostics,
@@ -3394,6 +3404,9 @@ T select<std::integral T>(T value) { return value; }
 
 void testConcurrencyTypeCapabilities() {
   const std::string source = R"(
+#include <std/cstdio>
+#include <std/memory>
+
 struct Scalar {
   int value = 0;
 };
@@ -3467,7 +3480,8 @@ int main() {
 )";
 
   lang::FrontendResult valid = lang::Frontend().analyze(
-      "concurrency-type-capabilities.gti", source, {standardLibraryPrelude()});
+      "concurrency-type-capabilities.gti", source, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected concurrency capability diagnostic: "
@@ -3623,6 +3637,8 @@ int main() {
          "emitted C++ traits or spellings");
 
   const std::string invalidSource = R"(
+#include <std/memory>
+
 class RawBox { int* address = nullptr; };
 class Cleanup {
   int value = 0;
@@ -3651,9 +3667,9 @@ int main() {
   return 0;
 }
 )";
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-concurrency-type-capabilities.gti",
-                               invalidSource, {standardLibraryPrelude()});
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-concurrency-type-capabilities.gti", invalidSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2029") >= 7 &&
@@ -4898,12 +4914,14 @@ int main() { return inspect(1, ambiguous()) ? 0 : 1; }
           "a callable relation should reject an ambiguous exact readable "
           "signature");
 
-  const lang::FrontendResult privateBinding =
-      lang::Frontend().analyze("private-callable-intrinsic.gti", R"(
+  const lang::FrontendResult privateBinding = lang::Frontend().analyze(
+      "private-callable-intrinsic.gti", R"(
+#include <std/functional>
+
 concept forged<F, A, R> =
     gti_internal::read_callable_capability<F, A, R>;
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!privateBinding.canGenerateCode() &&
              hasDiagnosticCode(privateBinding.diagnostics, "GTI-S2058"),
          "compiler-owned callable relations should remain private behind the "
@@ -6112,8 +6130,10 @@ int main() {
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 
-  const lang::FrontendResult movePack =
-      lang::Frontend().analyze("move-pack.gti", R"(
+  const lang::FrontendResult movePack = lang::Frontend().analyze(
+      "move-pack.gti", R"(
+#include <std/memory>
+
 class PackedValue {};
 
 void consume_owner<Args...>(Args... values) {}
@@ -6128,7 +6148,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   bool foundConcreteOwnerPack = false;
   for (const lang::HirFunctionInstance &instance :
        movePack.hir.functionInstances()) {
@@ -6143,8 +6163,10 @@ int main() {
          "a concrete move-only pack should be forwarded once and retained in "
          "typed HIR");
 
-  const lang::FrontendResult reusedMovePack =
-      lang::Frontend().analyze("reused-move-pack.gti", R"(
+  const lang::FrontendResult reusedMovePack = lang::Frontend().analyze(
+      "reused-move-pack.gti", R"(
+#include <std/memory>
+
 class PackedValue {};
 
 void consume_owner<Args...>(Args... values) {}
@@ -6160,7 +6182,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!reusedMovePack.canGenerateCode() &&
              hasDiagnostic(reusedMovePack.diagnostics,
                            "Value 'values' has already been moved") &&
@@ -7187,8 +7209,10 @@ int main() {
          "auto diagnostics should explain every unsupported declaration and "
          "inference context");
 
-  const lang::FrontendResult moveOnly =
-      lang::Frontend().analyze("move-only-auto.gti", R"(
+  const lang::FrontendResult moveOnly = lang::Frontend().analyze(
+      "move-only-auto.gti", R"(
+#include <std/memory>
+
 class Value {
 public:
   int number = 1;
@@ -7200,7 +7224,7 @@ int main() {
   return copied->number;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!moveOnly.canGenerateCode() &&
              hasDiagnosticCode(moveOnly.diagnostics, "GTI-S2003") &&
              hasDiagnostic(moveOnly.diagnostics,
@@ -7208,8 +7232,10 @@ int main() {
              hasDiagnosticHint(moveOnly.diagnostics, "std::move(owner)"),
          "auto initialization should reject move-only copies in GTI semantics");
 
-  const lang::FrontendResult movedOwner =
-      lang::Frontend().analyze("moved-auto.gti", R"(
+  const lang::FrontendResult movedOwner = lang::Frontend().analyze(
+      "moved-auto.gti", R"(
+#include <std/memory>
+
 class Value {
 public:
   int number = 1;
@@ -7221,7 +7247,7 @@ int main() {
   return moved->number - 1;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::FunctionDecl *movedMain =
       findTopLevelFunction(movedOwner.program, "main");
   const auto *moved = movedMain == nullptr
