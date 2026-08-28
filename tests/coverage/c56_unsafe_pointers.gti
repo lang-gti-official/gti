@@ -1,0 +1,26 @@
+// Raw pointers, address-of, dereference and pointer parameters under unsafe.
+class Anchor { public: int32_t id() { return 0; } };
+
+int32_t read_through(int32_t* p) {
+  unsafe { return *p; }
+}
+
+void write_through(mut int32_t* p, int32_t value) {
+  unsafe { *p = value; }
+}
+
+int main() {
+  mut int32_t cell = 7;
+  mut int32_t* p = nullptr;
+  unsafe { p = &cell; }
+
+  std::print(read_through(p)); std::print(" ");
+  write_through(p, 21);
+  std::print(cell); std::print(" ");
+  std::print(p == nullptr ? 1 : 0); std::print(" ");
+
+  mut int32_t other = 1;
+  unsafe { p = &other; }
+  std::println(read_through(p));
+  return 0;
+}

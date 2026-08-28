@@ -1,0 +1,32 @@
+// Lambdas as values: stored, returned, composed, and passed by value.
+class Anchor { public: int32_t id() { return 0; } };
+
+int32_t apply<Op>(mut Op op, int32_t v) { return op(v); }
+
+int32_t apply_twice<Op>(mut Op op, int32_t v) { return op(op(v)); }
+
+int main() {
+  int32_t offset = 4;
+  auto add = [offset](int32_t v) -> int32_t { return v + offset; };
+  auto double_it = [](int32_t v) -> int32_t { return v * 2; };
+
+  std::print(apply(std::move(add), 1)); std::print(" ");
+  std::print(apply_twice(std::move(double_it), 3)); std::print(" ");
+
+  auto inline_sum = [](int32_t a, int32_t b) -> int32_t { return a + b; };
+  std::print(inline_sum(2, 3)); std::print(" ");
+
+  auto no_args = []() -> int32_t { return 42; };
+  std::print(no_args()); std::print(" ");
+
+  auto voidish = [](int32_t v) -> void {};
+  voidish(1);
+
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i++) {
+    auto per_iteration = [i](int32_t v) -> int32_t { return v + i; };
+    total = total + per_iteration(10);
+  }
+  std::println(total);
+  return 0;
+}

@@ -1,0 +1,38 @@
+// Iterator protocol: begin/end, manual advance, and the for-each shape.
+#include <std/vector>
+#include <std/iterator>
+
+class Countdown {
+  mut int32_t remaining = 0;
+public:
+  Countdown(int32_t start) : remaining(start) {}
+  bool has_next() { return this.remaining > 0; }
+  int32_t next() mut { this.remaining = this.remaining - 1; return this.remaining; }
+};
+
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(4); v.push_back(5); v.push_back(6);
+
+  mut auto it = v.begin();
+  mut int32_t first = *it;
+  ++it;
+  mut int32_t second = *it;
+  std::print(first + second); std::print(" ");
+
+  mut int32_t walked = 0;
+  for (mut auto cursor = v.begin(); cursor != v.end(); ++cursor) {
+    walked = walked + *cursor;
+  }
+  std::print(walked); std::print(" ");
+
+  mut int32_t ranged = 0;
+  for (auto& value : v) { ranged = ranged + value; }
+  std::print(ranged); std::print(" ");
+
+  mut Countdown c = Countdown(3);
+  mut int32_t steps = 0;
+  while (c.has_next()) { steps = steps + c.next(); }
+  std::println(steps);
+  return 0;
+}

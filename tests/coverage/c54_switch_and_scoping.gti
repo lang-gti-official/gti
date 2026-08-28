@@ -1,0 +1,55 @@
+// Integer and enum switches, shadowing, block scoping and short-circuiting.
+class Anchor { public: int32_t id() { return 0; } };
+
+enum class Level {
+  low,
+  mid,
+  high,
+};
+
+int32_t from_level(Level l) {
+  switch (l) {
+  case Level::low:
+    return 1;
+  case Level::mid:
+    return 2;
+  case Level::high:
+    return 3;
+  }
+  // A scoped-enum switch covering every enumerator does not satisfy
+  // definite-return analysis, so this arm is required.
+  return 0;
+}
+
+int32_t from_int(int32_t v) {
+  switch (v) {
+  case 0:
+    return 10;
+  case 1:
+    return 20;
+  default:
+    return 30;
+  }
+}
+
+bool cheap_true() { return true; }
+
+int main() {
+  std::print(from_level(Level::mid)); std::print(" ");
+  std::print(from_int(1)); std::print(from_int(9)); std::print(" ");
+
+  int32_t shadowed = 1;
+  {
+    int32_t inner = shadowed + 1;
+    std::print(inner); std::print(" ");
+  }
+
+  mut int32_t evaluated = 0;
+  if (cheap_true() || (evaluated = 1) == 1) { }
+  if (!cheap_true() && (evaluated = 2) == 2) { }
+  std::print(evaluated); std::print(" ");
+
+  int32_t chained = shadowed > 0 ? (shadowed > 5 ? 100 : 50) : 0;
+  std::println(chained);
+  return 0;
+}

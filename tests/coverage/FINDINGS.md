@@ -17,7 +17,8 @@ rejection.
 
 ## Result at time of writing
 
-49 programs: **38 pass, 8 ICE, 1 link failure, 2 silent failures**.
+57 programs: **42 pass, 10 ICE, 1 link failure, 2 silent failures, 2
+rejections of valid code**.
 
 A second script, `scaffold_probe.sh`, probes stdlib operations the surface
 manifest marks as unimplemented and records how each one actually fails
@@ -413,6 +414,84 @@ Corpus program: `c48_ownership_breadth`.
 
 ---
 
+## F14 — Wrong diagnostic: a callable parameter invoked in argument position
+
+`reproducers/f14-nested-callable-invocation.gti`
+
+```gti
+int32_t apply_twice<Op>(mut Op op, int32_t v) { return op(op(v)); }
+```
+
+```
+error[GTI-S2046]: Callable parameter 'op' must return 'void' for this
+                  invocation, but the selected callable returns 'int32_t'.
+```
+
+Nothing in `op(op(v))` requires a `void` return. Splitting the expression —
+`int32_t once = op(v); return op(once);` — compiles and runs, producing the
+value the rejected form asked for. The inner invocation is evidently being
+classified as statement-position, and the diagnostic then reports a rule that
+does not apply.
+
+Corpus program: `c52_higher_order_lambdas`.
+
+## F15 — ICE: calling a method on the result of an overloaded operator
+
+`reproducers/f15-method-on-operator-result.gti`
+
+```gti
+Counter operator+(Counter& o) { return Counter(this.n + o.n); }
+...
+std::println((a + b).value());   // ICE
+```
+
+Emitter-vocabulary ICE. Two neighbouring shapes are both fine:
+
+- `mut Counter c = a + b;` then `c.value()`
+- `a.plus(b).value()`, where `plus` is an ordinary method returning the same
+  temporary
+
+So it is neither the temporary nor the method call on its own. It is a method
+call applied to the result of an *operator* invocation.
+
+Corpus program: `c53_operator_breadth`.
+
+## F16 — The canonical C++ iterator loop does not compile over `std::vector`
+
+`reproducers/f16-canonical-iterator-loop.gti`
+
+```gti
+for (mut auto it = v.begin(); it != v.end(); ++it) { total = total + *it; }
+```
+
+```
+error[GTI-S2022]: No exact overload of operator!= for argument types
+                  (std::detail::vector_sentinel).
+```
+
+`vector_iterator<T>::operator!=` takes `vector_sentinel&` — a reference — and
+`v.end()` is a temporary, so it cannot bind. Hoisting the sentinel into a
+variable first compiles and runs:
+
+```gti
+mut auto last = v.end();
+for (mut auto it = v.begin(); it != last; ++it) { ... }
+```
+
+This is not an ICE and the rejection is internally consistent, but it deserves
+a finding rather than a footnote. It is the single most familiar loop in C++,
+the language GTI takes its syntax from; every user will write it, and the
+diagnostic says only that no overload matched. It never mentions the temporary,
+which is the entire problem and the whole of the fix.
+
+The same reference-binding rule is what makes `std::find(v.begin(), v.end(), 6)`
+fail on its literal argument, so this is a pattern rather than an isolated
+signature choice.
+
+Corpus program: `c55_iterator_utilities`.
+
+---
+
 ## Language behaviour recorded along the way
 
 These are not filed as defects. They are diagnosed correctly and are either
@@ -474,10 +553,10 @@ worth capturing for whoever writes the language reference.
 
 ## Coverage gaps still open
 
-Not yet exercised by this corpus, in rough order of expected yield: native C
-records and bridge headers, `tcp`, `<std/random>` distribution surface,
-generic classes with value (non-type) parameters, and variadic packs beyond
-`emplace`.
+Not yet exercised by this corpus, in rough order of expected yield: `tcp`,
+concurrency beyond a single spawn/join, `<std/random>` distribution surface,
+and receiving a `[[c_abi]]` record from a linked native factory (which needs a
+companion C translation unit the single-file runner does not build).
 
 Two headers cannot be exercised at all until F7's underlying work lands:
 `<std/optional>` and `<std/list>` have no executable operations.
