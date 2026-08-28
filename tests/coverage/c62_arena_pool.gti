@@ -1,0 +1,26 @@
+// Bounded arena and pool allocation with explicit capacity failure.
+#include <std/memory>
+
+class Particle {
+  mut int32_t id = 0;
+public:
+  Particle(int32_t id) : id(id) {}
+  int32_t value() { return this.id; }
+};
+
+int main() {
+  mut auto arena_result = std::try_make_arena<Particle>(std::size_t(2));
+  if (!arena_result) { std::println("arena failed"); return 1; }
+  mut std::arena<Particle> arena = std::move(arena_result).value();
+
+  mut auto first = arena.try_insert(Particle(1));
+  mut auto second = arena.try_insert(Particle(2));
+  mut auto third = arena.try_insert(Particle(3));
+
+  std::print(first.has_value() ? 1 : 0);
+  std::print(second.has_value() ? 1 : 0);
+  std::print(third.has_value() ? 1 : 0);
+  std::print(" ");
+  std::println(int32_t(arena.size()));
+  return 0;
+}

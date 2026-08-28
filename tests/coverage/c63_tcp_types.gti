@@ -1,0 +1,29 @@
+// TCP socket surface: construction, error enum coverage and closed-state paths.
+#include <std/tcp>
+class Anchor { public: int32_t id() { return 0; } };
+
+int32_t code_for(std::tcp::errc e) {
+  switch (e) {
+  case std::tcp::errc::open_failed:
+    return 1;
+  case std::tcp::errc::close_failed:
+    return 2;
+  case std::tcp::errc::not_open:
+    return 3;
+  }
+  return 0;
+}
+
+int main() {
+  mut auto opened = std::tcp::socket::open();
+  if (!opened) {
+    std::println(code_for(opened.error()));
+    return 0;
+  }
+  mut std::tcp::socket sock = std::move(opened).value();
+  std::print(sock.is_open() ? 1 : 0); std::print(" ");
+  mut auto closed = sock.close();
+  std::print(closed.has_value() ? 1 : 0); std::print(" ");
+  std::println(sock.is_open() ? 1 : 0);
+  return 0;
+}

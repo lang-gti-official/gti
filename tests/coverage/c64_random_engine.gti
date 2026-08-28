@@ -1,0 +1,38 @@
+// Seeded engine determinism, sequence independence and bounded reduction.
+#include <std/random>
+#include <std/vector>
+
+int32_t bounded(uint64_t raw, int32_t limit) {
+  return int32_t(raw % uint64_t(limit));
+}
+
+int main() {
+  mut std::random_engine a = std::random_engine(uint64_t(42));
+  mut std::random_engine b = std::random_engine(uint64_t(42));
+  mut std::random_engine c = std::random_engine(uint64_t(43));
+
+  mut std::vector<uint64_t> from_a = std::vector<uint64_t>();
+  mut bool matches_b = true;
+  mut bool differs_from_c = false;
+  for (mut int32_t i = 0; i < 8; i++) {
+    uint64_t va = a();
+    uint64_t vb = b();
+    uint64_t vc = c();
+    from_a.push_back(va);
+    if (va != vb) { matches_b = false; }
+    if (va != vc) { differs_from_c = true; }
+  }
+
+  mut bool in_range = true;
+  for (auto& v : from_a) {
+    int32_t r = bounded(v, 10);
+    if (r < 0 || r > 9) { in_range = false; }
+  }
+
+  std::print(matches_b ? 1 : 0);
+  std::print(differs_from_c ? 1 : 0);
+  std::print(in_range ? 1 : 0);
+  std::print(" ");
+  std::println(int32_t(from_a.size()));
+  return 0;
+}

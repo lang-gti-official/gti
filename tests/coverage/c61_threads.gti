@@ -1,0 +1,18 @@
+// @coverage-profile: concurrent
+// Managed threads: spawn, join, and a result-carrying task.
+#include <std/thread>
+class Anchor { public: int32_t id() { return 0; } };
+
+int main() {
+  mut auto spawned = std::thread::start([]() -> void {});
+  if (!spawned) {
+    std::println("spawn failed");
+    return 1;
+  }
+  mut std::thread worker = std::move(spawned).value();
+  std::print(worker.joinable() ? 1 : 0); std::print(" ");
+  mut auto joined = worker.join();
+  std::print(joined.has_value() ? 1 : 0); std::print(" ");
+  std::println(worker.joinable() ? 1 : 0);
+  return 0;
+}
