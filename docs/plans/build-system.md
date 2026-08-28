@@ -117,6 +117,14 @@ filesystem-root escapes. `metadata` enumerates all manifest targets,
 profiles, and planned output paths as deterministic schema-versioned JSON
 without compiling or creating build directories.
 
+The driver also publishes the resolved project as read-only values through
+`gti/driver/project_facts.h`, so a consumer that must agree with `gti build`
+and `gti check` — an editor, a documentation generator, an external analysis
+tool — reads the driver's resolution instead of reinterpreting `gti.toml`.
+The facts include the package source-root graph, which cannot be
+reconstructed from one manifest. Resolution runs no native tool, git process,
+or build, creates no directories, and uses `metadata`'s dependency policy.
+
 Project scaffolding supports `gti new <path>` and `gti init [path]`. `new`
 requires a destination that does not exist. `init` requires an existing
 directory, preserves an existing regular `src/main.gti`, and refuses to replace
@@ -1230,15 +1238,17 @@ composition addition below extends this to package-scope native inputs.
   include visibility.
 - **Complete:** test missing direct dependencies, dependency cycles, duplicate
   roots/loads, cache identity, CLI selection, and diagnostics in dependency
-  units. The compiler query API accepts the same graph; wiring driver-owned
-  project facts into LSP snapshots remains B-PROJECT-05/T-LSP-04.
+  units. The compiler query API accepts the same graph, and the driver now
+  publishes that graph as read-only `ProjectFacts`; wiring those facts into
+  LSP snapshots remains T-LSP-04.
 
 Acceptance criteria:
 
 - **Passed:** undeclared filesystem access is rejected;
 - **Passed:** transitive and sibling package declarations do not leak;
-- **Pending B-PROJECT-05/T-LSP-04:** CLI and LSP resolve the same package
-  source graph;
+- **Pending T-LSP-04:** CLI and LSP resolve the same package source graph. The
+  driver publishes that graph through read-only `ProjectFacts`; the LSP does
+  not consume it yet and still analyzes with no package source roots;
 - **Passed at the compiler-library boundary:** direct compilation requests can
   receive explicit package-root mappings when needed without a
   manifest.
