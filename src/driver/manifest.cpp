@@ -1417,6 +1417,223 @@ parseBindgenImports(const toml::table &document,
   return imports;
 }
 
+// A declared native compiler must be an executable name or path, never an
+// option: the value is passed to the process layer exactly as spelled, in
+// the same position `--cxx` would occupy.
+bool isExecutableSpelling(std::string_view value) {
+  return !value.empty() && value.front() != '-';
+}
+
+std::optional<std::string>
+toolchainExecutable(const toml::table &table, std::string_view field,
+                    std::string_view sourceName, std::string_view source,
+                    SourceSpan &declaration,
+                    std::vector<Diagnostic> &diagnostics) {
+  const toml::node *node = table.get(field);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  declaration = sourceSpan(sourceName, source, *node);
+  const std::optional<std::string> value = node->value<std::string>();
+  if (!value) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", declaration,
+        "Toolchain field '" + std::string(field) + "' must be a string."));
+    return std::nullopt;
+  }
+  if (!isExecutableSpelling(*value)) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1902", declaration,
+        "Toolchain field '" + std::string(field) +
+            "' must name a native compiler executable, not an option."));
+    return std::nullopt;
+  }
+  return value;
+}
+
+// `[toolchains.<triple>]` declares the native toolchain a cross build uses.
+// The table key is normalized through the compiler's own triple vocabulary,
+// so the manifest cannot introduce a second spelling table, and two keys
+// selecting one normalized target are rejected rather than silently ordered.
+std::vector<ProjectToolchain>
+parseToolchains(const toml::table &document,
+                const std::filesystem::path &packageRoot,
+                std::string_view sourceName, std::string_view source,
+                std::vector<Diagnostic> &diagnostics) {
+  std::vector<ProjectToolchain> toolchains;
+  const toml::node *node = document.get("toolchains");
+  if (node == nullptr) {
+    return toolchains;
+  }
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        "Manifest field 'toolchains' must be a table of "
+                        "[toolchains.<triple>] tables."));
+    return toolchains;
+  }
+
+  for (const auto &[key, toolchainNode] : *table) {
+    ProjectToolchain toolchain;
+    toolchain.declaredTriple = std::string(key.str());
+    toolchain.declaration = sourceSpan(sourceName, source, key);
+    const TargetTripleParseResult parsed =
+        parseTargetTripleResult(toolchain.declaredTriple);
+    if (!parsed.succeeded()) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1900", toolchain.declaration,
+          "Toolchain table key '" + toolchain.declaredTriple +
+              "' is not a supported target triple: " +
+              std::string(targetTripleErrorMessage(parsed.error)) + "."));
+      continue;
+    }
+    toolchain.target = *parsed.target;
+    const auto collision = std::find_if(
+        toolchains.begin(), toolchains.end(),
+        [&toolchain](const ProjectToolchain &candidate) {
+          return candidate.target.os == toolchain.target.os &&
+                 candidate.target.vendor == toolchain.target.vendor &&
+                 candidate.target.arch == toolchain.target.arch;
+        });
+    if (collision != toolchains.end()) {
+      Diagnostic diagnostic = buildDiagnostic(
+          "GTI-B1901", toolchain.declaration,
+          "Toolchain '" + toolchain.declaredTriple +
+              "' selects the same normalized target as another declared "
+              "toolchain.");
+      diagnostic.related.push_back({collision->declaration,
+                                    "The conflicting toolchain is declared "
+                                    "here."});
+      diagnostics.push_back(std::move(diagnostic));
+      continue;
+    }
+
+    const toml::table *toolchainTable = toolchainNode.as_table();
+    if (toolchainTable == nullptr) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, toolchainNode),
+          "Toolchain '" + toolchain.declaredTriple +
+              "' must be a table declaring 'cxx'."));
+      continue;
+    }
+    validateFields(*toolchainTable, {"cxx", "cc", "sysroot", "native-target"},
+                   "toolchain", sourceName, source, diagnostics);
+
+    const toml::node *cxxNode = toolchainTable->get("cxx");
+    if (cxxNode == nullptr) {
+      Diagnostic diagnostic = buildDiagnostic(
+          "GTI-B1902", toolchain.declaration,
+          "Toolchain '" + toolchain.declaredTriple +
+              "' must declare 'cxx', the native C++ compiler and linker for "
+              "that target.");
+      diagnostic.hints.push_back(
+          "Without it the build would fall back to host compiler discovery "
+          "and link host objects into a cross build.");
+      diagnostics.push_back(std::move(diagnostic));
+      continue;
+    }
+    const std::optional<std::string> cxx =
+        toolchainExecutable(*toolchainTable, "cxx", sourceName, source,
+                            toolchain.cxxDeclaration, diagnostics);
+    if (!cxx) {
+      continue;
+    }
+    toolchain.cxx = *cxx;
+    if (const std::optional<std::string> cc =
+            toolchainExecutable(*toolchainTable, "cc", sourceName, source,
+                                toolchain.ccDeclaration, diagnostics)) {
+      toolchain.cc = *cc;
+    }
+    if (const toml::node *nativeTargetNode =
+            toolchainTable->get("native-target")) {
+      toolchain.nativeTargetDeclaration =
+          sourceSpan(sourceName, source, *nativeTargetNode);
+      const std::optional<std::string> value =
+          nativeTargetNode->value<std::string>();
+      if (!value) {
+        diagnostics.push_back(
+            buildDiagnostic("GTI-B1004", toolchain.nativeTargetDeclaration,
+                            "Toolchain field 'native-target' must be a "
+                            "string."));
+        continue;
+      }
+      if (value->empty() || value->front() == '-') {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1902", toolchain.nativeTargetDeclaration,
+            "Toolchain field 'native-target' must be a native triple "
+            "spelling, not an option."));
+        continue;
+      }
+      toolchain.nativeTarget = *value;
+    }
+
+    if (const toml::node *sysrootNode = toolchainTable->get("sysroot")) {
+      toolchain.sysrootDeclaration =
+          sourceSpan(sourceName, source, *sysrootNode);
+      const std::optional<std::string> spelling =
+          sysrootNode->value<std::string>();
+      if (!spelling) {
+        diagnostics.push_back(
+            buildDiagnostic("GTI-B1004", toolchain.sysrootDeclaration,
+                            "Toolchain field 'sysroot' must be a string."));
+        continue;
+      }
+      const std::filesystem::path declared(*spelling);
+      if (declared.empty()) {
+        diagnostics.push_back(
+            buildDiagnostic("GTI-B1903", toolchain.sysrootDeclaration,
+                            "Toolchain field 'sysroot' must not be empty."));
+        continue;
+      }
+      // A cross sysroot normally lives outside the package, so an absolute
+      // spelling is accepted as an explicit machine-specific declaration. A
+      // relative spelling stays package-contained like every other declared
+      // manifest path.
+      const bool absolute = isAbsoluteOnSupportedHost(*spelling, declared);
+      std::error_code error;
+      const std::filesystem::path resolved =
+          absolute ? std::filesystem::weakly_canonical(declared, error)
+                   : std::filesystem::weakly_canonical(packageRoot / declared,
+                                                       error);
+      if (error) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1903", toolchain.sysrootDeclaration,
+            "Failed to resolve toolchain sysroot '" + pathString(declared) +
+                "': " + error.message() + "."));
+        continue;
+      }
+      if (!absolute && !pathIsWithin(packageRoot, resolved)) {
+        Diagnostic diagnostic = buildDiagnostic(
+            "GTI-B1903", toolchain.sysrootDeclaration,
+            "Relative toolchain sysroot escapes the package directory: " +
+                pathString(declared) + ".");
+        diagnostic.hints.push_back(
+            "Declare a sysroot outside the package with an absolute path.");
+        diagnostics.push_back(std::move(diagnostic));
+        continue;
+      }
+      if (!std::filesystem::is_directory(resolved, error) || error) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1903", toolchain.sysrootDeclaration,
+            "Toolchain sysroot does not name an existing directory: " +
+                pathString(declared) + "."));
+        continue;
+      }
+      toolchain.sysroot = resolved;
+      toolchain.declaredSysroot = *spelling;
+    }
+    toolchains.push_back(std::move(toolchain));
+  }
+  // Deterministic identity: the manifest's own table ordering must not reach
+  // the build plan's model identity.
+  std::sort(toolchains.begin(), toolchains.end(),
+            [](const ProjectToolchain &left, const ProjectToolchain &right) {
+              return left.declaredTriple < right.declaredTriple;
+            });
+  return toolchains;
+}
+
 std::optional<ProjectWorkspaceManifest>
 parseWorkspace(const toml::table &document,
                const std::filesystem::path &packageRoot,
@@ -1502,14 +1719,16 @@ ProjectManifest::ProjectManifest(
     std::vector<ProjectDependency> dependencies,
     std::optional<ProjectWorkspaceManifest> workspace,
     ProjectBuildSettings build,
-    std::vector<ProjectBindgenImport> bindgenImports)
+    std::vector<ProjectBindgenImport> bindgenImports,
+    std::vector<ProjectToolchain> toolchains)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)),
       packageDependencies(std::move(dependencies)),
       workspaceManifest(std::move(workspace)),
       projectBuildSettings(std::move(build)),
-      projectBindgenImports(std::move(bindgenImports)) {}
+      projectBindgenImports(std::move(bindgenImports)),
+      projectToolchains(std::move(toolchains)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1552,6 +1771,22 @@ ProjectManifest::workspace() const {
 
 const ProjectBuildSettings &ProjectManifest::build() const {
   return projectBuildSettings;
+}
+
+const std::vector<ProjectToolchain> &ProjectManifest::toolchains() const {
+  return projectToolchains;
+}
+
+const ProjectToolchain *
+ProjectManifest::findToolchain(const TargetInfo &target) const {
+  for (const ProjectToolchain &toolchain : projectToolchains) {
+    if (toolchain.target.os == target.os &&
+        toolchain.target.vendor == target.vendor &&
+        toolchain.target.arch == target.arch) {
+      return &toolchain;
+    }
+  }
+  return nullptr;
 }
 
 const std::vector<ProjectBindgenImport> &ProjectManifest::bindgen() const {
@@ -1705,7 +1940,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   toml::table document = std::move(parsed).table();
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
-                  "dependencies", "workspace", "build", "bindgen"},
+                  "dependencies", "workspace", "build", "bindgen",
+                  "toolchains"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -1796,6 +2032,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   std::vector<ProjectBindgenImport> bindgenImports =
       parseBindgenImports(document, packageRoot, dependencies, sourceName,
                           source, result.diagnostics);
+  std::vector<ProjectToolchain> toolchains = parseToolchains(
+      document, packageRoot, sourceName, source, result.diagnostics);
   ProjectBuildSettings build;
   if (const toml::node *buildNode = document.get("build")) {
     build.declaration = sourceSpan(sourceName, source, *buildNode);
@@ -2059,7 +2297,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
                           std::move(profiles), std::move(dependencies),
                           std::move(workspace), std::move(build),
-                          std::move(bindgenImports));
+                          std::move(bindgenImports), std::move(toolchains));
   return result;
 }
 

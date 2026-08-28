@@ -20,6 +20,41 @@ struct ProjectBuildOverrides {
   ConfigurationFlags configurationFlags;
 };
 
+// How project resolution treats a selected target that is not the build
+// host.
+enum class ToolchainSelectionPolicy {
+  // Native compiler discovery keeps its existing host order. This is the
+  // compiler-library contract: a caller that assembles a TargetInfo to
+  // analyze code for another target is not asking the driver to configure a
+  // native toolchain, and `gti check` performs no native compilation.
+  HostTools,
+  // A target that is not the build host must resolve a declared
+  // `[toolchains.<triple>]` table. Project commands that produce a native
+  // artifact select this so a cross build can never silently link host
+  // tools and publish a wrong binary.
+  DeclaredForNonHostTarget,
+};
+
+// The native toolchain a plan builds with. `declared()` is false for a host
+// build, where native compiler discovery keeps its existing
+// `--cxx`/`GTI_CXX`/`CXX` order.
+struct ResolvedProjectToolchain {
+  // The manifest's declared triple spelling, empty for a host build.
+  std::string triple;
+  std::string cxx;
+  std::string cc;
+  std::filesystem::path sysroot;
+  // The sysroot exactly as spelled in the manifest.
+  std::string declaredSysroot;
+  // The native toolchain's own triple spelling, emitted as `--target=`.
+  std::string nativeTarget;
+  // The `[toolchains.<triple>]` key span, for diagnostics anchored at the
+  // declaration rather than the manifest as a whole.
+  SourceSpan declaration;
+
+  [[nodiscard]] bool declared() const { return !triple.empty(); }
+};
+
 class ProjectBuildRequest final {
 public:
   ProjectBuildRequest(std::filesystem::path startDirectory,
@@ -28,7 +63,9 @@ public:
                       ProjectBuildOverrides overrides = {},
                       std::optional<std::string> packageName = std::nullopt,
                       WorkspaceDependencyPolicy dependencyPolicy = {},
-                      RuntimeProfile runtimeProfile = RuntimeProfile::None);
+                      RuntimeProfile runtimeProfile = RuntimeProfile::None,
+                      ToolchainSelectionPolicy toolchainPolicy =
+                          ToolchainSelectionPolicy::HostTools);
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -38,6 +75,7 @@ public:
   [[nodiscard]] const std::optional<std::string> &packageName() const;
   [[nodiscard]] const WorkspaceDependencyPolicy &dependencyPolicy() const;
   [[nodiscard]] RuntimeProfile runtimeProfile() const;
+  [[nodiscard]] ToolchainSelectionPolicy toolchainPolicy() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -48,6 +86,7 @@ private:
   std::optional<std::string> selectedPackage;
   WorkspaceDependencyPolicy workspaceDependencyPolicy;
   RuntimeProfile selectedRuntimeProfile;
+  ToolchainSelectionPolicy selectedToolchainPolicy;
 };
 
 // One resolved bindgen import carried by a build plan: every value the
@@ -86,7 +125,8 @@ public:
                    std::vector<PackageSourceRoot> packageSourceRoots,
                    ConfigurationFlags configurationFlags,
                    std::string projectModelIdentity,
-                   std::vector<BindgenImportPlan> bindgenImports = {});
+                   std::vector<BindgenImportPlan> bindgenImports = {},
+                   ResolvedProjectToolchain toolchain = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -108,6 +148,7 @@ public:
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
   [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
+  [[nodiscard]] const ResolvedProjectToolchain &toolchain() const;
 
 private:
   std::filesystem::path projectManifestPath;
@@ -130,6 +171,7 @@ private:
   ConfigurationFlags resolvedConfigurationFlags;
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
+  ResolvedProjectToolchain resolvedToolchain;
 };
 
 class ProjectMetadata final {
