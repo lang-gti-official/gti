@@ -2251,6 +2251,46 @@ auto SemanticVisitor::Impl::isMutexLibraryUnit(SourceUnitId sourceUnit) const
          unit->standardLibraryName == "std/mutex";
 }
 
+auto SemanticVisitor::Impl::isMemoryLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/memory";
+}
+
+auto SemanticVisitor::Impl::isNumericLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/numeric";
+}
+
+auto SemanticVisitor::Impl::isIteratorLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/iterator";
+}
+
+auto SemanticVisitor::Impl::isFunctionalLibraryUnit(
+    SourceUnitId sourceUnit) const -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/functional";
+}
+
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
     const ClassInfo &owner) const -> bool {
   return isDefaultLibraryMutexGuardCarrier(owner) ||

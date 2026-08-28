@@ -2,6 +2,15 @@
 
 namespace {
 
+lang::FrontendResult analyzeWithMemory(std::string_view name,
+                                       std::string source) {
+  source.insert(0, "#include <std/memory>\n");
+  return lang::Frontend().analyze(std::filesystem::temp_directory_path() /
+                                      std::string(name),
+                                  std::move(source), {standardLibraryPrelude()},
+                                  {}, {standardLibraryRoot()});
+}
+
 void testOwnershipSemanticFoundation() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::Mutable);
@@ -586,8 +595,8 @@ int main() {
 }
 )";
 
-  const lang::FrontendResult valid = lang::Frontend().analyze(
-      "projected-field-moves.gti", source, {standardLibraryPrelude()});
+  const lang::FrontendResult valid =
+      analyzeWithMemory("projected-field-moves.gti", source);
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected projected-move diagnostic: "
@@ -639,7 +648,7 @@ int main() {
          "moves");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-projected-field-moves.gti", R"(
+      analyzeWithMemory("invalid-projected-field-moves.gti", R"(
 struct Item {
   int value;
 public:
@@ -681,8 +690,7 @@ int main() {
   Pair transferred = std::move(partial);
   return maybe_moved + transferred.right->read();
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
@@ -697,7 +705,7 @@ int main() {
       "returns, immutable places, and whole-owner transfer");
 
   const lang::FrontendResult nestedRead =
-      lang::Frontend().analyze("nested-projected-read.gti", R"(
+      analyzeWithMemory("nested-projected-read.gti", R"(
 struct Item {
   int read() { return 1; }
 };
@@ -714,8 +722,7 @@ int main() {
   [[discard]] std::move(observe(holder.value->read()));
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!nestedRead.canGenerateCode() &&
              hasDiagnostic(nestedRead.diagnostics,
                            "Place 'value' has already been moved") &&
@@ -791,7 +798,7 @@ int main() { int value = 1; return value - 1; }
          "generation");
 
   const lang::FrontendResult valid =
-      lang::Frontend().analyze("indexed-place-moves.gti", R"(
+      analyzeWithMemory("indexed-place-moves.gti", R"(
 struct Record {
   int value;
 public:
@@ -850,8 +857,7 @@ int main() {
   return moved[0].value + moved[1].value + holder.rotate() +
          branch_restore(true) + loop_restore() + partial_drop() - 26;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected indexed-place diagnostic: " << diagnostic.message
@@ -2569,7 +2575,7 @@ void testNonNullReferences() {
          "pointer carriers for retained local loans");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-references.gti", R"(
+      analyzeWithMemory("invalid-references.gti", R"(
 int& escape(mut int& value) { return value; }
 int global_value = 1;
 int& global_reference = global_value;
@@ -2596,8 +2602,7 @@ int main() {
   inspect(mutable_value);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode(),
          "escaping, temporary, and invalid mutable references should fail");
   expect(
@@ -3179,7 +3184,7 @@ int main() {
   }
 
   const lang::FrontendResult sparseMisuse =
-      analyzeTrustedPreludeFixture("prefix-storage-sparse-misuse.gti", R"(
+      analyzeTrustedMemoryFixture("prefix-storage-sparse-misuse.gti", R"(
 int main() {
   mut gti_internal::prefix_storage<int> values =
       gti_internal::allocate_prefix_storage<int>(uint64_t(1));
@@ -3192,7 +3197,7 @@ int main() {
          "the two capabilities stay distinct");
 
   const lang::FrontendResult prefixMisuse =
-      analyzeTrustedPreludeFixture("prefix-storage-prefix-misuse.gti", R"(
+      analyzeTrustedMemoryFixture("prefix-storage-prefix-misuse.gti", R"(
 int main() {
   mut gti_internal::storage<int> values =
       gti_internal::allocate_storage<int>(uint64_t(1));
@@ -3245,7 +3250,7 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedPreludeFixture("receiver-tied-references.gti", source);
+      analyzeTrustedMemoryFixture("receiver-tied-references.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected receiver-tied reference diagnostic: "
@@ -3305,7 +3310,7 @@ int main() {
       "and publish the returned loan without copying its referent");
 
   const lang::FrontendResult nested =
-      analyzeTrustedPreludeFixture("nested-receiver-reference.gti", R"(
+      analyzeTrustedMemoryFixture("nested-receiver-reference.gti", R"(
 class ElementBuffer {
   mut gti_internal::storage<int> data;
 
@@ -3468,7 +3473,7 @@ int main() {
       "reference-return diagnostics should explain each rejected lifetime");
 
   const lang::FrontendResult invalidated =
-      analyzeTrustedPreludeFixture("invalidated-reference.gti", R"(
+      analyzeTrustedMemoryFixture("invalidated-reference.gti", R"(
 class Buffer<T> {
   mut gti_internal::storage<T> data;
 
@@ -7176,7 +7181,7 @@ int main() {
 
 void testGeneralOwnerDependentReturns() {
   const lang::FrontendResult valid =
-      lang::Frontend().analyze("owner-dependent-returns.gti", R"(
+      analyzeWithMemory("owner-dependent-returns.gti", R"(
 class Reading<T> {
   mut T value;
 
@@ -7268,8 +7273,7 @@ int shared_aliases() {
   reading.replace(6);
   return reading.read() - 6;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected owner-dependency diagnostic: "
@@ -7497,7 +7501,7 @@ int shared_aliases() {
          "argument into lowering");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-owner-dependent-returns.gti", R"(
+      analyzeWithMemory("invalid-owner-dependent-returns.gti", R"(
 class DirectPayload {
 public:
   int value;
@@ -7572,8 +7576,7 @@ int mutable_alias() {
 }
 
 int main() { return 0; }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode(),
          "ambiguous, mutable, and unrelated borrowed returns and aliases "
          "must be rejected");
@@ -8320,8 +8323,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend = lang::Frontend().analyze(
-      "unique-ownership.gti", source, {standardLibraryPrelude()});
+  lang::FrontendResult frontend =
+      analyzeWithMemory("unique-ownership.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected unique-owner diagnostic: " << diagnostic.message
@@ -8408,7 +8411,7 @@ int main() {
       "nominal unique owners should remain move-only and physically movable");
 
   const lang::FrontendResult nullState =
-      lang::Frontend().analyze("unique-owner-null-state.gti", R"(
+      analyzeWithMemory("unique-owner-null-state.gti", R"(
 struct Widget {
 public:
   Widget() {}
@@ -8437,8 +8440,7 @@ int main() {
   owner = nullptr;
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   if (!nullState.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : nullState.diagnostics) {
       std::cerr << "Unexpected unique-owner null-state diagnostic: "
@@ -8567,15 +8569,14 @@ int main() {
       "assignment identities without a public-type special case");
 
   const lang::FrontendResult rejectedNullArgument =
-      lang::Frontend().analyze("unique-owner-null-argument.gti", R"(
+      analyzeWithMemory("unique-owner-null-argument.gti", R"(
 struct Widget {};
 void consume(std::unique_ptr<Widget> value) {}
 int main() {
   consume(nullptr);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!rejectedNullArgument.canGenerateCode() &&
              countDiagnosticCode(rejectedNullArgument.diagnostics,
                                  "GTI-S2003") == 1 &&
@@ -8622,7 +8623,7 @@ int main() {
          "rather than a raw-pointer overload");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-unique-ownership.gti", R"(
+      analyzeWithMemory("invalid-unique-ownership.gti", R"(
 struct Widget {
 public:
   int value = 0;
@@ -8661,8 +8662,7 @@ int main() {
   std::unique_ptr<Widget> generic = identity(std::move(moved));
   return after_move + maybe_moved + wrong_member;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode(),
          "copies, invalid global storage, and unsafe unique-owner use should "
          "fail");
@@ -8682,13 +8682,12 @@ int main() {
       "limits");
 
   const lang::FrontendResult invalidPointee =
-      lang::Frontend().analyze("invalid-unique-pointee.gti", R"(
+      analyzeWithMemory("invalid-unique-pointee.gti", R"(
 int main() {
   std::unique_ptr<int> primitive = std::make_unique<int>(1);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(
       !invalidPointee.canGenerateCode() &&
           hasDiagnostic(invalidPointee.diagnostics,
@@ -8699,7 +8698,7 @@ int main() {
       "capability use at their concrete instantiation site");
 
   const lang::FrontendResult invalidConstructor =
-      lang::Frontend().analyze("invalid-unique-constructor.gti", R"(
+      analyzeWithMemory("invalid-unique-constructor.gti", R"(
 struct Widget {
 public:
   Widget(int value) {}
@@ -8709,8 +8708,7 @@ int main() {
   auto owner = std::make_unique<Widget>(true);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(
       !invalidConstructor.canGenerateCode() &&
           hasDiagnostic(invalidConstructor.diagnostics,
@@ -8722,7 +8720,7 @@ int main() {
       "frontend constructor checking");
 
   const lang::FrontendResult invalidCapabilities =
-      analyzeTrustedPreludeFixture("invalid-owner-capabilities.gti", R"(
+      analyzeTrustedMemoryFixture("invalid-owner-capabilities.gti", R"(
 struct Widget {
 public:
   int read() { return 0; }
@@ -8749,7 +8747,7 @@ int misuse_internal_owner() {
          "borrow boundary");
 
   const lang::FrontendResult hiddenOwnerPolicy =
-      analyzeTrustedPreludeFixture("hidden-owner-policy.gti", R"(
+      analyzeTrustedMemoryFixture("hidden-owner-policy.gti", R"(
 struct Widget {};
 
 int main() {
@@ -8780,7 +8778,7 @@ int main() {
 
 void testPolymorphicUniqueOwnerUpcast() {
   const lang::FrontendResult frontend =
-      lang::Frontend().analyze("polymorphic-unique-owner-upcast.gti", R"(
+      analyzeWithMemory("polymorphic-unique-owner-upcast.gti", R"(
 interface Layer {
   uint64_t id();
   void update() mut;
@@ -8815,8 +8813,7 @@ int main() {
   other->update();
   return layer->id() == 7 and other->id() == 8 ? 0 : 1;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected unique-owner upcast diagnostic: "
@@ -8898,8 +8895,8 @@ int main() {
          "polymorphic destruction while declaring a selected method on its "
          "native generic owner before use");
 
-  const lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-polymorphic-unique-owner-upcast.gti", R"(
+  const lang::FrontendResult invalid =
+      analyzeWithMemory("invalid-polymorphic-unique-owner-upcast.gti", R"(
 class PlainBase {};
 class PlainDerived : public PlainBase {};
 class Unrelated {};
@@ -8911,8 +8908,7 @@ int main() {
       std::make_unique<Unrelated>());
   return 0;
 }
-)",
-      {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode() &&
              hasDiagnostic(invalid.diagnostics,
                            "must have polymorphic destruction") &&
@@ -8922,7 +8918,7 @@ int main() {
          "unrelated target types before backend generation");
 
   const lang::FrontendResult implicit =
-      lang::Frontend().analyze("implicit-polymorphic-owner-conversion.gti", R"(
+      analyzeWithMemory("implicit-polymorphic-owner-conversion.gti", R"(
 interface Layer { void update() mut; };
 class DemoLayer : public Layer {
 public:
@@ -8933,8 +8929,7 @@ int main() {
   consume(std::make_unique<DemoLayer>());
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!implicit.canGenerateCode() &&
              hasDiagnostic(implicit.diagnostics,
                            "parameter requires 'std::unique_ptr<Layer>'"),
@@ -8997,7 +8992,7 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedPreludeFixture("internal-storage.gti", source);
+      analyzeTrustedMemoryFixture("internal-storage.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected internal-storage diagnostic: "
@@ -9050,7 +9045,7 @@ int main() {
          "verified-MIR RAII capability family");
 
   const lang::FrontendResult invalid =
-      analyzeTrustedPreludeFixture("invalid-internal-storage.gti", R"(
+      analyzeTrustedMemoryFixture("invalid-internal-storage.gti", R"(
 gti_internal::storage<int> global =
     gti_internal::allocate_storage<int>(uint64_t(1));
 
@@ -9078,7 +9073,7 @@ int main() {
          "and use after move");
 
   const lang::FrontendResult hiddenStoragePolicy =
-      analyzeTrustedPreludeFixture("hidden-storage-policy.gti", R"(
+      analyzeTrustedMemoryFixture("hidden-storage-policy.gti", R"(
 int main() {
   mut gti_internal::storage<int> values =
       gti_internal::allocate_storage<int>(uint64_t(2));
@@ -9100,7 +9095,7 @@ int main() {
          "exposing a raw address or deallocation capability");
 
   const lang::FrontendResult recoverableStorage =
-      analyzeTrustedPreludeFixture("recoverable-storage-policy.gti", R"(
+      analyzeTrustedMemoryFixture("recoverable-storage-policy.gti", R"(
 int main() {
   mut gti_internal::storage<int> values =
       gti_internal::allocate_storage<int>(uint64_t(0));
@@ -9185,7 +9180,7 @@ int main() {
          "selection");
 
   const lang::FrontendResult invalidRecoverableStorage =
-      analyzeTrustedPreludeFixture("invalid-recoverable-storage.gti", R"(
+      analyzeTrustedMemoryFixture("invalid-recoverable-storage.gti", R"(
 int main() {
   gti_internal::storage<int> fixed =
       gti_internal::allocate_storage<int>(uint64_t(0));
@@ -9429,7 +9424,9 @@ int main() {
 
 void testVariadicStorageConstructionAndVector() {
   const lang::FrontendResult frontend =
-      analyzeTrustedPreludeFixture("variadic-storage-construction.gti", R"(
+      analyzeTrustedMemoryFixture("variadic-storage-construction.gti", R"(
+#include <std/memory>
+
 class DefaultValue {
   int32_t stored = 17;
 
@@ -9631,6 +9628,7 @@ int main() {
   const lang::FrontendResult vectorFrontend = lang::Frontend().analyze(
       "standard-vector-emplace.gti", R"(
 #include <std/vector>
+#include <std/memory>
 
 class Reading {
   int32_t left;
@@ -9805,7 +9803,7 @@ int main() {
          "range mutation diagnostics should report each identical borrow "
          "origin span and message only once");
 
-  const lang::FrontendResult invalidConstruction = analyzeTrustedPreludeFixture(
+  const lang::FrontendResult invalidConstruction = analyzeTrustedMemoryFixture(
       "invalid-variadic-storage-construction.gti", R"(
 class Pair {
 public:
@@ -9866,7 +9864,7 @@ int main() {
          "mismatch, and constructor access with each instantiation site");
 
   const lang::FrontendResult borrowedStorage =
-      analyzeTrustedPreludeFixture("borrowed-state-storage.gti", R"(
+      analyzeTrustedMemoryFixture("borrowed-state-storage.gti", R"(
 class BorrowCarrier {
   int32_t& value;
 
@@ -9889,7 +9887,7 @@ int main() {
          "retain borrowed state");
 
   const lang::FrontendResult nonmovableRelocation =
-      analyzeTrustedPreludeFixture("nonmovable-storage-relocation.gti", R"(
+      analyzeTrustedMemoryFixture("nonmovable-storage-relocation.gti", R"(
 class Stationary {
   int32_t value = 0;
 
@@ -9975,7 +9973,7 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedPreludeFixture("aggregate-ownership.gti", source);
+      analyzeTrustedMemoryFixture("aggregate-ownership.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected aggregate-owner diagnostic: "
@@ -10095,7 +10093,7 @@ int main() {
          "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
-      analyzeTrustedPreludeFixture("invalid-aggregate-ownership.gti", R"(
+      analyzeTrustedMemoryFixture("invalid-aggregate-ownership.gti", R"(
 class Buffer {
   mut gti_internal::storage<int> data;
 
@@ -10372,7 +10370,7 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedPreludeFixture("destructor.gti", source);
+      analyzeTrustedMemoryFixture("destructor.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected destructor diagnostic: " << diagnostic.message
@@ -13297,14 +13295,13 @@ int main() {
          "missing capture diagnostics should point back to the declaration");
 
   const lang::FrontendResult moveCapture =
-      lang::Frontend().analyze("move-capture.gti", R"(
+      analyzeWithMemory("move-capture.gti", R"(
 int main() {
   std::unique_ptr<int> owner = std::make_unique<int>(1);
   auto invalid = [owner]() -> int { return *owner; };
   return invalid();
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!moveCapture.canGenerateCode() &&
              hasDiagnostic(moveCapture.diagnostics, "is not copyable"),
          "move-only values should not enter closures without explicit "
@@ -15828,6 +15825,8 @@ int main() {
 
   const lang::FrontendResult owner =
       analyzeTrustedPreludeFixture("unique-owner-stage.gti", R"(
+#include <std/memory>
+
 class Entity {
 public:
   int32_t id = 7;

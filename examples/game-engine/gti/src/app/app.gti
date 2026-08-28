@@ -2,6 +2,7 @@
 #include "../core/layer.gti"
 #include "../core/layer_stack.gti"
 #include "app_layer.gti"
+#include <std/memory>
 
 namespace game {
   class App : public psych::Application {

@@ -1,9 +1,33 @@
-// Typed allocation is ordinary GTI policy over declaration-bound private
-// storage capabilities. unique_ptr and make_unique are supplied by the
-// prelude. Shared ownership remains declaration-only until its separate
-// compiler-private owner capability and lifetime rules exist.
+// Ownership and typed allocation are ordinary GTI policy over
+// declaration-bound private capabilities. Shared ownership remains
+// declaration-only until its separate compiler-private owner capability and
+// lifetime rules exist.
 
 namespace gti_internal {
+class unique_owner<T> {};
+class storage<T> {};
+
+gti_internal::unique_owner<T> allocate_unique_owner<T, Args...>(Args... args);
+T & unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
+mut T & unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
+bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
+gti_internal::unique_owner<Base> unique_owner_upcast<Base, Derived>(gti_internal::unique_owner<Derived> owner);
+
+gti_internal::storage<T> allocate_storage<T>(uint64_t count);
+int32_t storage_try_allocate<T>(mut gti_internal::storage<T>& destination,
+                                uint64_t count,
+                                uint64_t minimum_alignment);
+uint64_t storage_capacity<T>(gti_internal::storage<T>& storage);
+bool storage_initialized<T>(gti_internal::storage<T>& storage,
+                            uint64_t index);
+void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage, uint64_t index, Args... args);
+T & storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
+mut T & storage_read_mut<T>(mut gti_internal::storage<T>& storage, uint64_t index);
+void storage_destroy<T>(mut gti_internal::storage<T>& storage, uint64_t index);
+void storage_relocate<T>(mut gti_internal::storage<T>& source, mut gti_internal::storage<T>& destination, uint64_t count);
+void storage_shift_right<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
+void storage_shift_left<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
+
 /// Seals adoption of freshly allocated, wholly uninitialized typed storage.
 ///
 /// This is ordinary source-defined standard-library policy, not a compiler
@@ -15,6 +39,69 @@ enum class empty_storage_adoption {
 }
 
 namespace std {
+/// Exclusive ownership of one dynamically allocated `T`.
+class unique_ptr<T> {
+  mut gti_internal::unique_owner<T> owner = nullptr;
+
+public:
+  unique_ptr(nullptr_t empty) : owner(nullptr) {}
+
+  unique_ptr(gti_internal::unique_owner<T> value)
+      : owner(std::move(value)) {}
+
+  void reset() mut {
+    this.owner = nullptr;
+  }
+
+  void operator=(nullptr_t empty) mut {
+    this.reset();
+  }
+
+  unique_ptr<Base> upcast<Base>() mut {
+    mut gti_internal::unique_owner<Base> converted =
+        gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
+    this.owner = nullptr;
+    return unique_ptr<Base>(std::move(converted));
+  }
+
+  T& operator*() {
+    return gti_internal::unique_owner_borrow(this.owner);
+  }
+
+  mut T& operator*() mut {
+    return gti_internal::unique_owner_borrow_mut(this.owner);
+  }
+
+  T& operator->() {
+    return gti_internal::unique_owner_borrow(this.owner);
+  }
+
+  mut T& operator->() mut {
+    return gti_internal::unique_owner_borrow_mut(this.owner);
+  }
+
+  operator bool() {
+    return !gti_internal::unique_owner_is_null(this.owner);
+  }
+
+  bool operator==(nullptr_t other) {
+    return gti_internal::unique_owner_is_null(this.owner);
+  }
+
+  bool operator!=(nullptr_t other) {
+    return !gti_internal::unique_owner_is_null(this.owner);
+  }
+};
+
+/// Allocates a `T` from `args` and returns its exclusive owner.
+unique_ptr<T> make_unique<T, Args...>(Args... args) {
+  return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
+}
+
+unique_ptr<Base> upcast_unique<Base, Derived>(mut unique_ptr<Derived> owner) {
+  return owner.upcast<Base>();
+}
+
 /// Recoverable failures from typed storage allocation.
 enum class alloc_errc {
   invalid_alignment,

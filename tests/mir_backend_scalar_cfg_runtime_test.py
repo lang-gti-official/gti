@@ -24,27 +24,18 @@ SELECTED = (
     "cfg_grouped_condition",
 )
 # Standard-library scalar bodies selected per body once compiler-private
-# declarations were admitted; the fixture links them through the prelude.
+# declarations were admitted; the fixture links them through the lean prelude.
 STDLIB_SELECTED = (
-    "is_valid",
-    "get",
-    # Native-calling prelude bodies admitted once the NativeInterop
-    # capability row named the shipped gti_rt_* C-symbol surface.
     "write_stdout_byte",
-    "read_stdin_byte",
-    "read_file_byte",
-    "close_file",
 )
 FAILURE_SELECTED = (
     "compatibility_checked",
     "compatibility_call_target",
     "compatibility_call",
     "compatibility_reference",
-    "release",
     # The native-boundary and formatting chains can report a defined host
     # failure, so they publish exclusively through the explicit failure ABI.
     "write_stdout",
-    "open_file_read",
     "print",
     "println",
     "print_decimal_digit",
@@ -75,17 +66,14 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The verified-empty initializer bodies (the prelude's file_handle
-    # static, the text_view capability pair) and the empty module body
-    # join the named function bodies (the initializer slice).
+    # The verified-empty text-view capability initializers and empty module
+    # body join the named function bodies (the initializer slice).
     if (
         generated.count(f"{MARKER} function-instance")
         != len(SELECTED) + len(STDLIB_SELECTED)
-        or generated.count(f"{FAILURE_MARKER} function-instance") != 13
-        # file_handle's computed negate(1) default joined the verified
-        # initializer schedule as a terminally-contained expression.
-        or generated.count(f"{MARKER} field-initializers-instance") != 3
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 3
+        or generated.count(f"{FAILURE_MARKER} function-instance") != 11
+        or generated.count(f"{MARKER} field-initializers-instance") != 2
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 2
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(

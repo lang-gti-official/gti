@@ -3707,10 +3707,10 @@ auto SemanticVisitor::Impl::makeGenericParameters(
              .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
              .name = parameter.constraint->last().lexeme});
         if (conceptInfo.declaration->compilerBinding() &&
-            !isPreludeUnit(currentSourceUnit)) {
+            currentSourceUnit != conceptInfo.sourceUnit) {
           report(parameter.constraint->last(),
                  "Compiler capability concept '" + conceptInfo.qualifiedName +
-                     "' is private to the standard prelude; compose a "
+                     "' is private to its standard-library unit; compose a "
                      "public concept instead.",
                  "GTI-S2049");
           constraints = constraintBit(GenericConstraintKind::Invalid);

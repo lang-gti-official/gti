@@ -34,14 +34,7 @@ SELECTED = (
     "direct_sink",
     "direct_zero",
     "scoped_leaf",
-    "is_valid",
-    "get",
-    # Native-calling prelude bodies admitted once the NativeInterop
-    # capability row named the shipped gti_rt_* C-symbol surface.
     "write_stdout_byte",
-    "read_stdin_byte",
-    "read_file_byte",
-    "close_file",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary now emit from verified MIR too.
     "pass",
@@ -60,12 +53,10 @@ FAILURE_SELECTED = (
     "compatibility_checked_call",
     "compatibility_recursive",
     "checked_increment",
-    "release",
     "print",
     "println",
     "entry",
     "write_stdout",
-    "open_file_read",
     "print_decimal_digit",
 )
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -100,10 +91,8 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     # invariants; function coverage is checked by exact source name below so
     # unrelated prelude additions do not create count churn.
     if (
-        # file_handle's computed negate(1) default joined the verified
-        # initializer schedule as a terminally-contained expression.
-        generated.count(f"{MARKER} field-initializers-instance") != 4
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 4
+        generated.count(f"{MARKER} field-initializers-instance") != 3
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 3
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(

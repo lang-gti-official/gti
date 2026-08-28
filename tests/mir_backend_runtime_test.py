@@ -79,17 +79,17 @@ def main() -> int:
                 generated = emitted.read_text(encoding="utf8")
                 if (
                     generated.count(f"{marker} field-initializers-instance")
-                    != 3
+                    != 2
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
                     )
-                    != 3
+                    != 2
                     or generated.count(f"{marker} module-instance") != 1
                     or generated.count(
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    != 8
+                    != 4
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "
@@ -112,7 +112,6 @@ def main() -> int:
                     "checked_leaf",
                     "checked_caller",
                     "entry",
-                    "release",
                     "print",
                     "println",
                 ):

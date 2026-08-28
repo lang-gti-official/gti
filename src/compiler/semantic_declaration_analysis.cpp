@@ -756,12 +756,36 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   bool valid = true;
   if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
-    if (!isPreludeUnit(conceptInfo.sourceUnit) ||
+    const bool trustedAtomicConstraint =
+        isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
+        binding.name == "atomic_scalar";
+    const bool trustedIteratorConstraint =
+        isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
+        (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
+         binding.name == "dereferences_to" ||
+         binding.name == "writable_iterator" || binding.name == "writes_to" ||
+         binding.name == "bidirectional_iterator" ||
+         binding.name == "random_access_iterator" ||
+         binding.name == "subscripts_to_mut" ||
+         binding.name == "sized_sentinel_for");
+    const bool trustedFunctionalConstraint =
+        isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
+        (binding.name == "read_callable" || binding.name == "mut_callable" ||
+         binding.name == "once_callable" ||
+         binding.name == "read_binary_callable" ||
+         binding.name == "mut_binary_callable" ||
+         binding.name == "once_binary_callable" ||
+         binding.name == "once_action" ||
+         binding.name == "indirect_predicate" ||
+         binding.name == "indirect_operation");
+    if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedAtomicConstraint &&
+         !trustedIteratorConstraint && !trustedFunctionalConstraint) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,
              "@compiler_constraint is reserved for compiler-owned concepts "
-             "declared in the trusted prelude's gti_internal namespace.",
+             "declared in their trusted standard-library unit's "
+             "gti_internal namespace.",
              "GTI-S2049");
       valid = false;
     } else if (const std::optional<GenericConstraintKind> kind =
@@ -884,12 +908,13 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
            .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
            .name = requirement.name.last().lexeme});
       if (required.declaration->compilerBinding() &&
-          !isCompilerTrustedUnit(conceptInfo.sourceUnit)) {
-        report(requirement.name.last(),
-               "Compiler capability concept '" + required.qualifiedName +
-                   "' is private to the standard prelude; compose a public "
-                   "concept instead.",
-               "GTI-S2049");
+          conceptInfo.sourceUnit != required.sourceUnit) {
+        report(
+            requirement.name.last(),
+            "Compiler capability concept '" + required.qualifiedName +
+                "' is private to its standard-library unit; compose a public "
+                "concept instead.",
+            "GTI-S2049");
         valid = false;
         continue;
       }
@@ -1693,7 +1718,10 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedMutexCapabilityScope =
           isMutexLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
-      if (trustedPreludeCapabilityScope &&
+      const bool trustedMemoryCapabilityScope =
+          isMemoryLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
+      if (trustedMemoryCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
           !classDecl->genericParameters().front().valueType &&
           !classDecl->genericParameters().front().pack) {
@@ -1701,9 +1729,13 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
         } else if (classDecl->name().lexeme == "storage") {
           compilerCapability = CompilerCapabilityTypeKind::Storage;
-        } else if (classDecl->name().lexeme == "prefix_storage") {
-          compilerCapability = CompilerCapabilityTypeKind::PrefixStorage;
         }
+      } else if (trustedPreludeCapabilityScope &&
+                 classDecl->genericParameters().size() == 1 &&
+                 !classDecl->genericParameters().front().valueType &&
+                 !classDecl->genericParameters().front().pack &&
+                 classDecl->name().lexeme == "prefix_storage") {
+        compilerCapability = CompilerCapabilityTypeKind::PrefixStorage;
       } else if (trustedPreludeCapabilityScope &&
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "text_view") {

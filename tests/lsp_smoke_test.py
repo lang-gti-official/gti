@@ -5691,6 +5691,7 @@ def test_global_borrow_return_diagnostics(executable, root):
 
 def test_unique_ptr_null_state_tooling(executable, root):
     valid_source = (
+        "#include <std/memory>\n"
         "class Example { public: Example() {} };\n"
         "void consume(std::unique_ptr<Example> value) {}\n"
         "int main() {\n"
@@ -8856,6 +8857,7 @@ def main():
     source = (
         '#include "library.gti"\n'
         "#include <std/array>\n"
+        "#include <std/memory>\n"
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         '#error "inactive target"\n'

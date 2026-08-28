@@ -195,6 +195,7 @@ RunResult run(const std::filesystem::path &binary,
 constexpr std::string_view source = R"(
 #include <std/string>
 #include <std/vector>
+#include <std/memory>
 
 mut int32_t destroyed = 0;
 mut int32_t constructed_value = 0;
