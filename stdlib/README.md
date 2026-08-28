@@ -177,6 +177,12 @@ move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
 through `clone()`. `std::to_string(integer)` constructs the canonical base-10
 owning representation for every fixed-width integer, including signed minima.
+`std::to_string(float)` and the binary32 `std::print`/`std::println` overloads
+render an optional sign, the integer part, a point, and exactly six fractional
+digits taken from the stored value's exact decimal expansion and rounded to
+nearest with ties to even. Signed zero is preserved; `nan`, `inf`, and `-inf`
+cover non-finite values. Binary64 text and float arguments to `std::format`
+are separate sub-slices.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. A read cursor can be copy-constructed into an
