@@ -4155,12 +4155,12 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
     return instruction.info.traits.drop == DropKind::Lexical;
   }
   // Expected<scalar, E> crosses the transformed failure boundary through a
-  // value out-parameter. A direct `return callee();` therefore has no
-  // semantic result drop to arm: the callee publishes only on its successful
-  // Invoke edge and the caller immediately transfers that value to its own
-  // result. Keep this aligned with the backend boundary, which deliberately
-  // admits only scalar/void Expected payloads here; Expected<Class, E> uses
-  // the explicit placement-result contract below instead.
+  // value out-parameter. It therefore has no semantic result drop to arm:
+  // the callee publishes only on its successful Invoke edge, after which the
+  // value can feed either a direct return or another cleanup-free expression.
+  // Keep this aligned with the backend boundary, which deliberately admits
+  // only scalar/void Expected payloads here; Expected<Class, E> uses the
+  // explicit placement-result contract below instead.
   const auto passiveExpectedPayload = [](const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Void:
@@ -4181,8 +4181,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       return false;
     }
   };
-  if (position == MirFailureControlFlowPosition::FullExpressionRoot &&
-      instruction.kind == MirInstructionKind::Call && instruction.result &&
+  if (instruction.kind == MirInstructionKind::Call && instruction.result &&
       instruction.info.type.kind == SemanticType::Expected &&
       instruction.info.type.arguments.size() == 2 &&
       passiveExpectedPayload(instruction.info.type.arguments.front()) &&
