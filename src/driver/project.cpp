@@ -445,12 +445,105 @@ const ProjectProfile *selectProfile(const ProjectManifest &manifest,
   return nullptr;
 }
 
+// Finds the `[toolchains.<triple>]` entry configuring `target`. The selected
+// package owns the declaration; a workspace member falls back to the
+// workspace root package, which is where a workspace-wide cross toolchain
+// naturally belongs.
+const ProjectToolchain *findDeclaredToolchain(const ProjectWorkspace &workspace,
+                                              const ProjectManifest &manifest,
+                                              const TargetInfo &target) {
+  if (const ProjectToolchain *declared = manifest.findToolchain(target)) {
+    return declared;
+  }
+  for (const ResolvedProjectPackage &package : workspace.packages()) {
+    if (package.membership != ProjectPackageMembership::Root) {
+      continue;
+    }
+    return package.manifest.findToolchain(target);
+  }
+  return nullptr;
+}
+
+// Resolves the native toolchain a plan builds with, and fails closed when a
+// command that produces a native artifact selected a target that is not the
+// build host and no manifest declares how to build for it. Falling back to
+// host tools there would silently publish an executable for the wrong
+// target, which no later stage can detect.
+std::optional<ResolvedProjectToolchain>
+resolveBuildToolchain(const ProjectWorkspace &workspace,
+                      const ProjectManifest &manifest, const TargetInfo &target,
+                      ToolchainSelectionPolicy policy,
+                      std::vector<Diagnostic> &diagnostics) {
+  ResolvedProjectToolchain resolved;
+  const std::string selected = targetTriple(target);
+  const std::string host = targetTriple(TargetInfo::host());
+  const ProjectToolchain *declared =
+      findDeclaredToolchain(workspace, manifest, target);
+  if (declared == nullptr) {
+    if (selected != host &&
+        policy == ToolchainSelectionPolicy::DeclaredForNonHostTarget) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B1904", manifestSpan(manifest),
+          "No [toolchains." + selected +
+              "] table declares a native toolchain for target '" + selected +
+              "'.");
+      diagnostic.hints.push_back("Declare [toolchains." + selected +
+                                 "] with at least a 'cxx' compiler.");
+      diagnostic.hints.push_back(
+          "The build host is '" + host +
+          "'; host compilers are never reused for another target, because "
+          "the published executable would be built for the wrong one.");
+      diagnostics.push_back(std::move(diagnostic));
+      return std::nullopt;
+    }
+    return resolved;
+  }
+  resolved.triple = declared->declaredTriple;
+  resolved.cxx = declared->cxx;
+  resolved.cc = declared->cc;
+  resolved.sysroot = declared->sysroot;
+  resolved.declaredSysroot = declared->declaredSysroot;
+  resolved.nativeTarget = declared->nativeTarget;
+  resolved.declaration = declared->declaration;
+  return resolved;
+}
+
+// A declared toolchain that names no C compiler cannot build a package with
+// C sources: host `cc` discovery would produce host objects for a cross
+// link. Only a build that actually compiles C is rejected, so a pure-GTI
+// cross build needs no `cc`.
+bool checkToolchainCCoverage(const ResolvedProjectToolchain &toolchain,
+                             const NativeInputs &inputs,
+                             std::vector<Diagnostic> &diagnostics) {
+  if (!toolchain.declared() || !toolchain.cc.empty()) {
+    return true;
+  }
+  const bool compilesC = !inputs.cSources.empty() ||
+                         std::any_of(inputs.dependencyGroups.begin(),
+                                     inputs.dependencyGroups.end(),
+                                     [](const NativeDependencyGroup &group) {
+                                       return !group.cSources.empty();
+                                     });
+  if (!compilesC) {
+    return true;
+  }
+  Diagnostic diagnostic = projectDiagnostic(
+      "GTI-B1905", toolchain.declaration,
+      "Toolchain '" + toolchain.triple +
+          "' declares no 'cc', but this build compiles native C sources.");
+  diagnostic.hints.push_back(
+      "Declare cc = \"<c-compiler>\" beside cxx for that target.");
+  diagnostics.push_back(std::move(diagnostic));
+  return false;
+}
+
 ProjectBuildPlan makeBuildPlan(
     const ProjectWorkspace &workspace, const ProjectManifest &manifest,
     const ProjectTarget &selectedTarget, const ProjectProfile &selectedProfile,
     const TargetInfo &target, NativeInputs nativeInputs,
     const ProjectBuildOverrides &overrides = {},
-    RuntimeProfile runtimeProfile = RuntimeProfile::None) {
+    RuntimeProfile runtimeProfile = RuntimeProfile::None,
+    ResolvedProjectToolchain toolchain = {}) {
   const OptimizationLevel optimization =
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
@@ -480,7 +573,27 @@ ProjectBuildPlan makeBuildPlan(
   const std::filesystem::path generatedSource =
       outputDirectory / ".gti-intermediate" /
       (selectedTarget.name + ".gti.cpp");
+  // The selected target and the toolchain realizing it are model facts. A
+  // host build and a cross build must never share a cache entry, and
+  // changing the declared compiler, sysroot, or native triple must
+  // invalidate one.
+  nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
+                               .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  modelIdentity += "\ntarget:" + targetTriple(resolvedTarget);
+  if (toolchain.declared()) {
+    modelIdentity +=
+        "\ntoolchain:" + toolchain.triple + "|cxx=" + toolchain.cxx;
+    if (!toolchain.cc.empty()) {
+      modelIdentity += "|cc=" + toolchain.cc;
+    }
+    if (!toolchain.declaredSysroot.empty()) {
+      modelIdentity += "|sysroot=" + toolchain.declaredSysroot;
+    }
+    if (!toolchain.nativeTarget.empty()) {
+      modelIdentity += "|native-target=" + toolchain.nativeTarget;
+    }
+  }
   for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
   }
@@ -563,7 +676,7 @@ ProjectBuildPlan makeBuildPlan(
       generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
       std::move(nativeInputs), std::move(packageSourceRoots),
       configuration.configurationFlags(), std::move(modelIdentity),
-      std::move(bindgenImports));
+      std::move(bindgenImports), std::move(toolchain));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -650,14 +763,16 @@ ProjectBuildRequest::ProjectBuildRequest(
     std::filesystem::path startDirectory, std::optional<std::string> targetName,
     std::string profileName, TargetInfo target, ProjectBuildOverrides overrides,
     std::optional<std::string> packageName,
-    WorkspaceDependencyPolicy dependencyPolicy, RuntimeProfile runtimeProfile)
+    WorkspaceDependencyPolicy dependencyPolicy, RuntimeProfile runtimeProfile,
+    ToolchainSelectionPolicy toolchainPolicy)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
       cliOverrides(std::move(overrides)),
       selectedPackage(std::move(packageName)),
       workspaceDependencyPolicy(dependencyPolicy),
-      selectedRuntimeProfile(runtimeProfile) {}
+      selectedRuntimeProfile(runtimeProfile),
+      selectedToolchainPolicy(toolchainPolicy) {}
 
 const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
   return workspaceDependencyPolicy;
@@ -665,6 +780,10 @@ const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
 
 RuntimeProfile ProjectBuildRequest::runtimeProfile() const {
   return selectedRuntimeProfile;
+}
+
+ToolchainSelectionPolicy ProjectBuildRequest::toolchainPolicy() const {
+  return selectedToolchainPolicy;
 }
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
@@ -700,7 +819,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     NativeInputs nativeInputs,
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags, std::string projectModelIdentity,
-    std::vector<BindgenImportPlan> bindgenImports)
+    std::vector<BindgenImportPlan> bindgenImports,
+    ResolvedProjectToolchain toolchain)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -716,7 +836,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
-      resolvedBindgenImports(std::move(bindgenImports)) {}
+      resolvedBindgenImports(std::move(bindgenImports)),
+      resolvedToolchain(std::move(toolchain)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -782,6 +903,10 @@ const std::vector<PackageSourceRoot> &ProjectBuildPlan::packageSources() const {
 
 const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
   return resolvedConfigurationFlags;
+}
+
+const ResolvedProjectToolchain &ProjectBuildPlan::toolchain() const {
+  return resolvedToolchain;
 }
 
 const std::string &ProjectBuildPlan::projectModelIdentity() const {
@@ -935,6 +1060,14 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     return result;
   }
 
+  const std::optional<ResolvedProjectToolchain> toolchain =
+      resolveBuildToolchain(workspace, manifest, request.target(),
+                            request.toolchainPolicy(), result.diagnostics);
+  if (!toolchain) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    return result;
+  }
+
   std::optional<NativeInputs> nativeInputs =
       resolveNativeInputs(manifest, *selectedTarget, *selectedProfile,
                           request.target(), result.diagnostics);
@@ -948,15 +1081,17 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
       nativeInputs.reset();
     }
   }
-  if (!nativeInputs) {
+  if (!nativeInputs ||
+      !checkToolchainCCoverage(*toolchain, *nativeInputs, result.diagnostics)) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan = makeBuildPlan(
-      workspace, manifest, *selectedTarget, *selectedProfile, request.target(),
-      std::move(*nativeInputs), request.overrides(), request.runtimeProfile());
+  result.plan =
+      makeBuildPlan(workspace, manifest, *selectedTarget, *selectedProfile,
+                    request.target(), std::move(*nativeInputs),
+                    request.overrides(), request.runtimeProfile(), *toolchain);
   return result;
 }
 
@@ -1047,6 +1182,14 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     return result;
   }
 
+  const std::optional<ResolvedProjectToolchain> toolchain =
+      resolveBuildToolchain(workspace, manifest, request.target(),
+                            request.toolchainPolicy(), result.diagnostics);
+  if (!toolchain) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    return result;
+  }
+
   std::optional<std::vector<NativeDependencyGroup>> composed =
       composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
                                     request.target(), result.diagnostics);
@@ -1066,10 +1209,16 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       return result;
     }
     nativeInputs->dependencyGroups = *composed;
-    result.plans.push_back(
-        makeBuildPlan(workspace, manifest, *selectedTarget, *selectedProfile,
-                      request.target(), std::move(*nativeInputs),
-                      request.overrides(), request.runtimeProfile()));
+    if (!checkToolchainCCoverage(*toolchain, *nativeInputs,
+                                 result.diagnostics)) {
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      result.plans.clear();
+      return result;
+    }
+    result.plans.push_back(makeBuildPlan(
+        workspace, manifest, *selectedTarget, *selectedProfile,
+        request.target(), std::move(*nativeInputs), request.overrides(),
+        request.runtimeProfile(), *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1132,20 +1281,29 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     return result;
   }
 
+  const std::optional<ResolvedProjectToolchain> toolchain =
+      resolveBuildToolchain(workspace, manifest, request.target(),
+                            request.toolchainPolicy(), result.diagnostics);
+  if (!toolchain) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    return result;
+  }
+
   result.plans.reserve(manifest.targets().size());
   for (const ProjectTarget &target : manifest.targets()) {
     std::optional<NativeInputs> nativeInputs =
         resolveNativeInputs(manifest, target, *selectedProfile,
                             request.target(), result.diagnostics);
-    if (!nativeInputs) {
+    if (!nativeInputs || !checkToolchainCCoverage(*toolchain, *nativeInputs,
+                                                  result.diagnostics)) {
       result.status = ProjectResolutionStatus::ManifestFailure;
       result.plans.clear();
       return result;
     }
-    result.plans.push_back(
-        makeBuildPlan(workspace, manifest, target, *selectedProfile,
-                      request.target(), std::move(*nativeInputs),
-                      request.overrides(), request.runtimeProfile()));
+    result.plans.push_back(makeBuildPlan(
+        workspace, manifest, target, *selectedProfile, request.target(),
+        std::move(*nativeInputs), request.overrides(), request.runtimeProfile(),
+        *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1184,6 +1342,13 @@ ProjectMetadataResult resolveProjectMetadata(
   std::vector<ProjectBuildPlan> plans;
   ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
   const ProjectManifest &manifest = workspace.selectedPackage().manifest;
+  // Metadata is read-only and never compiles: it reports whatever toolchain
+  // the manifest declares for the requested target and never requires one.
+  const ResolvedProjectToolchain metadataToolchain =
+      resolveBuildToolchain(workspace, manifest, target,
+                            ToolchainSelectionPolicy::HostTools,
+                            result.diagnostics)
+          .value_or(ResolvedProjectToolchain{});
   std::optional<std::vector<NativeDependencyGroup>> composed =
       composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
                                     target, result.diagnostics);
@@ -1203,7 +1368,7 @@ ProjectMetadataResult resolveProjectMetadata(
       nativeInputs->dependencyGroups = *composed;
       plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
                                     target, std::move(*nativeInputs), {},
-                                    runtimeProfile));
+                                    runtimeProfile, metadataToolchain));
     }
   }
 

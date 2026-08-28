@@ -443,6 +443,7 @@ add_library(
   "src/driver/artifact.cpp"
   "src/driver/bindgen_import.cpp"
   "src/driver/build.cpp"
+  "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"
   "src/driver/dependencies.cpp"
   "src/driver/manifest.cpp"

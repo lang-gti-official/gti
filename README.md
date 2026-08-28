@@ -262,12 +262,15 @@ registry remains a later phase.
 Project `build`, `run`, and `test` commands use a verified local whole-program
 cache under `build/gti/cache/v2`. An unchanged eligible build restores the
 executable without rerunning the frontend/backend or native compiler. Declared
-native C/C++ sources, declared include directories, and exact archive/object
-link files participate in the cache through compiler dependency discovery;
-opaque native argument vectors, name-resolved libraries and frameworks,
-library search directories, non-content-complete link inputs (thin archives,
-linker scripts, shared libraries), time-and-date preprocessor macros, and
-dependency-injecting environment search paths conservatively bypass. Use
+native C/C++ sources — including a dependency package's — declared include and
+library search directories, exact archive/object link files, and `-l` names
+that resolve to exactly one content-complete file inside a declared search
+directory participate in the cache through compiler dependency discovery and
+full-tree identity; opaque native argument vectors, frameworks, `-l` names
+that resolve outside the declared search directories or ambiguously within
+them, non-content-complete link inputs (thin archives, linker scripts, shared
+libraries), time-and-date preprocessor macros, and dependency-injecting
+environment search paths conservatively bypass. Use
 `--verbose` to see the cache identity and hit/miss/bypass reason, or
 `--no-cache` to bypass both lookup and publication for verification. Direct
 `gti file.gti` compilation and `gti check` remain uncached.
@@ -275,6 +278,40 @@ dependency-injecting environment search paths conservatively bypass. Use
 `gti build --all` builds every declared target concurrently with a bounded job
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
 artifacts whether built serially or in parallel.
+
+`gti build`, `check`, `run`, and `test` accept `--target <triple>`. Omitting it
+selects the build host, so existing manifests and commands are unaffected. A
+non-host target resolves a declared toolchain rather than silently reusing host
+compilers:
+
+```toml
+[toolchains.aarch64-unknown-linux-gnu]
+cxx = "aarch64-linux-gnu-g++"        # required
+cc  = "aarch64-linux-gnu-gcc"        # required only when C sources build
+sysroot = "/opt/sysroots/aarch64"    # optional
+native-target = "aarch64-linux-gnu"  # optional; emitted as --target=
+```
+
+Building for a target with no declared table fails closed. `gti check`
+analyzes any supported target without one, since it invokes no native tool,
+and `gti run`/`gti test` refuse a non-host target rather than modelling a
+runner. Host and cross plans of one package never share a cache entry or an
+output path. The installed GTI runtime archive and headers are still
+discovered for the host, so a cross *link* needs a target-built runtime
+supplied through `GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE`.
+
+`gti build --build-report <path>` records a versioned provenance sidecar: the
+resolved package, target, profile, and selected target triple, the SHA-256
+content identity of every
+consumed GTI source unit and toolchain material, the native compiler identity
+and exact command, and the produced executable's own bytes.
+`gti verify --build-report <path>` rebuilds what that record describes and
+names every recorded identity the tree no longer reproduces, exiting `70` on
+any divergence. A successful verification proves that this tree, with this
+compiler on this host, consumed exactly the recorded inputs and produced a
+byte-identical executable. It is not a hermeticity proof: implicit C++
+standard-library and platform SDK headers are still treated as stable for an
+unchanged native compiler identity.
 
 Create a new manifest-driven executable package with:
 

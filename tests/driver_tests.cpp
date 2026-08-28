@@ -1,6 +1,7 @@
 #include "../src/driver/build_source_identity.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/build.h"
+#include "gti/driver/build_report.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -1310,19 +1311,45 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "cache identity so header shadowing can never restore a stale "
          "executable");
 
-  lang::driver::NativeInputs nativeLibraryDirectory;
-  nativeLibraryDirectory.libraryDirectories.push_back(nativeSearchDirectory);
+  const std::filesystem::path nativeLibrarySearchDirectory =
+      project / "native-library-search";
+  std::filesystem::create_directories(nativeLibrarySearchDirectory);
+  const auto buildWithLibraryDirectory = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.libraryDirectories.push_back(nativeLibrarySearchDirectory);
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
   const lang::driver::ExecutableBuildResult nativeLibraryDirectoryBuild =
-      build(lang::OptimizationLevel::O0, std::move(nativeLibraryDirectory));
+      buildWithLibraryDirectory();
   expect(nativeLibraryDirectoryBuild.succeeded() &&
              nativeLibraryDirectoryBuild.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
-             nativeLibraryDirectoryBuild.cache.detail &&
-             nativeLibraryDirectoryBuild.cache.detail->find(
-                 "library search directories") != std::string::npos &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeLibraryDirectoryBuild.cache.key != firstKey &&
              nativeLibraryDirectoryBuild.nativeProcess,
-         "native library search directories should bypass the whole-program "
-         "cache until linker search is resolved to exact inputs");
+         "declared native library search directories should join cache "
+         "identity through full-tree content instead of bypassing");
+  const lang::driver::ExecutableBuildResult nativeLibraryDirectoryHit =
+      buildWithLibraryDirectory();
+  expect(nativeLibraryDirectoryHit.succeeded() &&
+             nativeLibraryDirectoryHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeLibraryDirectoryHit.cache.key ==
+                 nativeLibraryDirectoryBuild.cache.key,
+         "an unchanged declared library search tree should verify and restore "
+         "the cached executable");
+  expect(writeFile(nativeLibrarySearchDirectory / "added.txt", "added\n"),
+         "the library-tree invalidation fixture should be writable");
+  const lang::driver::ExecutableBuildResult nativeLibraryDirectoryChange =
+      buildWithLibraryDirectory();
+  expect(nativeLibraryDirectoryChange.succeeded() &&
+             nativeLibraryDirectoryChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeLibraryDirectoryChange.cache.key !=
+                 nativeLibraryDirectoryBuild.cache.key,
+         "adding any file below a declared library search directory should "
+         "change cache identity, so a file dropped there can never shadow an "
+         "implicitly resolved library behind a stale entry");
+  std::filesystem::remove(nativeLibrarySearchDirectory / "added.txt");
 
   lang::driver::NativeInputs namedLibraryInput;
   namedLibraryInput.libraries.emplace_back("m");
@@ -1331,10 +1358,96 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   expect(namedLibraryBuild.cache.status ==
                  lang::driver::BuildCacheStatus::Bypassed &&
              namedLibraryBuild.cache.detail &&
-             namedLibraryBuild.cache.detail->find("name-resolved") !=
+             namedLibraryBuild.cache.detail->find(
+                 "does not resolve inside the declared native library search "
+                 "directories") != std::string::npos,
+         "a named library with no declared search directory holding it would "
+         "resolve through the linker's implicit directories and must bypass");
+
+  // A `-l` name that resolves to exactly one content-complete archive inside
+  // a declared search directory participates with that file's content.
+  const std::filesystem::path resolvedArchive =
+      nativeLibrarySearchDirectory / "libgtiruntimealias.a";
+  copyError.clear();
+  std::filesystem::copy_file(localRuntimeLibrary, resolvedArchive, copyError);
+  expect(!copyError, "the resolvable library fixture should be copyable");
+  const auto buildWithResolvedLibrary = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.libraryDirectories.push_back(nativeLibrarySearchDirectory);
+    inputs.libraries.emplace_back("gtiruntimealias");
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+  const lang::driver::ExecutableBuildResult resolvedLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(resolvedLibraryBuild.succeeded() &&
+             resolvedLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             resolvedLibraryBuild.nativeProcess,
+         "a named library resolving to one content-complete archive in a "
+         "declared search directory should join cache identity");
+  const lang::driver::ExecutableBuildResult resolvedLibraryHit =
+      buildWithResolvedLibrary();
+  expect(resolvedLibraryHit.succeeded() &&
+             resolvedLibraryHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             resolvedLibraryHit.cache.key == resolvedLibraryBuild.cache.key &&
+             !resolvedLibraryHit.nativeProcess,
+         "an unchanged resolved library should verify and restore the cached "
+         "executable");
+
+  // Two modeled candidates in the same directory: which one the linker would
+  // prefer is a guess, so resolution must refuse.
+  const std::filesystem::path ambiguousCandidate =
+      nativeLibrarySearchDirectory /
+#if defined(_WIN32)
+      "libgtiruntimealias.dll.a";
+#elif defined(__APPLE__)
+      "libgtiruntimealias.dylib";
+#else
+      "libgtiruntimealias.so";
+#endif
+  expect(writeFile(ambiguousCandidate, "not a real dynamic library\n"),
+         "the ambiguous library fixture should be writable");
+  const lang::driver::ExecutableBuildResult ambiguousLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(ambiguousLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             ambiguousLibraryBuild.cache.detail &&
+             ambiguousLibraryBuild.cache.detail->find("resolves ambiguously") !=
                  std::string::npos,
-         "name-resolved libraries should bypass the whole-program cache "
-         "until linker search resolution is modeled");
+         "two modeled candidates in one search directory should bypass rather "
+         "than guess the linker's preference");
+  std::filesystem::remove(ambiguousCandidate);
+
+  // An unambiguous resolution whose bytes do not determine its contribution
+  // to the link still bypasses.
+  std::filesystem::remove(resolvedArchive);
+  expect(writeFile(resolvedArchive, "INPUT(missing.o)\n"),
+         "the content-incomplete resolved library fixture should be writable");
+  const lang::driver::ExecutableBuildResult incompleteLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(incompleteLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             incompleteLibraryBuild.cache.detail &&
+             incompleteLibraryBuild.cache.detail->find(
+                 "not a content-complete archive or object") !=
+                 std::string::npos,
+         "a resolved library that is not content-complete should bypass with "
+         "the link-input reason");
+  std::filesystem::remove(resolvedArchive);
+
+  lang::driver::NativeInputs frameworkInput;
+  frameworkInput.frameworks.emplace_back("CoreFoundation");
+  const lang::driver::ExecutableBuildResult frameworkBuild =
+      build(lang::OptimizationLevel::O0, std::move(frameworkInput));
+  expect(frameworkBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             frameworkBuild.cache.detail &&
+             frameworkBuild.cache.detail->find(
+                 "name-resolved frameworks require framework search "
+                 "resolution") != std::string::npos,
+         "frameworks resolve through undeclared search roots to a bundle and "
+         "must keep bypassing");
 
   {
     ScopedEnvironment injectedIncludePath("CPATH",
@@ -1590,6 +1703,85 @@ void testNativeDependencyDiscoveryPrimitives() {
                  "int date = 0; // date and time words alone\n"),
          "the deterministic preprocessing policy should detect exactly the "
          "time-and-date macro spellings");
+}
+
+void testNativeLibraryNameResolution() {
+  using lang::driver::NativeLibraryResolutionStatus;
+  TemporaryDirectory temporary;
+  const std::filesystem::path first = temporary.root() / "first";
+  const std::filesystem::path second = temporary.root() / "second";
+  std::filesystem::create_directories(first);
+  std::filesystem::create_directories(second);
+  const std::vector<std::filesystem::path> directories{first, second};
+
+#if defined(_WIN32)
+  const std::string dynamicName = "libsupport.dll.a";
+#elif defined(__APPLE__)
+  const std::string dynamicName = "libsupport.dylib";
+#else
+  const std::string dynamicName = "libsupport.so";
+#endif
+
+  const auto resolve = [&](std::string_view name) {
+    return lang::driver::resolveNativeLibraryName(name, directories);
+  };
+
+  expect(resolve("support").status == NativeLibraryResolutionStatus::Unresolved,
+         "a name with no candidate in any declared directory should resolve "
+         "outside them and refuse to participate");
+
+  writeFile(second / "libsupport.a", "!<arch>\ncontents");
+  const lang::driver::NativeLibraryResolution resolved = resolve("support");
+  expect(resolved.status == NativeLibraryResolutionStatus::Resolved &&
+             resolved.file == second / "libsupport.a",
+         "a single modeled candidate should resolve to that exact file, "
+         "skipping earlier directories that hold none");
+
+  writeFile(first / dynamicName, "dynamic");
+  const lang::driver::NativeLibraryResolution shadowed = resolve("support");
+  expect(shadowed.status == NativeLibraryResolutionStatus::Resolved &&
+             shadowed.file == first / dynamicName,
+         "the first declared directory holding a candidate should win, as it "
+         "does on the link command line");
+
+  writeFile(first / "libsupport.a", "!<arch>\ncontents");
+  const lang::driver::NativeLibraryResolution ambiguous = resolve("support");
+  expect(ambiguous.status == NativeLibraryResolutionStatus::Ambiguous &&
+             ambiguous.directory == first,
+         "two modeled candidates in one directory should refuse rather than "
+         "guess the linker's preference");
+
+  std::filesystem::remove(first / dynamicName);
+  writeFile(first / "libsupport.la", "# libtool archive\n");
+  expect(resolve("support").status == NativeLibraryResolutionStatus::Ambiguous,
+         "a candidate spelling the driver does not model should make "
+         "resolution ambiguous, never invisible");
+  std::filesystem::remove(first / "libsupport.la");
+
+  // A neighbouring name must not be mistaken for a candidate.
+  writeFile(second / "libsupport_extra.a", "!<arch>\ncontents");
+  expect(resolve("support_extra").status ==
+                 NativeLibraryResolutionStatus::Resolved &&
+             resolve("support").status ==
+                 NativeLibraryResolutionStatus::Resolved,
+         "a longer library name sharing a prefix should not disturb either "
+         "resolution");
+
+  expect(resolve(":libsupport.a").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling &&
+             resolve("sub/support").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling &&
+             resolve("").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling,
+         "exact-name selections and path-bearing spellings mean different "
+         "things to different linkers and must not be resolved");
+
+  const std::vector<std::filesystem::path> missingDirectory{temporary.root() /
+                                                            "absent"};
+  expect(lang::driver::resolveNativeLibraryName("support", missingDirectory)
+                 .status == NativeLibraryResolutionStatus::DirectoryUnreadable,
+         "a search directory that cannot be enumerated must not be reported "
+         "as holding no candidate");
 }
 
 void testBuildSourceMaterialIdentityProjection() {
@@ -1946,6 +2138,188 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
              ")");
 }
 
+// The sidecar is the interchange format `gti verify` reads back, so writing
+// and reading it must round-trip exactly and comparison must name the exact
+// fact that moved.
+void testBuildReportRecordRoundTrip() {
+  lang::driver::BuildProvenance recorded;
+  recorded.producerExecutable = {.canonicalPath = "/opt/gti/bin/gti",
+                                 .bytes = 128,
+                                 .sha256 = std::string(64, 'a')};
+  recorded.compilerBuild = {.state = lang::driver::CompilerSourceState::Dirty,
+                            .commit = std::string(40, 'b')};
+  recorded.project = lang::driver::BuildProjectProvenance{
+      .packageName = "sample",
+      .packageVersion = "0.1.0",
+      .targetName = "sample",
+      .targetKind = "executable",
+      .profileName = "dev",
+      .targetTriple = "arm64-apple-macos",
+      // A multi-line identity exercises string escaping in both directions.
+      .modelIdentity = "gti-workspace-v1\npackage:sample@0.1.0"};
+  recorded.source.entryRoot = 1;
+  recorded.source.preludeRoots = {2};
+  recorded.source.compilationOrder = {2, 1};
+  recorded.source.materialsSha256 = std::string(64, 'c');
+  recorded.source.units.push_back(
+      {.id = 1,
+       .role = lang::SourceUnitRole::Application,
+       .material = {.canonicalPath = "/work/sample/src/main.gti",
+                    .bytes = 25,
+                    .sha256 = std::string(64, 'd')},
+       .logicalIdentity = "package:sample@0.1.0:src/main.gti",
+       .standardLibraryName = std::nullopt,
+       .packageIdentity = "sample@0.1.0",
+       .packageRelativePath = "src/main.gti",
+       .entry = true,
+       .prelude = false});
+  recorded.source.units.push_back(
+      {.id = 2,
+       .role = lang::SourceUnitRole::Prelude,
+       .material = {.canonicalPath = "/opt/gti/stdlib/prelude.gti",
+                    .bytes = 64,
+                    .sha256 = std::string(64, 'e')},
+       .logicalIdentity = "prelude",
+       .standardLibraryName = std::nullopt,
+       .packageIdentity = std::nullopt,
+       .packageRelativePath = std::nullopt,
+       .entry = false,
+       .prelude = true});
+  recorded.source.dependencies.push_back(
+      {.source = 1,
+       .target = 2,
+       .kind = lang::SourceDependencyKind::Prelude,
+       .includeSpelling = "prelude.gti",
+       .includeOccurrence = 0});
+  recorded.nativeCompilerExecutable = {.canonicalPath = "/usr/bin/c++",
+                                       .bytes = 512,
+                                       .sha256 = std::string(64, 'f')};
+  recorded.nativeCommand = {
+      "c++",
+      "-std=c++23",
+      "-O0",
+      "-MD",
+      "-MF",
+      "/tmp/gti-1-2-3-sample.build-report.d",
+      "/work/sample/build/gti/sample.gti.cpp",
+      "-o",
+      "/work/sample/build/gti/.sample.gti-stage-1-2-3/sample"};
+  recorded.runtime.materialsSha256 = std::string(64, '0');
+  recorded.runtime.headers.push_back(
+      {.kind = lang::driver::BuildRuntimeHeaderKind::Runtime,
+       .logicalIdentity = "gti/runtime.h",
+       .material = {.canonicalPath = "/opt/gti/include/gti/runtime.h",
+                    .bytes = 900,
+                    .sha256 = std::string(64, '1')}});
+  recorded.runtime.headers.push_back(
+      {.kind = lang::driver::BuildRuntimeHeaderKind::Compatibility,
+       .logicalIdentity = "nonstd/print.h",
+       .material = {.canonicalPath = "/opt/gti/include/nonstd/print.h",
+                    .bytes = 300,
+                    .sha256 = std::string(64, '2')}});
+  recorded.runtime.archive = {.canonicalPath = "/opt/gti/lib/libgti_runtime.a",
+                              .bytes = 4096,
+                              .sha256 = std::string(64, '3')};
+  recorded.artifact = {.canonicalPath = "/work/sample/build/gti/sample",
+                       .bytes = 58008,
+                       .sha256 = std::string(64, '4')};
+
+  const std::string serialized =
+      lang::driver::serializeBuildProvenanceJson(recorded);
+  expect(serialized.find("\"target_kind\":\"executable\"") != std::string::npos,
+         "a project record should serialize its resolved target kind");
+  expect(serialized.find("gti-workspace-v1\\npackage:sample@0.1.0") !=
+             std::string::npos,
+         "a multi-line model identity should be escaped, not truncated");
+  std::string parseError;
+  const std::optional<lang::driver::BuildProvenance> parsed =
+      lang::driver::parseBuildProvenanceJson(serialized, parseError);
+  expect(parsed.has_value(),
+         "a serialized build report should parse back: " + parseError);
+  if (!parsed) {
+    return;
+  }
+  expect(lang::driver::compareBuildProvenance(recorded, *parsed).empty(),
+         "a round-tripped record should compare equal to its source");
+  expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
+         "re-serializing a parsed record should reproduce the sidecar");
+
+  // The driver owns the staged link output and the dependency-file operand,
+  // and both carry a per-invocation identity. Comparing them literally would
+  // report a difference for every verification.
+  lang::driver::BuildProvenance restaged = *parsed;
+  restaged.nativeCommand[5] = "/tmp/gti-9-9-9-sample.build-report.d";
+  restaged.nativeCommand[8] =
+      "/work/sample/build/gti/.sample.gti-stage-9-9-9/sample";
+  expect(lang::driver::compareBuildProvenance(recorded, restaged).empty(),
+         "per-invocation staging paths should not read as a divergence");
+
+  lang::driver::BuildProvenance drifted = *parsed;
+  drifted.source.units[0].material.sha256 = std::string(64, '9');
+  drifted.source.units[0].material.bytes = 59;
+  drifted.source.materialsSha256 = std::string(64, '8');
+  drifted.runtime.headers.pop_back();
+  drifted.nativeCommand[2] = "-O2";
+  drifted.artifact.sha256 = std::string(64, '7');
+  drifted.project->profileName = "release";
+  // A record built for another target describes another build, even when
+  // every source unit and command operand is unchanged.
+  drifted.project->targetTriple = "x86_64-unknown-linux-gnu";
+  const std::vector<lang::driver::BuildProvenanceDifference> differences =
+      lang::driver::compareBuildProvenance(recorded, drifted);
+  const auto named = [&](std::string_view subject, std::string_view field) {
+    return std::any_of(
+        differences.begin(), differences.end(),
+        [&](const lang::driver::BuildProvenanceDifference &difference) {
+          return difference.subject.find(subject) != std::string::npos &&
+                 difference.field == field;
+        });
+  };
+  expect(named("package:sample@0.1.0:src/main.gti", "content"),
+         "a changed source unit should be named with its content identity");
+  expect(named("project", "target triple"),
+         "a record built for another target should diverge on its triple");
+  expect(named("source materials", "aggregate sha256"),
+         "the source aggregate should be compared");
+  expect(named("nonstd/print.h", "presence"),
+         "a runtime header the rebuild no longer consumes should be named");
+  expect(named("native argv[2]", "operand"),
+         "a changed native operand should be named by position");
+  expect(named("built artifact", "content"),
+         "the produced artifact's bytes should be compared");
+  expect(named("project", "profile name"),
+         "the recorded profile selection should be compared");
+  const bool preludeUntouched = std::none_of(
+      differences.begin(), differences.end(),
+      [](const lang::driver::BuildProvenanceDifference &difference) {
+        return difference.subject.find("prelude") != std::string::npos;
+      });
+  expect(preludeUntouched,
+         "an unchanged source unit should not be reported as a difference");
+
+  // A record whose content identity matches at another path is not a
+  // divergence; the tree may legitimately have moved.
+  lang::driver::BuildProvenance relocated = *parsed;
+  relocated.source.units[0].material.canonicalPath =
+      "/elsewhere/sample/src/main.gti";
+  relocated.artifact.canonicalPath = "/elsewhere/sample/build/gti/sample";
+  expect(lang::driver::compareBuildProvenance(recorded, relocated).empty(),
+         "identical content at a new canonical path should compare equal");
+
+  std::string rejectedError;
+  expect(
+      !lang::driver::parseBuildProvenanceJson("{\"schema\": 1}", rejectedError)
+              .has_value() &&
+          rejectedError.find("schema") != std::string::npos,
+      "an older schema should be refused rather than partially read");
+  expect(
+      !lang::driver::parseBuildProvenanceJson(serialized + "{", rejectedError)
+           .has_value(),
+      "trailing content should be refused");
+  expect(!lang::driver::parseBuildProvenanceJson("", rejectedError).has_value(),
+         "an empty report should be refused");
+}
+
 void testResourcesAndArtifactOwnership() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -2180,8 +2554,10 @@ int main(int argc, char *argv[]) {
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testNativeDependencyDiscoveryPrimitives();
+  testNativeLibraryNameResolution();
   testBuildSourceMaterialIdentityProjection();
   testBuildProvenance(std::filesystem::absolute(argv[0]));
+  testBuildReportRecordRoundTrip();
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

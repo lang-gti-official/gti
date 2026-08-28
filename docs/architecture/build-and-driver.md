@@ -169,6 +169,8 @@ The direct CLI currently selects `TargetInfo::host()`; it does not expose a
 general cross-compilation option. Compiler-library clients can request another
 supported normalized target for analysis, but the data-layout contract does
 not configure a native compiler, sysroot, runtime, or linker for that target.
+Project mode does select a target: see
+[Cross Compilation](#cross-compilation) below.
 
 ### Structured build provenance
 
@@ -178,8 +180,10 @@ checks as executable and generated-source outputs, must not alias a loaded
 source or the producer executable (including through a hard link), and is
 published atomically only after the driver has completed the native build and
 provenance capture. Emit-only builds reject the option. The public driver
-request/result types expose the structured record; the CLI owns JSON
-presentation.
+request/result types expose the structured record, and the driver owns the
+sidecar format in both directions: verification reads a recorded report back
+through the same schema, so the writer and the reader cannot drift apart. The
+CLI owns path validation, atomic publication, and human presentation.
 
 Source provenance is captured from the exact `SourceGraph` and
 `SourceManager` snapshot returned by `SourceLoader`, before compilation inputs
@@ -215,14 +219,21 @@ This executable binding is independent of packaged `BUILD_ID` metadata and is
 the fact benchmark tooling uses to verify that a sidecar came from the selected
 `--gti` binary.
 
+The current sidecar schema is 2. Beyond the facts above it records the
+published executable's own content identity, captured from the final output
+path after publication, and a `project` section that is `null` for a direct
+build. Schema 1 records carry neither and are refused rather than partially
+interpreted.
+
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
-resolves executable and test targets, profiles, and structured native inputs
-(including declared C and C++ sources), and produces immutable
-`ProjectBuildPlan` values. `build`, `check`, `run`, `test`, `clean`, `metadata`,
-`new`, and `init` are implemented. `check` stops after the frontend; `run`
-executes one executable target through exact arguments and inherited streams;
+resolves executable and test targets, profiles, declared cross-compilation
+toolchains, and structured native inputs (including declared C and C++
+sources), and produces immutable `ProjectBuildPlan` values. `build`, `check`,
+`run`, `test`, `clean`, `metadata`, `new`, and `init` are implemented. `check`
+stops after the frontend; `run` executes one executable target through exact
+arguments and inherited streams;
 `test` deterministically plans every test target or one named test and
 builds/runs each as an independent whole program in target-name order. A build
 failure stops the command; a runtime failure is recorded while later tests
@@ -286,6 +297,165 @@ a failed source compile preserves any prior object and executable and retains
 the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
+
+### Cross Compilation
+
+`gti build`, `check`, `run`, and `test` accept `--target <triple>`. Omitting
+it selects the build host, so an existing manifest and an existing command
+keep working unchanged. An explicit triple is parsed by the compiler's own
+`parseTargetTripleResult`, so project mode and `gti bindgen` share one
+spelling vocabulary; a malformed or unsupported triple is a usage error
+(`64`), and a triple GTI can name but cannot lay out is a
+toolchain-configuration error (`78`). The resolved `TargetInfo` reaches
+`ProjectBuildRequest` in place of `TargetInfo::host()` and flows unchanged
+through the shared analysis configuration into semantics, optimization, and
+backend generation. `gti build --all` forwards the selection to each child
+build. `gti metadata` still reports the host target.
+
+A target that is not the build host must be declared:
+
+```toml
+[toolchains.aarch64-unknown-linux-gnu]
+cxx = "aarch64-linux-gnu-g++"          # required
+cc = "aarch64-linux-gnu-gcc"           # required only when C sources build
+sysroot = "/opt/sysroots/aarch64"      # optional
+native-target = "aarch64-linux-gnu"    # optional; emitted as --target=
+```
+
+The table key is normalized through the same target vocabulary, so
+`[toolchains.aarch64-unknown-linux-gnu]` and `[toolchains.arm64-unknown-linux]`
+name one entry; declaring both is `GTI-B1901` rather than a silently ordered
+choice. A key that is not a supported triple is `GTI-B1900`. Selection
+compares only the OS, vendor, and architecture; the data layout always comes
+from the resolved build target. Entries are sorted by declared spelling for
+deterministic identity. The selected package owns the declaration, and a
+workspace member falls back to the workspace root package.
+
+`cxx` is required, because a declared toolchain that named no compiler would
+fall back to host discovery and link host objects into a cross build.
+`cxx`, `cc`, and `native-target` must be an executable or triple spelling
+rather than an option (`GTI-B1902`). `sysroot` is either an absolute path,
+taken as an explicit machine-specific declaration, or a package-contained
+relative path resolved against the package root; either way it must name an
+existing directory (`GTI-B1903`). `cc` is optional, and a build that actually
+compiles declared or composed native C sources without one is rejected with
+`GTI-B1905` rather than reaching for host `cc`. Unknown fields are rejected
+by the shared manifest field validator (`GTI-B1001`).
+
+The rule is fail-closed: `gti build`, `run`, and `test` for a target that is
+not the build host, with no matching `[toolchains.<triple>]` entry, fail with
+`GTI-B1904` naming the missing table. Host tools are never substituted,
+because the published executable would be built for the wrong target and no
+later stage can detect that. `gti check` is deliberately exempt — it stops
+after the frontend and compiles nothing native — so any supported target can
+be analyzed without a declared toolchain. `gti run` and `gti test` execute
+the produced program on this machine, so they reject a non-host `--target`
+as a usage error and point at `gti build --target` instead; GTI models no
+runner or emulator.
+
+Configuration precedence for the native compilers is the manifest's general
+rule: an explicit `--cxx`/`--cc` first, then the declared toolchain for the
+selected target, then the existing `GTI_CXX`/`CXX` and `GTI_CC`/`CC`
+discovery order. A declared toolchain outranks those environment variables
+because they describe the host.
+
+The resolved sysroot and `native-target` become one driver-owned
+`NativeTargetPolicy` carried by the plan's native inputs. It is emitted as
+`--target=<native-target>` and `--sysroot=<path>` ahead of every forwarded
+native argument and every input, on the final whole-program link and on each
+declared C and C++ object compile, including the cache's dependency-discovery
+probes. `native-target` is separate from GTI's normalized triple on purpose:
+a target-prefixed cross compiler already knows its target and must not be
+told one, while a multi-target Clang must be. GTI cannot verify that the
+spelling agrees with the selected target, so it is an explicit declaration in
+the same sense as a native argument vector. These two options are exactly the
+ones every user-supplied native argument vector rejects, so the driver is
+their only source.
+
+The selected triple and the resolved toolchain join the project model
+identity, and the target policy joins the whole-program cache key alongside
+the target OS, vendor, architecture, and complete data layout that the key
+already carried. A host build and a cross build therefore cannot share a
+cache entry, and changing the declared compiler, sysroot, or native triple
+invalidates one. The sysroot contributes path identity rather than content:
+it is a platform SDK tree, covered by the same explicitly non-hermetic
+toolchain boundary as implicit system headers. Output already lives under
+`build/gti/<profile>/<triple>/`, so artifacts for different targets sit
+beside each other.
+
+The installed GTI runtime archive and runtime headers are still discovered
+once for the host toolchain. A cross link therefore needs a runtime built for
+the selected target, supplied through the existing `GTI_RUNTIME_LIBRARY` and
+`GTI_RUNTIME_INCLUDE` overrides; the manifest does not yet select them per
+target.
+
+### Recorded Provenance And Verification
+
+`gti build [target] --build-report <path>` records the same structured sidecar
+in project mode, through the same driver capture path as direct mode, and adds
+the project facts a direct compilation has no concept of: the resolved package
+name and version, target name and kind, profile name, selected target triple,
+and the project model identity that produced the effective request. Capture
+bypasses whole-program cache reuse exactly as it does in direct mode, so the
+record always describes a native invocation that was actually performed. The
+option builds one executable: `--emit-mir` and `--all` reject it, and `check`,
+`run`, and `test` do not accept it.
+
+`gti verify --build-report <path>` reproduces a recorded project build and
+reports what no longer matches. It reads the record, re-resolves the package,
+target, profile, and target triple the record names from the current
+directory, rebuilds with capture, and compares the fresh record against the
+recorded one. Selecting the recorded triple rather than the build host is what
+makes a cross build verifiable: a record naming a non-host target resolves that
+target's declared `[toolchains.<triple>]` table and fails closed when the table
+is absent, instead of silently reproducing the build for the host and reporting
+the mismatch as a divergence. The recorded report is only ever read;
+verification cannot repair its own evidence.
+Because the record names the selection, `verify` refuses a contradicting
+target, `--package`, `--profile`, `--release`, or `--target`; host toolchain
+and resolution
+options (`--cxx`, `--cc`, `--offline`, `--locked`, `--no-cache`, `-v`) and the
+build overrides that a recorded invocation may have used (`-O`, `--std`,
+`--execution-profile`, `-D`) remain available. A direct-mode record is refused:
+its sidecar does not describe the option surface needed to reissue that
+command.
+
+Comparison is by content identity, not by path. Source units and runtime
+headers are matched on their logical identities, so a workspace that moved
+compares equal when its content did not change, while an application include
+outside the package keeps its path-sensitive external identity. Every recorded
+identity is compared: the producer executable, the compiler source identity,
+each source unit and the relocation-stable source aggregate, the project
+selection and model identity, the native compiler executable, the native argv,
+each runtime and compatibility header, the runtime archive, the runtime
+aggregate, and the produced executable's bytes. Divergences are reported one
+per fact, naming the subject, the compared field, and the recorded and rebuilt
+values, and the command exits 70. Two native argv operands are normalized
+before comparison because the driver generates them fresh for every
+invocation: the staged link output after `-o` and the build-report dependency
+file after `-MF`. Every other operand, absolute paths included, compares
+exactly, so verifying a relocated checkout reports the paths that moved.
+
+**What a successful verification proves.** The current tree, built by this
+compiler on this host, consumed exactly the recorded GTI sources and toolchain
+materials, issued the recorded native command, and produced a byte-identical
+executable. Artifact bytes are compared deliberately: comparing inputs alone
+would accept a rebuild that silently produced different output, and the
+driver's determinism work (including `-Wl,-reproducible` on Apple hosts) is
+what makes byte equality a testable claim rather than an aspiration.
+
+**What it does not prove.** It is not a hermeticity proof. The
+non-hermetic boundary named for the cache applies unchanged: implicit C++
+standard-library and platform SDK headers are treated as stable for an
+unchanged native compiler identity, and they are not hashed. It does not
+attest that the recorded build ever happened on another machine, that the
+recorded compiler binary is trustworthy, or that a byte-identical executable
+behaves identically under a different kernel or loader. A divergence in
+artifact bytes with no divergence in any recorded input is exactly the signal
+that something outside the recorded boundary moved. Verification also proves
+nothing about a build it cannot reproduce: an unresolvable package, target, or
+profile, or a build that no longer completes, is reported as a failure rather
+than as a match.
 
 ### Bindgen Imports
 
@@ -421,6 +591,44 @@ only when that package is built directly. Plans that carry dependency native
 groups bypass the whole-program cache with an explicit reason until dependency
 discovery covers group sources.
 
+### Vendored Native Dependencies
+
+The composition rules above and the bindgen imports below combine into one
+workflow worth naming, because it is what makes a GTI project portable: a
+dependency may **vendor a C library** and a consumer needs no system
+prerequisite at all.
+
+```toml
+# In the dependency package.
+[package.native]
+include-dirs = ["native"]
+c-sources = ["native/checksum.c"]
+
+[bindgen.checksum_c]
+header = "native/checksum.h"
+```
+
+The dependency carries the C source and header in its own tree, generates its
+own GTI declarations for them, and exposes the library through ordinary GTI
+functions. The consumer declares only the package dependency — path or pinned
+git — and `gti build` acquires it, generates the dependency's bindings inside
+its checkout, compiles the vendored C into the dependent build as an isolated
+native group, and links it. Nothing is installed on the machine, and nothing
+is found by search.
+
+Two existing rules do the load-bearing work and are worth restating here.
+Bindgen aliases are per-package, so a consumer cannot reach
+`#include <checksum_c/bindings>`; it sees only what the dependency chose to
+expose in GTI, which keeps the raw C ABI an implementation detail of the
+package that vendors it. And a dependency's native group scopes its include
+directories and macros to its own declared sources, so a vendored library
+cannot leak header search state into the consumer's sources or into the
+generated whole-program translation unit.
+
+`project_cli_workflow` covers the whole path end to end over a pinned git
+dependency, including the negative case that the consumer cannot reach the
+dependency's bindgen alias.
+
 ### Locked Git Dependencies
 
 `alias = { git = "<url>", rev = "<full 40-hex commit>" }` declares a pinned
@@ -546,14 +754,18 @@ with its configuration flags and bindgen imports.
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
 content-addressed whole-program cache by default. Declared native C and C++
-sources, declared native include directories, and content-complete exact link
-files (regular non-thin archives and relocatable objects) participate in cache
-identity exactly and no longer force a bypass. The remaining conservative
-bypasses are opaque native argument vectors, name-resolved libraries and
-frameworks, native library search directories, link inputs that are not
-content-complete (thin archives, linker scripts, shared libraries, and
-unrecognized formats), dependency-injecting native environment search paths,
-and any input whose exact identity cannot be established. Direct
+sources, declared native include directories, declared native library search
+directories, content-complete exact link files (regular non-thin archives and
+relocatable objects), and `-l` names that resolve to exactly one
+content-complete file inside a declared search directory participate in cache
+identity exactly and no longer force a bypass. A dependency package's composed
+native group participates on the same terms as the selected package's own
+native inputs. The remaining conservative bypasses are opaque native argument
+vectors, name-resolved frameworks, `-l` names that do not resolve inside the
+declared search directories or resolve ambiguously within one, link inputs
+that are not content-complete (thin archives, linker scripts, shared
+libraries, and unrecognized formats), dependency-injecting native environment
+search paths, and any input whose exact identity cannot be established. Direct
 `gti source.gti` mode and `gti check` remain uncached. `--no-cache` disables
 both lookup and publication for one project build/run/test command; under
 `--verbose`, the CLI reports the cache identity and whether the request hit,
@@ -583,6 +795,20 @@ The current key includes:
 - declared native include directories as full sorted tree identities, so
   adding, removing, or editing any file below a declared include root changes
   the key and header shadowing cannot restore a stale executable;
+- declared native library search directories as the same full sorted tree
+  identities, so any file appearing, changing, or disappearing below a
+  declared `-L` root changes the key and a dropped file cannot shadow an
+  implicitly resolved library behind a stale entry;
+- for every `-l<name>` operand, the concrete file it resolves to: the driver
+  searches the declared library directories in the exact order the link
+  command emits them, and joins the resolved file's path and content identity;
+- for every composed dependency native group, in composed order: the
+  contributing package identity, its include and library search directories as
+  full tree identities, its validated exact `-D`/`-U` macro spellings, its
+  selected C standard, its declared C/C++ sources with the same native
+  dependency discovery probe applied under the group's own include scope and
+  macros, and its ordered link operands under the same content-complete and
+  name-resolution rules;
 - for every declared C or C++ source, a native dependency discovery probe: the
   driver runs the exact object-compile argument vector with `-E -MD -MF`,
   consumes the compiler's own make-style dependency report for the exact
@@ -635,21 +861,53 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
+Three narrowings hold by an exact-identity argument, stated here because each
+one moved an input out of the bypass list.
+
+- A declared native library search directory is exact for the same reason a
+  declared include directory is: its full sorted tree identity records every
+  file below it, so any file that could answer a name — the project's own or
+  one the toolchain resolves implicitly — is part of the key before the linker
+  ever sees it.
+- A `-l<name>` operand is exact when the driver searches the declared
+  directories in the order the link command emits them and finds exactly one
+  modeled candidate: a declared `-L` directory precedes every implicit
+  toolchain directory on the command line, so the first declared directory
+  holding a candidate is the directory the linker selects from, and that
+  file's own content identity then joins the key. Resolution deliberately
+  refuses more than it accepts. A directory holding two modeled candidates, or
+  any `lib<name>.*` spelling outside the modeled set, is ambiguous rather than
+  guessed; a name with no candidate in any declared directory would resolve
+  through implicit system directories and bypasses; a `-l:file` exact-name
+  selection or a path-bearing spelling means different things to different
+  linkers and is never resolved; a search directory that cannot be enumerated
+  bypasses rather than being reported as empty. A resolved file still passes
+  the content-complete classification, so a name answering with a shared
+  library or stub bypasses exactly as an explicit one does.
+- A dependency native group is exact because composition already restricts it
+  to inputs the driver can identify: package resolution rejects a dependency's
+  linker and raw argument vectors outright and admits only exact `-D`/`-U`
+  macro spellings, so a group carries declared sources, its own include and
+  library directories, and ordered link operands — every one of which reaches
+  the same discovery probe, tree identity, and link-input classification the
+  selected package's inputs reach. The probe repeats the group's own include
+  scope and macros, which is exactly what its object compile uses.
+
 The remaining bypasses are exact-identity boundaries, not native-source
 boundaries. Opaque `c-compile-args`, `compile-args`, `link-args`, and
 `raw-args` bypass because options such as `-include` and linker scripts can
 introduce undeclared inputs outside the probed translation units and the final
-generated-C++ link. Named libraries/frameworks, non-file ordered link
-operands, and native library search directories bypass because the driver
-does not model the linker's search algorithm and must not guess which file a
-name would resolve to. A link file that is not a content-complete regular
-archive or relocatable object (thin archives, linker scripts, shared
-libraries, unrecognized formats) bypasses because its bytes do not determine
-its full contribution to the link. Non-empty compiler/SDK/include/library
-search environment variables likewise bypass: hashing `CPATH=/path`, for
-example, does not identify a transitive or subsequently mutated header below
-that path. Narrowing any of these requires establishing exact identity first;
-widening what the key trusts is never an acceptable way to obtain a hit.
+generated-C++ link. Named frameworks bypass because a framework resolves
+through undeclared `-F` and system framework roots to a bundle whose binary,
+headers, and re-exported dependencies no declared path determines. A link file
+that is not a content-complete regular archive or relocatable object (thin
+archives, linker scripts, shared libraries, unrecognized formats) bypasses
+because its bytes do not determine its full contribution to the link.
+Non-empty compiler/SDK/include/library search environment variables likewise
+bypass: hashing `CPATH=/path`, for example, does not identify a transitive or
+subsequently mutated header below that path. Narrowing any of these requires
+establishing exact identity first; widening what the key trusts is never an
+acceptable way to obtain a hit.
 
 Cacheable builds still consume implicit C++ standard-library and platform SDK
 headers/libraries selected by the native compiler. The bounded toolchain
@@ -694,9 +952,13 @@ The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
 Git dependencies support pinned full revisions only; registry ranges, branch
 or tag selectors, replacement/override authority, arbitrary native build
-scripts, and a package registry are not implemented. Dependency native groups
-are composed into builds, but plans containing them bypass the whole-program
-cache until dependency discovery covers their source and link inputs.
+scripts, and a package registry are not implemented. Cross compilation
+selects a target, a native compiler pair, a sysroot, and a native triple, but
+the GTI runtime archive and runtime headers are still discovered once for the
+host toolchain, so a cross link needs a target-built runtime supplied through
+`GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE`. `gti metadata` still reports the
+host target, and `gti run`/`gti test` refuse a non-host target rather than
+modelling a runner or emulator.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The driver publishes resolved project facts, but the LSP does not consume them

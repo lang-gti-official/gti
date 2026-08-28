@@ -374,17 +374,28 @@ NativeCompileRequest::dependencyFile() const {
   return nativeDependencyFile;
 }
 
+void appendNativeTargetPolicy(std::vector<std::string> &command,
+                              const NativeTargetPolicy &policy) {
+  if (!policy.triple.empty()) {
+    command.emplace_back("--target=" + policy.triple);
+  }
+  if (!policy.sysroot.empty()) {
+    command.emplace_back("--sysroot=" + policy.sysroot.string());
+  }
+}
+
 NativeCCompileRequest::NativeCCompileRequest(
     std::string compiler, std::filesystem::path source,
     std::filesystem::path output, CStandard standard,
     OptimizationLevel optimization,
     std::vector<std::filesystem::path> includeDirectories,
-    std::vector<std::string> compilerArguments)
+    std::vector<std::string> compilerArguments, NativeTargetPolicy targetPolicy)
     : compilerExecutable(std::move(compiler)), sourcePath(std::move(source)),
       outputPath(std::move(output)), cStandard(standard),
       optimizationLevel(optimization),
       nativeIncludeDirectories(std::move(includeDirectories)),
-      nativeCompilerArguments(std::move(compilerArguments)) {}
+      nativeCompilerArguments(std::move(compilerArguments)),
+      nativeTargetPolicy(std::move(targetPolicy)) {}
 
 const std::string &NativeCCompileRequest::compiler() const {
   return compilerExecutable;
@@ -414,17 +425,22 @@ NativeCCompileRequest::compilerArguments() const {
   return nativeCompilerArguments;
 }
 
+const NativeTargetPolicy &NativeCCompileRequest::targetPolicy() const {
+  return nativeTargetPolicy;
+}
+
 NativeCppCompileRequest::NativeCppCompileRequest(
     std::string compiler, std::filesystem::path source,
     std::filesystem::path output, CppStandard standard,
     OptimizationLevel optimization,
     std::vector<std::filesystem::path> includeDirectories,
-    std::vector<std::string> compilerArguments)
+    std::vector<std::string> compilerArguments, NativeTargetPolicy targetPolicy)
     : compilerExecutable(std::move(compiler)), sourcePath(std::move(source)),
       outputPath(std::move(output)), cppStandard(standard),
       optimizationLevel(optimization),
       nativeIncludeDirectories(std::move(includeDirectories)),
-      nativeCompilerArguments(std::move(compilerArguments)) {}
+      nativeCompilerArguments(std::move(compilerArguments)),
+      nativeTargetPolicy(std::move(targetPolicy)) {}
 
 const std::string &NativeCppCompileRequest::compiler() const {
   return compilerExecutable;
@@ -454,12 +470,20 @@ NativeCppCompileRequest::compilerArguments() const {
   return nativeCompilerArguments;
 }
 
+const NativeTargetPolicy &NativeCppCompileRequest::targetPolicy() const {
+  return nativeTargetPolicy;
+}
+
 std::vector<std::string>
 NativeToolchain::command(const NativeCompileRequest &request) const {
   std::vector<std::string> command{
       request.compiler(), std::string(standardFlag(request.standard())),
       std::string(optimizationFlag(request.optimization()))};
   const NativeInputs &inputs = request.inputs();
+  // Driver-owned target selection precedes every forwarded native argument
+  // and every input, because it selects which toolchain files the compiler
+  // resolves the rest of the command against.
+  appendNativeTargetPolicy(command, inputs.targetPolicy);
   for (const std::filesystem::path &directory : inputs.includeDirectories) {
     command.emplace_back("-I" + directory.string());
   }
@@ -531,10 +555,11 @@ std::vector<std::string> nativeSourceCommand(
     OptimizationLevel optimization,
     const std::vector<std::filesystem::path> &includeDirectories,
     const std::vector<std::string> &compilerArguments,
-    const std::filesystem::path &source, const std::filesystem::path &output,
-    const std::filesystem::path *depfile) {
+    const NativeTargetPolicy &targetPolicy, const std::filesystem::path &source,
+    const std::filesystem::path &output, const std::filesystem::path *depfile) {
   std::vector<std::string> command{compiler, std::move(standardFlagValue),
                                    std::string(optimizationFlag(optimization))};
+  appendNativeTargetPolicy(command, targetPolicy);
   for (const std::filesystem::path &directory : includeDirectories) {
     command.emplace_back("-I" + directory.string());
   }
@@ -563,7 +588,8 @@ NativeToolchain::command(const NativeCCompileRequest &request) const {
   return nativeSourceCommand(
       request.compiler(), cStandardFlag(request.standard()),
       request.optimization(), request.includeDirectories(),
-      request.compilerArguments(), request.source(), request.output(), nullptr);
+      request.compilerArguments(), request.targetPolicy(), request.source(),
+      request.output(), nullptr);
 }
 
 std::vector<std::string>
@@ -571,7 +597,8 @@ NativeToolchain::command(const NativeCppCompileRequest &request) const {
   return nativeSourceCommand(
       request.compiler(), std::string(standardFlag(request.standard())),
       request.optimization(), request.includeDirectories(),
-      request.compilerArguments(), request.source(), request.output(), nullptr);
+      request.compilerArguments(), request.targetPolicy(), request.source(),
+      request.output(), nullptr);
 }
 
 std::vector<std::string>
@@ -580,8 +607,8 @@ NativeToolchain::preprocessCommand(const NativeCCompileRequest &request,
   return nativeSourceCommand(
       request.compiler(), cStandardFlag(request.standard()),
       request.optimization(), request.includeDirectories(),
-      request.compilerArguments(), request.source(), request.output(),
-      &depfile);
+      request.compilerArguments(), request.targetPolicy(), request.source(),
+      request.output(), &depfile);
 }
 
 std::vector<std::string>
@@ -590,8 +617,8 @@ NativeToolchain::preprocessCommand(const NativeCppCompileRequest &request,
   return nativeSourceCommand(
       request.compiler(), std::string(standardFlag(request.standard())),
       request.optimization(), request.includeDirectories(),
-      request.compilerArguments(), request.source(), request.output(),
-      &depfile);
+      request.compilerArguments(), request.targetPolicy(), request.source(),
+      request.output(), &depfile);
 }
 
 NativePreprocessingResult
