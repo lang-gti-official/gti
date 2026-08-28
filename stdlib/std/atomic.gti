@@ -1,0 +1,84 @@
+namespace std {
+/// Result of one strong atomic compare/exchange operation.
+class atomic_compare_exchange_result<std::atomic_scalar T> {
+  bool exchanged_value;
+  T observed_value;
+
+public:
+  atomic_compare_exchange_result(bool exchanged, T observed)
+      : exchanged_value(exchanged), observed_value(observed) {}
+
+  /// True when the desired value replaced the expected value.
+  bool exchanged() {
+    return this.exchanged_value;
+  }
+
+  /// The value observed immediately before the compare/exchange decision.
+  T observed() {
+    return this.observed_value;
+  }
+};
+}
+
+namespace gti_internal {
+/// Compiler-owned scalar atomic representation. The declaration identity, not
+/// this source spelling, selects the backend capability.
+class atomic_storage<std::atomic_scalar T> {
+public:
+  atomic_storage(T value) {}
+};
+
+T atomic_load<std::atomic_scalar T>(gti_internal::atomic_storage<T>& storage);
+void atomic_store<std::atomic_scalar T>(gti_internal::atomic_storage<T>& storage,
+                                        T value);
+T atomic_exchange<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T value);
+bool atomic_compare_exchange<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T expected_value, T desired,
+    mut T& observed);
+}
+
+namespace std {
+/// A share-safe atomic bool or fixed-width integer.
+///
+/// Every operation in this initial surface is sequentially consistent. The
+/// value is move-only; GTI's borrow rules prevent moving it while shared
+/// references are live, preserving the storage identity used by an operation.
+class atomic<std::atomic_scalar T> {
+  gti_internal::atomic_storage<T> storage;
+
+public:
+  /// Creates one atomic scalar initialized to `value`.
+  atomic(T value)
+      : storage(gti_internal::atomic_storage<T>(value)) {}
+  atomic(atomic<T>& other) = delete;
+  atomic(atomic<T>&& other) = default;
+
+  /// Returns the current value with sequentially consistent ordering.
+  T load() {
+    return gti_internal::atomic_load(this.storage);
+  }
+
+  /// Replaces the current value with sequentially consistent ordering.
+  void store(T value) {
+    gti_internal::atomic_store(this.storage, value);
+  }
+
+  /// Replaces and returns the prior value with sequentially consistent
+  /// ordering.
+  T exchange(T value) {
+    return gti_internal::atomic_exchange(this.storage, value);
+  }
+
+  /// Strongly compares with `expected_value`, conditionally stores `desired`,
+  /// and reports both success and the observed value. This operation never
+  /// fails spuriously and is sequentially consistent.
+  atomic_compare_exchange_result<T> compare_exchange_strong(
+      T expected_value, T desired) {
+    mut T observed = expected_value;
+    bool exchanged = gti_internal::atomic_compare_exchange(
+        this.storage, expected_value, desired, observed);
+    return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+};
+}

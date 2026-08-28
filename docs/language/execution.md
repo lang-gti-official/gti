@@ -639,23 +639,24 @@ GTI does not provide language exceptions.
 ## 4.9 Concurrency Boundary
 
 GTI has an adopted concurrency and memory-model boundary, with rationale in
-[ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler does
-not yet expose public atomics, mutexes, or foreign-thread entry. It does expose
-the first owned managed-thread slice through the ordinary source-defined
-`std::thread` in `<std/thread>`. The single-threaded profile remains the
-default executable profile.
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler
+exposes owned managed threads through `<std/thread>` and sequentially
+consistent scalar atomics through `<std/atomic>`. Mutexes and foreign-thread
+entry remain unavailable. The single-threaded profile remains the default
+executable profile. The focused current source contract is in
+[Concurrency And Atomic Values](concurrency.md).
 
 The compiler now has backend-independent HIR/MIR identities for thread
 spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
 lock/unlock. Atomic records retain operation-specific memory orders and MIR
 rejects illegal order combinations. In the single-threaded profile it rejects
 executable synchronization records while permitting only exact private thread
-intrinsics in lowering-marked dormant standard-library wrapper bodies. This is
-why source may import `<std/thread>` without using it; calling or constructing
-its managed-thread surface still fails semantically before MIR publication.
-These internal records are not source operations. `std::thread` reaches the
-implemented spawn and join records through exact trusted private capabilities;
-public atomics and mutexes remain unavailable.
+or atomic intrinsics in lowering-marked dormant standard-library wrapper
+bodies. This is why source may import `<std/thread>` or `<std/atomic>` without
+using it; calling or constructing either concurrent surface still fails
+semantically before MIR publication. These internal records are not source
+operations. Public wrappers reach them through exact trusted private
+capabilities; mutexes remain unavailable.
 `std::thread` is the normal public managed-thread type. Unlike C++'s class with
 the same spelling, it always joins and exposes no detach operation.
 
@@ -666,9 +667,9 @@ profile spells it `execution-profile = "concurrent"`. The exact
 `single-threaded` value is available in both places and is the default. Native
 link flags, host-library behavior, backend code, and incidental use of a host
 thread never infer the selection. Selecting the profile applies the
-transfer/share and global rules below. An implemented managed-thread operation
-also requires the selected target/runtime `threads` capability; profile
-selection does not make any other unimplemented operation available.
+transfer/share and global rules below. Implemented managed-thread and atomic
+operations also require the selected target/runtime `threads` capability;
+profile selection does not make any other unimplemented operation available.
 
 One **memory location** is a live scalar object or non-overlapping scalar
 subobject. Two accesses conflict when they touch the same location or
@@ -686,21 +687,24 @@ whose contract says so. **Happens-before** is the transitive closure of those
 relations. A compiler effect such as `maySynchronize` is a conservative
 optimization barrier, not proof of a synchronizes-with edge.
 
-The implemented managed-thread subset provides the first two edges below. The
-remaining rows define later atomic and mutex slices:
+The implemented managed-thread and atomic subsets provide the first three
+edges below. The remaining row defines the later mutex slice:
 
 - every evaluation sequenced before successful spawn happens-before task
   entry;
 - task completion happens-before successful explicit or automatic join
   returns or continues cleanup;
-- every future sequentially consistent atomic operation participates in one
+- every sequentially consistent atomic operation participates in one
   program-wide sequentially consistent order; and
 - a future mutex unlock synchronizes-with the corresponding later successful
   acquisition.
 
-The first atomic value domains are fixed-width integers and `bool`. Their
-initial operations are sequentially consistent and promise neither lock
-freedom nor C-compatible layout. Later accepted order names are `relaxed`,
+The implemented atomic value domains are fixed-width integers and `bool`.
+Construction, load, store, exchange, and strong compare/exchange are
+sequentially consistent and promise neither lock freedom nor C-compatible
+layout. Strong compare/exchange never fails spuriously and reports success plus
+the actual observation without exposing a reference. Later accepted order
+names are `relaxed`,
 `acquire`, `release`, `acq_rel`, and `seq_cst`; `consume` is absent. Operation-
 specific legality must be checked before lowering.
 

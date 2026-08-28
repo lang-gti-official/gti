@@ -25,6 +25,7 @@ namespace gti_internal {
   @compiler_constraint("default_initializable") concept default_initializable_capability<T>;
   @compiler_constraint("equality_comparable") concept equality_comparable_capability<T>;
   @compiler_constraint("relationally_ordered") concept relationally_ordered_capability<T>;
+  @compiler_constraint("atomic_scalar") concept atomic_scalar_capability<T>;
   @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
   @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
   @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
@@ -161,6 +162,12 @@ namespace std {
   concept signed_integral<T> = gti_internal::signed_integral_capability<T> && std::integral<T> && std::signed_numeric<T>;
   concept unsigned_integral<T> = gti_internal::unsigned_integral_capability<T> && std::integral<T>;
   concept floating_point<T> = gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
+  /// A scalar domain with a stable public atomic contract: bool and the
+  /// fixed-width signed and unsigned integer types.
+  concept atomic_scalar<T> =
+      gti_internal::atomic_scalar_capability<T> && std::copyable<T> &&
+      std::default_initializable<T> && std::transferable<T> &&
+      std::shareable<T>;
 
   /// Domain-value operator capabilities (L-OP-01). Each proves one exact
   /// public read-only member returning an owned value of the domain type,

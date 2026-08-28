@@ -21942,6 +21942,42 @@ private:
       return emitted;
     };
     if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+         instruction.intrinsic == IntrinsicKind::AtomicStore ||
+         instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+         instruction.intrinsic == IntrinsicKind::AtomicCompareExchange)) {
+      const bool store = instruction.intrinsic == IntrinsicKind::AtomicStore;
+      const bool compareExchange =
+          instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
+      if (!store) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+      }
+      if (compareExchange) {
+        output << "::gti_internal::backend::atomic_compare_exchange(";
+        emitCallArgument(instruction.operands[0], false, false);
+        output << ", ";
+        emitOperand(instruction.operands[1]);
+        output << ", ";
+        emitOperand(instruction.operands[2]);
+        output << ", ";
+        emitCallArgument(instruction.operands[3], false, false);
+        output << ", std::memory_order_seq_cst, std::memory_order_seq_cst";
+      } else {
+        emitCallArgument(instruction.operands[0], false, false);
+        output << (instruction.intrinsic == IntrinsicKind::AtomicLoad ? ".load("
+                   : instruction.intrinsic == IntrinsicKind::AtomicStore
+                       ? ".store("
+                       : ".exchange(");
+        if (instruction.operands.size() == 2) {
+          emitOperand(instruction.operands[1]);
+          output << ", ";
+        }
+        output << "std::memory_order_seq_cst";
+      }
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {
       output << "auto __gti_mir_v_" << *instruction.result
              << " = ::gti_internal::backend::thread_handle{};\n";
@@ -31076,6 +31112,99 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        ? &handle
                        : nullptr;
           };
+          const auto atomicStorageElement =
+              [&](const MirOperand &operand) -> const SemanticType * {
+            if (operand.kind != MirOperandKind::BorrowRead ||
+                operand.place == 0 ||
+                operand.type.kind != SemanticType::Reference ||
+                operand.type.referenceAccess != AccessMode::ReadOnly ||
+                operand.type.arguments.size() != 1) {
+              return nullptr;
+            }
+            const MirPlace *place = body.findPlace(operand.place);
+            const SemanticType &storage = operand.type.arguments.front();
+            if (place == nullptr || place->type != storage ||
+                storage.kind != SemanticType::Class ||
+                storage.arguments.size() != 1 || !typeRow(storage)) {
+              return nullptr;
+            }
+            return &storage.arguments.front();
+          };
+          const auto sequentiallyConsistentAtomic = [&] {
+            return instruction.synchronization.order ==
+                   AtomicMemoryOrder::SequentiallyConsistent;
+          };
+          if (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+              instruction.intrinsic == IntrinsicKind::AtomicStore ||
+              instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+              instruction.intrinsic == IntrinsicKind::AtomicCompareExchange) {
+            const SemanticType *element =
+                instruction.operands.empty()
+                    ? nullptr
+                    : atomicStorageElement(instruction.operands.front());
+            const std::size_t operandCount =
+                instruction.intrinsic == IntrinsicKind::AtomicLoad ? 1
+                : instruction.intrinsic == IntrinsicKind::AtomicStore ||
+                        instruction.intrinsic == IntrinsicKind::AtomicExchange
+                    ? 2
+                    : 4;
+            const SynchronizationOperationKind expectedSynchronization =
+                instruction.intrinsic == IntrinsicKind::AtomicLoad
+                    ? SynchronizationOperationKind::AtomicLoad
+                : instruction.intrinsic == IntrinsicKind::AtomicStore
+                    ? SynchronizationOperationKind::AtomicStore
+                : instruction.intrinsic == IntrinsicKind::AtomicExchange
+                    ? SynchronizationOperationKind::AtomicReadModifyWrite
+                    : SynchronizationOperationKind::AtomicCompareExchange;
+            const bool resultReady =
+                instruction.intrinsic == IntrinsicKind::AtomicStore
+                    ? !instruction.result &&
+                          instruction.info.type == SemanticType::Void
+                    : instruction.result.has_value() &&
+                          (instruction.intrinsic ==
+                                   IntrinsicKind::AtomicCompareExchange
+                               ? instruction.info.type == SemanticType::Bool
+                               : element != nullptr &&
+                                     instruction.info.type == *element);
+            if (instruction.receiver || instruction.functionTarget ||
+                element == nullptr ||
+                instruction.operands.size() != operandCount || !resultReady ||
+                instruction.synchronization.kind != expectedSynchronization ||
+                !sequentiallyConsistentAtomic() ||
+                (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange
+                     ? instruction.synchronization.failureOrder !=
+                           AtomicMemoryOrder::SequentiallyConsistent
+                     : instruction.synchronization.failureOrder.has_value()) ||
+                !instruction.localFailureSites.empty()) {
+              return false;
+            }
+            const std::size_t scalarValueEnd =
+                instruction.intrinsic == IntrinsicKind::AtomicCompareExchange
+                    ? instruction.operands.size() - 1
+                    : instruction.operands.size();
+            for (std::size_t index = 1; index < scalarValueEnd; ++index) {
+              if (!valueOperand(instruction.operands[index]) ||
+                  instruction.operands[index].type != *element) {
+                return false;
+              }
+            }
+            if (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange) {
+              const MirOperand &observed = instruction.operands.back();
+              const MirPlace *observedPlace =
+                  observed.place == 0 ? nullptr
+                                      : body.findPlace(observed.place);
+              if (observed.kind != MirOperandKind::BorrowWrite ||
+                  observedPlace == nullptr ||
+                  observed.type.kind != SemanticType::Reference ||
+                  observed.type.referenceAccess != AccessMode::Mutable ||
+                  observed.type.arguments.size() != 1 ||
+                  observed.type.arguments.front() != *element ||
+                  observedPlace->type != *element) {
+                return false;
+              }
+            }
+            continue;
+          }
           if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {
             if (instruction.receiver || instruction.functionTarget ||
                 !instruction.result || !instruction.operands.empty() ||

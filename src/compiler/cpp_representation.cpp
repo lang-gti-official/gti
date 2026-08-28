@@ -128,6 +128,14 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         CompilerCapabilityTypeKind::ThreadHandle) {
       return "::gti_internal::backend::thread_handle";
     }
+    if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::AtomicStorage) {
+      if (type.arguments.size() != 1) {
+        return "void";
+      }
+      return "::gti_internal::backend::atomic_value<" +
+             spell(type.arguments.front()) + ">";
+    }
     std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
                                                  classInfo->cOpaqueHandle);
     const std::vector<SemanticType> &typeArguments =

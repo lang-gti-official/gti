@@ -19,6 +19,12 @@ atomics, mutexes, or entry from a foreign-created thread. The current public
 executable language is therefore single-threaded even though generated C++ or
 a native dependency may internally use host threads.
 
+That paragraph records the adoption-time context. The current implementation
+now exposes owned managed threads and sequentially consistent scalar atomics
+under the opt-in concurrent profile; mutexes and foreign-thread entry remain
+outstanding. Current source semantics live in
+[the concurrency language contract](../language/concurrency.md).
+
 That implementation accident cannot become the language memory model. Before
 the ownership and compatibility contracts freeze, GTI needs one answer for:
 
@@ -185,7 +191,8 @@ full-expression contract. **Synchronizes-with** is created only by a GTI
 operation whose language contract says so. **Happens-before** is the transitive
 closure of those relations.
 
-The first executable concurrent profile will provide these edges:
+The implemented profile provides the spawn, join, and sequentially consistent
+atomic edges below; mutex ordering remains future:
 
 - evaluations sequenced before successful spawn happen-before task entry;
 - task completion happens-before a successful explicit or automatic join

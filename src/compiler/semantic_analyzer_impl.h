@@ -1415,6 +1415,9 @@ private:
   void analyzeThreadIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
 
+  void analyzeAtomicIntrinsicCall(const Call &expr,
+                                  const CallableCandidate &declaration);
+
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
 
@@ -1688,8 +1691,8 @@ private:
   [[nodiscard]] bool typeRequiresThreads(const SemanticType &type) const;
 
   [[nodiscard]] bool
-  validateThreadSurfaceAvailability(const Token &location,
-                                    std::string_view surface);
+  validateConcurrentSurfaceAvailability(const Token &location,
+                                        std::string_view surface);
 
   [[nodiscard]] static std::string
   constructorSignatureSpelling(const ConstructorInfo &constructor);
@@ -2634,8 +2637,7 @@ private:
                                          const SemanticType &constructedType,
                                          const SourceSpan &span);
 
-  [[nodiscard]] static bool
-  hasOpenProgramCleanupShape(const SemanticType &type);
+  [[nodiscard]] bool hasOpenProgramCleanupShape(const SemanticType &type) const;
 
   void recordProgramCleanupEffects(const SemanticType &type,
                                    const SourceSpan &span,
@@ -2771,6 +2773,8 @@ private:
   [[nodiscard]] bool isPreludeUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isThreadLibraryUnit(SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] bool isAtomicLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;

@@ -56,8 +56,9 @@ for the current implementation when a document is stale or ambiguous.
   [raw pointers](language/raw-pointers.md), and
   [native C interoperation](language/native-c-interop.md) — ownership, unsafe,
   ABI, and lifetime contracts.
-- [Concepts](language/concepts.md), [ranges](language/ranges.md), and
-  [expected values](language/expected.md) — focused feature contracts.
+- [Concepts](language/concepts.md), [ranges](language/ranges.md),
+  [expected values](language/expected.md), and
+  [concurrency](language/concurrency.md) — focused feature contracts.
 - [I/O](language/io.md), [TCP](language/tcp.md), and
   [standard library](language/standard-library.md) — current library-facing
   semantics and boundaries.

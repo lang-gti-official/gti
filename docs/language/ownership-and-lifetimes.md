@@ -130,9 +130,10 @@ dereference operation.
 ## Concurrency Transfer And Sharing
 
 The default executable profile is single-threaded. GTI also implements the
-ownership facts, process-wide storage policy, and first owned managed-thread
-operation of its opt-in concurrent profile. Public atomics, mutex-protected
-borrows, scoped threads, detach, and foreign-thread entry remain unavailable.
+ownership facts, process-wide storage policy, owned managed threads, and
+sequentially consistent scalar atomics of its opt-in concurrent profile.
+Mutex-protected borrows, scoped threads, detach, and foreign-thread entry
+remain unavailable.
 
 For a concrete type `T`:
 
@@ -212,7 +213,8 @@ The adopted initial rules are:
 `mut` grants mutation through one local access path. It does not mean atomic,
 volatile, synchronized, transfer-capable, share-capable, or safe for concurrent
 use. Concurrent mutation must be mediated by an operation with an explicit
-synchronization contract, such as a future atomic or mutex guard.
+synchronization contract, such as the implemented `std::atomic<T>` or a future
+mutex guard.
 
 The executable managed-thread model consumes one exact owned `void()` task
 through `std::thread` or one exact owned `Result()` task through

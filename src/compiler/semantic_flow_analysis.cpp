@@ -278,8 +278,18 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
                           "a selected GTI constructor has no executable body");
 }
 
-auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(const SemanticType &type)
-    -> bool {
+auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(
+    const SemanticType &type) const -> bool {
+  if (type.kind == SemanticType::Class && type.classId != 0 &&
+      type.classId <= classes.size() &&
+      classInfo(type.classId).compilerCapability ==
+          CompilerCapabilityTypeKind::AtomicStorage) {
+    // The exact compiler-owned atomic representation has trivial cleanup and
+    // a storage-independent constructor for every admitted scalar T. Its
+    // generic element therefore does not make program-initialization effects
+    // open-ended.
+    return false;
+  }
   if (type.kind == SemanticType::TypeParameter ||
       type.kind == SemanticType::TypePack) {
     return true;
@@ -291,7 +301,9 @@ auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(const SemanticType &type)
     return true;
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
-                     hasOpenProgramCleanupShape);
+                     [this](const SemanticType &argument) {
+                       return hasOpenProgramCleanupShape(argument);
+                     });
 }
 
 auto SemanticVisitor::Impl::recordProgramCleanupEffects(
@@ -1740,6 +1752,10 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ThreadHandleEmpty:
         case IntrinsicKind::ThreadSpawn:
         case IntrinsicKind::ThreadJoinable:
+        case IntrinsicKind::AtomicLoad:
+        case IntrinsicKind::AtomicStore:
+        case IntrinsicKind::AtomicExchange:
+        case IntrinsicKind::AtomicCompareExchange:
           break;
         case IntrinsicKind::ThreadJoin:
           operation.propagation = FailurePropagationKind::TaskJoin;
@@ -2194,6 +2210,16 @@ auto SemanticVisitor::Impl::isThreadLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/thread";
+}
+
+auto SemanticVisitor::Impl::isAtomicLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/atomic";
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
@@ -5905,7 +5931,24 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
       invalidConstraintSet(actual)) {
     return true;
   }
-  return hasConstraint(actual, required);
+  if (hasConstraint(actual, required)) {
+    return true;
+  }
+  if (!hasConstraint(actual, GenericConstraintKind::AtomicScalar)) {
+    return false;
+  }
+  switch (required) {
+  case GenericConstraintKind::CopyConstructible:
+  case GenericConstraintKind::Copyable:
+  case GenericConstraintKind::Movable:
+  case GenericConstraintKind::Transferable:
+  case GenericConstraintKind::Shareable:
+  case GenericConstraintKind::DefaultInitializable:
+  case GenericConstraintKind::EqualityComparable:
+    return true;
+  default:
+    return false;
+  }
 }
 
 auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const

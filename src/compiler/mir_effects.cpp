@@ -295,6 +295,14 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{},
     // ThreadAutoJoin: synchronization metadata supplies the join barrier.
     MirEffectTraits{},
+    // AtomicLoad: synchronization metadata supplies the read barrier.
+    MirEffectTraits{.initializesValue = true},
+    // AtomicStore: synchronization metadata supplies the write barrier.
+    MirEffectTraits{},
+    // AtomicExchange: synchronization metadata supplies the RMW barrier.
+    MirEffectTraits{.initializesValue = true},
+    // AtomicCompareExchange: synchronization metadata supplies both barriers.
+    MirEffectTraits{.initializesValue = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -467,6 +475,10 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-joinable",
     "thread-join",
     "thread-auto-join",
+    "atomic-load",
+    "atomic-store",
+    "atomic-exchange",
+    "atomic-compare-exchange",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

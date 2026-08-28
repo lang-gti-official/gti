@@ -260,9 +260,11 @@ diagnostics or letting a backend message choose either identity.
   diagnostics may accompany an invalid nominal class, but the LSP must publish
   this compiler diagnostic unchanged and clear it when a newer snapshot
   becomes valid.
-- `GTI-S2084` owns the trusted managed-thread boundary. Point at an invalid
+- `GTI-S2084` owns the trusted concurrency boundary. Point at an invalid
   handle/task argument, explicit type argument, or unavailable execution/
-  target capability. A task must be one consumed, movable, transfer-capable
+  target capability. Atomic construction/use requires the concurrent profile,
+  target thread support, and its exact private capability; a task must be one
+  consumed, movable, transfer-capable
   exact `void()` or context-required `Result()` lambda or nominal callable;
   typed result handles additionally require an owned, non-reference,
   non-pointer, transfer-capable result. Relate the first structural transfer
@@ -271,7 +273,12 @@ diagnostics or letting a backend message choose either identity.
   offer a fix-it because choosing ownership, capture shape, execution profile,
   or target is not mechanical. Ordinary missing-move diagnostics remain
   `GTI-S2046`. The LSP publishes the shared diagnostic unchanged and must not
-  recognize `std::thread` by spelling.
+  recognize `std::thread` or `std::atomic` by spelling.
+- `GTI-S2086` owns malformed compiler-private scalar atomic storage and
+  operation shapes. It is normally visible only while validating the trusted
+  `<std/atomic>` unit; public unsupported type arguments fail through the
+  `std::atomic_scalar` constraint. Do not replace exact identity, place,
+  mutability, operand-type, or domain failures with a backend error.
 - `GTI-S2085` owns an incoherent return from a by-value direct
   stored-reference carrier. Point at the actionable terminal token of the
   returned expression and distinguish a carrier-shell field/projection, a

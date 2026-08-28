@@ -333,8 +333,9 @@ semantics.
 The concurrency and memory-model boundary is specified in
 [Execution section 4.9](execution.md#49-concurrency-boundary) and
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The source-defined
-`std::thread` and `std::thread_result<Result>` provide the first public owned
-managed-thread operations. Public atomics, mutexes, signal interaction,
+`std::thread` and `std::thread_result<Result>` provide public owned
+managed-thread operations. `std::atomic<T>` provides sequentially consistent
+`bool` and fixed-width integer atomics. Mutexes, signal interaction,
 detached/asynchronous execution, and foreign-thread entry are not currently
 implemented. An implementation shall not infer the
 concurrent profile or a `threads` capability solely from the target operating
@@ -347,11 +348,11 @@ The reference direct compiler selects that fact with
 `--execution-profile single-threaded|concurrent`. Project mode resolves the
 optional `execution-profile` field of the selected `[profiles.<name>]` table,
 with the same two values, and accepts the command-line option as an explicit
-override. Omission selects `single-threaded`. Concurrent selection currently
-enables the adopted static global/storage policy and permits implemented
-managed-thread operations when the selected target advertises its independent
-`threads` runtime capability. It grants no atomic, mutex, detach, or other
-unimplemented operation.
+override. Omission selects `single-threaded`. Concurrent selection enables the
+adopted static global/storage policy and permits implemented managed-thread and
+atomic operations when the selected target advertises its independent
+`threads` runtime capability. It grants no mutex, detach, or other unimplemented
+operation.
 
 The reference driver resolves execution policy and runtime support into one
 immutable analysis configuration before frontend entry. A raw compiler-library

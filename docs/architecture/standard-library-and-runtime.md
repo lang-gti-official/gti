@@ -149,6 +149,16 @@ explicit `join` returns `expected<Result, thread_errc>`, and destruction joins
 then abandons an unobserved value exactly once. GTI does not infer either
 public class by qualified spelling.
 
+The ordinary `<std/atomic>` source unit defines move-only `std::atomic<T>` and
+its compare/exchange result policy. Semantics does not recognize either public
+name. The exact trusted unit alone owns the compiler-private
+`gti_internal::atomic_storage<T>` capability and load, store, exchange, and
+strong compare/exchange declarations. The capability admits only `bool` and
+fixed-width integers. HIR attaches the exact sequentially consistent operation
+record, MIR verifies it, and the sealed C++ plan maps the private storage to its
+native representation. The backend never infers an atomic from a class name or
+reconstructs an order from source syntax.
+
 Only the irreducible host boundary is compiler-private. Its capability surface
 is the identity-bound `gti_internal::thread_handle` and
 `gti_internal::thread_result_handle<Result>` plus their empty, spawn,
@@ -169,11 +179,12 @@ an exact backend-independent synchronization record. HIR and MIR distinguish
 thread spawn/join, atomic operation families, and mutex lock/unlock; atomic
 records retain legal order dimensions. MIR rejects these records in the
 single-threaded execution profile except in an exact, lowering-marked dormant
-compiler-trusted thread-wrapper body. That exception lets the complete unused
-`<std/thread>` declaration inventory exist; it cannot create a task adapter and
-does not bypass the public semantic profile check. Optimizer effects preserve
-every record as a barrier. The concurrent profile plus target `threads`
-capability admits the implemented thread operations. Spawn transfers one exact
+compiler-trusted thread- or atomic-wrapper body. That exception lets complete
+unused `<std/thread>` and `<std/atomic>` declaration inventories exist; it
+cannot create a task adapter or executable atomic use and does not bypass the
+public semantic profile check. Optimizer effects preserve every record as a
+barrier. The concurrent profile plus target `threads` capability admits the
+implemented operations. Spawn transfers one exact
 owned task to the worker, successful explicit or automatic join establishes
 completion-before-return, and no public detach operation exists.
 

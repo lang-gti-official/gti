@@ -3660,6 +3660,28 @@ private:
         } else if (resolved->intrinsic == IntrinsicKind::ThreadJoin ||
                    resolved->intrinsic == IntrinsicKind::ThreadAutoJoin) {
           value.synchronization.kind = SynchronizationOperationKind::ThreadJoin;
+        } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad) {
+          value.synchronization.kind = SynchronizationOperationKind::AtomicLoad;
+          value.synchronization.order =
+              AtomicMemoryOrder::SequentiallyConsistent;
+        } else if (resolved->intrinsic == IntrinsicKind::AtomicStore) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::AtomicStore;
+          value.synchronization.order =
+              AtomicMemoryOrder::SequentiallyConsistent;
+        } else if (resolved->intrinsic == IntrinsicKind::AtomicExchange) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::AtomicReadModifyWrite;
+          value.synchronization.order =
+              AtomicMemoryOrder::SequentiallyConsistent;
+        } else if (resolved->intrinsic ==
+                   IntrinsicKind::AtomicCompareExchange) {
+          value.synchronization.kind =
+              SynchronizationOperationKind::AtomicCompareExchange;
+          value.synchronization.order =
+              AtomicMemoryOrder::SequentiallyConsistent;
+          value.synchronization.failureOrder =
+              AtomicMemoryOrder::SequentiallyConsistent;
         }
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {

@@ -22,9 +22,10 @@ diagnostic `GTI-S2058` rejects each such attempt.
 
 Compiler-capability types and operations bind by an exact selected declaration
 identity, never by qualified spelling or a public wrapper name. Most such
-identities live in the trusted prelude; the managed-thread identities live only
-in the exact trusted `<std/thread>` source unit so unrelated programs do not
-carry its private declaration inventory. Aliases preserve an identity.
+identities live in the trusted prelude; managed-thread and atomic identities
+live only in the exact trusted `<std/thread>` and `<std/atomic>` source units so
+unrelated programs do not carry their private declaration inventories. Aliases
+preserve an identity.
 Declarations whose exposed semantic type contains a private capability are not
 published to application source, so a trusted unit cannot leak a private
 handle through an otherwise public constructor, function, field, or alias.
@@ -140,6 +141,13 @@ The current implemented foundation includes:
   returns the owned value from explicit `join()`, and joins then abandons an
   unobserved value during destruction. This first surface has no detach, stop
   token, separate argument pack, or cross-thread borrow; and
+- `<std/atomic>` source-defined move-only `std::atomic<T>` for `bool` and every
+  fixed-width signed and unsigned integer. Construction, load, store, exchange,
+  and strong compare/exchange are sequentially consistent. Strong
+  compare/exchange never fails spuriously and returns success plus the actual
+  observation without exposing storage. The wrapper is transfer- and
+  share-capable but promises neither lock freedom, stable layout, nor native
+  ABI compatibility; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
   `std::tcp::socket` owner with typed creation and close errors; and
 - `<std/filesystem>` a move-only `std::filesystem::path` giving C++'s
@@ -382,7 +390,8 @@ The following component families remain planned or incomplete:
 - indexed/named/specifier-based and floating-point formatting, formatter
   customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, random distributions and engine
-  breadth, connected networking, traffic buffers, atomics, mutexes, condition
+  breadth, connected networking, traffic buffers, atomic order/fetch/wait
+  breadth, mutexes, condition
   variables, stop tokens, detached/scoped tasks, typed argument packs, and
   broader threading;
 - stateful allocator policy, allocator-aware growing containers,

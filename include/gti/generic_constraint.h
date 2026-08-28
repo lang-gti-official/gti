@@ -25,6 +25,7 @@ enum class GenericConstraintKind : std::uint8_t {
   DefaultInitializable,
   EqualityComparable,
   RelationallyOrdered,
+  AtomicScalar,
   Count,
 };
 
@@ -64,7 +65,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 14> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -79,9 +80,10 @@ inline constexpr std::array<GenericConstraintKind, 14> genericConstraintKinds{{
     GenericConstraintKind::DefaultInitializable,
     GenericConstraintKind::EqualityComparable,
     GenericConstraintKind::RelationallyOrdered,
+    GenericConstraintKind::AtomicScalar,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 14> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -96,6 +98,7 @@ inline constexpr std::array<CompilerConstraintRecord, 14> compilerConstraints{{
     {"default_initializable", GenericConstraintKind::DefaultInitializable},
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
+    {"atomic_scalar", GenericConstraintKind::AtomicScalar},
 }};
 
 inline constexpr std::array<CompilerStructuralConstraintRecord, 13>

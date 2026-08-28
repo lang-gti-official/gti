@@ -87,12 +87,12 @@ immutable program metadata. Body lowering and optimization do not rediscover
 it from host/backend flags. The current profile fact constrains frontend
 global/static validity. The MIR declaration inventory includes unused,
 non-generic standard-library method bodies. When one of those compiler-trusted
-bodies contains an exact private thread intrinsic, lowering marks that body as
-a dormant synchronization wrapper. MIR verification exact-checks the marker,
-rejects it on module/hosted bodies or non-thread synchronization, and otherwise
-rejects represented synchronization in the single-threaded profile. Thus an
-unused `<std/thread>` import remains valid without granting a backend or
-transform executable concurrent authority.
+bodies contains an exact private thread or atomic intrinsic, lowering marks
+that body as a dormant synchronization wrapper. MIR verification exact-checks
+the marker, rejects it on module/hosted bodies or unrelated synchronization,
+and otherwise rejects represented synchronization in the single-threaded
+profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
+without granting a backend or transform executable concurrent authority.
 
 The deterministic serialization is currently `mir-v51`/`mir-body-v45`.
 Program v51 extends the version-28 benign-event rule to the trivial-commit

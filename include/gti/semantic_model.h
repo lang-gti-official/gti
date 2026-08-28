@@ -272,6 +272,10 @@ enum class IntrinsicKind {
   ThreadJoinable,
   ThreadJoin,
   ThreadAutoJoin,
+  AtomicLoad,
+  AtomicStore,
+  AtomicExchange,
+  AtomicCompareExchange,
   Count,
 };
 
@@ -293,6 +297,7 @@ enum class CompilerCapabilityTypeKind {
   CString,
   PrefixStorage,
   ThreadHandle,
+  AtomicStorage,
 };
 
 enum class ProgramEntryKind {

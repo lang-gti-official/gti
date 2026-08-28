@@ -693,7 +693,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const SemanticType constructedType = selectedClass;
   if (!isCompilerTrustedRequester(paren) &&
       typeRequiresThreads(constructedType) &&
-      !validateThreadSurfaceAvailability(paren, "This managed-thread value")) {
+      !validateConcurrentSurfaceAvailability(paren, "This concurrent value")) {
     currentType = SemanticType::Unknown;
     return;
   }
@@ -2025,6 +2025,38 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                "type.",
                "GTI-S2084");
       }
+    }
+    return;
+  }
+  if (compilerCapability == CompilerCapabilityTypeKind::AtomicStorage) {
+    if (type.arguments.size() != 1) {
+      report(type.name.last(),
+             "gti_internal::atomic_storage<T> requires exactly one scalar "
+             "value type.",
+             "GTI-S2086");
+    } else {
+      if (type.arguments.front().genericArgumentSyntax ==
+          GenericArgumentSyntax::Value) {
+        report(type.arguments.front().name.last(),
+               "gti_internal::atomic_storage requires a type argument.",
+               "GTI-S2086");
+        return;
+      }
+      validateType(type.arguments.front());
+      const SemanticType valueType = typeOf(type.arguments.front());
+      if (!satisfiesConstraint(
+              valueType, constraintBit(GenericConstraintKind::AtomicScalar))) {
+        report(type.arguments.front().name.last(),
+               "Compiler-private atomic storage supports bool and the "
+               "fixed-width signed and unsigned integer types only.",
+               "GTI-S2086");
+      }
+    }
+    if (!type.arrayExtents.empty()) {
+      report(type.name.last(),
+             "Fixed arrays of compiler-private atomic storage are not "
+             "supported.",
+             "GTI-S2086");
     }
     return;
   }
