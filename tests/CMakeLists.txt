@@ -1270,6 +1270,19 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/random_engine.gti"
   )
   add_test(
+    NAME language_coverage_corpus
+    COMMAND "${PROJECT_SOURCE_DIR}/tests/coverage/run_coverage.sh"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_BINARY_DIR}/language-coverage-corpus"
+  )
+  set_tests_properties(
+    language_coverage_corpus
+    PROPERTIES TIMEOUT 900
+               PROCESSORS 2
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+  add_test(
     NAME filesystem_path_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/filesystem_path_runtime_test.py"

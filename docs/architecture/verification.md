@@ -252,18 +252,19 @@ example graph.
 
 ## Language coverage corpus
 
-`tests/coverage/` holds a breadth sweep that is deliberately **not** a
-registered CI suite. It compiles and runs a set of ordinary GTI programs
-chosen to combine as much syntax and stdlib surface as possible, on the
-premise that feature-owned tests exercise each construct in isolation and so
-miss defects that only appear in combination. Run it manually with
+`tests/coverage/` holds the registered `language_coverage_corpus` breadth
+sweep. It compiles and runs ordinary GTI programs chosen to combine as much
+syntax and stdlib surface as possible, on the premise that feature-owned tests
+exercise each construct in isolation and can miss defects that appear only in
+combination. Run it through CTest or directly with
 `tests/coverage/run_coverage.sh build/gti`.
 
-It is excluded from ctest because several of its programs currently fail;
-`tests/coverage/FINDINGS.md` records each failure with a minimal reproducer.
-As those defects are fixed the corpus becomes a candidate for registration.
-Programs added here should be valid GTI — a failure is a compiler finding, not
-a corpus expectation to be edited away.
+All corpus programs must compile and exit successfully; the runner separately
+classifies an ICE (`GTI-B0001`), a diagnostic rejection, a silent compiler
+failure, and a runtime failure so no class can be mistaken for another.
+`tests/coverage/FINDINGS.md` preserves the original six reductions and their
+resolutions. Programs added here must be valid GTI — a failure is a compiler
+finding, not a corpus expectation to edit away.
 
 For exact qualified class specializations, `compiler_pipeline` owns qualified
 syntax, canonical type/value keys, declaration-order independence, primary
