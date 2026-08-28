@@ -1,0 +1,8 @@
+#include <std/utility>
+class A { public: int32_t i() { return 0; } };
+int main() {
+  mut auto inner = std::make_pair(1, 2);
+  mut auto nested = std::make_pair(std::move(inner), 3);
+  std::println(nested.second);
+  return 0;
+}

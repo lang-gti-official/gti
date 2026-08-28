@@ -15,7 +15,11 @@ exit with no diagnostic), or rejection.
 
 ## Result at time of writing
 
-30 programs: **24 pass, 4 ICE, 2 silent failures**.
+41 programs: **32 pass, 7 ICE, 2 silent failures**.
+
+A second script, `scaffold_probe.sh`, probes stdlib operations the surface
+manifest marks as unimplemented and records how each one actually fails
+(finding F7).
 
 Every finding below is reproduced by a self-contained program in
 `reproducers/`. None of them are fixed here — this pass is about locating
@@ -202,6 +206,159 @@ declares a class).
 
 ---
 
+## F7 — Unimplemented stdlib operations fail as C++ linker errors, never as GTI diagnostics
+
+`reproducers/f7-scaffold-operation-link-error.gti`, `scaffold_probe.sh`
+
+`tests/stdlib_surface_manifest.json` already records, per operation, which
+parts of the standard library have no GTI body — **46 operations** across
+thirteen headers, with `<std/optional>` and `<std/list>` marked scaffold in
+their entirety and no executable entry at all. The information needed to
+diagnose these calls exists, in machine-readable form, in the repository.
+
+Calling one anyway produces this:
+
+```
+gti: native C++ compiler diagnostics:
+Undefined symbols for architecture arm64:
+  "__gti_program::__gti_std::optional<int>::__gti_fn_73_has_value() const",
+      referenced from: ...
+ld: symbol(s) not found for architecture arm64
+```
+
+The user is shown a mangled C++ symbol from generated code they never wrote,
+for a header the standard library ships and the documentation lists.
+
+`scaffold_probe.sh` runs eleven representative operations:
+
+| Outcome | Count | Examples |
+| --- | --- | --- |
+| Linker error, C++ mangled symbol | 9 | `std::sqrt`, `std::floor`, `std::swap`, `std::exchange`, `std::string::swap`, `std::vector::swap`, `std::optional`, `std::list`, `std::hash<int32_t>` |
+| ICE (`GTI-B0001`) | 1 | `std::make_shared` |
+| Compiles and runs | 2 | `std::sort`, `std::transform` |
+
+**No probe produces a GTI-level diagnostic.** There is no "this operation is
+not implemented yet" error anywhere in the set.
+
+Two observations beyond the missing diagnostic:
+
+- The scaffolded surface includes what most programs reach for first. All of
+  `std::sqrt`, `std::pow`, `std::sin`, `std::cos`, `std::floor`, `std::ceil`,
+  `std::round` and the rest of the `<std/cmath>` arithmetic are bodyless, as
+  are `std::swap`, `std::exchange`, `std::shared_ptr`, and every member of
+  `std::optional`. Anyone writing ordinary code hits one of these early, and
+  what they get back is a linker error.
+- The last row is a manifest accuracy problem in the other direction:
+  `std::sort` and `std::transform` are listed as scaffold but have bodies and
+  run correctly. The manifest overstates what is missing as well as failing to
+  act on what is.
+
+A diagnostic naming the operation and its manifest status would convert the
+worst failure mode in the standard library into an ordinary, actionable error.
+
+## F8 — ICE: borrowing a view from a by-value returned owner
+
+`reproducers/f8-view-from-returned-owner.gti`
+
+```gti
+mut std::filesystem::path p = std::filesystem::path("/a/b/thing.txt");
+std::println(p.string().view());
+```
+
+```
+error[GTI-B0001]: failed to construct valid MIR.
+write of a place conflicts with active read-only loan
+```
+
+Binding the intermediate to a name first — `mut std::string s = p.string();`
+then `s.view()` — compiles and runs.
+
+Note what the message says. That text is a *borrow-checker diagnostic*, and a
+reasonable one; it is simply being raised as an internal compiler error
+instead of being reported against the source. Whichever answer is correct here
+(the temporary lives to the end of the full expression, so this is arguably
+well-formed), an ICE is not it.
+
+The same shape over a user-defined class returning a plain value is fine, so
+this is specific to borrowing from a returned heap-owning temporary.
+
+Corpus program: `c32_filesystem_paths`.
+
+## F9 — ICE: `?` propagation applied to a method call
+
+`reproducers/f9-propagation-on-method-call.gti`
+
+```gti
+expected<int32_t, e> use() {
+  mut Src s = Src();
+  int32_t a = ?s.take();   // ICE
+  return a;
+}
+```
+
+The propagation operator works on a free function call and fails on a method
+call, for any receiver — a local value, a reference, or a `unique_ptr`
+through `->`. Two `?` operators on free functions in one body are fine, so
+this is the receiver, not the count.
+
+Together with F3 (`?` inside a loop), the two working shapes for `?` are
+straight-line code over free functions. Every stdlib type that reports errors
+through `expected` does so from methods — `FILE::write`, `FILE::read_some`,
+`FILE::seek`, `FILE::tell` — so none of them can be used with `?`.
+
+Corpus program: `c33_file_io`.
+
+## F10 — Assignment through a method returning `mut T&` is rejected by the parser
+
+`reproducers/f10-assign-through-mut-ref-method.gti`
+
+```gti
+class Holder {
+  mut int32_t n = 0;
+public:
+  Holder() {}
+  mut int32_t& slot() mut { return this.n; }
+};
+
+h.slot() = 4;   // error[GTI-P0001]: Invalid assignment target.
+```
+
+`operator[]` returning `mut T&` **is** an assignable target; a named method
+returning the identical type is not. The rejection is `GTI-P0001`, from the
+parser, so no type information is consulted — a call expression is simply not
+accepted on the left of `=`.
+
+This makes a large part of the standard library's mutable surface
+unreachable. `std::array::at`, `std::vector::at`, `front`, `back`, and
+`std::optional::value` all return `mut T&` and none can be assigned through:
+
+```gti
+a.at(std::size_t(0)) = 5;   // rejected
+a[std::size_t(0)] = 5;      // accepted
+```
+
+Corpus program: `c38_array_span` (works only by avoiding `at`).
+
+## F11 — ICE: a generic instantiated over its own instantiation
+
+`reproducers/f11-pair-nested-in-pair.gti`
+
+```gti
+mut auto inner = std::make_pair(1, 2);
+mut auto nested = std::make_pair(std::move(inner), 3);   // ICE
+```
+
+Emitter-vocabulary ICE. `std::vector<std::pair<int32_t, int32_t>>` is fine, so
+it is not generic nesting in general — it is the same generic appearing inside
+itself. Naming the inner value first does not help.
+
+This is likely the same underlying defect as F5 (`Box<Box<T>>`), reached
+through construction rather than through chained accessors.
+
+Corpus program: `c36_utility_pairs`.
+
+---
+
 ## Language behaviour recorded along the way
 
 These are not filed as defects. They are diagnosed correctly and are either
@@ -230,11 +387,26 @@ worth capturing for whoever writes the language reference.
   function; there is no whole-object mutability shorthand.
 - Managed threads require `--execution-profile concurrent`. Corpus programs
   opt in with a `// @coverage-profile: concurrent` marker comment.
-- `std::upcast_unique` does not deduce `Derived`.
+- `std::upcast_unique` does not deduce `Derived`; a `unique_ptr<Derived>` needs
+  an explicit `std::upcast_unique<Base, Derived>(std::move(p))` to become a
+  `unique_ptr<Base>`.
+- Implementing an interface requires both `public` on the base and `override`
+  on every method. Both are diagnosed clearly (GTI-S2040, GTI-S2042).
+- Configuration flags are valueless: `#define TIER 2` is rejected by GTI-I0011,
+  which directs the user to a typed `constexpr` selected by `#ifdef`.
+- Preprocessor directives cannot be indented after the `#`; `#  if` is
+  GTI-L0003.
+- `std::find` and `std::count` take the searched value as `T&`, so a literal
+  argument is rejected (GTI-S2017) and must be bound to a name first.
+- `std::fopen` yields `unique_ptr<FILE>`, so its members are reached with `->`.
+- `std::string` has no `substr`.
 
 ## Coverage gaps still open
 
-Not yet exercised by this corpus, in rough order of expected yield:
-filesystem paths, `cstdio`, `optional`, native C records and bridge headers,
-`tcp`, qualified template specializations, and richer conditional-compilation
-nesting.
+Not yet exercised by this corpus, in rough order of expected yield: native C
+records and bridge headers, `tcp`, `<std/random>` distribution surface,
+generic classes with value (non-type) parameters, and variadic packs beyond
+`emplace`.
+
+Two headers cannot be exercised at all until F7's underlying work lands:
+`<std/optional>` and `<std/list>` have no executable operations.
