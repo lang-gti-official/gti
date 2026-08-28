@@ -1,0 +1,20 @@
+---
+title: <std/cmath>
+description: Implemented binary32 absolute-value and classification operations.
+kind: library-header
+api:
+  - std/cmath|function|std::abs
+  - std/cmath|function|std::isfinite
+  - std/cmath|function|std::isinf
+  - std/cmath|function|std::isnan
+examples: []
+---
+
+```gti
+#include <std/cmath>
+```
+
+The current executable surface is deliberately restricted to `float`.
+`abs` preserves ordinary floating-point behavior, while the classification
+functions inspect the binary32 exponent and significand. Other familiar
+`<cmath>` declarations remain bodyless and must not be called yet.

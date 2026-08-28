@@ -1,0 +1,5 @@
+{
+  "title": "Join and decompose a path",
+  "description": "Uses directory-join operators and lexical filename and extension observers.",
+  "mode": "run"
+}

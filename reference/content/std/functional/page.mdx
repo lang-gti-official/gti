@@ -1,0 +1,27 @@
+---
+title: <std/functional>
+description: Exact comparison function objects for generic algorithms.
+kind: library-header
+api:
+  - std/functional|class|std::equal_to
+  - std/functional|operator|std::equal_to::operator()
+  - std/functional|class|std::not_equal_to
+  - std/functional|operator|std::not_equal_to::operator()
+  - std/functional|class|std::less
+  - std/functional|operator|std::less::operator()
+  - std/functional|class|std::greater
+  - std/functional|operator|std::greater::operator()
+examples:
+  - compare-values
+---
+
+```gti
+#include <std/functional>
+```
+
+Each function object uses the corresponding exact operator on `T`. GTI does
+not perform implicit conversion, overload ranking, reversed-operand lookup, or
+argument-dependent lookup when the call operator is instantiated.
+
+The generic `std::hash<T>` primary remains declaration-only and is not part of
+the executable synopsis.
