@@ -272,7 +272,7 @@ start a later phase:
 | Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, integral scoped enums, passive unions, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
-| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure. Public managed threads and SC scalar atomics implement the bounded first surface. |
+| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, ordered scalar atomics, scoped mutex guards, global policy, and contained worker failure. Public managed threads, ordered scalar atomics, and mutex guards implement the bounded systems-ready surface. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later local-detector or static direct-call arguments after prepared owners. |
 
 MIR is the sole executable-body authority. It still has bounded verifier gaps
@@ -2266,8 +2266,8 @@ or MIR prerequisite.
 
 ### C-RUNTIME-01: Target And Runtime Thread Capability
 
-- **State/role:** done in 0.309.0 for managed threads; atomics/mutexes retain
-  their own operation/runtime rows.
+- **State/role:** done for the shared thread runtime capability; managed
+  threads, atomics, and mutexes retain their own operation rows.
 - **Scope:** Add an explicit target/runtime `threads` capability, private
   owning handle, generated task-entry thunk contract, thread-safe runtime
   diagnostics/allocation, fixed failure-record handoff, platform linkage, and
@@ -2292,14 +2292,24 @@ or MIR prerequisite.
 
 ### C-SYNC-01: Mutex And Guard-Tied Mutable Access
 
-- **State/role:** blocked; prerequisites are `C-THREAD-01` and
-  `M-OWN-03`; systems-readiness work-queue capability.
+- **State/role:** done; `C-THREAD-01` and the bounded `M-OWN-03` owner-tied
+  carrier are complete.
 - **Scope:** Model a mutex guard as an owner-tied capability whose lifetime
-  gates mutable access. Integrate poisoning/failure according to `D-FAIL-01`.
-- **Non-goals:** pretending the bounded local exclusive-reborrow slice already
-  represents a stored guard dependency.
+  gates mutable access. Integrate failure cleanup according to `D-FAIL-01`.
+- **Non-goals:** poisoning, public manual unlock, recursive/read-write mutexes,
+  fairness, or condition-variable wait/reacquire.
 - **Exit gate:** unlock occurs exactly once on every edge; protected access
   cannot escape the guard; two threads pass race/stress tests.
+- **Completion evidence:** source-defined `std::mutex<T>` and move-only,
+  non-transferable `std::mutex_guard<T>` use sealed private storage/token
+  capabilities. Semantic owner dependencies exclude relock/owner move and
+  prevent temporary/local guard loans from escaping. HIR/MIR retain exact
+  lock/unlock identities, guard-read loan origin, move transfer, and reverse
+  cleanup. `mutex_semantic_ir` includes verifier mutations;
+  `mutex_end_to_end` covers C++20/C++23 at O0/O3, move-only payloads,
+  contention, and unlock-before-failure-propagation; `mutex_tsan` covers the
+  shared counter on supported hosts. No poisoning is introduced: deterministic
+  cleanup preserves the primary GTI failure and permits a later lock.
 
 ### C-ORDER-01: Explicit Atomic Memory Orders
 
@@ -2324,9 +2334,9 @@ or MIR prerequisite.
 
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/role:** complete for public `std::thread` and ordered scalar atomics;
-  active again when mutexes, scoped threads, or another public concurrency
-  family is added.
+- **State/role:** complete for public `std::thread`, ordered scalar atomics,
+  and scoped mutex guards; active again when scoped threads or another public
+  concurrency family is added.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -2336,18 +2346,19 @@ or MIR prerequisite.
   supported, and no unexplained reliance on native C++ ordering.
 - **Current evidence:** `managed_thread_semantic_ir`,
   `managed_thread_runtime`, `managed_thread_end_to_end`, `atomic_semantic_ir`,
-  `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`, `lsp_protocol`, the stdlib
-  surface/corpus gates, installed workflows, and sanitizer runs cover the
+  `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`, `mutex_semantic_ir`,
+  `mutex_end_to_end`, `mutex_tsan`, `lsp_protocol`, the stdlib surface/corpus
+  gates, installed workflows, and sanitizer runs cover the
   shipped thread and ordered scalar-atomic surfaces. Timing is never a correctness
   oracle.
 
 The following remain blocked beyond the initial concurrency profile: detached
-threads; scoped borrowed captures; mutex/RW-lock guards before stored/escaping
-mutable owner dependencies; condition variables before guard
-release/reacquisition is modeled; cross-thread shared ownership before
-shared/weak ownership is specified; pointer atomics before public pointer
-provenance; native callbacks before `S-CALL-01`; volatile/MMIO, signals,
-coroutines, lock-free guarantees, atomic aggregates, and reclamation schemes.
+threads; scoped borrowed captures; recursive/read-write locks; condition
+variables before guard release/reacquisition is modeled; cross-thread shared
+ownership before shared/weak ownership is specified; pointer atomics before
+public pointer provenance; native callbacks before `S-CALL-01`; volatile/MMIO,
+signals, coroutines, lock-free guarantees, atomic aggregates, and reclamation
+schemes.
 
 ## Phase L: Owner-Dependent Library And Language Completion
 
@@ -2590,7 +2601,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v51`/`mir-body-v45` carry explicit mutually exclusive
+  transport plan; `mir-v52`/`mir-body-v46` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact
@@ -3410,7 +3421,7 @@ owned by the rows and domain plans above.
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
-| Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, and ordered scalar `std::atomic<T>` **complete**; mutexes remain systems-readiness work | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, `C-ORDER-01`, and their `C-CONFORM-01` subsets done; `C-SYNC-01` remains |
+| Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`, and scoped `std::mutex<T>`/`std::mutex_guard<T>` **complete** | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, `C-ORDER-01`, `C-SYNC-01`, and their `C-CONFORM-01` subsets done |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **hover/completion/signature-help tooling complete; broader consumers remain** | `///` retention, hover, completion, and signature help are complete in `T-LSP-01`; broader library coverage and generated API documentation remain |

@@ -640,10 +640,11 @@ GTI does not provide language exceptions.
 
 GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler
-exposes owned managed threads through `<std/thread>` and scalar atomics with a
+exposes owned managed threads through `<std/thread>`, scalar atomics with a
 sequentially consistent default plus explicit legal orders through
-`<std/atomic>`. Mutexes and foreign-thread
-entry remain unavailable. The single-threaded profile remains the default
+`<std/atomic>`, and owner-tied scoped mutex guards through `<std/mutex>`.
+Condition variables and foreign-thread entry remain unavailable. The
+single-threaded profile remains the default
 executable profile. The focused current source contract is in
 [Concurrency And Atomic Values](concurrency.md).
 
@@ -651,13 +652,13 @@ The compiler now has backend-independent HIR/MIR identities for thread
 spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
 lock/unlock. Atomic records retain operation-specific memory orders and MIR
 rejects illegal order combinations. In the single-threaded profile it rejects
-executable synchronization records while permitting only exact private thread
-or atomic intrinsics in lowering-marked dormant standard-library wrapper
-bodies. This is why source may import `<std/thread>` or `<std/atomic>` without
-using it; calling or constructing either concurrent surface still fails
-semantically before MIR publication. These internal records are not source
-operations. Public wrappers reach them through exact trusted private
-capabilities; mutexes remain unavailable.
+executable synchronization records while permitting only exact private thread,
+atomic, or mutex intrinsics in lowering-marked dormant standard-library
+wrapper bodies. This is why source may import `<std/thread>`, `<std/atomic>`,
+or `<std/mutex>` without using it; calling or constructing any concurrent
+surface still fails semantically before MIR publication. These internal
+records are not source operations. Public wrappers reach them through exact
+trusted private capabilities.
 `std::thread` is the normal public managed-thread type. Unlike C++'s class with
 the same spelling, it always joins and exposes no detach operation.
 
@@ -668,8 +669,8 @@ profile spells it `execution-profile = "concurrent"`. The exact
 `single-threaded` value is available in both places and is the default. Native
 link flags, host-library behavior, backend code, and incidental use of a host
 thread never infer the selection. Selecting the profile applies the
-transfer/share and global rules below. Implemented managed-thread and atomic
-operations also require the selected target/runtime `threads` capability;
+transfer/share and global rules below. Implemented managed-thread, atomic, and
+mutex operations also require the selected target/runtime `threads` capability;
 profile selection does not make any other unimplemented operation available.
 
 One **memory location** is a live scalar object or non-overlapping scalar
@@ -688,8 +689,8 @@ whose contract says so. **Happens-before** is the transitive closure of those
 relations. A compiler effect such as `maySynchronize` is a conservative
 optimization barrier, not proof of a synchronizes-with edge.
 
-The implemented managed-thread and atomic subsets provide the first three
-edges below. The remaining row defines the later mutex slice:
+The implemented managed-thread, atomic, and mutex subsets provide these
+edges:
 
 - every evaluation sequenced before successful spawn happens-before task
   entry;
@@ -700,8 +701,8 @@ edges below. The remaining row defines the later mutex slice:
   operation participates in its object's modification order, and every
   sequentially consistent operation also participates in one program-wide
   sequentially consistent order; and
-- a future mutex unlock synchronizes-with the corresponding later successful
-  acquisition.
+- a mutex unlock synchronizes-with the corresponding later successful
+  acquisition of the same mutex.
 
 The implemented atomic value domains are fixed-width integers and `bool`.
 Construction, load, store, exchange, and strong compare/exchange default to

@@ -1,0 +1,95 @@
+namespace gti_internal {
+/// Compiler-owned mutex representation. Declaration identity, rather than
+/// source spelling, selects the native synchronization capability.
+class mutex_storage<std::movable T> {
+public:
+  mutex_storage(T value) {}
+};
+
+/// Compiler-owned move-only lock obligation. An active token is released by
+/// exactly one guard destructor; moving it transfers that obligation.
+[[no_transfer, no_share]] class mutex_lock_token<std::movable T> {
+public:
+  mutex_lock_token() = default;
+  mutex_lock_token(mutex_lock_token<T>& other) = delete;
+  mutex_lock_token(mutex_lock_token<T>&& other) = default;
+  ~mutex_lock_token() = default;
+};
+
+int32_t mutex_lock<std::movable T>(
+    gti_internal::mutex_storage<T>& storage,
+    mut gti_internal::mutex_lock_token<T>& token);
+void mutex_unlock<std::movable T>(
+    gti_internal::mutex_storage<T>& storage,
+    mut gti_internal::mutex_lock_token<T>& token);
+bool mutex_guard_active<std::movable T>(
+    gti_internal::mutex_lock_token<T>& token);
+T& mutex_guard_read<std::movable T>(
+    gti_internal::mutex_storage<T>& storage,
+    gti_internal::mutex_lock_token<T>& token);
+mut T& mutex_guard_read_mut<std::movable T>(
+    gti_internal::mutex_storage<T>& storage,
+    gti_internal::mutex_lock_token<T>& token);
+void mutex_lock_failure();
+}
+
+namespace std {
+/// A move-only scoped exclusive loan into one mutex-protected value.
+///
+/// Destruction releases the lock. Moving the guard transfers both the lock
+/// obligation and the exclusive owner dependency; a moved-from guard is inert.
+[[no_transfer, no_share]] class mutex_guard<std::movable T> {
+  gti_internal::mutex_storage<T>& storage;
+  mut gti_internal::mutex_lock_token<T> token;
+
+public:
+  mutex_guard(gti_internal::mutex_storage<T>& owner,
+              gti_internal::mutex_lock_token<T> value)
+      : storage(owner), token(std::move(value)) {}
+  mutex_guard(mutex_guard<T>& other) = delete;
+  mutex_guard(mutex_guard<T>&& other) = default;
+
+  /// Returns a read-only loan valid no longer than this guard.
+  T& get() {
+    return gti_internal::mutex_guard_read(this.storage, this.token);
+  }
+
+  /// Returns an exclusive loan valid no longer than this guard.
+  mut T& get() mut {
+    return gti_internal::mutex_guard_read_mut(this.storage, this.token);
+  }
+
+  ~mutex_guard() {
+    if (gti_internal::mutex_guard_active(this.token)) {
+      gti_internal::mutex_unlock(this.storage, this.token);
+    }
+  }
+};
+
+/// A move-only synchronization owner for one value.
+///
+/// Shared references may lock it because the compiler-owned storage provides
+/// interior synchronization. Moving is permitted only when no guard loan is
+/// live and creates a fresh unlocked native mutex around the moved value. The
+/// protected value is accessible only through the guard returned by `lock()`.
+class mutex<std::movable T> {
+  gti_internal::mutex_storage<T> storage;
+
+public:
+  mutex(T value)
+      : storage(gti_internal::mutex_storage<T>(std::move(value))) {}
+  mutex(mutex<T>& other) = delete;
+  mutex(mutex<T>&& other) = default;
+
+  /// Acquires the mutex and returns its exclusive scoped guard. Native lock
+  /// failure is converted to GTI's defined-failure channel.
+  mutex_guard<T> lock() {
+    mut gti_internal::mutex_lock_token<T> token{};
+    int32_t status = gti_internal::mutex_lock(this.storage, token);
+    if (status != 0) {
+      gti_internal::mutex_lock_failure();
+    }
+    return mutex_guard<T>(this.storage, std::move(token));
+  }
+};
+}

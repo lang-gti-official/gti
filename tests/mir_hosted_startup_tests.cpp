@@ -428,7 +428,7 @@ void testOwnedScheduleAndPrinter() {
          "effects");
 
   const std::string dump = lang::MirPrinter().print(owned.mir);
-  expect(dump.starts_with("mir-v51 valid=") &&
+  expect(dump.starts_with("mir-v52 valid=") &&
              dump.find("hosted-startup kind=") != std::string::npos &&
              dump.find("hosted-operation @") != std::string::npos &&
              dump.find("hosted-startup-body") != std::string::npos &&

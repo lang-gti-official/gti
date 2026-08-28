@@ -90,8 +90,8 @@ creation/join condition uses `thread_errc`; a GTI failure in the worker is
 cleaned there, preserved exactly, and re-raised by explicit or automatic join.
 References, borrowed captures, raw pointers, and non-transferable owned
 captures or results are rejected before lowering. Detach, stop tokens,
-separate argument packs, scoped borrows, mutexes, and foreign-thread entry are
-outside this first surface.
+separate argument packs, scoped cross-thread borrows, and foreign-thread entry
+remain outside this surface.
 
 `<std/atomic>` provides move-only `std::atomic<T>` for `bool` and every
 fixed-width signed and unsigned integer. Construction, load, store, exchange,
@@ -102,7 +102,15 @@ and returns both success and the actual observed value without exposing a
 reference into storage. Atomic values are transfer- and
 share-capable, but no lock-free, stable-layout, or native ABI promise is made.
 
-Both concurrency modules require
+`<std/mutex>` provides noncopyable `std::mutex<T>` and the move-only,
+non-transferable `std::mutex_guard<T>`. `lock()` creates one owner-tied scoped
+guard; `get()` exposes a read-only or mutable loan no longer than that guard;
+and deterministic cleanup unlocks exactly once, including before a defined
+failure propagates. Unlock synchronizes-with a later successful lock of the
+same mutex. There is no public manual unlock, recursive locking, fairness, or
+poisoning promise.
+
+All three concurrency modules require
 `--execution-profile concurrent`; project profiles use
 `execution-profile = "concurrent"`.
 

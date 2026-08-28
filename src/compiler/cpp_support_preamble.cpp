@@ -110,6 +110,12 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "modulo",
       "multiply",
       "multiply_assign",
+      "mutex_guard_active",
+      "mutex_guard_read",
+      "mutex_lock",
+      "mutex_lock_token",
+      "mutex_unlock",
+      "mutex_value",
       "mutable_call",
       "mutable_reference",
       "mutable_receiver",
@@ -325,8 +331,14 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesExpected = features.expected;
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
+  const bool usesMutexes = features.mutexes;
   if (usesAtomics) {
     output << "#include <atomic>\n";
+  }
+  if (usesMutexes) {
+    output << "#include <mutex>\n"
+              "#include <optional>\n"
+              "#include <system_error>\n";
   }
   if (usesExpected) {
     if (features.standard == CppStandard::Cpp23) {
@@ -354,6 +366,13 @@ void writeCppSupportPreamble(std::ostream &output,
 struct gti_failure_record_v1;
 
 namespace gti_internal::backend {
+
+// Defined with the failure-ABI helpers below. Capability representations may
+// accept it by reference here so a transformed constructor can create an
+// observation-free native empty state before publishing the MIR result.
+struct mir_empty_state_constructor_tag_v1;
+template <std::uint64_t Constructor>
+struct mir_failure_constructor_tag_v1;
 )";
   if (usesExpected) {
     output << (features.standard == CppStandard::Cpp23 ? R"(
@@ -1351,6 +1370,161 @@ template <typename T>
     std::memory_order success, std::memory_order failure) {
   observed = expected;
   return value.compare_exchange_strong(observed, desired, success, failure);
+}
+
+)";
+  }
+  if (usesMutexes) {
+    output << R"(
+
+template <typename T> class mutex_value final {
+public:
+  static_assert(std::is_nothrow_move_constructible_v<T>,
+                "GTI mutex payload relocation must not throw");
+
+  explicit mutex_value(
+      const mir_empty_state_constructor_tag_v1 &) noexcept
+      : value_(std::nullopt) {}
+
+  explicit mutex_value(T value) noexcept
+      : value_(std::in_place, std::move(value)) {}
+
+  template <std::uint64_t Constructor>
+  explicit mutex_value(
+      const mir_failure_constructor_tag_v1<Constructor> &, T value,
+      bool *success, ::gti_failure_record_v1 *) noexcept
+      : mutex_value(std::move(value)) {
+    if (success == nullptr) {
+      std::terminate();
+    }
+    *success = true;
+  }
+  mutex_value(const mutex_value &) = delete;
+  mutex_value &operator=(const mutex_value &) = delete;
+
+  mutex_value(mutex_value &&other) noexcept
+      : value_(std::move(other.value_)) {
+    if (!value_.has_value()) {
+      std::terminate();
+    }
+    other.value_.reset();
+  }
+
+  mutex_value &operator=(mutex_value &&other) noexcept {
+    if (this == &other || value_.has_value() || !other.value_.has_value()) {
+      std::terminate();
+    }
+    value_.emplace(std::move(*other.value_));
+    other.value_.reset();
+    return *this;
+  }
+
+  void lock() const {
+    if (!value_.has_value()) {
+      std::terminate();
+    }
+    mutex_.lock();
+  }
+  void unlock() const noexcept {
+    try {
+      mutex_.unlock();
+    } catch (...) {
+      std::terminate();
+    }
+  }
+
+  [[nodiscard]] T &value() const noexcept {
+    if (!value_.has_value()) {
+      std::terminate();
+    }
+    return *value_;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  mutable std::optional<T> value_;
+};
+
+template <typename T> class mutex_lock_token final {
+public:
+  mutex_lock_token() noexcept = default;
+  mutex_lock_token(const mutex_lock_token &) = delete;
+  mutex_lock_token &operator=(const mutex_lock_token &) = delete;
+
+  mutex_lock_token(mutex_lock_token &&other) noexcept
+      : owner_(std::exchange(other.owner_, nullptr)) {}
+
+  mutex_lock_token &operator=(mutex_lock_token &&) = delete;
+
+  ~mutex_lock_token() {
+    if (owner_ != nullptr) {
+      std::terminate();
+    }
+  }
+
+  [[nodiscard]] bool active() const noexcept { return owner_ != nullptr; }
+  [[nodiscard]] bool owns(const mutex_value<T> &owner) const noexcept {
+    return owner_ == &owner;
+  }
+  void activate(const mutex_value<T> &owner) noexcept {
+    if (owner_ != nullptr) {
+      std::terminate();
+    }
+    owner_ = &owner;
+  }
+  void release(const mutex_value<T> &owner) noexcept {
+    if (!owns(owner)) {
+      std::terminate();
+    }
+    owner_ = nullptr;
+  }
+
+private:
+  const mutex_value<T> *owner_ = nullptr;
+};
+
+template <typename T>
+[[nodiscard]] inline std::int32_t
+mutex_lock(const mutex_value<T> &storage,
+           mutex_lock_token<T> &token) noexcept {
+  if (token.active()) {
+    std::terminate();
+  }
+  try {
+    storage.lock();
+  } catch (const std::system_error &) {
+    return INT32_C(1);
+  } catch (...) {
+    return INT32_C(1);
+  }
+  token.activate(storage);
+  return INT32_C(0);
+}
+
+template <typename T>
+inline void mutex_unlock(const mutex_value<T> &storage,
+                         mutex_lock_token<T> &token) noexcept {
+  if (!token.owns(storage)) {
+    std::terminate();
+  }
+  storage.unlock();
+  token.release(storage);
+}
+
+template <typename T>
+[[nodiscard]] inline bool
+mutex_guard_active(const mutex_lock_token<T> &token) noexcept {
+  return token.active();
+}
+
+template <typename T>
+[[nodiscard]] inline T &mutex_guard_read(
+    const mutex_value<T> &storage,
+    const mutex_lock_token<T> &token) noexcept {
+  if (!token.owns(storage)) {
+    std::terminate();
+  }
+  return storage.value();
 }
 
 )";

@@ -656,7 +656,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                    constructorInfo->kind ==
                                        ConstructorKind::Move,
                                defaultLibraryStorageBorrow);
-    if (nestsBorrowedState(parameterType)) {
+    const bool trustedGuardSpecialMember =
+        isDefaultLibraryMutexGuardCarrier(owner) &&
+        constructorInfo != nullptr &&
+        (constructorInfo->kind == ConstructorKind::Copy ||
+         constructorInfo->kind == ConstructorKind::Move);
+    if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember) {
       report(parameter.name,
              "Constructor parameters cannot nest borrowed state in the "
              "current lifetime model.",
@@ -814,7 +819,10 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                 .field = fieldSymbol,
                 .storesReference =
                     member->second.symbol.type.kind == SemanticType::Reference,
-                .borrowAccess = member->second.symbol.type.referenceAccess});
+                .borrowAccess =
+                    isDefaultLibraryMutexGuardCarrier(owner)
+                        ? AccessMode::Mutable
+                        : member->second.symbol.type.referenceAccess});
       }
     }
     if (field == nullptr) {
@@ -932,7 +940,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               .targetType = fieldType,
               .field = fieldSymbol,
               .storesReference = fieldType.kind == SemanticType::Reference,
-              .borrowAccess = fieldType.referenceAccess,
+              .borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
+                                  ? AccessMode::Mutable
+                                  : fieldType.referenceAccess,
               .ownedParameter = ownedParameter});
     }
   }

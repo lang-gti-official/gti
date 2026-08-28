@@ -418,6 +418,9 @@ cppMirConstructorStatusCannotFail(const MirProgram &program,
 cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
                                            HirClassInstanceId instance);
 
+[[nodiscard]] bool cppMirFailureConstructorEmptyStateTypeEligible(
+    const MirProgram &program, const SemanticType &type);
+
 // An explicit base initializer whose arguments are exact copy-loads of this
 // constructor's scalar parameters. The native C++ initializer list may spell
 // those parameters directly; all other base-expression shapes remain on the
@@ -483,6 +486,7 @@ struct CppMirConstructedFieldInitializerBinding {
   SemanticType fieldType = SemanticType::Unknown;
   HirConstructorInstanceId constructor = 0;
   std::vector<std::size_t> parameters;
+  std::vector<bool> movedParameters;
   MirValueId constructedValue = 0;
   MirInstructionId constructInstruction = 0;
   std::vector<MirInstructionId> argumentInstructions;

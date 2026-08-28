@@ -2060,6 +2060,47 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
+      compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
+    const bool storage =
+        compilerCapability == CompilerCapabilityTypeKind::MutexStorage;
+    const std::string_view name =
+        storage ? "gti_internal::mutex_storage"
+                : "gti_internal::mutex_lock_token";
+    if (type.arguments.size() != 1) {
+      report(type.name.last(), std::string(name) +
+                                   "<T> requires exactly one movable value "
+                                   "type.",
+             "GTI-S2088");
+    } else {
+      if (type.arguments.front().genericArgumentSyntax ==
+          GenericArgumentSyntax::Value) {
+        report(type.arguments.front().name.last(),
+               std::string(name) + " requires a type argument.",
+               "GTI-S2088");
+        return;
+      }
+      validateType(type.arguments.front());
+      const SemanticType valueType = typeOf(type.arguments.front());
+      if (!satisfiesConstraint(
+              valueType, constraintBit(GenericConstraintKind::Movable)) ||
+          valueType == SemanticType::Void ||
+          valueType.kind == SemanticType::Reference ||
+          valueType.kind == SemanticType::RawPointer) {
+        report(type.arguments.front().name.last(),
+               "Compiler-private mutex state requires an owned movable "
+               "value type.",
+               "GTI-S2088");
+      }
+    }
+    if (!type.arrayExtents.empty()) {
+      report(type.name.last(),
+             "Fixed arrays of compiler-private mutex state are not "
+             "supported.",
+             "GTI-S2088");
+    }
+    return;
+  }
   if (!type.arrayExtents.empty() && !type.pointer &&
       baseTypeOf(type, currentNamespace) == SemanticType::Void) {
     // A pointer declarator makes the element `void*`, a sized pointer
@@ -2467,13 +2508,24 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
       !source ? nullptr : semanticModel.findLoan(source->loan);
   if (symbol == nullptr ||
       symbol->bindingKind != SemanticBindingKind::LocalVariable ||
-      loan == nullptr || loan->parent == 0) {
+      loan == nullptr || (loan->parent == 0 && !loan->lifecycleBound)) {
     return false;
   }
-  report(expressionToken(value),
-         "A local child reborrow cannot escape through " +
-             std::string(destination) + ".",
-         "GTI-S2017");
+  if (loan->lifecycleBound) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
+        "A borrow protected by a local mutex guard cannot escape through " +
+            std::string(destination) + ".");
+    diagnostic.hints.emplace_back(
+        "Copy or move the protected value while the guard is live; the guard "
+        "must unlock before its scope exits.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  } else {
+    report(expressionToken(value),
+           "A local child reborrow cannot escape through " +
+               std::string(destination) + ".",
+           "GTI-S2017");
+  }
   return true;
 }
 
@@ -2562,6 +2614,57 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
       info->access != AccessMode::Mutable) {
     report(expressionToken(value),
            "Mutable reference return requires a mutable value.", "GTI-S2017");
+    return;
+  }
+  enum class EscapingMutexGuardReceiver { None, Local, Temporary };
+  const auto escapingMutexGuardReceiver = [&]() {
+    const Expr *candidate = value.get();
+    while (const auto *group = exprAs<Grouping>(candidate)) {
+      candidate = group->expression().get();
+    }
+    const auto *call = exprAs<Call>(candidate);
+    const auto *member =
+        call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+    if (member == nullptr) {
+      return EscapingMutexGuardReceiver::None;
+    }
+    const Expr *receiver = member->object().get();
+    while (const auto *group = exprAs<Grouping>(receiver)) {
+      receiver = group->expression().get();
+    }
+    const auto *temporary = exprAs<Call>(receiver);
+    const auto *variable = exprAs<Variable>(receiver);
+    const ExpressionInfo *receiverInfo =
+        semanticModel.findExpression(*member->object());
+    const ClassInfo *owner =
+        receiverInfo == nullptr ? nullptr : classInfo(receiverInfo->type);
+    if (owner == nullptr || !isDefaultLibraryMutexGuardCarrier(*owner)) {
+      return EscapingMutexGuardReceiver::None;
+    }
+    if (temporary != nullptr) {
+      return EscapingMutexGuardReceiver::Temporary;
+    }
+    const Symbol *symbol = variable == nullptr ? nullptr
+                                                : resolve(variable->name());
+    return symbol != nullptr &&
+                   symbol->bindingKind == SemanticBindingKind::LocalVariable
+               ? EscapingMutexGuardReceiver::Local
+               : EscapingMutexGuardReceiver::None;
+  }();
+  if (escapingMutexGuardReceiver != EscapingMutexGuardReceiver::None) {
+    const bool temporary = escapingMutexGuardReceiver ==
+                           EscapingMutexGuardReceiver::Temporary;
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
+        temporary
+            ? "A reference protected by a temporary mutex guard cannot "
+              "escape the guard's full expression."
+            : "A reference protected by a local mutex guard cannot escape "
+              "the guard's scope.");
+    diagnostic.hints.emplace_back(
+        "Bind the guard in a lexical scope and copy or move the protected "
+        "value before that scope exits.");
+    diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
   if (rejectEscapingLocalChildLoan(value, "a reference return")) {

@@ -719,6 +719,17 @@ private:
     return semanticTraits(type);
   }
 
+  [[nodiscard]] bool
+  isLifecycleBoundBorrowCarrier(const SemanticType &type) const {
+    return type.kind == SemanticType::Class &&
+           std::any_of(program.classInstances().begin(),
+                       program.classInstances().end(),
+                       [&](const HirClassInstance &candidate) {
+                         return candidate.type == type &&
+                                candidate.lifecycleBoundBorrowCarrier;
+                       });
+  }
+
   [[nodiscard]] std::optional<MirDropType>
   preparedParameterDropType(const SemanticType &type) const {
     if (type.kind != SemanticType::Class) {
@@ -1081,6 +1092,50 @@ private:
     return std::find(loans.begin(), loans.end(), loan) != loans.end();
   }
 
+  [[nodiscard]] MirLoanId
+  lifecycleLoanForBinding(HirBindingId binding) const {
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      for (auto candidate = scope->loans.rbegin();
+           candidate != scope->loans.rend(); ++candidate) {
+        const MirLoan *loan = output.findLoan(*candidate);
+        if (loan != nullptr && loan->lifecycleBound && !loan->escapes &&
+            std::find(loan->carriers.begin(), loan->carriers.end(), binding) !=
+                loan->carriers.end()) {
+          return loan->id;
+        }
+      }
+    }
+    return 0;
+  }
+
+  void endUncarriedLifecycleLoans(bool updateState = true) {
+    std::vector<MirLoanId> ended;
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
+           ++loan) {
+        const MirLoan *record = output.findLoan(*loan);
+        if (record == nullptr) {
+          valid = false;
+          continue;
+        }
+        if (!record->lifecycleBound || !record->carriers.empty() ||
+            record->escapes) {
+          continue;
+        }
+        if (!containsLoan(ended, record->id)) {
+          ended.push_back(record->id);
+        }
+      }
+    }
+    for (const MirLoanId loan : ended) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+      if (updateState) {
+        removeLoanFromState(loan, scopes, bindingLoans);
+      }
+    }
+  }
+
   void emitFailureTemporaryCleanup(
       const std::vector<TemporaryDrop> &activeTemporaries,
       const std::vector<MirDropObligationId> &consumedDrops) {
@@ -1108,6 +1163,7 @@ private:
           candidate->conditional);
       cleanup.push_back(candidate->obligation);
     }
+    endUncarriedLifecycleLoans(false);
     appendFailureCleanupBoundary(std::move(cleanup));
   }
 
@@ -1117,6 +1173,10 @@ private:
                           const std::vector<MirLoanId> &endedLoans) {
     for (auto loan = scope.loans.rbegin(); loan != scope.loans.rend(); ++loan) {
       if (containsLoan(endedLoans, *loan)) {
+        continue;
+      }
+      const MirLoan *record = output.findLoan(*loan);
+      if (record != nullptr && record->lifecycleBound) {
         continue;
       }
       (void)appendInstruction(
@@ -1137,12 +1197,21 @@ private:
         valid = false;
         continue;
       }
+      const MirLoanId lifecycleLoan =
+          place->root == MirPlaceRootKind::Binding
+              ? lifecycleLoanForBinding(place->binding)
+              : 0;
       (void)appendFailureCleanupDrop(
           obligation, *drop,
           ExpressionInfo{.type = place->type,
                          .category = ValueCategory::Place,
                          .access = place->access,
                          .traits = place->traits});
+      if (lifecycleLoan != 0 &&
+          !containsLoan(endedLoans, lifecycleLoan)) {
+        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                 .loan = lifecycleLoan});
+      }
       cleanup.push_back(obligation);
     }
     appendFailureCleanupBoundary(std::move(cleanup));
@@ -1152,7 +1221,8 @@ private:
       MirInstructionId producerInstruction,
       MirDropObligationId successResultDrop,
       const std::vector<MirDropObligationId> &consumedDrops = {},
-      const std::vector<MirLoanId> &endedLoans = {}) {
+      const std::vector<MirLoanId> &endedLoans = {},
+      const std::vector<MirLoanId> &producerEndedLoans = {}) {
     const MirBlockId producerBlock = current;
     const MirBlock *producer = currentBlock();
     if (producer == nullptr || producer->instructions.empty() ||
@@ -1184,11 +1254,19 @@ private:
     terminate(std::move(invoke));
 
     current = failureBlock;
+    std::vector<MirLoanId> failureEndedLoans = endedLoans;
+    for (const MirLoanId loan : producerEndedLoans) {
+      if (containsLoan(failureEndedLoans, loan)) {
+        continue;
+      }
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+      failureEndedLoans.push_back(loan);
+    }
     if (output.kind == MirBodyKind::Constructor ||
         output.kind == MirBodyKind::FieldInitializers) {
-      emitConstructorFailureDrain(consumedDrops, endedLoans);
+      emitConstructorFailureDrain(consumedDrops, failureEndedLoans);
     } else {
-      std::vector<MirLoanId> failureEndedLoans = endedLoans;
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
         for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
              ++loan) {
@@ -1229,7 +1307,9 @@ private:
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
            ++loan) {
-        if (!containsLoan(endedLoans, *loan)) {
+        const MirLoan *record = output.findLoan(*loan);
+        if (!containsLoan(endedLoans, *loan) &&
+            (record == nullptr || !record->lifecycleBound)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
         }
@@ -1287,6 +1367,10 @@ private:
         valid = false;
         continue;
       }
+      const MirLoanId lifecycleLoan =
+          place->root == MirPlaceRootKind::Binding
+              ? lifecycleLoanForBinding(place->binding)
+              : 0;
       (void)appendFailureCleanupDrop(
           entry.obligation, obligation->place,
           ExpressionInfo{.type = place->type,
@@ -1294,6 +1378,11 @@ private:
                          .access = place->access,
                          .traits = place->traits},
           entry.conditional);
+      if (lifecycleLoan != 0 &&
+          !containsLoan(endedLoans, lifecycleLoan)) {
+        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                 .loan = lifecycleLoan});
+      }
       cleanup.push_back(entry.obligation);
     }
     appendFailureCleanupBoundary(std::move(cleanup));
@@ -1322,7 +1411,8 @@ private:
       ExpressionInfo info, std::vector<MirLifecycleEvent> lifecycle,
       const std::vector<MirDropObligationId> &consumedDrops,
       const std::vector<MirLoanId> &endedLoans, HirValueId hirValue = 0,
-      HirStatementId hirStatement = 0, std::size_t constructorInitializer = 0) {
+      HirStatementId hirStatement = 0, std::size_t constructorInitializer = 0,
+      MirLoanId producerEndedLoan = 0) {
     MirInstruction drop{.kind = MirInstructionKind::Drop,
                         .hirValue = hirValue,
                         .hirStatement = hirStatement,
@@ -1337,7 +1427,10 @@ private:
     if (instruction != 0 && routeFailureEdgesHere() &&
         normalizedDestructorPropagation(obligation) ==
             FailurePropagationKind::Destructor) {
-      appendFailureControlFlow(instruction, 0, consumedDrops, endedLoans);
+      appendFailureControlFlow(
+          instruction, 0, consumedDrops, endedLoans,
+          producerEndedLoan == 0 ? std::vector<MirLoanId>{}
+                                 : std::vector<MirLoanId>{producerEndedLoan});
     }
     return instruction;
   }
@@ -1606,6 +1699,7 @@ private:
                              consumedDrops, {}, hirValue, hirStatement,
                              constructorInitializer);
     }
+    endUncarriedLifecycleLoans();
     temporaryDrops = baseline;
     const auto boundary = std::find_if(
         source.fullExpressions.begin(), source.fullExpressions.end(),
@@ -1917,6 +2011,23 @@ private:
                : source.findLoan(resolved->info.retainedLoan);
   }
 
+  [[nodiscard]] HirBindingId
+  movedBorrowCarrierBinding(HirValueId valueId) const {
+    const HirValue *move = findValue(valueId);
+    if (move == nullptr || move->kind != HirValueKind::Move ||
+        move->operands.size() != 1) {
+      return 0;
+    }
+    const HirValue *sourceValue = findValue(move->operands.front());
+    if (sourceValue == nullptr ||
+        (sourceValue->kind != HirValueKind::Variable &&
+         sourceValue->kind != HirValueKind::QualifiedName)) {
+      return 0;
+    }
+    const auto local = localSymbols.find(sourceValue->symbol);
+    return local == localSymbols.end() ? 0 : local->second;
+  }
+
   void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
@@ -1935,6 +2046,11 @@ private:
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
+    if (lowered.lifecycleBound && !loan.lifecycleBound) {
+      valid = false;
+      return;
+    }
+    lowered.lifecycleBound = loan.lifecycleBound;
     if (lowered.designatedField != 0 &&
         lowered.designatedField != loan.designatedField) {
       valid = false;
@@ -3231,6 +3347,14 @@ private:
              SymbolId storedField = 0, MirLoanId parent = 0,
              bool twoPhase = false) {
     const MirLoanId id = output.loans.size() + 1;
+    const HirValue *producer =
+        producedBy == 0 ? nullptr : findValue(producedBy);
+    const HirBinding *carrier = binding == 0 ? nullptr : findBinding(binding);
+    const bool lifecycleBound =
+        (producer != nullptr &&
+         isLifecycleBoundBorrowCarrier(producer->info.type)) ||
+        (carrier != nullptr &&
+         isLifecycleBoundBorrowCarrier(carrier->info.type));
     output.loans.push_back(
         {.id = id,
          .parent = parent,
@@ -3241,6 +3365,7 @@ private:
          .carriers = binding == 0 ? std::vector<HirBindingId>{}
                                   : std::vector<HirBindingId>{binding},
          .storedField = storedField,
+         .lifecycleBound = lifecycleBound,
          .twoPhase = twoPhase});
     return id;
   }
@@ -3853,6 +3978,11 @@ private:
     }
     const MirDropObligationId resultDrop =
         detachedBorrowResult ? 0 : dropObligationForValue(value.id);
+    const bool transferableBorrowedResult =
+        call.loan && value.info.type.kind == SemanticType::Class &&
+        value.info.category == ValueCategory::Value &&
+        value.info.traits.movable &&
+        value.info.traits.containsBorrowedState;
     // A cleanup-owning result exists only after a failure-capable call
     // succeeds, regardless of whether it is the full-expression root or a
     // nested input to another call. Arm its value obligation on the Invoke
@@ -3861,7 +3991,8 @@ private:
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
         !call.definedFailure.empty() && !call.destination &&
-        (!call.loan || borrowedTemporaryTransfers.contains(value.id)) &&
+        (!call.loan || transferableBorrowedResult ||
+         borrowedTemporaryTransfers.contains(value.id)) &&
         !value.ownership;
     if (successEdgeResult) {
       call.successResultDrop = resultDrop;
@@ -4239,7 +4370,7 @@ private:
       }
       for (std::size_t index = after.size(); index > before.size(); --index) {
         const MirLoan &loan = output.loans[after[index - 1] - 1];
-        if (loan.carriers.empty() && !loan.escapes &&
+        if (!loan.lifecycleBound && loan.carriers.empty() && !loan.escapes &&
             !retained.contains(loan.id)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
@@ -4251,7 +4382,8 @@ private:
                                  [&](MirLoanId loan) {
                                    const MirLoan &candidate =
                                        output.loans[loan - 1];
-                                   return candidate.carriers.empty() &&
+                                   return !candidate.lifecycleBound &&
+                                          candidate.carriers.empty() &&
                                           !candidate.escapes &&
                                           !retained.contains(loan);
                                  }),
@@ -4277,7 +4409,8 @@ private:
         const bool added =
             std::find(before.begin(), before.end(), *candidate) == before.end();
         const MirLoan *loan = output.findLoan(*candidate);
-        if (added && loan != nullptr && loan->carriers.empty() &&
+        if (added && loan != nullptr && !loan->lifecycleBound &&
+            loan->carriers.empty() &&
             !loan->escapes && !retained.contains(*candidate)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
@@ -5896,6 +6029,10 @@ private:
     std::vector<MirLoanId> &endedLoans =
         sharedEndedLoans == nullptr ? localEndedLoans : *sharedEndedLoans;
     for (const MirLoanId loan : childFirstMirLoans(scope.loans)) {
+      const MirLoan *record = output.findLoan(loan);
+      if (record != nullptr && record->lifecycleBound) {
+        continue;
+      }
       if (!containsLoan(endedLoans, loan)) {
         endedLoans.push_back(loan);
       }
@@ -5916,6 +6053,10 @@ private:
         }
         cleanup.push_back(obligation);
       }
+      const MirLoanId lifecycleLoan =
+          place != nullptr && place->root == MirPlaceRootKind::Binding
+              ? lifecycleLoanForBinding(place->binding)
+              : 0;
       (void)appendNormalDrop(
           obligation, *drop,
           place == nullptr ? ExpressionInfo{}
@@ -5928,7 +6069,12 @@ private:
               : std::vector<MirLifecycleEvent>{{.kind =
                                                     MirLifecycleEventKind::Drop,
                                                 .source = obligation}},
-          consumedDrops, endedLoans);
+          consumedDrops, endedLoans, 0, 0, 0, lifecycleLoan);
+      if (lifecycleLoan != 0 && !containsLoan(endedLoans, lifecycleLoan)) {
+        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                 .loan = lifecycleLoan});
+        endedLoans.push_back(lifecycleLoan);
+      }
     }
     if (!cleanup.empty()) {
       const std::size_t id = output.cleanupBoundaries.size() + 1;
@@ -6252,12 +6398,19 @@ private:
         } else if (found == semanticLoans.end()) {
           semanticLoans.emplace(semanticLoan, retainedLoan);
         }
-        MirLoan &retained = output.loans[retainedLoan - 1];
-        if (retained.semanticLoan != 0 &&
-            retained.semanticLoan != semanticLoan) {
+        const HirLoan *desired = source.findLoan(semanticLoan);
+        if (desired == nullptr) {
           valid = false;
+        } else if (desired->lifecycleBound) {
+          recordLoanIdentity(retainedLoan, *desired, *statement.binding);
         } else {
-          retained.semanticLoan = semanticLoan;
+          MirLoan &retained = output.loans[retainedLoan - 1];
+          if (retained.semanticLoan != 0 &&
+              retained.semanticLoan != semanticLoan) {
+            valid = false;
+          } else {
+            retained.semanticLoan = semanticLoan;
+          }
         }
       }
       bindingLoans.insert_or_assign(*statement.binding, retainedLoan);
@@ -6266,6 +6419,18 @@ private:
       if (std::find(carriers.begin(), carriers.end(), *statement.binding) ==
           carriers.end()) {
         carriers.push_back(*statement.binding);
+      }
+      const MirLoan *retained = output.findLoan(retainedLoan);
+      const HirBindingId transferred =
+          statement.value ? movedBorrowCarrierBinding(*statement.value) : 0;
+      if (retained != nullptr && retained->lifecycleBound && transferred != 0 &&
+          transferred != *statement.binding) {
+        std::erase(output.loans[retainedLoan - 1].carriers, transferred);
+        if (const auto sourceLoan = bindingLoans.find(transferred);
+            sourceLoan != bindingLoans.end() &&
+            sourceLoan->second == retainedLoan) {
+          bindingLoans.erase(sourceLoan);
+        }
       }
     } else if (binding != nullptr &&
                binding->info.traits.containsBorrowedState && statement.value) {

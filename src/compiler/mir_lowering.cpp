@@ -172,9 +172,12 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirClassInstance &instance : source.classInstances()) {
     MirClassInstance lowered{
         .id = instance.id,
+        .sourceUnit = instance.sourceUnit,
         .declaration = instance.declaration,
         .type = instance.type,
         .traits = instance.traits,
+        .compilerCapability = instance.compilerCapability,
+        .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .kind = instance.kind,
         .bases = instance.bases,
         .structuralBases = instance.bases,

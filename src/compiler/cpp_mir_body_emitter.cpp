@@ -7493,7 +7493,20 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
       instance->traits.containsBorrowedState ||
       !instance->traits.moveAssignable ||
       !visiting.insert(instance->id).second) {
-    return false;
+    // The sealed mutex capability has a private native disengaged state and
+    // a fail-closed move publication operation. It exists solely so the
+    // transformed constructor ABI can preserve MIR's construct-then-reparent
+    // schedule; it is neither a GTI default constructor nor an observable
+    // source value. The complete capability shape remains verified by the
+    // MIR program verifier.
+    return instance != nullptr &&
+           instance->compilerCapability ==
+               CompilerCapabilityTypeKind::MutexStorage &&
+           instance->type.arguments.size() == 1 &&
+           instance->declaredFields.empty() && !instance->abstract &&
+           !instance->polymorphic && !instance->cAbiRecord &&
+           !instance->unionLayout && instance->bases.empty() &&
+           instance->structuralBases.empty();
   }
 
   const bool fieldsReady = std::all_of(
@@ -11504,6 +11517,12 @@ loanReferentType(const MirProgram &program, const MirBody &body,
         target->returnType.arguments.size() == 1) {
       return target->returnType.arguments.front();
     }
+    if (producer != nullptr &&
+        (producer->intrinsic == IntrinsicKind::MutexGuardRead ||
+         producer->intrinsic == IntrinsicKind::MutexGuardReadMut) &&
+        producer->info.type != SemanticType::Unknown) {
+      return producer->info.type;
+    }
     if ((source->type.kind == SemanticType::Storage ||
          source->type.kind == SemanticType::PrefixStorage ||
          source->type.kind == SemanticType::UniqueOwner ||
@@ -13238,6 +13257,11 @@ bool cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
          failureConstructorEmptyDefaultFieldType(program, instance->type);
 }
 
+bool cppMirFailureConstructorEmptyStateTypeEligible(
+    const MirProgram &program, const SemanticType &type) {
+  return failureConstructorEmptyDefaultFieldType(program, type);
+}
+
 std::optional<std::vector<SemanticType>> cppMirFlattenConcreteParameterTypes(
     std::span<const SemanticType> parameterTypes) {
   std::vector<SemanticType> flattened;
@@ -13504,6 +13528,35 @@ storageAllocationFailureCall(const MirProgram &program,
   return site != nullptr && site->outcomes.size() == 1 &&
          site->outcomes.front().code == DefinedFailureCode::AllocationFailure &&
          site->outcomes.front().detail == DefinedFailureDetail::PrivateStorage;
+}
+
+[[nodiscard]] bool
+mutexLockFailureCall(const MirProgram &program,
+                     const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::MutexLockFailure ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.bodyTarget || instruction.lambdaTarget ||
+      instruction.callableInvocation || instruction.receiver ||
+      instruction.result || !instruction.operands.empty() ||
+      !instruction.parameterTypes.empty() ||
+      !instruction.callableArguments.empty() ||
+      instruction.localFailureSites.size() != 1 ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None ||
+      !instruction.lifecycle.empty()) {
+    return false;
+  }
+  const DefinedFailureOutcome expected{
+      .code = DefinedFailureCode::InfallibleHostOperationFailed,
+      .detail = DefinedFailureDetail::MutexLock};
+  const FailureSiteDescriptor *site =
+      program.failureMetadata().findSite(
+          instruction.localFailureSites.front());
+  return site != nullptr &&
+         site->outcomes == std::vector<DefinedFailureOutcome>{expected} &&
+         instruction.definedFailure.localOrigins.front().outcomes ==
+             std::vector<DefinedFailureOutcome>{expected};
 }
 
 // A storage read with no live failure edge is terminally contained by the
@@ -14524,6 +14577,31 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
         return nullptr;
       }
       found = &loan;
+    }
+  }
+  return found;
+}
+
+[[nodiscard]] const MirInstruction *
+mutexGuardReadLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.producedBy == 0) {
+    return nullptr;
+  }
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          (instruction.intrinsic != IntrinsicKind::MutexGuardRead &&
+           instruction.intrinsic != IntrinsicKind::MutexGuardReadMut) ||
+          instruction.hirValue != loan.producedBy ||
+          producedCallResultLoan(body, instruction) != &loan) {
+        continue;
+      }
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &instruction;
     }
   }
   return found;
@@ -17450,17 +17528,13 @@ public:
                  << " *__gti_mir_loan_" << loan.id << "{};\n";
           continue;
         }
-        const MirInstruction *call =
-            loanProducingReferenceCall(program, facts.body, loan);
-        const MirFunctionInstance *target =
-            call != nullptr && call->functionTarget
-                ? program.findFunctionInstance(*call->functionTarget)
-                : nullptr;
-        if (target == nullptr || target->returnType.arguments.empty()) {
+        const std::optional<SemanticType> referent =
+            loanReferentType(program, facts.body, loan);
+        if (!referent) {
           throw std::logic_error(
               "verified MIR call-result loan lost its element type");
         }
-        output << typeSpelling(target->returnType.arguments.front())
+        output << typeSpelling(*referent)
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
@@ -17519,6 +17593,7 @@ public:
           if (instruction.kind == MirInstructionKind::Call &&
               (storageBoundsCheckCall(instruction) ||
                storageAllocationFailureCall(program, instruction) ||
+               mutexLockFailureCall(program, instruction) ||
                (storageReadIntrinsic(instruction.intrinsic) &&
                 invokePairedInstruction(facts.body, instruction.id)) ||
                checkedConversionIntrinsicCall(instruction) ||
@@ -21960,6 +22035,62 @@ private:
       return emitted;
     };
     if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::MutexLock ||
+         instruction.intrinsic == IntrinsicKind::MutexUnlock ||
+         instruction.intrinsic == IntrinsicKind::MutexGuardActive ||
+         instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+         instruction.intrinsic == IntrinsicKind::MutexGuardReadMut)) {
+      const bool readsGuard =
+          instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+          instruction.intrinsic == IntrinsicKind::MutexGuardReadMut;
+      if (instruction.intrinsic == IntrinsicKind::MutexLock ||
+          instruction.intrinsic == IntrinsicKind::MutexGuardActive) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+      } else if (readsGuard) {
+        const MirLoan *loan =
+            producedCallResultLoan(facts.body, instruction);
+        if (loan == nullptr) {
+          throw std::logic_error(
+              "verified mutex guard read lost its call-result loan");
+        }
+        output << "__gti_mir_loan_" << loan->id << " = &";
+      }
+      output << "::gti_internal::backend::";
+      switch (instruction.intrinsic) {
+      case IntrinsicKind::MutexLock:
+        output << "mutex_lock";
+        break;
+      case IntrinsicKind::MutexUnlock:
+        output << "mutex_unlock";
+        break;
+      case IntrinsicKind::MutexGuardActive:
+        output << "mutex_guard_active";
+        break;
+      case IntrinsicKind::MutexGuardRead:
+      case IntrinsicKind::MutexGuardReadMut:
+        output << "mutex_guard_read";
+        break;
+      default:
+        throw std::logic_error("unreachable mutex intrinsic spelling");
+      }
+      output << '(';
+      (void)emitCallOperands(nullptr, false, false);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
+      if (!failureForm || !mutexLockFailureCall(program, instruction)) {
+        throw std::logic_error(
+            "verified mutex lock failure lost its checked shape");
+      }
+      output << "__gti_mir_failure_status_" << instruction.id
+             << " = ::gti_internal::backend::mir_failure_status_v1{"
+                "GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1, "
+                "GTI_FAILURE_DETAIL_MUTEX_LOCK_V1};\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
          instruction.intrinsic == IntrinsicKind::AtomicStore ||
          instruction.intrinsic == IntrinsicKind::AtomicExchange ||
@@ -23826,6 +23957,7 @@ private:
       const bool storageDetector =
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
           (storageAllocationFailureCall(program, *producer) ||
+           mutexLockFailureCall(program, *producer) ||
            (storageReadIntrinsic(producer->intrinsic) &&
             !producer->localFailureSites.empty()) ||
            (sparseStorageIntrinsic(producer->intrinsic) &&
@@ -26004,6 +26136,97 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 
 namespace {
 
+// The sealed mutex-storage class is represented by backend::mutex_value<T>,
+// whose native constructor moves the one payload parameter directly into its
+// optional value. The source declaration deliberately has an empty body, but
+// a lexical class parameter still contributes its ordinary exit-time Drop to
+// MIR and therefore makes the source constructor conservatively
+// failure-capable. Prove that exact empty-body schedule before treating the
+// native constructor as the ordinary overload used by a member initializer.
+[[nodiscard]] bool nativeMutexStorageConstructorTarget(
+    const MirProgram &program, const MirConstructorInstance &target,
+    const MirClassInstance &owner) {
+  if (owner.compilerCapability !=
+          CompilerCapabilityTypeKind::MutexStorage ||
+      owner.type.arguments.size() != 1 ||
+      target.owner != owner.id ||
+      target.definitionKind != MirDefinitionKind::Source ||
+      !target.typeArguments.empty() || !target.valueArguments.empty() ||
+      target.parameterBindings.size() != 1 ||
+      target.parameterTypes.size() != 1 ||
+      target.parameterTypes.front() != owner.type.arguments.front() ||
+      target.borrowOrigin != BorrowOriginKind::None ||
+      !target.initializers.empty() ||
+      !cppMirConstructorStatusCannotFail(program, target.id)) {
+    return false;
+  }
+
+  const MirBody &body = target.body;
+  const MirBlock *entry = body.findBlock(body.entry);
+  if (body.kind != MirBodyKind::Constructor || entry == nullptr ||
+      body.blocks.size() != 1 || !entry->reachable ||
+      entry->activeFailure != 0 || !entry->parameters.empty() ||
+      entry->terminator.kind != MirTerminatorKind::Return ||
+      entry->terminator.value || entry->terminator.failureRecord != 0 ||
+      !entry->terminator.successLifecycle.empty() ||
+      !body.failureRecords.empty() || !body.loans.empty() ||
+      !body.fullExpressions.empty() || !body.rangeIterations.empty() ||
+      !body.programConstantSubstitutions.empty() || !body.values.empty() ||
+      body.places.size() != 1) {
+    return false;
+  }
+  const MirPlace &source = body.places.front();
+  if (source.root != MirPlaceRootKind::Binding || source.binding == 0 ||
+      source.binding != target.parameterBindings.front() ||
+      !source.projections.empty() || !source.initiallyAvailable ||
+      source.type != target.parameterTypes.front()) {
+    return false;
+  }
+
+  if (body.dropObligations.empty()) {
+    return body.cleanupBoundaries.empty() && entry->instructions.empty() &&
+           source.traits.drop == DropKind::Trivial;
+  }
+  if (body.dropObligations.size() != 1 ||
+      body.cleanupBoundaries.size() != 1 || entry->instructions.size() != 2) {
+    return false;
+  }
+  const MirDropObligation &drop = body.dropObligations.front();
+  const MirCleanupBoundary &boundary = body.cleanupBoundaries.front();
+  const MirInstruction &dropInstruction = entry->instructions[0];
+  const MirInstruction &boundaryInstruction = entry->instructions[1];
+  const MirLifecycleEvent *dropEvent =
+      dropInstruction.lifecycle.size() == 1
+          ? &dropInstruction.lifecycle.front()
+          : nullptr;
+  return drop.id == 1 && drop.kind == MirDropObligationKind::Binding &&
+         drop.place == source.id && drop.binding == source.binding &&
+         drop.dropType.type == source.type && drop.initiallyActive &&
+         boundary.id == 1 && boundary.kind == MirCleanupBoundaryKind::Normal &&
+         boundary.obligations.size() == 1 &&
+         boundary.obligations.front() == drop.id &&
+         dropInstruction.kind == MirInstructionKind::Drop &&
+         dropInstruction.destination == source.id && !dropInstruction.result &&
+         !dropInstruction.receiver && dropInstruction.operands.empty() &&
+         dropInstruction.localFailureSites.empty() &&
+         dropInstruction.definedFailure.empty() &&
+         !dropInstruction.ownership && dropInstruction.fullExpressionEnd == 0 &&
+         dropInstruction.cleanupBoundaryEnd == 0 &&
+         dropInstruction.info.type == source.type && dropEvent != nullptr &&
+         dropEvent->kind == MirLifecycleEventKind::Drop &&
+         dropEvent->source == drop.id && dropEvent->target == 0 &&
+         !dropEvent->conditional && !dropEvent->failureCleanup &&
+         boundaryInstruction.kind == MirInstructionKind::Lifecycle &&
+         !boundaryInstruction.result && !boundaryInstruction.destination &&
+         !boundaryInstruction.receiver && boundaryInstruction.operands.empty() &&
+         boundaryInstruction.localFailureSites.empty() &&
+         boundaryInstruction.definedFailure.empty() &&
+         !boundaryInstruction.ownership &&
+         boundaryInstruction.lifecycle.empty() &&
+         boundaryInstruction.fullExpressionEnd == 0 &&
+         boundaryInstruction.cleanupBoundaryEnd == boundary.id;
+}
+
 // The native member-initializer list spells the target's ordinary C++
 // overload. A failure-capable target is therefore admissible only when its
 // verified MIR body can never report a failure status and that ordinary body is
@@ -26022,6 +26245,11 @@ plainConstructedFieldTarget(const MirProgram &program,
   }
   if (!cppMirConstructorStatusCannotFail(program, target.id)) {
     return false;
+  }
+  const MirClassInstance *owner = program.findClassInstance(target.owner);
+  if (owner != nullptr &&
+      nativeMutexStorageConstructorTarget(program, target, *owner)) {
+    return true;
   }
   probing.push_back(target.id);
   const bool published =
@@ -26060,15 +26288,16 @@ cppMirConstructedFieldInitializerBindings(
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
   const MirBody &body = constructor.body;
   const MirBlock *entry = body.findBlock(body.entry);
-  // One straight-line prologue with no failure routing, no loans, and no
-  // cleanup boundaries is the only shape whose complete instruction set can be
-  // proved here. Anything else could hide an operation that the native member
-  // initializer list would reorder.
+  // One straight-line prologue with no failure routing or loans is the only
+  // shape whose complete instruction set can be proved here. A moved mutex
+  // payload may retain the exact normal parameter-drop boundary proved below;
+  // anything else could hide an operation that the native member-initializer
+  // list would reorder.
   if (owner == nullptr || entry == nullptr || body.blocks.size() != 1 ||
       entry->terminator.kind != MirTerminatorKind::Return ||
       entry->terminator.value || !entry->terminator.successLifecycle.empty() ||
       !entry->parameters.empty() || !body.failureRecords.empty() ||
-      !body.loans.empty() || !body.cleanupBoundaries.empty() ||
+      !body.loans.empty() ||
       !body.rangeIterations.empty() || !owner->bases.empty() ||
       !owner->structuralBases.empty() || constructor.initializers.empty() ||
       constructor.initializers.size() != owner->declaredFields.size() ||
@@ -26209,7 +26438,9 @@ cppMirConstructedFieldInitializerBindings(
       const MirOperand &operand = construct->operands[argumentIndex];
       if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
           operand.type != target->parameterTypes[argumentIndex] ||
-          !scalarArgumentType(operand.type)) {
+          (!scalarArgumentType(operand.type) &&
+           constructedOwner->compilerCapability !=
+               CompilerCapabilityTypeKind::MutexStorage)) {
         return {};
       }
       const MirValue *staged = body.findValue(operand.value);
@@ -26222,7 +26453,8 @@ cppMirConstructedFieldInitializerBindings(
           input->callSite != construct->callSite || !input->callInputRole ||
           *input->callInputRole != MirCallInputRole::Argument ||
           input->callInputIndex != argumentIndex ||
-          input->callInputKind != HirCallInputKind::Value ||
+          (input->callInputKind != HirCallInputKind::Value &&
+           input->callInputKind != HirCallInputKind::MoveValue) ||
           input->defaultArgument || input->destination || input->receiver ||
           input->operands.size() != 1 ||
           input->operands.front().kind != MirOperandKind::Value ||
@@ -26236,12 +26468,26 @@ cppMirConstructedFieldInitializerBindings(
       const MirInstruction *load =
           loaded == nullptr ? nullptr
                             : findInstruction(body, loaded->definition);
-      if (loaded == nullptr || load == nullptr ||
-          load->kind != MirInstructionKind::Load || !load->result ||
-          *load->result != loaded->id || load->destination || load->receiver ||
-          load->operands.size() != 1 ||
-          load->operands.front().kind != MirOperandKind::Copy ||
-          load->operands.front().place == 0 ||
+      const bool copied =
+          load != nullptr && load->kind == MirInstructionKind::Load &&
+          load->operands.size() == 1 &&
+          load->operands.front().kind == MirOperandKind::Copy;
+      const bool movedMutexValue =
+          load != nullptr && load->kind == MirInstructionKind::Move &&
+          constructedOwner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage &&
+          load->intrinsic == IntrinsicKind::Move &&
+          load->operands.size() == 1 &&
+          load->operands.front().kind == MirOperandKind::Move;
+      if (loaded == nullptr || load == nullptr || (!copied && !movedMutexValue) ||
+          (copied && input->callInputKind != HirCallInputKind::Value) ||
+          (movedMutexValue &&
+           input->callInputKind !=
+               (scalarArgumentType(loaded->info.type)
+                    ? HirCallInputKind::Value
+                    : HirCallInputKind::MoveValue)) ||
+          !load->result || *load->result != loaded->id || load->destination ||
+          load->receiver || load->operands.front().place == 0 ||
           !load->localFailureSites.empty() || !load->definedFailure.empty() ||
           !load->lifecycle.empty() || load->fullExpressionEnd != 0 ||
           load->cleanupBoundaryEnd != 0 || loaded->info.type != operand.type ||
@@ -26252,6 +26498,8 @@ cppMirConstructedFieldInitializerBindings(
       if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
           !source->projections.empty() || !source->initiallyAvailable ||
           source->type != operand.type ||
+          (copied && !scalarArgumentType(source->type)) ||
+          (movedMutexValue && !source->traits.movable) ||
           load->operands.front().type != source->type) {
         return {};
       }
@@ -26268,6 +26516,7 @@ cppMirConstructedFieldInitializerBindings(
         return {};
       }
       binding.parameters.push_back(parameterIndex);
+      binding.movedParameters.push_back(movedMutexValue);
       binding.argumentInstructions.push_back(load->id);
       binding.argumentInstructions.push_back(input->id);
     }
@@ -26411,6 +26660,153 @@ cppMirConstructedFieldInitializerBindings(
     return {};
   }
 
+  // Moving a class payload into the private mutex storage constructor leaves
+  // its source parameter's lexical Drop in MIR. Native C++ performs that same
+  // destruction automatically at constructor exit, after the member
+  // initializer has moved from the parameter. Claim only the bijective
+  // Binding-drop/normal-boundary schedule for the exact parameters already
+  // proved as MoveValue inputs above; every other cleanup shape remains in the
+  // body and therefore rejects this member-initializer spelling.
+  std::vector<MirDropObligationId> movedParameterDrops;
+  std::vector<MirInstructionId> movedParameterDropInstructions;
+  for (const CppMirConstructedFieldInitializerBinding &binding : bindings) {
+    if (binding.parameters.size() != binding.movedParameters.size() ||
+        binding.argumentInstructions.size() != binding.parameters.size() * 2) {
+      return {};
+    }
+    for (std::size_t index = 0; index < binding.parameters.size(); ++index) {
+      if (!binding.movedParameters[index]) {
+        continue;
+      }
+      const std::size_t parameter = binding.parameters[index];
+      if (parameter >= constructor.parameterBindings.size() ||
+          parameter >= constructor.parameterTypes.size()) {
+        return {};
+      }
+      const MirInstruction *move =
+          findInstruction(body, binding.argumentInstructions[index * 2]);
+      const MirPlace *source =
+          move != nullptr && move->operands.size() == 1 &&
+                  move->operands.front().kind == MirOperandKind::Move
+              ? body.findPlace(move->operands.front().place)
+              : nullptr;
+      if (move == nullptr || move->kind != MirInstructionKind::Move ||
+          move->intrinsic != IntrinsicKind::Move || !move->result ||
+          move->destination || move->receiver || !move->lifecycle.empty() ||
+          !move->localFailureSites.empty() || !move->definedFailure.empty() ||
+          move->fullExpressionEnd != 0 || move->cleanupBoundaryEnd != 0 ||
+          source == nullptr || source->root != MirPlaceRootKind::Binding ||
+          !source->projections.empty() || !source->initiallyAvailable ||
+          source->binding != constructor.parameterBindings[parameter] ||
+          source->type != constructor.parameterTypes[parameter] ||
+          !source->traits.movable || move->info.type != source->type ||
+          move->operands.front().type != source->type) {
+        return {};
+      }
+
+      if (source->traits.drop == DropKind::Trivial) {
+        if (std::any_of(body.dropObligations.begin(),
+                        body.dropObligations.end(),
+                        [&](const MirDropObligation &drop) {
+                          return drop.place == source->id ||
+                                 (drop.binding != 0 &&
+                                  drop.binding == source->binding);
+                        })) {
+          return {};
+        }
+        continue;
+      }
+
+      const MirDropObligation *parameterDrop = nullptr;
+      for (const MirDropObligation &drop : body.dropObligations) {
+        if (drop.kind != MirDropObligationKind::Binding ||
+            drop.place != source->id || drop.binding != source->binding ||
+            drop.dropType.type != source->type || !drop.initiallyActive) {
+          continue;
+        }
+        if (parameterDrop != nullptr) {
+          return {};
+        }
+        parameterDrop = &drop;
+      }
+      const MirInstruction *dropInstruction = nullptr;
+      for (const MirInstruction &instruction : entry->instructions) {
+        if (parameterDrop == nullptr ||
+            instruction.kind != MirInstructionKind::Drop ||
+            instruction.destination != source->id ||
+            instruction.lifecycle.size() != 1) {
+          continue;
+        }
+        const MirLifecycleEvent &event = instruction.lifecycle.front();
+        if (event.kind != MirLifecycleEventKind::Drop ||
+            event.source != parameterDrop->id || event.target != 0 ||
+            event.conditional || event.failureCleanup || instruction.result ||
+            instruction.receiver || !instruction.operands.empty() ||
+            !instruction.localFailureSites.empty() ||
+            !instruction.definedFailure.empty() || instruction.ownership ||
+            instruction.fullExpressionEnd != 0 ||
+            instruction.cleanupBoundaryEnd != 0 ||
+            instruction.info.type != source->type) {
+          return {};
+        }
+        if (dropInstruction != nullptr) {
+          return {};
+        }
+        dropInstruction = &instruction;
+      }
+      if (parameterDrop == nullptr || dropInstruction == nullptr ||
+          std::find(movedParameterDrops.begin(), movedParameterDrops.end(),
+                    parameterDrop->id) != movedParameterDrops.end() ||
+          std::find(movedParameterDropInstructions.begin(),
+                    movedParameterDropInstructions.end(),
+                    dropInstruction->id) !=
+              movedParameterDropInstructions.end()) {
+        return {};
+      }
+      movedParameterDrops.push_back(parameterDrop->id);
+      movedParameterDropInstructions.push_back(dropInstruction->id);
+    }
+  }
+
+  std::vector<std::size_t> cleanupMarkers(body.cleanupBoundaries.size(), 0);
+  std::vector<MirDropObligationId> scheduledParameterDrops;
+  for (const MirInstruction &instruction : entry->instructions) {
+    if (instruction.cleanupBoundaryEnd == 0) {
+      continue;
+    }
+    if (instruction.cleanupBoundaryEnd > body.cleanupBoundaries.size() ||
+        instruction.kind != MirInstructionKind::Lifecycle ||
+        instruction.result || instruction.destination || instruction.receiver ||
+        !instruction.operands.empty() ||
+        !instruction.localFailureSites.empty() ||
+        !instruction.definedFailure.empty() || instruction.ownership ||
+        !instruction.lifecycle.empty() || instruction.fullExpressionEnd != 0) {
+      return {};
+    }
+    ++cleanupMarkers[instruction.cleanupBoundaryEnd - 1];
+  }
+  for (std::size_t index = 0; index < body.cleanupBoundaries.size(); ++index) {
+    const MirCleanupBoundary &boundary = body.cleanupBoundaries[index];
+    if (boundary.id != index + 1 ||
+        boundary.kind != MirCleanupBoundaryKind::Normal ||
+        boundary.obligations.empty() || cleanupMarkers[index] != 1) {
+      return {};
+    }
+    for (MirDropObligationId obligation : boundary.obligations) {
+      if (std::find(movedParameterDrops.begin(), movedParameterDrops.end(),
+                    obligation) == movedParameterDrops.end() ||
+          std::find(scheduledParameterDrops.begin(),
+                    scheduledParameterDrops.end(),
+                    obligation) != scheduledParameterDrops.end()) {
+        return {};
+      }
+      scheduledParameterDrops.push_back(obligation);
+    }
+  }
+  if (scheduledParameterDrops.size() != movedParameterDrops.size()) {
+    return {};
+  }
+
   // One shared transfer-out instruction retires every claimed rollback
   // obligation at normal completion. Prove that it mentions exactly those
   // obligations and that no other instruction touches them.
@@ -26432,7 +26828,11 @@ cppMirConstructedFieldInitializerBindings(
                  (binding.initializeInstruction != 0 &&
                   instruction.id == binding.initializeInstruction);
         });
-    if (named) {
+    const bool movedParameterDrop =
+        std::find(movedParameterDropInstructions.begin(),
+                  movedParameterDropInstructions.end(),
+                  instruction.id) != movedParameterDropInstructions.end();
+    if (named || movedParameterDrop) {
       continue;
     }
     if (transferInstruction != 0 ||
@@ -26484,6 +26884,10 @@ cppMirConstructedFieldInitializerBindings(
     const bool sibling =
         std::find(siblingInstructions.begin(), siblingInstructions.end(),
                   instruction.id) != siblingInstructions.end();
+    const bool movedParameterDrop =
+        std::find(movedParameterDropInstructions.begin(),
+                  movedParameterDropInstructions.end(),
+                  instruction.id) != movedParameterDropInstructions.end();
     const bool metadataBoundary =
         instruction.kind == MirInstructionKind::Lifecycle &&
         !instruction.result && !instruction.destination &&
@@ -26492,7 +26896,7 @@ cppMirConstructedFieldInitializerBindings(
         instruction.definedFailure.empty() && instruction.lifecycle.empty() &&
         (instruction.fullExpressionEnd != 0 ||
          instruction.cleanupBoundaryEnd != 0);
-    if (!named && !sibling && !metadataBoundary) {
+    if (!named && !sibling && !movedParameterDrop && !metadataBoundary) {
       return {};
     }
   }
@@ -27778,8 +28182,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirInstruction *checkedStorageRead =
         discharged == nullptr ? checkedStorageReadLoanProducer(body, loan)
                               : nullptr;
-    const MirInstruction *referenceCall =
+    const MirInstruction *mutexGuardRead =
         discharged == nullptr && checkedStorageRead == nullptr
+            ? mutexGuardReadLoanProducer(body, loan)
+            : nullptr;
+    const MirInstruction *referenceCall =
+        discharged == nullptr && checkedStorageRead == nullptr &&
+                mutexGuardRead == nullptr
             ? loanProducingReferenceCall(program_, body, loan)
             : nullptr;
     if (discharged != nullptr) {
@@ -27797,6 +28206,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           loanSource->type.arguments.empty() ||
           checkedStorageRead->operands.size() != 2 ||
           checkedStorageRead->info.type != loanSource->type.arguments.front()) {
+        return false;
+      }
+    } else if (mutexGuardRead != nullptr) {
+      const MirClassInstance *storage =
+          uniqueClassInstanceForType(program_, loanSource->type);
+      if (storage == nullptr ||
+          storage->compilerCapability !=
+              CompilerCapabilityTypeKind::MutexStorage ||
+          loanSource->type.arguments.size() != 1 ||
+          mutexGuardRead->operands.size() != 2 ||
+          mutexGuardRead->info.type != loanSource->type.arguments.front() ||
+          loan.access !=
+              (mutexGuardRead->intrinsic == IntrinsicKind::MutexGuardReadMut
+                   ? AccessMode::Mutable
+                   : AccessMode::ReadOnly)) {
         return false;
       }
     } else if (referenceCall != nullptr) {
@@ -31152,6 +31576,125 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
             return &storage.arguments.front();
           };
+          const auto capabilityArgument =
+              [&](const MirOperand &operand,
+                  CompilerCapabilityTypeKind capability,
+                  AccessMode access) -> const SemanticType * {
+            const MirOperandKind expectedKind =
+                access == AccessMode::Mutable ? MirOperandKind::BorrowWrite
+                                              : MirOperandKind::BorrowRead;
+            if (operand.kind != expectedKind || operand.place == 0 ||
+                operand.type.kind != SemanticType::Reference ||
+                operand.type.referenceAccess != access ||
+                operand.type.arguments.size() != 1) {
+              return nullptr;
+            }
+            const MirPlace *place = body.findPlace(operand.place);
+            const SemanticType &value = operand.type.arguments.front();
+            const MirClassInstance *instance =
+                uniqueClassInstanceForType(program_, value);
+            if (place == nullptr || place->type != value ||
+                instance == nullptr ||
+                instance->compilerCapability != capability ||
+                value.arguments.size() != 1 || !typeRow(value)) {
+              return nullptr;
+            }
+            return &value.arguments.front();
+          };
+          const bool plainIntrinsicCall =
+              !instruction.receiver && !instruction.functionTarget &&
+              !instruction.constructorTarget && !instruction.bodyTarget &&
+              !instruction.lambdaTarget && !instruction.callableInvocation &&
+              instruction.callableArguments.empty() &&
+              instruction.parameterTypes.size() ==
+                  instruction.operands.size() &&
+              std::equal(instruction.parameterTypes.begin(),
+                         instruction.parameterTypes.end(),
+                         instruction.operands.begin(),
+                         [](const SemanticType &parameter,
+                            const MirOperand &operand) {
+                           return parameter == operand.type;
+                         });
+          if (instruction.intrinsic == IntrinsicKind::MutexLock ||
+              instruction.intrinsic == IntrinsicKind::MutexUnlock ||
+              instruction.intrinsic == IntrinsicKind::MutexGuardActive ||
+              instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+              instruction.intrinsic == IntrinsicKind::MutexGuardReadMut ||
+              instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
+            if (instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
+              if (!mutexLockFailureCall(program_, instruction) ||
+                  !invokePairedInstruction(body, instruction.id)) {
+                return false;
+              }
+              continue;
+            }
+            const bool tokenOnly =
+                instruction.intrinsic == IntrinsicKind::MutexGuardActive;
+            const bool mutableToken =
+                instruction.intrinsic == IntrinsicKind::MutexLock ||
+                instruction.intrinsic == IntrinsicKind::MutexUnlock;
+            const std::size_t expectedOperands = tokenOnly ? 1 : 2;
+            const SemanticType *storageElement =
+                tokenOnly || instruction.operands.empty()
+                    ? nullptr
+                    : capabilityArgument(
+                          instruction.operands.front(),
+                          CompilerCapabilityTypeKind::MutexStorage,
+                          AccessMode::ReadOnly);
+            const std::size_t tokenIndex = tokenOnly ? 0 : 1;
+            const SemanticType *tokenElement =
+                instruction.operands.size() <= tokenIndex
+                    ? nullptr
+                    : capabilityArgument(
+                          instruction.operands[tokenIndex],
+                          CompilerCapabilityTypeKind::MutexLockToken,
+                          mutableToken ? AccessMode::Mutable
+                                       : AccessMode::ReadOnly);
+            const bool readsGuard =
+                instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+                instruction.intrinsic == IntrinsicKind::MutexGuardReadMut;
+            const MirLoan *loan =
+                readsGuard ? producedCallResultLoan(body, instruction)
+                           : nullptr;
+            const bool resultReady =
+                instruction.intrinsic == IntrinsicKind::MutexLock
+                    ? instruction.result.has_value() &&
+                          instruction.info.type == SemanticType::Int32
+                : instruction.intrinsic == IntrinsicKind::MutexUnlock
+                    ? !instruction.result &&
+                          instruction.info.type == SemanticType::Void
+                : instruction.intrinsic == IntrinsicKind::MutexGuardActive
+                    ? instruction.result.has_value() &&
+                          instruction.info.type == SemanticType::Bool
+                    : instruction.result.has_value() && loan != nullptr &&
+                          storageElement != nullptr &&
+                          instruction.info.type == *storageElement &&
+                          loan->access ==
+                              (instruction.intrinsic ==
+                                       IntrinsicKind::MutexGuardReadMut
+                                   ? AccessMode::Mutable
+                                   : AccessMode::ReadOnly);
+            const SynchronizationOperationKind expectedSynchronization =
+                instruction.intrinsic == IntrinsicKind::MutexLock
+                    ? SynchronizationOperationKind::MutexLock
+                : instruction.intrinsic == IntrinsicKind::MutexUnlock
+                    ? SynchronizationOperationKind::MutexUnlock
+                    : SynchronizationOperationKind::None;
+            if (!plainIntrinsicCall ||
+                instruction.operands.size() != expectedOperands ||
+                tokenElement == nullptr ||
+                (!tokenOnly && (storageElement == nullptr ||
+                                *storageElement != *tokenElement)) ||
+                !resultReady || !instruction.localFailureSites.empty() ||
+                !instruction.definedFailure.empty() ||
+                !instruction.lifecycle.empty() ||
+                instruction.synchronization.kind !=
+                    expectedSynchronization ||
+                !validSynchronizationOperation(instruction.synchronization)) {
+              return false;
+            }
+            continue;
+          }
           if (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
               instruction.intrinsic == IntrinsicKind::AtomicStore ||
               instruction.intrinsic == IntrinsicKind::AtomicExchange ||
@@ -31875,6 +32418,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (storageAllocationFailureCall(program_, *producer)) {
           // The allocation helper writes the canonical checked status that
           // drives this Invoke edge; successful publication remains in MIR.
+          continue;
+        }
+        if (mutexLockFailureCall(program_, *producer)) {
+          // The trusted mutex detector publishes its one canonical lock
+          // failure status before this Invoke routes ordinary cleanup.
           continue;
         }
         if (storageReadIntrinsic(producer->intrinsic) &&

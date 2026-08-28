@@ -61,6 +61,7 @@ enum class DefinedFailureDetail : std::uint8_t {
   AutomaticJoin,
   NegativeArgumentCount,
   RecursiveThreadLocalInitialization,
+  MutexLock,
   Count,
 };
 
@@ -167,7 +168,8 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
            outcome.detail == DefinedFailureDetail::HostedArguments;
   case DefinedFailureCode::InfallibleHostOperationFailed:
     return outcome.detail == DefinedFailureDetail::StdoutWrite ||
-           outcome.detail == DefinedFailureDetail::AutomaticJoin;
+           outcome.detail == DefinedFailureDetail::AutomaticJoin ||
+           outcome.detail == DefinedFailureDetail::MutexLock;
   case DefinedFailureCode::HostedRuntimeContractFailure:
     return outcome.detail == DefinedFailureDetail::NegativeArgumentCount ||
            outcome.detail ==
@@ -278,6 +280,8 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "stdout_write";
   case DefinedFailureDetail::AutomaticJoin:
     return "automatic_join";
+  case DefinedFailureDetail::MutexLock:
+    return "mutex_lock";
   case DefinedFailureDetail::NegativeArgumentCount:
     return "negative_argument_count";
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:

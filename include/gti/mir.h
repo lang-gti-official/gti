@@ -336,6 +336,10 @@ struct MirLoan {
   // storedField (a constructor storage target), this is provenance metadata
   // for a by-value carrier dependency and has no backend representation.
   SymbolId designatedField = 0;
+  // True only for a stored exclusive dependency whose carrier destructor
+  // releases the protected resource. Cleanup must Drop that carrier before
+  // ending this loan on every normal and failure edge.
+  bool lifecycleBound = false;
   // A two-phase mutable call-result loan reserves one stable target place at
   // its producing call, but does not become exclusive until the unique
   // ActivateBorrow instruction immediately before the committing write.
@@ -982,9 +986,13 @@ struct MirUnionLayout {
 
 struct MirClassInstance {
   HirClassInstanceId id = 0;
+  SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  CompilerCapabilityTypeKind compilerCapability =
+      CompilerCapabilityTypeKind::None;
+  bool lifecycleBoundBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;

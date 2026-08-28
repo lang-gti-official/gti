@@ -266,16 +266,19 @@ to render `std::copyable` and `std::copy_constructible` as distinct declared
 concepts. The protocol layer does not infer owner provenance from member names
 or lifecycle capability from spelling.
 
-Managed-thread diagnostics also remain shared frontend authority. An invalid
-task transfer, single-threaded profile, or target without thread support
-publishes `GTI-S2084` with its semantic related spans and hints. Typed-result
-diagnostics use the same compiler fact, including exact result matching and
-transfer denials. The LSP reads the default project profile as described below,
-exposes only the source-defined `std::thread` and
-`std::thread_result<Result>` declarations in hover/definition/completion, and
-filters the identity-bound `gti_internal` handles and operations. It does not
-derive task transfer, callable entry selection, result ownership, or
-concurrency from public spelling.
+Managed-thread and mutex diagnostics also remain shared frontend authority.
+An invalid task transfer, single-threaded profile, or target without thread
+support publishes `GTI-S2084`; an escaped protected loan or overlapping live
+guard publishes the ordinary ownership diagnostic `GTI-S2017`. Both retain
+their semantic related spans and hints. Typed-result diagnostics use the same
+compiler fact, including exact result matching and transfer denials. The LSP
+reads the default project profile as described below,
+exposes only the source-defined `std::thread`, `std::thread_result<Result>`,
+`std::mutex<T>`, and `std::mutex_guard<T>` declarations in
+hover/definition/completion, and filters the identity-bound `gti_internal`
+handles, mutex storage, lock tokens, and operations. It does not derive task
+transfer, callable entry selection, result ownership, protected-value
+provenance, lock lifetime, or concurrency from public spelling.
 
 ## Document State
 
@@ -361,8 +364,8 @@ reimplement TOML, target, or capability policy. A startup
 profile and also configures standalone documents. Omission selects the
 manifest `dev` profile when present and otherwise remains single-threaded.
 This keeps standalone and concurrent-project diagnostics and the public
-`<std/thread>` and `<std/atomic>` surfaces aligned with compiler-driver
-workflows. Analysis work
+`<std/thread>`, `<std/atomic>`, and `<std/mutex>` surfaces aligned with
+compiler-driver workflows. Analysis work
 additionally runs inside `lang::runGuarded`, and that boundary is deliberately
 narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
 an isolated `DocumentAnalysis` and its immutable frontend snapshot, and

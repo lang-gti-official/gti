@@ -251,6 +251,11 @@ add_executable("gti_atomic_tests"
 target_link_libraries("gti_atomic_tests" PRIVATE gti_cpp_backend)
 add_test(NAME atomic_semantic_ir COMMAND gti_atomic_tests)
 
+add_executable("gti_mutex_tests"
+               "${PROJECT_SOURCE_DIR}/tests/mutex_tests.cpp")
+target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
+add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
+
 add_executable("gti_defined_integer_tests"
                "${PROJECT_SOURCE_DIR}/tests/defined_integer_tests.cpp")
 target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
@@ -1265,6 +1270,25 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 300)
     add_test(
+      NAME mutex_end_to_end
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mutex_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_basic.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_move_only.gti"
+    )
+    set_tests_properties(mutex_end_to_end PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME mutex_tsan
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mutex_tsan_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
+              "${CMAKE_CXX_COMPILER}"
+    )
+    set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
+    add_test(
       NAME domain_operator_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/domain_operator_runtime_test.py"
@@ -1335,7 +1359,7 @@ if(Python3_Interpreter_FOUND)
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime managed_thread_end_to_end atomic_end_to_end
-      atomic_tsan
+      atomic_tsan mutex_end_to_end mutex_tsan
       domain_operator_runtime
       PROPERTIES ENVIRONMENT
         "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
@@ -1352,6 +1376,11 @@ if(Python3_Interpreter_FOUND)
       NAME atomic_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" atomic
+    )
+    add_test(
+      NAME mutex_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
+              "$<TARGET_FILE:gti_lsp>" mutex
     )
     add_test(
       NAME block_comment_lsp

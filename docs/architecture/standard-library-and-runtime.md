@@ -181,14 +181,23 @@ an exact backend-independent synchronization record. HIR and MIR distinguish
 thread spawn/join, atomic operation families, and mutex lock/unlock; atomic
 records retain legal order dimensions. MIR rejects these records in the
 single-threaded execution profile except in an exact, lowering-marked dormant
-compiler-trusted thread- or atomic-wrapper body. That exception lets complete
-unused `<std/thread>` and `<std/atomic>` declaration inventories exist; it
-cannot create a task adapter or executable atomic use and does not bypass the
-public semantic profile check. Optimizer effects preserve every record as a
-barrier. The concurrent profile plus target `threads` capability admits the
-implemented operations. Spawn transfers one exact
+compiler-trusted thread-, atomic-, or mutex-wrapper body. That exception lets
+complete unused `<std/thread>`, `<std/atomic>`, and `<std/mutex>` declaration
+inventories exist; it cannot create a task adapter or executable
+synchronization use and does not bypass the public semantic profile check.
+Optimizer effects preserve every record as a barrier. The concurrent profile
+plus target `threads` capability admits the implemented operations. Spawn
+transfers one exact
 owned task to the worker, successful explicit or automatic join establishes
 completion-before-return, and no public detach operation exists.
+
+The mutex surface follows the same policy split. Exact private storage and
+lock-token declarations lower to the native mutex preamble only when a
+concrete capability instance exists. `std::mutex<T>` remains source policy;
+its guard carries a verified owner dependency and lock token, guard reads
+publish only owner-tied MIR loans, and reverse deterministic cleanup emits the
+one unlock before normal return or failure propagation. The runtime has no
+separate public mutex ABI.
 
 Worker checked failure completes the worker's verified MIR cleanup before the
 generated adapter copies the exact ordinary record or `GTI-R0014` envelope and

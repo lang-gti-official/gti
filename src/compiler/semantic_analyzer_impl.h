@@ -507,6 +507,7 @@ private:
     std::unordered_set<SymbolId> carriers;
     bool confinedToRegion = true;
     bool hasAliases = false;
+    bool lifecycleBound = false;
     bool active = true;
   };
 
@@ -1422,6 +1423,9 @@ private:
 
   void analyzeAtomicIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
+
+  void analyzeMutexIntrinsicCall(const Call &expr,
+                                 const CallableCandidate &declaration);
 
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
@@ -2781,8 +2785,13 @@ private:
 
   [[nodiscard]] bool isAtomicLibraryUnit(SourceUnitId sourceUnit) const;
 
+  [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
+
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;
+
+  [[nodiscard]] bool
+  isDefaultLibraryMutexGuardCarrier(const ClassInfo &owner) const;
 
   [[nodiscard]] bool isDefaultLibraryStorageBorrowParameter(
       const ClassInfo &owner, const SemanticType &parameterType) const;
