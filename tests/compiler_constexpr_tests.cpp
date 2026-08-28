@@ -605,13 +605,29 @@ int main() {
              hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
          "char should not inherit integer arithmetic or conversions");
 
-  lang::Lexer reverseCodeUnitLexer;
-  lang::Parser reverseCodeUnitParser(reverseCodeUnitLexer.scan(
-      "int main() { char value = char(uint8_t(65)); return 0; }"));
-  (void)reverseCodeUnitParser.parse();
-  expect(reverseCodeUnitParser.hadError(),
-         "the byte bridge should expose one-way char-to-uint8 code-unit "
-         "extraction rather than making char a bidirectionally numeric type");
+  const lang::FrontendResult codeUnitBridge = lang::Frontend().analyze(
+      "character-code-unit.gti",
+      "static_assert(char(uint8_t(65)) == 'A'); "
+      "static_assert(uint8_t('B') == uint8_t(66)); "
+      "int main() { mut uint8_t byte = uint8_t(67); char value = char(byte); "
+      "return value == 'C' ? 0 : 1; }",
+      {standardLibraryPrelude()});
+  expect(codeUnitBridge.canGenerateCode(),
+         "char and uint8_t should support an explicit, lossless code-unit "
+         "bridge in both directions");
+
+  const lang::FrontendResult invalidCodeUnitBridge = lang::Frontend().analyze(
+      "invalid-character-code-unit.gti",
+      "int main() { uint8_t byte = uint8_t(65); char implicit = byte; "
+      "char wide = char(uint16_t(65)); return 0; }",
+      {standardLibraryPrelude()});
+  expect(!invalidCodeUnitBridge.canGenerateCode() &&
+             hasDiagnostic(invalidCodeUnitBridge.diagnostics,
+                           "Cannot initialize 'implicit'") &&
+             countDiagnosticCode(invalidCodeUnitBridge.diagnostics,
+                                 "GTI-S2014") == 1,
+         "the code-unit bridge should remain explicit and should not admit "
+         "other integer widths");
 
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",

@@ -1,4 +1,19 @@
 #include <std/cstdio>
+#include <std/string>
+
+expected<std::string, std::io_errc> read_all(mut std::FILE& stream) {
+  mut std::string result = std::string("");
+  while (true) {
+    mut auto chunk = stream.read_some(std::size_t(7));
+    if (!chunk) {
+      return unexpected(chunk.error());
+    }
+    if (chunk.value().empty()) {
+      return std::move(result);
+    }
+    result.append(chunk.value().view());
+  }
+}
 
 int main() {
   mut auto opened = std::fopen("bytes.bin", "rb");
@@ -23,19 +38,100 @@ int main() {
       closed_again.error() != std::io_errc::invalid_stream) {
     return 4;
   }
-  auto missing = std::fopen("missing.bin", "r");
-  if (missing || missing.error() != std::io_errc::open_failed) {
+
+  mut auto created = std::fopen(
+      "records.csv", std::file_mode::read_write_truncate);
+  if (!created) {
     return 5;
   }
-  auto unsupported = std::fopen("bytes.bin", "w");
-  if (unsupported || unsupported.error() != std::io_errc::unsupported_mode) {
+  auto written = std::fwrite("name,score\nAda,42\n", *created.value());
+  if (!written || written.value() != std::size_t(18)) {
     return 6;
   }
-  auto input = std::getchar();
-  auto input_eof = std::getchar();
-  if (!input || input.value() != 81 || input_eof ||
-      input_eof.error() != std::io_errc::end_of_file) {
+  auto after_write = std::ftell(*created.value());
+  if (!after_write || after_write.value() != int64_t(18)) {
     return 7;
+  }
+  auto rewound = std::fseek(*created.value(), int64_t(0),
+                            std::seek_origin::begin);
+  if (!rewound) {
+    return 8;
+  }
+  auto all = read_all(*created.value());
+  if (!all || all.value() != "name,score\nAda,42\n") {
+    return 9;
+  }
+  auto tail = std::fseek(*created.value(), int64_t(-3),
+                         std::seek_origin::end);
+  auto last = std::fread(*created.value(), std::size_t(8));
+  if (!tail || !last || last.value() != "42\n") {
+    return 10;
+  }
+  auto created_close = std::fclose(*created.value());
+  if (!created_close) {
+    return 11;
+  }
+
+  mut auto appended = std::fopen("records.csv", std::file_mode::append);
+  if (!appended) {
+    return 12;
+  }
+  auto append_result = appended.value()->write("Lin,7\n");
+  auto append_close = appended.value()->close();
+  if (!append_result || append_result.value() != std::size_t(6) ||
+      !append_close) {
+    return 13;
+  }
+
+  mut auto complete = std::fopen("records.csv", "r");
+  if (!complete) {
+    return 14;
+  }
+  auto contents = read_all(*complete.value());
+  if (!contents || contents.value() != "name,score\nAda,42\nLin,7\n") {
+    return 15;
+  }
+  auto complete_close = complete.value()->close();
+  if (!complete_close) {
+    return 16;
+  }
+  auto invalid_read = complete.value()->read_some(std::size_t(1));
+  auto invalid_write = complete.value()->write("x");
+  auto invalid_seek = complete.value()->seek(int64_t(0),
+                                             std::seek_origin::begin);
+  auto invalid_tell = complete.value()->tell();
+  if (invalid_read || invalid_write || invalid_seek || invalid_tell ||
+      invalid_read.error() != std::io_errc::invalid_stream ||
+      invalid_write.error() != std::io_errc::invalid_stream ||
+      invalid_seek.error() != std::io_errc::invalid_stream ||
+      invalid_tell.error() != std::io_errc::invalid_stream) {
+    return 17;
+  }
+
+  auto missing = std::fopen("missing.bin", "r");
+  if (missing || missing.error() != std::io_errc::open_failed) {
+    return 18;
+  }
+  auto unsupported = std::fopen("bytes.bin", "x");
+  if (unsupported || unsupported.error() != std::io_errc::unsupported_mode) {
+    return 19;
+  }
+
+  auto input = std::read_stdin_some(std::size_t(8));
+  auto input_eof = std::getchar();
+  if (!input || input.value() != "Q" || input_eof ||
+      input_eof.error() != std::io_errc::end_of_file) {
+    return 20;
+  }
+
+  auto stdout_write = std::try_write_stdout("io-out\n");
+  auto stderr_write = std::try_write_stderr("io-err\n");
+  auto stdout_flush = std::try_flush_stdout();
+  auto stderr_flush = std::try_flush_stderr();
+  if (!stdout_write || stdout_write.value() != std::size_t(7) ||
+      !stderr_write || stderr_write.value() != std::size_t(7) ||
+      !stdout_flush || !stderr_flush) {
+    return 21;
   }
   return 0;
 }

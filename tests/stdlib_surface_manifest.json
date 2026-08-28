@@ -5,7 +5,7 @@
     "stdlib/std/algorithm.gti": "ebfafdb53acb944829f2f83876072307a6c940246ddce97922e625f953cb50a4",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
-    "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
+    "stdlib/std/cstdio.gti": "13aa9146e9d587fe8cd3ad995f70eee192dfa9bb01336af830f99c029d181ef3",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
@@ -69,7 +69,7 @@
       "files": {
         "bytes.bin": {"encoding": "hex", "contents": "41005a"}
       },
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "io-out\n", "stderr": "io-err\n"}
     },
     {
       "id": "filesystem",
@@ -338,10 +338,23 @@
         "std::FILE::close",
         "std::FILE::get",
         "std::FILE::is_open",
+        "std::FILE::read_some",
+        "std::FILE::seek",
+        "std::FILE::tell",
+        "std::FILE::write",
         "std::fclose",
         "std::fgetc",
         "std::fopen",
-        "std::getchar"
+        "std::fread",
+        "std::fseek",
+        "std::ftell",
+        "std::fwrite",
+        "std::getchar",
+        "std::read_stdin_some",
+        "std::try_flush_stderr",
+        "std::try_flush_stdout",
+        "std::try_write_stderr",
+        "std::try_write_stdout"
       ],
       "case_ids": ["cstdio"],
       "required_instantiations": [],

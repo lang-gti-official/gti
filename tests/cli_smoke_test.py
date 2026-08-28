@@ -776,7 +776,7 @@ def main():
             '  auto missing = std::fopen("missing.bin", "r");\n'
             "  if (missing or missing.error() != "
             "std::io_errc::open_failed) { return 6; }\n"
-            '  auto unsupported = std::fopen("bytes.bin", "w");\n'
+            '  auto unsupported = std::fopen("bytes.bin", "x");\n'
             "  if (unsupported or unsupported.error() != "
             "std::io_errc::unsupported_mode) { return 7; }\n"
             "  auto input = std::getchar();\n"

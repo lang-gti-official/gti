@@ -2685,20 +2685,22 @@ name recognition.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
   The current formatter recognizes sequential `{}` plus `{{`/`}}`, accepts
   integral arguments only, and validates before stdout; indexing, names,
-  specifiers, floats, and customization remain later breadth. Stderr remains a
-  hosted service owned by `L-HOST-01`.
+  specifiers, floats, and customization remain later breadth. Recoverable
+  counted stderr output is now supplied by `L-HOST-01`.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.
 
 ### L-HOST-01: Remaining Hosted Services
 
-- **State/role:** blocked; `D-FAIL-01` is done; remaining prerequisites are
-  `L-RANGE-03` and any bounded FFI record actually required by the selected
-  service; bounded-first systems-readiness library work.
-- **Scope:** The initial systems-ready minimum covers file writes/seeking, monotonic and wall-clock
-  time, deterministic PRNG plus nondeterministic seed, process
-  arguments/environment, and stderr, one service family per prompt.
+- **State/role:** active. Counted stdin/stdout/stderr, file open/read/write,
+  seek/tell, and standard-stream flush are implemented through ordinary GTI
+  wrappers over a versioned byte ABI. Remaining independent services are
+  monotonic/wall-clock time and environment access.
+- **Scope:** The remaining systems-ready minimum covers monotonic and wall-clock
+  time and process environment access, one service family per prompt.
+  Deterministic PRNG plus nondeterministic seed, process arguments, and the
+  bounded I/O family are implemented.
   Recoverable failures return `expected`; public APIs expose no backend handles
   or raw C buffers. Broader filesystem traversal/watch, connected networking,
   and traffic buffers are client-driven sub-slices after a demonstrated need or

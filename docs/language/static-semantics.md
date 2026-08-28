@@ -202,13 +202,12 @@ explicit `IntegerType(value)` syntax and the checked range/truncation rule in
 `float(value)` and `double(value)` accept integers or either floating width;
 converting to `float` is the required explicit narrowing operation.
 
-`char` remains a distinct nonnumeric unsigned eight-bit code-unit type. One
-explicit lossless extraction bridges byte-oriented output code:
-`uint8_t(character)` preserves the character's code-unit bits. No range check
-is required because every character code unit fits. The conversion is not
-implicit, does not admit any other integer destination, does not add the
-inverse `char(uint8_t)` form, and does not make `char` satisfy an integer or
-numeric constraint.
+`char` remains a distinct nonnumeric unsigned eight-bit code-unit type. Two
+explicit lossless conversions bridge text and byte-oriented code:
+`uint8_t(character)` extracts the code-unit bits and `char(byte)` constructs the
+same code unit from one `uint8_t`. Neither direction requires a range check.
+The conversions are not implicit, do not admit any other integer type, and do
+not make `char` satisfy an integer or numeric constraint.
 
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
