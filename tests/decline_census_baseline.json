@@ -1,0 +1,107 @@
+{
+  "totals": {
+    "decline": 21,
+    "invalid-mir": 0,
+    "ok": 15,
+    "rejected": 0
+  },
+  "vocabularies": [
+    {
+      "body_kind": "Function",
+      "count": 6,
+      "example": "cleanup-owning class / constructor prvalue / array element",
+      "signature": [
+        "assign:dest=Binding+proj:Replace",
+        "drop:dest=Value:Drop"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 3,
+      "example": "cleanup-owning class / constructor prvalue / existing binding",
+      "signature": [
+        "assign:dest=Binding:Replace",
+        "drop:dest=Value:Drop"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 3,
+      "example": "cleanup-free class / constructor prvalue / vector element",
+      "signature": [
+        "assign:dest=Loan"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 3,
+      "example": "cleanup-owning class / constructor prvalue / vector element",
+      "signature": [
+        "assign:dest=Loan:Replace",
+        "drop:dest=Value:Drop"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-free class / call result / existing binding",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary",
+        "move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-free class / call result / class field",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary",
+        "move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 1,
+      "example": "cleanup-free class / constructor prvalue / existing binding",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 1,
+      "example": "cleanup-free class / constructor prvalue / class field",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary"
+      ]
+    }
+  ]
+}

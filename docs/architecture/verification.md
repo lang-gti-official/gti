@@ -743,6 +743,35 @@ reduction can never quietly become a different bug. The local audit's
 `--keep-failures` (or `--artifacts-dir`) preserves a failing working tree for
 exactly this pipeline instead of deleting it with the temporary directory.
 
+`scripts/debug/decline_census.py` answers the population question the
+per-reproducer tools cannot. The backend admits shapes through many
+individually proved fail-closed routes; each route proves one shape, and
+nothing measures their union, so a shape outside every route surfaces only
+when somebody happens to write a program that produces it. The census sweeps a
+generated shape space (and any `--corpus` directory), and for every program
+that declines with `GTI-B0001` it reads the body the diagnostic names,
+extracts a normalized feature set from the verified MIR, subtracts the
+features that some successfully emitted body already proves spellable, and
+aggregates what remains. The output is a ranked list of missing vocabularies
+with a representative program for each.
+
+```sh
+python3 scripts/debug/decline_census.py --compiler build/gti
+python3 scripts/debug/decline_census.py --compiler build/gti --corpus examples
+python3 scripts/debug/decline_census.py --compiler build/gti \
+    --baseline tests/decline_census_baseline.json
+```
+
+It needs no instrumented compiler: a declining program still emits verified
+MIR, because only the backend declined. Gate-level attribution for one
+reproducer remains `explain_rejection.py`'s job. Outcomes are separated so the
+driver's own defects stay visible — an ordinary diagnostic on a generated
+program means the *generator* is wrong and is reported apart from the census,
+and an internal error raised before the backend is a different defect class
+again. `--baseline` compares against a recorded census so a new missing
+vocabulary is visible as a change; it is a debug sweep rather than a merge
+gate, like the rest of `scripts/debug/`.
+
 `fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, the whole
 analysis-to-backend pipeline, and a bounded two/three-unit source-loader
 composition. They exist only under
