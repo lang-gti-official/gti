@@ -1304,6 +1304,53 @@ Acceptance criteria:
   or submodules), and symbolic links, gitlinks, unsafe paths, and
   case-folded collisions reject the tree.
 
+### Post-Milestone 7 addition: declared cross-compilation toolchains
+
+Status: complete for the declared-toolchain scope; a per-target GTI runtime
+archive and a `gti run`/`gti test` runner concept remain out of scope.
+
+Cross-target builds were listed above as a case the direct driver cannot
+express. Project mode now expresses it.
+
+- **Complete:** `--target <triple>` on `build`, `check`, `run`, and `test`,
+  parsed with the compiler's own `parseTargetTripleResult` so project mode
+  and `gti bindgen` share one spelling vocabulary. Omitting it selects the
+  host, and `gti build --all` forwards the selection to each child build.
+- **Complete:** a `[toolchains.<triple>]` manifest table declaring `cxx`,
+  optional `cc`, optional `sysroot`, and an optional `native-target` native
+  triple spelling. Keys normalize through the target vocabulary, duplicates
+  that select one target are rejected, and entries sort by declared spelling
+  for deterministic identity.
+- **Complete:** the resolved sysroot and native triple become one
+  driver-owned target policy emitted as `--sysroot=`/`--target=` on the
+  whole-program link, on every declared C and C++ object compile, and on the
+  cache's dependency-discovery probes. These are exactly the options every
+  user-supplied native argument vector rejects, so the driver is their only
+  source.
+- **Complete:** the selected triple and resolved toolchain join the project
+  model identity, and the target policy joins the whole-program cache key.
+- The GTI runtime archive and runtime headers are still discovered once for
+  the host toolchain. Supplying a runtime built for the selected target uses
+  the existing `GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE` overrides; a
+  per-target manifest field waits for that need to be demonstrated together
+  with a cross-built runtime.
+
+Acceptance criteria:
+
+- **Passed:** an unchanged manifest still builds for the host, and a host
+  build carries no cross policy;
+- **Passed:** a `build`, `run`, or `test` for a target that is not the build
+  host, with no matching `[toolchains.<triple>]`, fails with `GTI-B1904`
+  naming the missing table instead of reusing host tools;
+- **Passed:** `gti check` analyzes any supported target without a declared
+  toolchain, because it compiles nothing native;
+- **Passed:** `gti run` and `gti test` refuse a non-host `--target` rather
+  than building a program this machine cannot execute;
+- **Passed:** a declared toolchain without `cc` rejects a build that compiles
+  native C sources rather than reaching for host `cc`;
+- **Passed:** a host plan and a cross plan of one package never share a
+  project model identity.
+
 ## Testing Strategy
 
 The build system needs tests at four boundaries:

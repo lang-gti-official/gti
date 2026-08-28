@@ -2519,6 +2519,131 @@ def main():
         assert "constexpr double POINTS_SCALE = 1.5;" in policy_bindings
         run([gti, "run"], cwd=policy_project)
 
+        # Cross compilation. `--target` selects the build target for project
+        # commands; a target that is not the build host must resolve a
+        # declared [toolchains.<triple>] table rather than silently reuse
+        # host tools.
+        cross_triple = (
+            "x86_64-unknown-linux-gnu"
+            if host_target_os() != "linux"
+            else "arm64-apple-macos"
+        )
+        cross_project = root / "cross"
+        (cross_project / "src").mkdir(parents=True)
+        (cross_project / "sysroot").mkdir(parents=True)
+        (cross_project / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        host_only_manifest = manifest(
+            '[targets.cross]\nkind = "executable"\nroot = "src/main.gti"\n'
+        )
+        (cross_project / "gti.toml").write_text(
+            host_only_manifest, encoding="utf-8"
+        )
+
+        # The host build of an unchanged manifest keeps working.
+        run([gti, "build"], cwd=cross_project)
+
+        # Fail closed: no declared toolchain for a non-host target.
+        missing = run(
+            [gti, "build", "--target", cross_triple],
+            expected=65,
+            cwd=cross_project,
+        )
+        assert "GTI-B1904" in missing.stderr, missing.stderr
+        assert "[toolchains." in missing.stderr, missing.stderr
+
+        # A malformed triple is a usage error, not a build failure.
+        malformed = run(
+            [gti, "build", "--target", "not a triple"],
+            expected=64,
+            cwd=cross_project,
+        )
+        assert "invalid --target" in malformed.stderr, malformed.stderr
+
+        # `check` performs no native compilation, so it analyzes another
+        # supported target without a declared toolchain.
+        checked = run(
+            [gti, "check", "--target", cross_triple], cwd=cross_project
+        )
+        assert "Checked cross" in checked.stdout, checked.stdout
+
+        # `run` executes on this machine and refuses a foreign target.
+        refused = run(
+            [gti, "run", "--target", cross_triple],
+            expected=64,
+            cwd=cross_project,
+        )
+        assert "gti build --target" in refused.stderr, refused.stderr
+
+        if sys.platform != "win32":
+            # A declared toolchain reaches the native invocation. The stub
+            # compiler records its exact argument vector, so the assertions
+            # below are about the command GTI built, not about having a real
+            # cross toolchain installed on the test machine.
+            record = cross_project / "native-commands.txt"
+            stub = cross_project / "stub-c++"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib, sys\n"
+                f"record = pathlib.Path(r{str(record)!r})\n"
+                "arguments = sys.argv[1:]\n"
+                'record.open("a", encoding="utf-8").write('
+                '"\\n".join(arguments) + "\\n")\n'
+                'if "--version" in arguments:\n'
+                '    print("gti stub cross compiler 1.0")\n'
+                "    sys.exit(0)\n"
+                "output = None\n"
+                "for index, value in enumerate(arguments):\n"
+                '    if value == "-o" and index + 1 < len(arguments):\n'
+                "        output = arguments[index + 1]\n"
+                "if output is not None:\n"
+                "    produced = pathlib.Path(output)\n"
+                "    produced.parent.mkdir(parents=True, exist_ok=True)\n"
+                '    produced.write_bytes(b"#!/bin/sh\\nexit 0\\n")\n'
+                "    produced.chmod(0o755)\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            (cross_project / "gti.toml").write_text(
+                host_only_manifest
+                + f"\n[toolchains.{cross_triple}]\n"
+                + f'cxx = "{stub}"\n'
+                + 'sysroot = "sysroot"\n'
+                + f'native-target = "{cross_triple}"\n',
+                encoding="utf-8",
+            )
+            run([gti, "build", "--target", cross_triple], cwd=cross_project)
+            recorded = record.read_text(encoding="utf-8").splitlines()
+            assert f"--target={cross_triple}" in recorded, recorded
+            sysroot = (cross_project / "sysroot").resolve()
+            assert f"--sysroot={sysroot}" in recorded, recorded
+
+            # The cross artifact publishes beside, not over, the host one.
+            cross_directories = sorted(
+                path.name
+                for path in (cross_project / "build/gti/dev").iterdir()
+                if path.is_dir()
+            )
+            assert len(cross_directories) == 2, cross_directories
+
+            # An unknown toolchain field is rejected by the shared manifest
+            # field validator.
+            (cross_project / "gti.toml").write_text(
+                host_only_manifest
+                + f"\n[toolchains.{cross_triple}]\n"
+                + f'cxx = "{stub}"\n'
+                + 'linker = "ld"\n',
+                encoding="utf-8",
+            )
+            unknown = run(
+                [gti, "build", "--target", cross_triple],
+                expected=65,
+                cwd=cross_project,
+            )
+            assert "GTI-B1001" in unknown.stderr, unknown.stderr
+
 
 if __name__ == "__main__":
     main()
