@@ -93,6 +93,12 @@ Each canonical generic class instance also retains the first source span that
 requested it. That span is diagnostic provenance for concrete semantic
 reanalysis, not part of instance identity or backend representation.
 
+Generic declaration defaults are exhausted before an instance reaches HIR.
+The worklist therefore sees the same complete ordered type/value identity
+whether an argument was written, inferred, or filled from a default. HIR does
+not store default syntax, evaluate dependent arithmetic, or ask a native
+template to complete an instance.
+
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"
 in constant time. It is a lookup structure only: the ordered instance vectors
@@ -375,8 +381,11 @@ Function and constructor instance keys retain type arguments and `uint64_t`
 value arguments separately. A constructor key combines its selected
 declaration, concrete owner, and ordered constructor-local arguments; its row
 also retains substituted parameter types and the first instantiation site.
-MIR and the detached lowered inventory copy those arguments and parameters so
-later verification never reconstructs inference from native layout.
+MIR function and constructor rows and the detached lowered inventory copy those
+arguments and parameters so later verification never reconstructs inference
+from native layout. The HIR-to-MIR and MIR-to-lowered coherence gates compare
+the complete vectors, including a function value that does not occur in any
+runtime parameter type.
 Contextual braces have already become a concrete
 fixed-array `HirValue` under the selected parameter type; HIR does not infer
 their element type or extent. Forwarding one symbolic array extent to another

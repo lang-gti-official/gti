@@ -477,7 +477,22 @@ generic-parameter-clause
                          { "," generic-parameter } ">" ;
 
 generic-parameter      = [ generic-constraint ] IDENTIFIER [ "..." ]
-                       | ( "uint64_t" | "uint64" ) IDENTIFIER ;
+                         [ "=" type ]
+                       | ( "uint64_t" | "uint64" ) IDENTIFIER
+                         [ "=" generic-value-expression ] ;
+
+generic-value-expression
+                       = generic-value-additive ;
+
+generic-value-additive = generic-value-multiplicative
+                         { ( "+" | "-" ) generic-value-multiplicative } ;
+
+generic-value-multiplicative
+                       = generic-value-primary
+                         { ( "*" | "/" | "%" ) generic-value-primary } ;
+
+generic-value-primary  = INT_LITERAL | IDENTIFIER
+                       | "(" generic-value-expression ")" ;
 
 generic-constraint     = qualified-name ;
 
@@ -922,7 +937,7 @@ generic-argument-clause
                        = "<" generic-argument
                          { "," generic-argument } ">" ;
 
-generic-argument       = type | INT_LITERAL ;
+generic-argument       = type | generic-value-expression ;
 
 qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
@@ -1206,25 +1221,37 @@ pack-expansion         = IDENTIFIER "..." ;
    implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
-   value parameters, such as `class array<T, uint64_t N>`. Every class value
-   argument is an integer literal or an in-scope value parameter. Value
-   parameters participate in exact class type identity and may be used as
-   fixed-array extents or nested generic arguments. Although an identifier in
-   a generic argument is syntactically also a type, semantic analysis resolves
-   it from the target declaration's parameter kind. Type parameters must
-   precede value parameters.
+   value parameters, such as `class array<T, uint64_t N>`. Type and value
+   parameters may have a trailing declaration-owned default suffix. A type
+   default is a visible exact non-void type and may use earlier parameters. A
+   value default and written value argument are closed `uint64_t` expressions
+   over integer literals, earlier visible namespace `constexpr uint64_t`
+   bindings with closed arithmetic initializers, and earlier or enclosing value
+   parameters using parentheses and `+`, `-`, `*`, `/`, or `%`. Checked
+   constant evaluation rejects overflow, underflow, division by zero, and
+   modulo by zero. Value parameters
+   participate in exact class type identity and may be used as fixed-array
+   extents or nested generic arguments.
+   Although an identifier in a generic argument is syntactically also a type,
+   semantic analysis resolves it from the target declaration's parameter kind.
+   Type parameters must precede value parameters.
 
    A function, non-polymorphic method, or constructor may use the narrower
-   inferred form `uint64_t N` only when `N` is the complete extent of one
-   by-value fixed-array parameter. A named fixed array supplies its exact
-   extent and a contextual brace argument supplies its written element count.
-   Type parameters must be inferred from ordinary typed arguments; braces and
-   omitted default expressions do not synthesize or infer a type argument.
-   Constructor-local parameters appear after the constructor name. Inferred
-   values participate in concrete function or constructor instance identity.
-   Explicit function/constructor value arguments, other value types, arbitrary
-   value-generic expressions, value-parameter defaults, value packs, and
-   value-generic virtual/operator call surfaces are not implemented.
+   `uint64_t N` form when `N` is the complete extent of one by-value fixed-array
+   parameter. A named fixed array supplies its exact extent and a contextual
+   brace argument supplies its written element count. An ordinary function or
+   non-polymorphic method call may instead write a generic suffix: every type
+   argument first, then every written `uint64_t` value. Inference runs from
+   ordinary call arguments before declaration defaults fill any still-unbound
+   trailing parameters. Braces and ordinary callable-parameter default
+   expressions do not synthesize or infer a generic argument.
+   Constructor-local parameters appear after the constructor name and remain
+   inference-only. Inferred and explicit values participate in concrete
+   function or constructor instance identity. Generic packs cannot have or
+   coexist with generic defaults. Other value types, unrestricted
+   value-generic expressions, value packs, explicit/defaulted constructor-local
+   values, and value-generic virtual/operator call surfaces are not
+   implemented.
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,

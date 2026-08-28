@@ -83,9 +83,13 @@ diagnostics or letting a backend message choose either identity.
   its selected element type. Point at the opening brace and do not suggest an
   initializer-list type or implicit conversion. An exact invalid element keeps
   the ordinary `GTI-S2003` assignment diagnostic at that element. `GTI-S2026`
-  separately owns an invalid or uninferable `uint64_t` extent generic; point at
-  its declaration name or the call that cannot infer it. Neither family has a
-  universally correct fix-it.
+  separately owns an invalid, uninferable, wrong-kind, or incomplete explicit
+  `uint64_t` generic suffix and a malformed value-parameter default. Point at
+  the declaration name, missing/unavailable parameter, or exact arithmetic
+  operand/operator that violates the target's type/value shape. `GTI-S2023`
+  owns invalid type defaults and defaults mixed with generic packs. Neither
+  family has a universally correct fix-it because selecting a replacement
+  type/value or changing declaration order requires intent.
 - `GTI-S2002` owns assignment through the current method's read-only receiver
   when the receiver-rooted field path is otherwise mutable. Trace only
   ordinary grouping, named `.` projections, and built-in fixed-array indexing;
@@ -341,7 +345,18 @@ diagnostics or letting a backend message choose either identity.
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
 
-`GTI-S2046` owns the confined-callable boundary. It points at the callable
+`GTI-S2029` owns failure of a declared public callable relationship before a
+generic body is instantiated. It retains the source concept name and required
+application, then gives a shape-specific hint for unary/binary argument and
+owned-result exactness, receiver capability, iterator dereference, or nullary
+`void()` action. An inexact argument, borrowed/wrong result, private or
+ambiguous `operator()`, and a consuming target at a repeatable site therefore
+fail at call viability. Do not postpone these cases to a body-local
+`GTI-S2022` or `GTI-S2046`: concrete reanalysis must confirm the relation, not
+discover that its public contract was insufficient.
+
+`GTI-S2046` owns the confined-callable boundary after public viability. It
+points at the callable
 use, forwarding argument, or enclosing return type that lacks a proven exact
 contract. It rejects inexact arguments/results, `auto` result inference,
 reference or tracked-borrow results, invoked callable escape, and forwarding

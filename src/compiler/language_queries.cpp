@@ -409,6 +409,31 @@ void SignaturePrinter::appendSelectedGenericArguments(
 void SignaturePrinter::appendGenericParameters(
     std::string &result,
     const std::vector<GenericParameterInfo> &parameters) const {
+  const auto appendValueDefault =
+      [&](const auto &self, const GenericValueExpression &expression) -> void {
+    if (expression.kind == GenericValueExpression::UInt64) {
+      result += std::to_string(expression.value);
+      return;
+    }
+    if (expression.kind == GenericValueExpression::Parameter) {
+      const GenericParameterInfo *parameter =
+          semantics.findGenericParameter(expression.parameterId);
+      result += parameter == nullptr ? expression.token.lexeme
+                                     : parameter->name.lexeme;
+      return;
+    }
+    result += '(';
+    if (expression.left) {
+      self(self, *expression.left);
+    }
+    result += ' ';
+    result += expression.token.lexeme;
+    result += ' ';
+    if (expression.right) {
+      self(self, *expression.right);
+    }
+    result += ')';
+  };
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     if (index != 0) {
       result += ", ";
@@ -422,6 +447,12 @@ void SignaturePrinter::appendGenericParameters(
     result += parameter.name.lexeme;
     if (parameter.pack) {
       result += "...";
+    }
+    if (parameter.defaultType) {
+      result += " = " + types.print(*parameter.defaultType);
+    } else if (parameter.defaultValue) {
+      result += " = ";
+      appendValueDefault(appendValueDefault, *parameter.defaultValue);
     }
   }
 }

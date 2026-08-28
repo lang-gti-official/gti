@@ -13,6 +13,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   externCSymbols.clear();
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
+  genericDefaultConstants.clear();
+  genericDefaultConstantUses.clear();
   requirementScopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
@@ -86,13 +88,16 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerEnums(program.declarations(), {});
   registerConcepts(program.declarations(), {});
   resolveConcepts();
+  genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
   resolveTypeAliases();
   registerClassSpecializations(program.declarations(), {});
   recordClassTypeIdentities();
   resolveEnumPayloads();
   resolveClassInheritance();
+  genericDefaultConstants.clear();
   registerFunctionGenericParameters(program.declarations(), {}, false);
+  genericDefaultConstants.clear();
   registerNamespaceSymbols(program.declarations(), {});
   collectRootNativeStorageSymbols(program.declarations());
   collectClassMembers(program.declarations(), {});
@@ -119,6 +124,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   measureTopLevelStatements = workMetrics != nullptr;
   analyze(program.declarations());
   measureTopLevelStatements = false;
+  recordGenericDefaultConstantUses();
   validateDefaultArgumentCycles();
   endScope();
   if (workMetrics != nullptr) {
@@ -3478,13 +3484,44 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
 
   std::vector<SemanticType> explicitTypeArguments;
   explicitTypeArguments.reserve(expr.typeArguments().size());
+  std::vector<CompileTimeValue> explicitValueArguments;
+  explicitValueArguments.reserve(expr.typeArguments().size());
+  bool sawExplicitValueArgument = false;
   for (const TypeRef &argument : expr.typeArguments()) {
-    if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
-      report(argument.name.last(),
-             "Function value generic arguments are not supported yet.",
-             "GTI-S2026");
-      explicitTypeArguments.emplace_back(SemanticType::Unknown);
+    std::optional<CompileTimeValue> value;
+    if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
+        (argument.genericArgumentSyntax ==
+             GenericArgumentSyntax::UnresolvedIdentifier &&
+         (value = genericValueArgument(argument)).has_value())) {
+      sawExplicitValueArgument = true;
+      if (!value) {
+        value = genericValueArgument(argument);
+      }
+      if (!value) {
+        if (!reportGenericValueArgumentFailure(
+                argument, "Function value generic argument")) {
+          report(argument.name.last(),
+                 "A function value generic argument must be an in-scope "
+                 "uint64_t compile-time value.",
+                 "GTI-S2026");
+        }
+        explicitValueArguments.emplace_back();
+      } else {
+        explicitValueArguments.emplace_back(*value);
+        if (argument.genericValueExpression) {
+          recordArrayExtentUses(*argument.genericValueExpression);
+        } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
+          recordGenericParameterUse(argument.name.last(), *value,
+                                    OccurrenceRole::Read);
+        }
+      }
       continue;
+    }
+    if (sawExplicitValueArgument) {
+      report(argument.name.last(),
+             "Explicit generic type arguments must appear before value "
+             "arguments.",
+             "GTI-S2026");
     }
     validateType(argument);
     const SemanticType argumentType = typeOf(argument);
@@ -3493,11 +3530,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     explicitTypeArguments.emplace_back(argumentType);
   }
+  const bool hasExplicitGenericArguments =
+      !explicitTypeArguments.empty() || !explicitValueArguments.empty();
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
     const SemanticType *objectType = semanticModel.findType(*member->object());
     if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
-      if (!explicitTypeArguments.empty()) {
+      if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "Expected member functions do not take generic arguments.");
       }
@@ -3510,7 +3549,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       return;
     }
     if (objectType != nullptr && objectType->kind == SemanticType::Array) {
-      if (!explicitTypeArguments.empty()) {
+      if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "Fixed array member functions do not take generic arguments.");
       }
@@ -3522,7 +3561,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       return;
     }
     if (objectType != nullptr && objectType->kind == SemanticType::StringView) {
-      if (!explicitTypeArguments.empty()) {
+      if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "String-view member functions do not take generic arguments.",
                "GTI-S2035");
@@ -3566,14 +3605,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (callee->overloads.size() == 1) {
     const CallableCandidate &candidate = callee->overloads.front();
     CallableCandidate resolved = candidate;
-    bool valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
-                                            argumentTypes, expr.arguments(),
-                                            expr.paren());
+    bool valid = applyFunctionTypeArguments(
+        resolved, explicitTypeArguments, explicitValueArguments, argumentTypes,
+        expr.arguments(), expr.paren());
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     CallableCandidate trial;
     ConstraintFailure constraintFailure;
-    if (tryInstantiateFunction(candidate, explicitTypeArguments, argumentTypes,
+    if (tryInstantiateFunction(candidate, explicitTypeArguments,
+                               explicitValueArguments, argumentTypes,
                                expr.arguments(), trial, resolvedTypeArguments,
                                resolvedValueArguments, &constraintFailure)) {
       resolved = std::move(trial);
@@ -3700,10 +3740,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<CompileTimeValue> resolvedValueArguments;
     std::vector<std::size_t> resolvedEphemeralBorrowArguments;
     ConstraintFailure constraintFailure;
-    if (!tryInstantiateFunction(candidate, explicitTypeArguments, argumentTypes,
-                                expr.arguments(), resolved,
-                                resolvedTypeArguments, resolvedValueArguments,
-                                &constraintFailure)) {
+    if (!tryInstantiateFunction(
+            candidate, explicitTypeArguments, explicitValueArguments,
+            argumentTypes, expr.arguments(), resolved, resolvedTypeArguments,
+            resolvedValueArguments, &constraintFailure)) {
       if (hasConstraintFailure(constraintFailure)) {
         constraintFailures.emplace_back(std::move(constraintFailure));
       }
@@ -5463,7 +5503,7 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
       ConstraintFailure failure;
-      if (!tryInstantiateFunction(candidate, {}, concreteArguments,
+      if (!tryInstantiateFunction(candidate, {}, {}, concreteArguments,
                                   call->arguments(), resolved, typeArguments,
                                   valueArguments, &failure)) {
         if (hasConstraintFailure(failure)) {

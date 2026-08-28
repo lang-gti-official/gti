@@ -311,6 +311,25 @@ the selected parameter types. `ResolvedCallInfo` and
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
+An explicit ordinary function or method generic suffix is classified before
+candidate selection using its syntax, the target parameter kinds, and the
+lexical constant catalog. Closed `uint64_t` expression trees contain literals,
+in-scope `constexpr uint64_t` bindings, enclosing value parameters,
+parentheses, and checked arithmetic; other written arguments occupy type
+slots. Type slots precede value slots. Exact overload viability consumes those
+ordered vectors, performs structural inference from written call arguments,
+then applies declaration-owned defaults to unresolved trailing positions in
+order. An ordered registration-side constant catalog folds earlier visible
+namespace `constexpr uint64_t` bindings whose initializers are themselves
+closed arithmetic before generic declarations, without making later or
+invisible storage available. Default type records retain
+resolved symbolic `SemanticType`s, and default value records retain normalized
+parameter-identity expression trees; neither is source text. Concrete instance
+reanalysis substitutes the complete result just like inferred fixed-array
+extents. This is frontend authority:
+native template deduction/defaults are not consulted and failed candidates
+cannot leave partial substitutions in shared semantic state.
+
 An ordinary constructor can add inference-only local type parameters inside
 its owning class's generic scope. Candidate analysis infers them solely from
 written arguments, checks inline and trailing constraints after substitution,
@@ -352,10 +371,10 @@ class/function type arguments and class value arguments. Concrete reanalysis
 reuses the lexical declaration and substitutes both parts. This distinction is
 required even for captureless lambdas with identical signatures: two enclosing
 generic instances may give the same source body different compile-time meaning.
-Function and constructor instance identity now includes the bounded inferred
-`uint64_t` extent arguments used by contextual fixed-array parameters. Lambda
-identity retains enclosing function value arguments as a separate identity
-component rather than treating them as capture or signature types.
+Function and constructor instance identity includes bounded inferred and
+explicit `uint64_t` arguments. Lambda identity retains enclosing function value
+arguments as a separate identity component rather than treating them as
+capture or signature types.
 
 Each lambda capture records its new binding symbol, original source symbol,
 exact type and traits, initialization mode, and initializer expression. Bare
@@ -526,12 +545,15 @@ A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
 non-pack parameters or closed concrete types; unresolved dependent compound
-types fail before candidate selection. During symbolic body
-analysis, a requirement scope contributes unary facts to ordinary constrained
-operations and supplies synthetic exact operator candidates for the bounded
-iterator relationships. This is semantic proof, not text-based operator
-guessing. The AST application is retained for source-facing diagnostics and
-tooling occurrences.
+types fail before candidate selection. During symbolic body analysis, a
+requirement scope contributes unary facts to ordinary constrained operations
+and supplies synthetic exact operator or callable candidates for the bounded
+structural relationships. Callable requirements carry unary/binary argument
+and owned-result types plus read, repeatable mutable, or consuming-use
+capability; iterator-aware predicate and operation relations derive the exact
+checked-dereference referent privately. This is semantic proof, not text-based
+operator guessing. The AST application is retained for source-facing
+diagnostics and tooling occurrences.
 
 Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
@@ -541,12 +563,15 @@ operator. Requirement failure filters a candidate but does not rank viable
 candidates or change the exact-overload identity rule.
 
 The current structural checks are deliberately identity- and shape-based:
-public read-only checked dereference and mutable prefix increment for an input
-iterator, exact read-only iterator/sentinel inequality, and a read-only
-dereference referent exactly equal to the accumulator type. Adding a
-relationship requires one new irreducible semantic question and a
-source-defined public client; it must not be implemented as a public-name case
-or backend expression probe.
+iterator movement/read/write relationships, exact domain-value operators, and
+exact public callable signatures. A callable result must be the requested
+owned non-borrowed type. Each readable argument is accepted either by exact
+value or exact read-only reference, and receiver implication follows the
+existing `Read` -> repeatable `Mutable` -> `Once` use-site lattice. Concrete
+reanalysis still selects one exact lambda or `operator()` target and retains
+its identity and capability in HIR/MIR. Adding a relationship requires one new
+irreducible semantic question and a source-defined public client; it must not
+be implemented as a public-name case or backend expression probe.
 
 ## Transfer And Share Facts
 

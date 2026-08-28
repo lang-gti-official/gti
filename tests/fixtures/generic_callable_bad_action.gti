@@ -1,0 +1,11 @@
+#include <std/functional>
+
+class value_action {
+public:
+  int32_t operator()() && { return 1; }
+};
+
+int main() {
+  std::invoke_once(value_action());
+  return 0;
+}

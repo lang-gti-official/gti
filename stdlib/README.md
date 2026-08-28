@@ -329,14 +329,19 @@ move the same by-value callable parameter after repeated confined invocation;
 `std::for_each` uses that rule without storage or type erasure. Implemented
 predicate and numeric algorithms retain their callable by value in one confined
 mutable local. They accept read-callable and mut-callable targets, may invoke
-them repeatedly, and reject consuming once-callables.
+them repeatedly, and reject consuming once-callables. `<std/functional>` now
+exposes those same exact relationships as public `read_callable`,
+`mut_callable`, `once_callable`, unary/binary predicate and operation,
+comparator, indirect iterator predicate/operation, and `once_action` concepts.
+`std::invoke_once` is the first consuming utility; no concept or wrapper name
+is recognized by the backend.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, `for_each`, forward-iterator `binary_search`, writable-output `copy`, and the whole-container `fill`, `transform`, `reverse`, and `sort` forms over `std::vector<T>`; comparator `sort` and iterator-pair in-place forms remain |
+| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, and whole-vector predicate/operation overloads plus `fill`, `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
 | `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
 | `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
-| `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
+| `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Implemented typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |

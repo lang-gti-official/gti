@@ -2,6 +2,56 @@
 // Owning type erasure and escaping callable storage are not implemented yet.
 
 namespace std {
+  /// Exact confined-call relationships. `read_callable` requires a public
+  /// read-only target; `mut_callable` is a repeatable exclusive-use site and
+  /// therefore accepts read-only or mutable targets; `once_callable` is a
+  /// consuming use site and accepts read-only, mutable, or consuming targets.
+  /// Arguments are exact readable values: a concrete target may take each one
+  /// by value or by read-only reference. Results are exact and non-borrowed.
+  concept read_callable<Callable, Argument, Result> =
+      gti_internal::read_callable_capability<Callable, Argument, Result>;
+  concept mut_callable<Callable, Argument, Result> =
+      gti_internal::mut_callable_capability<Callable, Argument, Result>;
+  concept once_callable<Callable, Argument, Result> =
+      gti_internal::once_callable_capability<Callable, Argument, Result>;
+
+  concept read_binary_callable<Callable, Left, Right, Result> =
+      gti_internal::read_binary_callable_capability<Callable, Left, Right,
+                                                    Result>;
+  concept mut_binary_callable<Callable, Left, Right, Result> =
+      gti_internal::mut_binary_callable_capability<Callable, Left, Right,
+                                                   Result>;
+  concept once_binary_callable<Callable, Left, Right, Result> =
+      gti_internal::once_binary_callable_capability<Callable, Left, Right,
+                                                    Result>;
+
+  concept predicate<Predicate, Argument> =
+      std::mut_callable<Predicate, Argument, bool>;
+  concept binary_predicate<Predicate, Left, Right> =
+      std::mut_binary_callable<Predicate, Left, Right, bool>;
+  concept operation<Operation, Argument, Result> =
+      std::mut_callable<Operation, Argument, Result>;
+  concept binary_operation<Operation, Left, Right, Result> =
+      std::mut_binary_callable<Operation, Left, Right, Result>;
+  concept comparator<Compare, T> = std::binary_predicate<Compare, T, T>;
+  concept once_action<Callable> =
+      gti_internal::once_action_capability<Callable>;
+
+  /// Iterator-aware relations name the source cursor directly because the
+  /// bounded concept language intentionally has no associated-type syntax.
+  concept indirect_predicate<Predicate, Iterator> =
+      gti_internal::indirect_predicate_capability<Predicate, Iterator>;
+  concept indirect_operation<Operation, Iterator, Result> =
+      gti_internal::indirect_operation_capability<Operation, Iterator, Result>;
+
+  /// Consume one exact no-argument action. A reusable target is valid because
+  /// a once-only use site may invoke it through owned access; a consuming
+  /// operator() must be selected exactly and invalidates the local callable.
+  void invoke_once<Callable>(Callable callable)
+    requires std::once_action<Callable> {
+    std::move(callable)();
+  }
+
   class less<std::totally_ordered T> {
   public:
     bool operator()(T & left, T & right) {

@@ -1,0 +1,141 @@
+#include <std/algorithm>
+#include <std/functional>
+#include <std/numeric>
+#include <std/vector>
+
+mut int32_t action_calls = 0;
+
+class is_positive {
+public:
+  bool operator()(int32_t& value) { return value > 0; }
+};
+
+class alternating_positive {
+  mut int32_t calls;
+
+public:
+  alternating_positive() : calls(0) {}
+  bool operator()(int32_t& value) mut {
+    this.calls++;
+    return value > 0 && this.calls % 2 == 1;
+  }
+};
+
+class once_offset {
+  int32_t offset;
+
+public:
+  once_offset(int32_t value) : offset(value) {}
+  int32_t operator()(int32_t& value) && { return value + this.offset; }
+};
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+};
+
+class add_values {
+public:
+  int32_t operator()(int32_t& left, int32_t& right) {
+    return left + right;
+  }
+};
+
+class times_three {
+public:
+  int32_t operator()(int32_t& value) { return value * 3; }
+};
+
+class sum_values {
+  mut int32_t sum;
+
+public:
+  sum_values() : sum(0) {}
+  void operator()(int32_t& value) mut { this.sum += value; }
+  int32_t result() { return this.sum; }
+};
+
+class mark_read_action {
+public:
+  void operator()() { action_calls++; }
+};
+
+class mark_mut_action {
+public:
+  void operator()() mut { action_calls++; }
+};
+
+class mark_once_action {
+public:
+  void operator()() && { action_calls++; }
+};
+
+bool inspect<Callable>(int32_t value, Callable callable)
+  requires std::read_callable<Callable, int32_t, bool> {
+  return callable(value);
+}
+
+bool inspect_twice<Callable>(int32_t first, int32_t second,
+                             mut Callable callable)
+  requires std::predicate<Callable, int32_t> {
+  return callable(first) && !callable(second);
+}
+
+int32_t apply_once<Callable>(int32_t value, Callable callable)
+  requires std::once_callable<Callable, int32_t, int32_t> {
+  return std::move(callable)(value);
+}
+
+int main() {
+  if (!inspect(3, is_positive()) ||
+      !inspect(3, [](int32_t& value) -> bool { return value == 3; }) ||
+      !inspect_twice(5, 5, alternating_positive()) ||
+      apply_once(7, once_offset(4)) != 11) {
+    return 1;
+  }
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({3, 1, 4, 2});
+  std::sort(values, descending());
+  if (values[std::size_t(0)] != 4 || values[std::size_t(1)] != 3 ||
+      values[std::size_t(2)] != 2 || values[std::size_t(3)] != 1) {
+    return 2;
+  }
+
+  if (!std::all_of(values, is_positive()) ||
+      !std::any_of(values, [](int32_t& value) -> bool { return value == 2; }) ||
+      std::none_of(values, is_positive()) ||
+      std::count_if(values,
+                    [](int32_t& value) -> bool { return value >= 3; }) != 2) {
+    return 3;
+  }
+
+  sum_values summed = std::for_each(values, sum_values());
+  if (summed.result() != 10) {
+    return 4;
+  }
+
+  mut std::vector<int32_t> transformed =
+      std::vector<int32_t>(std::size_t(4));
+  std::transform(values, transformed, times_three());
+  if (transformed[std::size_t(0)] != 12 ||
+      transformed[std::size_t(3)] != 3) {
+    return 5;
+  }
+
+  int32_t accumulated = std::accumulate(
+      values.begin(), values.end(), int32_t(0), add_values());
+  if (accumulated != 10) {
+    return 6;
+  }
+
+  std::invoke_once(mark_read_action());
+  std::invoke_once(mark_mut_action());
+  std::invoke_once(mark_once_action());
+  if (action_calls != 3) {
+    return 7;
+  }
+  return 0;
+}

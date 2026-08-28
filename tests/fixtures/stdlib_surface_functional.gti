@@ -1,5 +1,22 @@
 #include <std/functional>
 
+mut int32_t action_count = 0;
+
+class read_action {
+public:
+  void operator()() { action_count++; }
+};
+
+class mut_action {
+public:
+  void operator()() mut { action_count++; }
+};
+
+class once_action {
+public:
+  void operator()() && { action_count++; }
+};
+
 int main() {
   mut int32_t left = 2;
   mut int32_t right = 3;
@@ -10,6 +27,12 @@ int main() {
   if (!less(left, right) || !greater(right, left) || !equal(left, left) ||
       !not_equal(left, right)) {
     return 1;
+  }
+  std::invoke_once(read_action());
+  std::invoke_once(mut_action());
+  std::invoke_once(once_action());
+  if (action_count != 3) {
+    return 2;
   }
   return 0;
 }

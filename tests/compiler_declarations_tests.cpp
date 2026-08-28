@@ -1855,11 +1855,9 @@ int main() {
               std::string::npos &&
           generated.find("virtual bool read__gti_mir_failure(") !=
               std::string::npos &&
-          generated.find("read__gti_mir_failure(T "
+          generated.find("read__gti_mir_failure(std::int32_t "
                          "*__gti_mir_out_result") != std::string::npos &&
-          generated.find("template <> std::int32_t "
-                         "__gti_program::Box<std::int32_t>::read() const") !=
-              std::string::npos &&
+          generated.find("_Box::read() const") != std::string::npos &&
           firstNameIdDefinition != std::string::npos &&
           generated.find(nameIdDefinition,
                          firstNameIdDefinition + nameIdDefinition.size()) ==
@@ -2297,18 +2295,18 @@ int main() {
          "HIR should retain direct initialization and its constructor edge");
 
   const std::string generated = gti_test::emitCppText(frontend);
-  expect(
-      generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
-              std::string::npos &&
-          generated.find(".construct(__gti_mir_v_") != std::string::npos &&
-          generated.find("mir_lifetime_slot<::__gti_program::Holder>") !=
-              std::string::npos &&
-          generated.find(".construct();") != std::string::npos &&
-          generated.find("mir_lifetime_slot<::__gti_program::Pair>") !=
-              std::string::npos &&
-          generated.find("Pair::Pair(std::int32_t __gti_mir_arg_0, "
-                         "std::int32_t __gti_mir_arg_1)") != std::string::npos,
-      "the backend should lower braces through explicit constructor calls");
+  expect(generated.find("mir_lifetime_slot<::__gti_program::__gti_type_") !=
+                 std::string::npos &&
+             generated.find(".construct(__gti_mir_v_") != std::string::npos &&
+             generated.find("mir_lifetime_slot<::__gti_program::Holder>") !=
+                 std::string::npos &&
+             generated.find(".construct();") != std::string::npos &&
+             generated.find("mir_lifetime_slot<::__gti_program::Pair>") !=
+                 std::string::npos &&
+             generated.find("Pair::Pair(std::int32_t __gti_mir_arg_0, "
+                            "std::int32_t __gti_mir_arg_1)") !=
+                 std::string::npos,
+         "the backend should lower braces through explicit constructor calls");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-direct-initialization.gti", R"(
@@ -2500,32 +2498,34 @@ int main() {
          "generic substitution and exact inference should validate");
 
   const std::string generated = gti_test::emitCppText(validFrontend);
-  expect(generated.find("template <typename T>\n  class Box;") !=
-                 std::string::npos &&
-             generated.find("template <typename T>\n  class Box {") !=
+  expect(generated.find("_Box;") != std::string::npos &&
+             generated.find("_Box {") != std::string::npos &&
+             generated.find("template <typename T>\n  class Box") ==
                  std::string::npos,
-         "generic classes should lower with matching C++ forward declarations");
-  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
-                 std::string::npos &&
-             generated.find("_identity(T __gti_mir_arg_0)") !=
-                 std::string::npos &&
-             generated.find("_unbox(") != std::string::npos,
-         "generic functions should lower as C++ function templates");
+         "a selected nameable generic class should lower with matching "
+         "GTI-owned concrete forward and full declarations");
+  expect(generated.find("__gti_inst_") != std::string::npos &&
+             containsMangledFunction(generated, "", "identity",
+                                     "(std::int32_t __gti_mir_arg_0)") &&
+             containsMangledFunction(generated, "", "identity",
+                                     "__gti_mir_failure(std::string_view "
+                                     "__gti_mir_arg_0") &&
+             containsMangledFunction(generated, "", "unbox", ""),
+         "nameable generic functions should lower as GTI-selected concrete "
+         "functions");
   expect(
-      generated.find("mir_lifetime_slot<::__gti_program::Box<std::int32_t>>") !=
+      generated.find("mir_lifetime_slot<::__gti_program::__gti_type_") !=
               std::string::npos &&
           generated.find("_identity(__gti_mir_v_") != std::string::npos &&
-          generated.find("Box<std::int32_t>::__gti_fn_") != std::string::npos &&
+          generated.find("_Box::__gti_member_") != std::string::npos &&
           generated.find("_set(") != std::string::npos &&
           containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
-          containsMangledFunction(generated, "Box<std::int32_t>::", "set", "("),
+          generated.find("_set(__gti_mir_v_") != std::string::npos,
       "applied types and explicit generic calls should lower recursively");
   expect(generated.find(".template __gti_fn_") == std::string::npos &&
-             generated.find("Box<std::int32_t>::__gti_fn_") !=
-                 std::string::npos &&
+             generated.find("_Box::__gti_member_") != std::string::npos &&
              generated.find("_echo(__gti_mir_v_") != std::string::npos &&
-             containsMangledFunction(generated, "Box<std::int32_t>::", "echo",
-                                     "(__gti_mir_v_"),
+             generated.find("template <> ") == std::string::npos,
          "the backend should emit the concrete selected generic method "
          "without reopening C++ dependent-template lookup");
 
@@ -2621,6 +2621,52 @@ int use() {
          "parser recovery should continue after malformed generic parameters");
 }
 
+void testNativeGenericCarrierClosure() {
+  const std::string source = R"(
+class Leaf<T> {
+  T value;
+
+public:
+  Leaf(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+class DormantCarrier<T> {
+  Leaf<T> value;
+
+public:
+  DormantCarrier(Leaf<T> value) : value(value) {}
+};
+
+int main() {
+  Leaf<int> value = Leaf<int>(7);
+  return value.get();
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("native-generic-carrier-closure.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected carrier-closure diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "a dormant dependent generic carrier should validate");
+
+  const std::string generated = gti_test::emitCppText(frontend);
+  expect(
+      concreteBackendSymbols(generated, "__gti_type_", "Leaf").size() == 1 &&
+          generated.find("template <typename T>\n  class Leaf;") !=
+              std::string::npos &&
+          generated.find("template <typename T>\n  class Leaf {") !=
+              std::string::npos &&
+          generated.find("template <typename T>\n  class DormantCarrier {") !=
+              std::string::npos,
+      "a retained native carrier should close over every dependent generic "
+      "family while concrete calls keep their direct representation");
+}
+
 void testExactQualifiedClassSpecializations() {
   const std::string source = R"(
 class demo::Value<int> {
@@ -2695,16 +2741,25 @@ int main() {
 
   if (frontend.canGenerateCode()) {
     const std::string generated = gti_test::emitCppText(frontend);
-    const std::size_t primaryDefinition = generated.find("class Value {");
-    const std::size_t specializationDefinition =
-        generated.find("class Value<std::int32_t> {");
-    expect(generated.find("class Value<std::int32_t>;") != std::string::npos &&
-               primaryDefinition != std::string::npos &&
-               specializationDefinition != std::string::npos &&
-               primaryDefinition < specializationDefinition,
-           "the C++ representation should emit a forward declaration and "
-           "dependency-order the selected full specialization after its "
-           "primary");
+    const std::size_t firstValue = generated.find("_Value {");
+    const std::size_t secondValue =
+        firstValue == std::string::npos
+            ? std::string::npos
+            : generated.find("_Value {", firstValue + 1);
+    const std::size_t firstCount = generated.find("_Count {");
+    const std::size_t secondCount =
+        firstCount == std::string::npos
+            ? std::string::npos
+            : generated.find("_Count {", firstCount + 1);
+    expect(generated.find("_Value;") != std::string::npos &&
+               firstValue != std::string::npos &&
+               secondValue != std::string::npos &&
+               firstCount != std::string::npos &&
+               secondCount != std::string::npos &&
+               generated.find("Value<std::") == std::string::npos &&
+               generated.find("Count<") == std::string::npos,
+           "the C++ representation should emit ordinary concrete classes for "
+           "both primary applications and selected exact specializations");
   }
 
   const std::string formatted = lang::Formatter().format(
@@ -2956,18 +3011,18 @@ int main() {
          "the AST should retain the qualified generic constraint path");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
-                 std::string::npos &&
-             generated.find("_minimum(T __gti_mir_arg_0, T __gti_mir_arg_1)") !=
-                 std::string::npos &&
-             generated.find(
-                 "_minimum<std::int32_t>(std::int32_t __gti_mir_arg_0") !=
-                 std::string::npos &&
-             generated.find("mir_checked_multiply_v1<std::int32_t>") !=
-                 std::string::npos &&
-             generated.find("requires __gti_std::") == std::string::npos,
-         "constraints should remain frontend metadata while generic numeric "
-         "conversions lower through checked backend casts");
+  expect(
+      generated.find("template <typename T>\n  T __gti_fn_") ==
+              std::string::npos &&
+          containsMangledFunction(generated, "", "minimum",
+                                  "(std::int32_t __gti_mir_arg_0, std::int32_t "
+                                  "__gti_mir_arg_1)") &&
+          generated.find("_minimum<std::int32_t>(") == std::string::npos &&
+          generated.find("mir_checked_multiply_v1<std::int32_t>") !=
+              std::string::npos &&
+          generated.find("requires __gti_std::") == std::string::npos,
+      "constraints should remain frontend metadata while generic numeric "
+      "conversions lower through checked backend casts");
   expect(generated.find("static_cast<std::uint64_t>(0)") != std::string::npos &&
              generated.find("static_cast<std::uint8_t>(3)") !=
                  std::string::npos,
@@ -4395,11 +4450,11 @@ int main() {
               "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
               std::string_view::npos &&
           exactBridgeCpp.find(
-              "exact_type<const ::__gti_program::GenericComparable<T, N> &>") !=
+              "exact_type<const ::__gti_program::__gti_type_") !=
               std::string::npos &&
-          exactBridgeCpp.find(
-              "operator!=(const ::__gti_program::GenericComparable<T, N> & "
-              "other)") != std::string::npos &&
+          exactBridgeCpp.find("_GenericComparable &>") != std::string::npos &&
+          exactBridgeCpp.find("_GenericComparable & __gti_argument_0") !=
+              std::string::npos &&
           exactBridgeCpp.find("GenericComparable<void, 0>") ==
               std::string::npos,
       "sentinel bridges should tag exact read-only parameter types and "
@@ -4659,6 +4714,200 @@ int32_t after() {
          "recovery-oriented formatting should not misindent a non-clause "
          "'requires' occurrence even though the compiler reserves it as a "
          "keyword");
+}
+
+void testCallableConceptCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "callable-concepts.gti", R"(
+#include <std/functional>
+
+class reader {
+public:
+  bool operator()(int32_t& value) { return value == 7; }
+};
+
+class counter {
+  mut int32_t calls;
+
+public:
+  counter() : calls(0) {}
+  bool operator()(int32_t& value) mut {
+    this.calls++;
+    return value == 7;
+  }
+};
+
+class once_reader {
+public:
+  bool operator()(int32_t& value) && { return value == 7; }
+};
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+};
+
+class once_action {
+public:
+  void operator()() && {}
+};
+
+bool read_value<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+
+bool mutate_value<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+
+bool consume_value<Function>(int32_t value, Function function)
+  requires std::once_callable<Function, int32_t, bool> {
+  return std::move(function)(value);
+}
+
+bool order_values<Function>(int32_t left, int32_t right,
+                            mut Function function)
+  requires std::comparator<Function, int32_t> {
+  return function(left, right);
+}
+
+int main() {
+  bool read = read_value(7, reader());
+  bool mutable_result = mutate_value(7, counter());
+  bool consumed = consume_value(7, once_reader());
+  bool ordered = order_values(8, 7, descending());
+  std::invoke_once(once_action());
+  return read && mutable_result && consumed && ordered ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected callable-concept diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "public callable concepts should establish exact read, repeatable "
+         "mutable, consuming, predicate, comparator, and once-action "
+         "contracts before concrete generic reanalysis");
+
+  const auto rejects = [&](std::string_view name, const std::string &source,
+                           std::string_view conceptName,
+                           std::string_view hintFragment,
+                           std::string_view message) {
+    const lang::FrontendResult result = lang::Frontend().analyze(
+        std::string(name), source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    if (result.canGenerateCode() ||
+        !hasDiagnosticCode(result.diagnostics, "GTI-S2029")) {
+      for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+        std::cerr << name << " [" << diagnostic.code
+                  << "]: " << diagnostic.message << '\n';
+      }
+    }
+    expect(!result.canGenerateCode() &&
+               hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                     std::string(conceptName) +
+                                                     "'") &&
+               hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
+           std::string(message));
+  };
+
+  rejects("mutable-target-at-read-site.gti", R"(
+#include <std/functional>
+class mutable_only {
+public:
+  bool operator()(int32_t& value) mut { return value > 0; }
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+int main() { return inspect(1, mutable_only()) ? 0 : 1; }
+)",
+          "std::read_callable", "receiver capability",
+          "a mutable-only target should not satisfy a read-only callable "
+          "use site");
+
+  rejects("once-target-at-repeatable-site.gti", R"(
+#include <std/functional>
+class once_only {
+public:
+  bool operator()(int32_t& value) && { return value > 0; }
+};
+bool inspect<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+int main() { return inspect(1, once_only()) ? 0 : 1; }
+)",
+          "std::predicate", "receiver capability",
+          "a consuming target should not satisfy a repeatable predicate use "
+          "site");
+
+  rejects("wrong-predicate-result.gti", R"(
+#include <std/functional>
+class integer_result {
+public:
+  int32_t operator()(int32_t& value) { return value; }
+};
+bool inspect<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+int main() { return inspect(1, integer_result()) ? 0 : 1; }
+)",
+          "std::predicate", "declared owned result",
+          "a predicate should require an exact owned bool result");
+
+  rejects("borrowed-operation-result.gti", R"(
+#include <std/functional>
+class borrowed_result {
+public:
+  int32_t& operator()(int32_t& value) { return value; }
+};
+int32_t transform<Function>(int32_t value, mut Function function)
+  requires std::operation<Function, int32_t, int32_t> {
+  return function(value);
+}
+int main() { return transform(1, borrowed_result()) - 1; }
+)",
+          "std::operation", "declared owned result",
+          "an operation should not satisfy an owned-result relation with a "
+          "borrowed result");
+
+  rejects("ambiguous-callable-relation.gti", R"(
+#include <std/functional>
+class ambiguous {
+public:
+  bool operator()(int32_t value) { return value > 0; }
+  bool operator()(int32_t& value) { return value > 0; }
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+int main() { return inspect(1, ambiguous()) ? 0 : 1; }
+)",
+          "std::read_callable", "one exact public unary operator()",
+          "a callable relation should reject an ambiguous exact readable "
+          "signature");
+
+  const lang::FrontendResult privateBinding =
+      lang::Frontend().analyze("private-callable-intrinsic.gti", R"(
+concept forged<F, A, R> =
+    gti_internal::read_callable_capability<F, A, R>;
+)",
+                               {standardLibraryPrelude()});
+  expect(!privateBinding.canGenerateCode() &&
+             hasDiagnosticCode(privateBinding.diagnostics, "GTI-S2058"),
+         "compiler-owned callable relations should remain private behind the "
+         "public std concepts");
 }
 
 void testSymbolicAutoLocalBinding() {
@@ -4963,13 +5212,19 @@ int main() {
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(
-      generated.find("template <typename T>") != std::string::npos &&
-          generated.find("template <typename Tag>") != std::string::npos &&
-          generated.find("template <typename Iterator, typename Sentinel>") !=
+      generated.find("explicit Capture(std::int32_t __gti_mir_arg_0);") !=
+              std::string::npos &&
+          generated.find("explicit Capture(bool __gti_mir_arg_0);") !=
+              std::string::npos &&
+          concreteBackendSymbols(generated, "__gti_type_", "Tagged").size() ==
+              1 &&
+          generated.find("Capture(T value)") == std::string::npos &&
+          generated.find("string(Iterator first, Sentinel last)") ==
               std::string::npos &&
           generated.find("requires std::") == std::string::npos,
-      "the backend should emit constructor templates without delegating "
-      "GTI constraint selection to C++");
+      "the backend should emit each selected constructor as an ordinary "
+      "concrete overload without delegating GTI inference or constraints to "
+      "C++");
 
   const auto analyze = [&](std::string_view name, std::string text) {
     return lang::Frontend().analyze(std::filesystem::path(name),
@@ -5150,6 +5405,9 @@ int main() { return 0; }
 
 void testValueGenerics() {
   const std::string source = R"(
+constexpr uint64_t default_array_base = 2;
+constexpr uint64_t default_array_size = default_array_base + 1;
+
 class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
@@ -5165,12 +5423,21 @@ public:
   uint64_t size() { return this.value.size(); }
 };
 
+class DefaultArray<T = int, uint64_t N = default_array_size> {
+  T values[N] = {};
+
+public:
+  uint64_t size() { return N; }
+};
+
 int main() {
   StaticArray<int, 4> four = StaticArray<int, 4>();
+  StaticArray<int, 2 + 2> arithmetic = StaticArray<int, 2 + 2>();
   StaticArray<int, 8> eight = StaticArray<int, 8>();
   WrappedArray<int, 4> wrapped = WrappedArray<int, 4>();
-  if (four.size() == 4 and eight.size() == 8 and wrapped.size() == 4 and
-      four.first() == 0) {
+  DefaultArray defaulted = DefaultArray();
+  if (four.size() == 4 and arithmetic.size() == 4 and eight.size() == 8 and
+      wrapped.size() == 4 and four.first() == 0 and defaulted.size() == 3) {
     return 0;
   }
   return 1;
@@ -5191,7 +5458,18 @@ int main() {
 
   bool foundFour = false;
   bool foundEight = false;
+  bool foundDefaultThree = false;
   for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "DefaultArray" &&
+        instance.typeArguments.size() == 1 &&
+        instance.typeArguments.front() == lang::SemanticType::Int32 &&
+        instance.valueArguments.size() == 1 &&
+        instance.valueArguments.front().kind ==
+            lang::CompileTimeValue::UInt64 &&
+        instance.valueArguments.front().value == 3) {
+      foundDefaultThree = true;
+    }
     if (instance.source == nullptr ||
         instance.source->name().lexeme != "StaticArray" ||
         instance.valueArguments.size() != 1 || instance.fields.empty()) {
@@ -5207,20 +5485,51 @@ int main() {
       foundEight = foundEight || length.value == 8;
     }
   }
-  expect(foundFour && foundEight,
+  expect(foundFour && foundEight && foundDefaultThree,
          "HIR should keep value arguments in class identity and substitute "
-         "symbolic array extents");
+         "symbolic array extents, including declaration-owned defaults");
+
+  const std::size_t namedDefault =
+      source.find("N = default_array_size") + std::string("N = ").size();
+  const lang::SourceUnitId valueGenericsUnit = valid.sourceGraph.entryUnit();
+  const lang::SemanticOccurrence *namedDefaultOccurrence =
+      valid.semantics.database().findOccurrence(valueGenericsUnit,
+                                                namedDefault + 1);
+  const lang::SymbolRecord *namedDefaultSymbol =
+      valid.semantics.database().findSymbolAt(valueGenericsUnit,
+                                              namedDefault + 1);
+  expect(namedDefaultOccurrence != nullptr &&
+             lang::hasRole(namedDefaultOccurrence->roles,
+                           lang::OccurrenceRole::Reference) &&
+             lang::hasRole(namedDefaultOccurrence->roles,
+                           lang::OccurrenceRole::Read) &&
+             namedDefaultSymbol != nullptr &&
+             namedDefaultSymbol->kind == lang::SymbolKind::GlobalVariable &&
+             namedDefaultSymbol->name == "default_array_size",
+         "an early namespace constexpr generic default should retain an exact "
+         "tooling reference to its declaration after registration-time "
+         "normalization");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find(
-             "template <typename T, std::size_t N>\n  class StaticArray") !=
-                 std::string::npos &&
-             generated.find("std::array<T, N> values = std::array<T, N>{}") !=
-                 std::string::npos &&
-             generated.find("StaticArray<T, N> value") != std::string::npos &&
-             generated.find("StaticArray<std::int32_t, 4>") !=
-                 std::string::npos,
-         "the C++ backend should preserve mixed type and value arguments");
+  expect(
+      concreteBackendSymbols(generated, "__gti_type_", "StaticArray").size() ==
+              2 &&
+          concreteBackendSymbols(generated, "__gti_type_", "WrappedArray")
+                  .size() == 1 &&
+          concreteBackendSymbols(generated, "__gti_type_", "DefaultArray")
+                  .size() == 1 &&
+          generated.find("std::array<std::int32_t, 4> values") !=
+              std::string::npos &&
+          generated.find("std::array<std::int32_t, 8> values") !=
+              std::string::npos &&
+          generated.find(
+              "template <typename T, std::size_t N>\n  class StaticArray") ==
+              std::string::npos &&
+          generated.find("typename T =") == std::string::npos &&
+          generated.find("std::size_t N =") == std::string::npos,
+      "the C++ backend should give each GTI-selected mixed type/value "
+      "application an ordinary concrete class and should not rely on "
+      "native template selection or defaults");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -5232,10 +5541,24 @@ public:
   void overwrite() { N = 2; }
 };
 uint64_t invalid_function<uint64_t N>() { return N; }
+T same_default<T>(T value) { return value; }
+T same_default<T = int>(T value) { return value; }
 NeedsValue<int, int> wrong_value;
 NeedsValue<4, 4> wrong_type;
 NeedsValue<int, Missing> missing_value;
 int invalid_extent[Missing] = {};
+class MissingAfterDefault<T = int, U> {};
+class ForwardDefault<T = U, U = int> {};
+class ForwardValue<uint64_t N = M, uint64_t M = 2> {};
+class BadValueDefault<uint64_t N = 1 / 0> {};
+class BadValueUnderflow<uint64_t N = 1 - 2> {};
+class BadValueOverflow<uint64_t N = 18446744073709551615 + 1> {};
+class BadValueName<uint64_t N = Missing> {};
+void default_pack<T = int, Args...>() {}
+class ConstructorDefault {
+public:
+  ConstructorDefault<T = int>(T value) {}
+};
 )"));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
@@ -5248,27 +5571,130 @@ int invalid_extent[Missing] = {};
              hasDiagnostic(invalidSemantic,
                            "type parameters must appear before value") &&
              hasDiagnostic(invalidSemantic,
-                           "must be the extent of a by-value fixed-array") &&
-             hasDiagnostic(invalidSemantic,
                            "requires a uint64_t compile-time value") &&
              hasDiagnostic(invalidSemantic, "requires a type argument") &&
              hasDiagnostic(invalidSemantic,
                            "Cannot assign to compile-time value parameter") &&
              hasDiagnostic(invalidSemantic,
                            "is not an in-scope constexpr integer or uint64_t "
-                           "value generic"),
+                           "value generic") &&
+             hasDiagnostic(invalidSemantic,
+                           "without a default cannot follow a defaulted") &&
+             hasDiagnostic(invalidSemantic,
+                           "may reference only visible types and earlier") &&
+             hasDiagnostic(invalidSemantic,
+                           "may reference only earlier value parameters") &&
+             hasDiagnostic(invalidSemantic,
+                           "cannot divide or take modulo by zero") &&
+             hasDiagnostic(invalidSemantic, "underflows uint64_t") &&
+             hasDiagnostic(invalidSemantic, "overflows uint64_t") &&
+             hasDiagnostic(invalidSemantic, "must use uint64_t literals") &&
+             hasDiagnostic(invalidSemantic,
+                           "parameter list that contains a type pack") &&
+             hasDiagnostic(invalidSemantic,
+                           "Constructor-local generic parameters are "
+                           "inference-only") &&
+             hasDiagnostic(invalidSemantic,
+                           "Duplicate overload signature for 'same_default'"),
          "value generic diagnostics should identify unsupported parameter "
-         "types, ordering, scope, and argument kind");
+         "types, ordering, scope, defaults, and argument kind without "
+         "requiring every value to be inferable");
+
+  const std::string invalidDefaultsSource =
+      "T constrained<std::integral T = double>() { return T(); }\n"
+      "uint64_t selected<uint64_t N>() { return N; }\n"
+      "uint64_t dependent_underflow<uint64_t N, uint64_t M = N - 2>() { "
+      "return M; }\n"
+      "int main() { return int(selected<1 / 0>() + "
+      "dependent_underflow<1>()); }\n";
+  const lang::FrontendResult invalidDefaults = lang::Frontend().analyze(
+      "invalid-generic-defaults.gti", invalidDefaultsSource,
+      {standardLibraryPrelude()});
+  const auto invalidExpression = std::find_if(
+      invalidDefaults.diagnostics.begin(), invalidDefaults.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message.find(
+                   "Function value generic argument arithmetic cannot") !=
+                   std::string::npos;
+      });
+  const auto dependentUnderflow = std::find_if(
+      invalidDefaults.diagnostics.begin(), invalidDefaults.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message.find(
+                   "underflows uint64_t for the selected") != std::string::npos;
+      });
+  expect(!invalidDefaults.canGenerateCode() &&
+             hasDiagnostic(invalidDefaults.diagnostics,
+                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalidDefaults.diagnostics,
+                           "Function value generic argument arithmetic "
+                           "cannot divide or take modulo by zero") &&
+             invalidExpression != invalidDefaults.diagnostics.end() &&
+             invalidExpression->primary.source.ends_with(
+                 "/invalid-generic-defaults.gti") &&
+             invalidExpression->primary.start ==
+                 invalidDefaultsSource.find('/') &&
+             dependentUnderflow != invalidDefaults.diagnostics.end() &&
+             dependentUnderflow->primary.start ==
+                 invalidDefaultsSource.find("N - 2") + 2,
+         "invalid constrained defaults and closed value expressions should "
+         "remain precisely anchored GTI diagnostics rather than native "
+         "substitution failures");
+
+  const lang::FrontendResult lateDefault = lang::Frontend().analyze(
+      "late-generic-default.gti", "class LateDefault<uint64_t N = later> {};\n"
+                                  "constexpr uint64_t later = 3;\n");
+  expect(!lateDefault.canGenerateCode() &&
+             hasDiagnostic(lateDefault.diagnostics,
+                           "must use uint64_t literals, visible uint64_t "
+                           "constexpr bindings, or earlier value parameters"),
+         "generic defaults should not see a namespace constexpr binding "
+         "declared later in source order");
 
   const std::string formatted = lang::Formatter().format(
       "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
-      "values=StaticArray<int,4>();");
+      "values=StaticArray<int,4>();T choose<T=int,uint64_t N=2+1>(){return "
+      "T();}");
   expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
                  std::string::npos &&
              formatted.find("StaticArray<int, 4> values =") !=
                  std::string::npos &&
+             formatted.find("T choose<T = int, uint64_t N = 2 + 1>() {") !=
+                 std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
-         "value generic syntax should format idempotently");
+         "value generic defaults and dependent expressions should format "
+         "idempotently");
+
+  lang::Parser recoveryParser(
+      lexer.scan("T broken<T = >(); int recovered() { return 0; }"));
+  lang::Program recovered = recoveryParser.parse();
+  expect(recoveryParser.hadError() &&
+             findTopLevelFunction(recovered, "recovered") != nullptr,
+         "a malformed generic default should recover at the declaration "
+         "boundary and preserve the following function");
+
+  lang::Parser typeArgumentParser(lexer.scan(R"(
+class Widget {};
+T identity<T>(T value) { return value; }
+void accept_type_arguments(Widget* pointer) {
+  identity<Widget*>(pointer);
+}
+class CallbackHolder<T> {};
+void accept_callback(CallbackHolder<(int)->void> callback) {}
+)"));
+  (void)typeArgumentParser.parse();
+  if (typeArgumentParser.hadError()) {
+    for (const lang::ParseDiagnostic &diagnostic :
+         typeArgumentParser.errors()) {
+      std::cerr << "Unexpected generic type-argument parser diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(!typeArgumentParser.hadError(),
+         "dependent value arithmetic lookahead should preserve pointer and "
+         "native-function generic type arguments");
 }
 
 void testContextualArrayArguments() {
@@ -5282,6 +5708,10 @@ int total<uint64_t N>(int values[N]) {
 }
 
 T first<T, uint64_t N>(T fallback, T values[N]) { return values[0]; }
+
+constexpr uint64_t exact_extent<uint64_t N>() { return N; }
+
+int relay_total<uint64_t N>(int values[N]) { return total<N>(values); }
 
 int choose(int values[2]) { return 2; }
 int choose(int values[3]) { return 3; }
@@ -5303,7 +5733,14 @@ int main() {
   int method = object.add({2, 3});
   int named_values[2] = {11, 12};
   int named = total(named_values);
-  return summed + selected + extent + object.read() + method + named - 79;
+  int explicit_total = total<3>({3, 4, 5});
+  int explicit_mixed = first<int, 2>(0, {6, 7});
+  int relayed = relay_total<2>({8, 9});
+  uint64_t explicit_extent = exact_extent<4>();
+  int explicit_method = object.add<2>({1, 1});
+  return summed + selected + extent + object.read() + method + named +
+         explicit_total + explicit_mixed + relayed + int(explicit_extent) +
+         explicit_method - 139;
 }
 )";
 
@@ -5407,6 +5844,8 @@ int main() {
          instance.parameterTypes.front().arrayLength == 2);
   }
   bool foundMethodTwo = false;
+  bool foundExtentFour = false;
+  bool foundRelayTwo = false;
   for (const lang::HirFunctionInstance &instance :
        frontend.hir.functionInstances()) {
     foundMethodTwo =
@@ -5420,20 +5859,93 @@ int main() {
          instance.parameterTypes.size() == 1 &&
          instance.parameterTypes.front().kind == lang::SemanticType::Array &&
          instance.parameterTypes.front().arrayLength == 2);
+    foundExtentFour =
+        foundExtentFour || (instance.source != nullptr &&
+                            instance.source->name().lexeme == "exact_extent" &&
+                            instance.valueArguments.size() == 1 &&
+                            instance.valueArguments.front().kind ==
+                                lang::CompileTimeValue::UInt64 &&
+                            instance.valueArguments.front().value == 4 &&
+                            instance.parameterTypes.empty());
+    foundRelayTwo =
+        foundRelayTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "relay_total" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
   }
-  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo,
-         "HIR instance identity should include inferred function and "
-         "constructor value arguments, including methods");
+  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo &&
+             foundExtentFour && foundRelayTwo,
+         "HIR instance identity should include inferred and explicit function "
+         "and constructor value arguments, including methods and symbolic "
+         "forwarding");
+
+  std::size_t mirroredValueFunctions = 0;
+  bool exactMirIdentity = true;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr || instance.valueArguments.empty()) {
+      continue;
+    }
+    const std::string_view name = instance.source->name().lexeme;
+    if (name != "total" && name != "add" && name != "exact_extent" &&
+        name != "relay_total") {
+      continue;
+    }
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    exactMirIdentity = exactMirIdentity && mir != nullptr &&
+                       mir->typeArguments == instance.typeArguments &&
+                       mir->valueArguments == instance.valueArguments;
+    ++mirroredValueFunctions;
+  }
+  expect(exactMirIdentity && mirroredValueFunctions >= 4,
+         "MIR function identity should preserve every concrete HIR type and "
+         "value argument rather than reconstructing it from parameter types");
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "LoweredProgram should retain and verify the exact MIR function "
+         "value-generic identity");
+
+  lang::MirProgram forged = frontend.mir;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  const auto forgedValue =
+      std::find_if(forgedFunctions.begin(), forgedFunctions.end(),
+                   [](const lang::MirFunctionInstance &instance) {
+                     return !instance.valueArguments.empty() &&
+                            instance.valueArguments.front().kind ==
+                                lang::CompileTimeValue::UInt64;
+                   });
+  if (forgedValue != forgedFunctions.end()) {
+    ++forgedValue->valueArguments.front().value;
+  }
+  const lang::LoweredProgramBuild rejected =
+      lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
+                                          frontend.hir, forged, forged, {},
+                                          lang::TargetInfo::host());
+  expect(forgedValue != forgedFunctions.end() && !rejected.valid(),
+         "the HIR-to-MIR boundary should reject a forged function value "
+         "argument before backend planning");
 
   const std::string generated = gti_test::emitCppText(frontend);
   expect(generated.find("std::initializer_list") == std::string::npos &&
-             generated.find("template <std::size_t N>") != std::string::npos &&
+             generated.find("template <std::size_t N>\n  bool __gti_fn_") ==
+                 std::string::npos &&
              generated.find("std::array<std::int32_t, 3>{__gti_mir_v_") !=
                  std::string::npos &&
              generated.find("std::array<std::int32_t, 2>{__gti_mir_v_") !=
                  std::string::npos &&
-             generated.find("__gti_fn_1_total__gti_mir_failure(std::array<std::"
-                            "int32_t, 3>") != std::string::npos,
+             containsMangledFunction(
+                 generated, "", "total",
+                 "__gti_mir_failure(std::array<std::int32_t, 3>"),
          "the backend should materialize an explicit std::array value and "
          "never delegate list semantics to C++ overload resolution");
 
@@ -5447,6 +5959,10 @@ int duplicate<uint64_t M>(int values[M]) { return 2; }
 int uninferable<uint64_t N>() { return int(N); }
 int explicit_extent<uint64_t N>(int values[N]) { return values[0]; }
 T no_common_type<T, uint64_t N>(T values[N]) { return values[0]; }
+T type_only<T>(T value) { return value; }
+int two_extents<uint64_t N, uint64_t M>(int first[N], int second[M]) {
+  return first[0] + second[0];
+}
 
 class DuplicateConstructor {
 public:
@@ -5466,6 +5982,11 @@ int main() {
   int unresolved = uninferable();
   int no_common = no_common_type({1, 2});
   int explicit_value = explicit_extent<2>({1, 2});
+  int wrong_kind = type_only<2>(1);
+  int missing_type_before_value = no_common_type<2>({1, 2});
+  int wrong_value_count = two_extents<2>({1, 2}, {3, 4});
+  int value_then_type = no_common_type<2, int>({1, 2});
+  int non_generic_value = scalar<2>(1);
   int ambiguous_value = ambiguous({1, 2});
   return 0;
 }
@@ -5476,11 +5997,16 @@ int main() {
       !invalid.canGenerateCode() &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2011") == 2 &&
           hasDiagnostic(invalid.diagnostics,
-                        "must be the extent of a by-value fixed-array") &&
-          hasDiagnostic(invalid.diagnostics,
                         "Cannot infer generic type parameter 'T'") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Function value generic arguments are not supported") &&
+                        "wrong number of type arguments") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "wrong number of explicit value arguments") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "type arguments must appear before value") &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "Non-generic functions do not take generic arguments") &&
           hasDiagnostic(invalid.diagnostics,
                         "Constructor-local generic parameters cannot shadow") &&
           hasDiagnostic(invalid.diagnostics,
@@ -5488,9 +6014,9 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Cannot initialize array element") &&
           hasDiagnostic(invalid.diagnostics, "is ambiguous"),
-      "contextual arrays should reject duplicate generic shapes, missing "
-      "array context, invalid elements, and ambiguous overloads at the GTI "
-      "layer");
+      "contextual arrays and explicit value arguments should reject duplicate "
+      "generic shapes, missing array context, invalid argument kinds/counts, "
+      "and ambiguous overloads at the GTI layer");
 
   const auto wrongExtent =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -5510,10 +6036,10 @@ int main() {
 
   const std::string formatted = lang::Formatter().format(
       "int total<uint64_t N>(int values[N]){return values[0];}int "
-      "main(){return total({1,2,3});}");
-  expect(formatted.find("total({1, 2, 3})") != std::string::npos &&
+      "main(){return total<3>({1,2,3});}");
+  expect(formatted.find("total<3>({1, 2, 3})") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
-         "contextual brace arguments and inferred value generics should "
+         "contextual brace arguments and explicit value generics should "
          "format idempotently");
 }
 
@@ -5567,34 +6093,18 @@ int main() {
          "concrete MIR parameter roles across equivalent pack groupings");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("template <typename... Args>") != std::string::npos &&
-             generated.find("Args... __gti_mir_arg_0") != std::string::npos &&
-             generated.find("_consume__gti_mir_failure("
-                            "std::int32_t __gti_mir_arg_0, bool "
-                            "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "consume",
-                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+  expect(containsMangledFunction(
+             generated, "", "consume",
+             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
+             "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
-  expect(generated.find("_consume__gti_mir_failure("
-                        "std::int32_t __gti_mir_arg_0, std::int32_t "
-                        "__gti_mir_arg_1, bool __gti_mir_arg_2, "
-                        "std::string_view __gti_mir_arg_3") !=
-                 std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "consume",
-                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
-                 "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
-                 "std::string_view __gti_mir_arg_3"),
+  expect(containsMangledFunction(
+             generated, "", "consume",
+             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
+             "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
+             "std::string_view __gti_mir_arg_3"),
          "a final symbolic pack should compose with concrete pack elements");
-  expect(generated.find("template <typename T, typename... Rest>") !=
-                 std::string::npos &&
-             generated.find("_first__gti_mir_failure("
-                            "std::int32_t __gti_mir_arg_0, bool "
-                            "__gti_mir_arg_1, std::string_view "
-                            "__gti_mir_arg_2") != std::string::npos &&
+  expect(generated.find("Rest... __gti_mir_arg_1") == std::string::npos &&
              containsMangledFunction(
                  generated, "", "first",
                  "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
@@ -5877,9 +6387,8 @@ int main() {
 
   const std::string foldGenerated = gti_test::emitCppText(foldFrontend);
   expect(resolvedFold != nullptr &&
-             foldGenerated.find(
-                 "__gti_fn_" + std::to_string(resolvedFold->function) +
-                 "_touch__gti_mir_failure(__gti_mir_p_") != std::string::npos &&
+             containsMangledFunction(foldGenerated, "", "touch",
+                                     "__gti_mir_failure(__gti_mir_p_") &&
              foldGenerated.find("_touch(count, values), ...") ==
                  std::string::npos,
          "the C++ backend should emit the one compiler-selected fold target "
@@ -6014,19 +6523,18 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find(
-             "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::__gti_program::math::__gti_fn_2_pow__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("::__gti_program::Selector<std::int32_t, "
-                                    "float>::__gti_fn_3_apply(") !=
-                 std::string::npos &&
-             artifact.contents.find("::__gti_program::Selector<std::int32_t, "
-                                    "float>::__gti_fn_4_apply(") !=
-                 std::string::npos,
-         "the C++ backend should emit the function identity selected by GTI");
+  expect(
+      artifact.contents.find(
+          "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "::__gti_program::math::__gti_fn_2_pow__gti_mir_failure(") !=
+              std::string::npos &&
+          concreteBackendSymbols(artifact.contents, "__gti_type_", "Selector")
+                  .size() == 1 &&
+          concreteBackendSymbols(artifact.contents, "__gti_member_", "apply")
+                  .size() == 2,
+      "the C++ backend should emit the function identity selected by GTI");
   expect(artifact.contents.find("mir_checked_convert_v1<std::uint64_t>(") !=
                  std::string::npos &&
              artifact.contents.find("mir_checked_convert_v1<std::int32_t>(") !=
@@ -6947,20 +7455,24 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(
-      artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("std::array<std::int32_t, 2> "
-                                 "__gti_mir_p_") != std::string::npos &&
-          artifact.contents.find(
-              "mir_lifetime_slot<::__gti_program::Pair<std::int32_t, bool>>") !=
-              std::string::npos &&
-          artifact.contents.find(".get().first") != std::string::npos &&
-          artifact.contents.find(".get().second") != std::string::npos &&
-          artifact.contents.find("const auto [left, right]") ==
-              std::string::npos,
-      "the C++ backend should represent validated structured bindings as "
-      "MIR projections without relying on C++ decomposition declarations");
+  const std::unordered_set<std::string> pairTypes =
+      concreteBackendSymbols(artifact.contents, "__gti_type_", "Pair");
+  const std::string pairLifetime =
+      pairTypes.size() == 1
+          ? "mir_lifetime_slot<::__gti_program::" + *pairTypes.begin() + ">"
+          : std::string();
+  expect(artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
+                 std::string::npos &&
+             artifact.contents.find("std::array<std::int32_t, 2> "
+                                    "__gti_mir_p_") != std::string::npos &&
+             !pairLifetime.empty() &&
+             artifact.contents.find(pairLifetime) != std::string::npos &&
+             artifact.contents.find(".get().first") != std::string::npos &&
+             artifact.contents.find(".get().second") != std::string::npos &&
+             artifact.contents.find("const auto [left, right]") ==
+                 std::string::npos,
+         "the C++ backend should represent validated structured bindings as "
+         "MIR projections without relying on C++ decomposition declarations");
 
   const std::string formatted = lang::Formatter().format(
       "int main(){int values[2]={1,2};auto[left,right]=values;return left;}");
@@ -7111,19 +7623,19 @@ Result main() {
          "type aliases should canonicalize before semantic checks");
 
   const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("using LaterSize = std::uint64_t;") !=
-                 std::string::npos &&
-             generated.find("using Triple = std::array<std::int32_t, 3>;") !=
-                 std::string::npos &&
-             generated.find(
-                 "using IntBox = ::__gti_program::Box<std::int32_t>;") !=
-                 std::string::npos &&
-             generated.find("static_cast<std::uint64_t>(3)") !=
-                 std::string::npos &&
-             generated.find("#include <expected>") != std::string::npos &&
-             generated.find("int main()") != std::string::npos,
-         "the C++ backend should emit canonical, declaration-order-independent "
-         "aliases");
+  expect(
+      generated.find("using LaterSize = std::uint64_t;") != std::string::npos &&
+          generated.find("using Triple = std::array<std::int32_t, 3>;") !=
+              std::string::npos &&
+          generated.find("using IntBox = "
+                         "::__gti_program::__gti_type_") != std::string::npos &&
+          generated.find("_Box;") != std::string::npos &&
+          generated.find("static_cast<std::uint64_t>(3)") !=
+              std::string::npos &&
+          generated.find("#include <expected>") != std::string::npos &&
+          generated.find("int main()") != std::string::npos,
+      "the C++ backend should emit canonical, declaration-order-independent "
+      "aliases");
 
   auto invalidTokens = lexer.scan(R"(
 using First = Second;
@@ -7198,15 +7710,16 @@ int main() {
   expect(generated.find("namespace gfx = engine::graphics;") !=
              std::string::npos,
          "emitter should preserve namespace aliases");
-  expect(generated.find("::__gti_program::engine::graphics::Renderer "
-                        "__gti_fn_3_createRenderer();") != std::string::npos &&
+  expect(containsMangledFunction(generated,
+                                 "::__gti_program::engine::graphics::Renderer ",
+                                 "createRenderer", "();") &&
              generated.find("namespace gfx = engine::graphics;") !=
                  std::string::npos,
          "qualified types should parse and emit through namespace aliases");
-  expect(generated.find("engine::graphics::__gti_fn_1_render();") !=
-                 std::string::npos &&
-             generated.find("engine::graphics::__gti_fn_2_renderTwice();") !=
-                 std::string::npos,
+  expect(containsMangledFunction(generated, "engine::graphics::", "render",
+                                 "();") &&
+             containsMangledFunction(
+                 generated, "engine::graphics::", "renderTwice", "();"),
          "emitter should preserve qualified calls");
 
   auto invalidTokens = lexer.scan(R"(
@@ -7340,16 +7853,15 @@ int main() { return native_like(7); }
   expect(ordinaryPrototype.canGenerateCode(),
          "ordinary GTI bodyless functions should remain valid declarations");
   const std::string ordinaryCpp = gti_test::emitCppText(ordinaryPrototype);
-  expect(ordinaryCpp.find("extern \"C\"") == std::string::npos &&
-             ordinaryCpp.find(
-                 "std::int32_t __gti_fn_1_native_like(const std::int32_t "
-                 "value);") != std::string::npos &&
-             ordinaryCpp.find("__gti_fn_1_native_like(__gti_mir_v_") !=
-                 std::string::npos &&
-             ordinaryCpp.find("native_like__gti_mir_failure") ==
-                 std::string::npos,
-         "ordinary prototypes should retain GTI mangling unless linkage is "
-         "explicitly C");
+  expect(
+      ordinaryCpp.find("extern \"C\"") == std::string::npos &&
+          containsMangledFunction(ordinaryCpp, "std::int32_t ", "native_like",
+                                  "(const std::int32_t value);") &&
+          containsMangledFunction(ordinaryCpp, "", "native_like",
+                                  "(__gti_mir_v_") &&
+          ordinaryCpp.find("native_like__gti_mir_failure") == std::string::npos,
+      "ordinary prototypes should retain GTI mangling unless linkage is "
+      "explicitly C");
 
   const lang::FrontendResult runtime =
       analyzeTrustedStandalonePreludeFixture("extern-runtime.gti", R"(
@@ -8184,6 +8696,7 @@ constexpr NamedTest kTests[] = {
     {"testDirectBraceConstruction", testDirectBraceConstruction},
     {"testRecursiveClassLayouts", testRecursiveClassLayouts},
     {"testNamedGenerics", testNamedGenerics},
+    {"testNativeGenericCarrierClosure", testNativeGenericCarrierClosure},
     {"testExactQualifiedClassSpecializations",
      testExactQualifiedClassSpecializations},
     {"testConstrainedGenerics", testConstrainedGenerics},
@@ -8193,6 +8706,7 @@ constexpr NamedTest kTests[] = {
      testStructuralRequiresAndAccumulate},
     {"testDomainValueOperatorCapabilities",
      testDomainValueOperatorCapabilities},
+    {"testCallableConceptCapabilities", testCallableConceptCapabilities},
     {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
     {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
     {"testValueGenerics", testValueGenerics},

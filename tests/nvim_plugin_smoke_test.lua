@@ -123,6 +123,9 @@ local ok, problem = xpcall(function()
     "  }",
     "  return right;",
     "}",
+    "uint64_t selected_extent<uint64_t N>() { return N; }",
+    "uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }",
+    "int explicit_value_client() { return int(selected_extent<4>()); }",
     "char marker = 'G';",
     "constexpr uint64_t int_size = sizeof(int32_t);",
     "void raw_write(uint8_t* writable, const uint8_t* readable) {",
@@ -240,6 +243,10 @@ local ok, problem = xpcall(function()
   end
 
   require_capture("T choose<std::ordered T>(T left, T right) {", "left", "variable.parameter")
+  require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "selected_extent", "function.call")
+  require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "4", "number")
+  require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "N", "variable.parameter")
+  require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "3", "number")
   require_capture("  if (left > right) {", "if", "keyword.conditional")
   require_capture("  if (left > right) {", "left", "variable")
   require_capture("    return left;", "return", "keyword.return")
@@ -315,6 +322,10 @@ local ok, problem = xpcall(function()
   )
   require_rainbow_delimiter("  uint64_t size() { return N; }", "(")
   require_rainbow_delimiter("StaticArray<int, 4> direct_array{};", "{")
+  require_rainbow_delimiter(
+    "int explicit_value_client() { return int(selected_extent<4>()); }",
+    "<"
+  )
 
   local structural_rainbow_source = table.concat({
     '@compiler_constraint("smoke")',
@@ -470,6 +481,7 @@ local ok, problem = xpcall(function()
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
     or not formatted:find("requires pairwise<Left, Right>", 1, true)
     or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
+    or not formatted:find("selected_extent<4>()", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
     or not formatted:find("void raw_write(uint8_t* writable, const uint8_t* readable)", 1, true)
     or not formatted:find("unsafe {", 1, true)

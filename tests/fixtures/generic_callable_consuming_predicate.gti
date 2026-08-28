@@ -1,0 +1,12 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class consume_once {
+public:
+  bool operator()(int32_t& value) && { return value > 0; }
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});
+  return std::all_of(values, consume_once()) ? 0 : 1;
+}

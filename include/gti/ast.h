@@ -95,6 +95,7 @@ struct TypeRef {
   // ordinary function declarations continue to use FunctionDecl.
   std::optional<std::size_t> nativeFunctionParameterCount;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
+  ArrayExtentExprPtr genericValueExpression;
 };
 
 enum class Mutability {
@@ -338,6 +339,9 @@ struct GenericParameter {
   std::optional<Token> pack;
   std::optional<Token> valueType;
   std::optional<NamePath> constraint;
+  std::optional<Token> equal;
+  std::optional<TypeRef> defaultType;
+  ArrayExtentExprPtr defaultValue;
 };
 
 struct RuntimeBinding {

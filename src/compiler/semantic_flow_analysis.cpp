@@ -6499,22 +6499,62 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     if (const std::optional<ClassId> id =
             resolveClassPath(type.name, fromScope)) {
-      std::vector<SemanticType> arguments;
-      std::vector<CompileTimeValue> valueArguments;
       const ClassInfo &owner = classInfo(*id);
-      arguments.reserve(genericTypeParameterCount(owner.genericParameters));
-      valueArguments.reserve(
-          genericValueParameterCount(owner.genericParameters));
+      GenericSubstitution substitution;
       const std::size_t count =
           std::min(type.arguments.size(), owner.genericParameters.size());
       for (std::size_t index = 0; index < count; ++index) {
         const GenericParameterInfo &parameter = owner.genericParameters[index];
         const TypeRef &argument = type.arguments[index];
         if (parameter.value) {
-          valueArguments.emplace_back(
-              genericValueArgument(argument).value_or(CompileTimeValue{}));
+          if (const std::optional<CompileTimeValue> value =
+                  genericValueArgument(argument)) {
+            substitution.values.emplace(parameter.id, *value);
+          }
         } else {
-          arguments.emplace_back(typeOf(argument, fromScope));
+          substitution.types.emplace(parameter.id, typeOf(argument, fromScope));
+        }
+      }
+      for (const GenericParameterInfo &parameter : owner.genericParameters) {
+        if (parameter.value) {
+          if (substitution.values.contains(parameter.id) ||
+              !parameter.defaultValue) {
+            continue;
+          }
+          const GenericValueEvaluation evaluation =
+              evaluateGenericValueExpression(*parameter.defaultValue,
+                                             substitution);
+          if (evaluation.value) {
+            substitution.values.emplace(parameter.id, *evaluation.value);
+          }
+          continue;
+        }
+        if (substitution.types.contains(parameter.id) ||
+            !parameter.defaultType) {
+          continue;
+        }
+        substitution.types.emplace(
+            parameter.id, substituteType(*parameter.defaultType, substitution));
+      }
+      std::vector<SemanticType> arguments;
+      std::vector<CompileTimeValue> valueArguments;
+      arguments.reserve(genericTypeParameterCount(owner.genericParameters));
+      valueArguments.reserve(
+          genericValueParameterCount(owner.genericParameters));
+      for (const GenericParameterInfo &parameter : owner.genericParameters) {
+        if (parameter.value) {
+          const auto found = substitution.values.find(parameter.id);
+          if (found == substitution.values.end()) {
+            return SemanticType::Unknown;
+          }
+          valueArguments.emplace_back(found->second);
+        } else {
+          const auto found = substitution.types.find(parameter.id);
+          if (found == substitution.types.end() ||
+              found->second == SemanticType::Unknown) {
+            return SemanticType::Unknown;
+          }
+          arguments.emplace_back(found->second);
         }
       }
       return selectExactClassSpecialization(SemanticType::classType(

@@ -1,0 +1,15 @@
+#include <std/algorithm>
+#include <std/vector>
+
+class difference {
+public:
+  int32_t operator()(int32_t& left, int32_t& right) {
+    return left - right;
+  }
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({2, 1});
+  std::sort(values, difference());
+  return 0;
+}

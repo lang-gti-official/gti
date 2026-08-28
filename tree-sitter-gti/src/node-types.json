@@ -2416,6 +2416,38 @@
           }
         ]
       },
+      "default_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "default_value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "array_extent_binary_expression",
+            "named": true
+          },
+          {
+            "type": "array_extent_parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "integer_literal",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -4417,6 +4449,14 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "array_extent_binary_expression",
+          "named": true
+        },
+        {
+          "type": "array_extent_parenthesized_expression",
+          "named": true
+        },
         {
           "type": "integer_literal",
           "named": true

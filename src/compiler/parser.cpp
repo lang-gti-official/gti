@@ -861,8 +861,13 @@ private:
         Token name =
             consume(TokenKind::IDENTIFIER,
                     "Expect a value parameter name after its declared type.");
-        parameters.push_back({std::move(name), std::nullopt,
-                              std::move(valueType), std::nullopt});
+        GenericParameter parameter{.name = std::move(name),
+                                   .valueType = std::move(valueType)};
+        if (match({TokenKind::EQUAL})) {
+          parameter.equal = previous();
+          parameter.defaultValue = arrayExtentExpression();
+        }
+        parameters.emplace_back(std::move(parameter));
         continue;
       }
       Token first = consume(TokenKind::IDENTIFIER,
@@ -881,8 +886,14 @@ private:
       if (match({TokenKind::ELLIPSIS})) {
         pack = previous();
       }
-      parameters.push_back({std::move(name), std::move(pack), std::nullopt,
-                            std::move(constraint)});
+      GenericParameter parameter{.name = std::move(name),
+                                 .pack = std::move(pack),
+                                 .constraint = std::move(constraint)};
+      if (match({TokenKind::EQUAL})) {
+        parameter.equal = previous();
+        parameter.defaultType = parseType();
+      }
+      parameters.emplace_back(std::move(parameter));
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after generic parameters.");
     return parameters;
@@ -1301,9 +1312,21 @@ private:
   }
 
   TypeRef parseGenericArgument() {
-    if (match({TokenKind::INT_LITERAL})) {
-      TypeRef argument(previous());
+    const std::optional<std::size_t> expressionEnd =
+        arrayExtentExpressionEnd(0);
+    const bool expressionReachesDelimiter =
+        expressionEnd && (peekAt(*expressionEnd).kind == TokenKind::COMMA ||
+                          peekAt(*expressionEnd).kind == TokenKind::GREATER);
+    const bool valueExpression =
+        check(TokenKind::INT_LITERAL) ||
+        (expressionReachesDelimiter &&
+         (check(TokenKind::LEFT_PAREN) ||
+          (isIdentifierUseToken(peek().kind) && *expressionEnd > 1)));
+    if (valueExpression) {
+      ArrayExtentExprPtr expression = arrayExtentExpression();
+      TypeRef argument(expression->token);
       argument.genericArgumentSyntax = GenericArgumentSyntax::Value;
+      argument.genericValueExpression = std::move(expression);
       return argument;
     }
 
@@ -2553,10 +2576,70 @@ private:
 
   [[nodiscard]]
   std::optional<std::size_t> genericArgumentEnd(std::size_t offset) const {
-    if (peekAt(offset).kind == TokenKind::INT_LITERAL) {
-      return offset + 1;
+    const TokenKind first = peekAt(offset).kind;
+    const std::optional<std::size_t> expressionEnd =
+        arrayExtentExpressionEnd(offset);
+    const bool expressionReachesDelimiter =
+        expressionEnd && (peekAt(*expressionEnd).kind == TokenKind::COMMA ||
+                          peekAt(*expressionEnd).kind == TokenKind::GREATER);
+    if (first == TokenKind::INT_LITERAL ||
+        (expressionReachesDelimiter &&
+         (first == TokenKind::LEFT_PAREN ||
+          (isIdentifierUseToken(first) && *expressionEnd > offset + 1)))) {
+      return expressionEnd;
     }
     return typeEnd(offset);
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  arrayExtentPrimaryEnd(std::size_t offset) const {
+    if (peekAt(offset).kind == TokenKind::INT_LITERAL ||
+        isIdentifierUseToken(peekAt(offset).kind)) {
+      return offset + 1;
+    }
+    if (peekAt(offset).kind != TokenKind::LEFT_PAREN) {
+      return std::nullopt;
+    }
+    const std::optional<std::size_t> expression =
+        arrayExtentExpressionEnd(offset + 1);
+    if (!expression || peekAt(*expression).kind != TokenKind::RIGHT_PAREN) {
+      return std::nullopt;
+    }
+    return *expression + 1;
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  arrayExtentMultiplicativeEnd(std::size_t offset) const {
+    std::optional<std::size_t> expression = arrayExtentPrimaryEnd(offset);
+    if (!expression) {
+      return std::nullopt;
+    }
+    while (peekAt(*expression).kind == TokenKind::STAR ||
+           peekAt(*expression).kind == TokenKind::SLASH ||
+           peekAt(*expression).kind == TokenKind::PERCENT) {
+      expression = arrayExtentPrimaryEnd(*expression + 1);
+      if (!expression) {
+        return std::nullopt;
+      }
+    }
+    return expression;
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  arrayExtentExpressionEnd(std::size_t offset) const {
+    std::optional<std::size_t> expression =
+        arrayExtentMultiplicativeEnd(offset);
+    if (!expression) {
+      return std::nullopt;
+    }
+    while (peekAt(*expression).kind == TokenKind::PLUS ||
+           peekAt(*expression).kind == TokenKind::MINUS) {
+      expression = arrayExtentMultiplicativeEnd(*expression + 1);
+      if (!expression) {
+        return std::nullopt;
+      }
+    }
+    return expression;
   }
 
   [[nodiscard]] std::optional<std::size_t> typeEnd(std::size_t offset) const {
