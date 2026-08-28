@@ -2685,8 +2685,26 @@ name recognition.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
   The current formatter recognizes sequential `{}` plus `{{`/`}}`, accepts
   integral arguments only, and validates before stdout; indexing, names,
-  specifiers, floats, and customization remain later breadth. Stderr remains a
+  specifiers, float arguments, and customization remain later breadth. Stderr remains a
   hosted service owned by `L-HOST-01`.
+- **Implemented binary32 text sub-slice:** `std::to_string(float)` plus the
+  `std::print`/`std::println` binary32 overloads render an optional sign, the
+  integer part, a point, and exactly six fractional digits, with `nan`, `inf`,
+  and `-inf` for non-finite values. The digits are the stored value's *exact*
+  decimal expansion, rounded half up at the sixth place, produced by ordinary
+  GTI arithmetic with no host call and no wider-float round trip: a magnitude
+  at or above 2^24 is normalised by exact halving and its mantissa's decimal
+  digits are doubled, while a smaller magnitude extracts fractional digits in
+  binary64, where a binary32 fraction times ten needs at most 28 significant
+  bits and is therefore exact. Output is pinned byte-for-byte against C's
+  `printf("%f", (float)x)` across O0/O3 and C++20/C++23.
+- **Named next sub-slices:** binary64 text (its own numeric sub-slice, since a
+  binary64 fraction times ten is not exact in binary64), float parsing, and
+  float arguments to `std::format`. The last is blocked on a dispatch
+  mechanism rather than on formatting: `std::format` constrains its pack to
+  one capability, concepts are conjunction-only so `integral || floating_point`
+  is inexpressible, and with no type predicate for `if constexpr` a single
+  generic body cannot select between the integral and binary32 conversions.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.

@@ -17,7 +17,7 @@
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "6b7632100f3ddf38ea14e8aaf75428293733e0a650b001dc9cd586967c8f7964",
+    "stdlib/std/string.gti": "2c539bed8c8719239a23ded9ab0f940b549b4c0516aa0e366e8af65cef1029b2",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
@@ -699,7 +699,8 @@
         "std::string::shrink_to_fit",
         "std::string::size",
         "std::string::view",
-        "std::to_string"
+        "std::to_string",
+        "std::to_string(float)"
       ],
       "case_ids": ["span", "string"],
       "required_instantiations": ["std::to_string for every fixed-width integer family"],

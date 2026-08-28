@@ -1246,6 +1246,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(domain_operator_runtime PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME float_text_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/float_text_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(float_text_runtime PROPERTIES TIMEOUT 300)
 
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
