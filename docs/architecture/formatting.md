@@ -162,7 +162,9 @@ Constructor-local value parameters use the same compact clause, for example
 `Buffer<uint64_t N>(T values[N])`. A brace after `(` or `,` in a call remains
 an inline initializer (`make({1, 2}, {3, 4})`) rather than being formatted as a
 statement block. This is syntax formatting only; the formatter does not infer
-the selected fixed-array context.
+the selected fixed-array context. Explicit function and method values retain
+the same generic-call form (`extent<4>()`, `first<int, 2>(values)`); a numeric
+argument does not turn the angle tokens into relational operators.
 
 Parameter defaults use ordinary assignment spacing, for example
 `int choose(int value = fallback())`. The formatter preserves the complete

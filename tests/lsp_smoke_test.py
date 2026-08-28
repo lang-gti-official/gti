@@ -6833,14 +6833,18 @@ def test_worker_survives_failed_analysis(executable, root):
 def test_contextual_array_hover(executable, root):
     source = (
         "int total<uint64_t N>(int values[N]) { return values[0]; }\n"
+        "uint64_t extent<uint64_t N>() { return N; }\n"
         "class Total {\n"
         "public:\n"
         "  Total<uint64_t N>(int values[N]) {}\n"
+        "  uint64_t extent<uint64_t N>() { return N; }\n"
         "};\n"
         "int main() {\n"
         "  int value = total({1, 2, 3});\n"
         "  Total object = Total({4, 5});\n"
-        "  return value - 1;\n"
+        "  uint64_t selected = extent<4>();\n"
+        "  uint64_t member = object.extent<5>();\n"
+        "  return value + int(selected) + int(member) - 10;\n"
         "}\n"
     )
     path = root / "contextual-array-hover.gti"
@@ -6922,6 +6926,16 @@ def test_contextual_array_hover(executable, root):
         assert selected_constructor.startswith(
             "```gti\nTotal::Total<2>(int32_t[2] values)\n```"
         ), selected_constructor
+
+        selected_value = hover(6, source.index("extent<4>") + 1)
+        assert selected_value.startswith(
+            "```gti\nuint64_t extent<4>()\n```"
+        ), selected_value
+
+        selected_method = hover(7, source.index("object.extent<5>") + len("object."))
+        assert selected_method.startswith(
+            "```gti\nuint64_t Total::extent<5>()\n```"
+        ), selected_method
     finally:
         session.close()
 

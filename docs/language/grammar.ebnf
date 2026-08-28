@@ -1215,16 +1215,19 @@ pack-expansion         = IDENTIFIER "..." ;
    precede value parameters.
 
    A function, non-polymorphic method, or constructor may use the narrower
-   inferred form `uint64_t N` only when `N` is the complete extent of one
-   by-value fixed-array parameter. A named fixed array supplies its exact
-   extent and a contextual brace argument supplies its written element count.
-   Type parameters must be inferred from ordinary typed arguments; braces and
+   `uint64_t N` form when `N` is the complete extent of one by-value fixed-array
+   parameter. A named fixed array supplies its exact extent and a contextual
+   brace argument supplies its written element count. An ordinary function or
+   non-polymorphic method call may instead write the complete generic suffix:
+   every type argument first, then every `uint64_t` value as an integer literal,
+   in-scope constexpr integer binding, or enclosing value parameter. Braces and
    omitted default expressions do not synthesize or infer a type argument.
-   Constructor-local parameters appear after the constructor name. Inferred
-   values participate in concrete function or constructor instance identity.
-   Explicit function/constructor value arguments, other value types, arbitrary
-   value-generic expressions, value-parameter defaults, value packs, and
-   value-generic virtual/operator call surfaces are not implemented.
+   Constructor-local parameters appear after the constructor name and remain
+   inference-only. Inferred and explicit values participate in concrete
+   function or constructor instance identity. Other value types, arbitrary
+   value-generic expressions, value-parameter defaults, value packs, explicit
+   constructor-local values, and value-generic virtual/operator call surfaces
+   are not implemented.
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,

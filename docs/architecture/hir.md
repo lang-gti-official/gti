@@ -375,8 +375,11 @@ Function and constructor instance keys retain type arguments and `uint64_t`
 value arguments separately. A constructor key combines its selected
 declaration, concrete owner, and ordered constructor-local arguments; its row
 also retains substituted parameter types and the first instantiation site.
-MIR and the detached lowered inventory copy those arguments and parameters so
-later verification never reconstructs inference from native layout.
+MIR function and constructor rows and the detached lowered inventory copy those
+arguments and parameters so later verification never reconstructs inference
+from native layout. The HIR-to-MIR and MIR-to-lowered coherence gates compare
+the complete vectors, including a function value that does not occur in any
+runtime parameter type.
 Contextual braces have already become a concrete
 fixed-array `HirValue` under the selected parameter type; HIR does not infer
 their element type or extent. Forwarding one symbolic array extent to another

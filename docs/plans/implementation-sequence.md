@@ -2351,10 +2351,12 @@ name recognition.
   public-name compiler special case, or native C++ substitution to express a
   valid generic operation.
 - **Required slices, in dependency order:**
-  1. admit explicit immutable `uint64_t` function and method arguments that
-     the parser already represents, preserving ordered type/value identity
-     through concrete reanalysis, HIR, MIR, effects, constexpr evaluation,
-     backend calls, formatting, Tree-sitter, and LSP signatures;
+  1. **Completed:** explicit immutable `uint64_t` function and method
+     arguments preserve ordered type/value identity through concrete
+     reanalysis, HIR, `mir-v52`, LoweredProgram, constexpr evaluation, exact
+     backend calls, formatting, Tree-sitter, and LSP signatures. Literal,
+     named-constant, symbolic forwarding, mixed type/value, value-only, and
+     method calls execute across the production mode matrix;
   2. add declaration-owned default type/value arguments and closed dependent
      `uint64_t` constant expressions, with exact call identity and no return-
      context inference or native-template defaults;
@@ -2622,7 +2624,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v51`/`mir-body-v45` carry explicit mutually exclusive
+  transport plan; `mir-v52`/`mir-body-v45` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact

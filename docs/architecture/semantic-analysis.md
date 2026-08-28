@@ -311,6 +311,17 @@ the selected parameter types. `ResolvedCallInfo` and
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
+An explicit ordinary function or method generic suffix is classified before
+candidate selection using the written token and lexical constant catalog.
+Integer literals, in-scope `constexpr uint64_t` bindings, and enclosing value
+parameters occupy value slots; all other identifiers occupy type slots. Type
+slots must precede value slots, and once a value is written the complete type
+and value suffix is required. Exact overload viability consumes those two
+ordered vectors, then concrete instance reanalysis substitutes the selected
+values just like inferred fixed-array extents. This is frontend authority:
+native template deduction is not consulted and failed candidates cannot leave
+partial substitutions in shared semantic state.
+
 An ordinary constructor can add inference-only local type parameters inside
 its owning class's generic scope. Candidate analysis infers them solely from
 written arguments, checks inline and trailing constraints after substitution,
@@ -352,10 +363,10 @@ class/function type arguments and class value arguments. Concrete reanalysis
 reuses the lexical declaration and substitutes both parts. This distinction is
 required even for captureless lambdas with identical signatures: two enclosing
 generic instances may give the same source body different compile-time meaning.
-Function and constructor instance identity now includes the bounded inferred
-`uint64_t` extent arguments used by contextual fixed-array parameters. Lambda
-identity retains enclosing function value arguments as a separate identity
-component rather than treating them as capture or signature types.
+Function and constructor instance identity includes bounded inferred and
+explicit `uint64_t` arguments. Lambda identity retains enclosing function value
+arguments as a separate identity component rather than treating them as
+capture or signature types.
 
 Each lambda capture records its new binding symbol, original source symbol,
 exact type and traits, initialization mode, and initializer expression. Bare

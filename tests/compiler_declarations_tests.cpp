@@ -5248,8 +5248,6 @@ int invalid_extent[Missing] = {};
              hasDiagnostic(invalidSemantic,
                            "type parameters must appear before value") &&
              hasDiagnostic(invalidSemantic,
-                           "must be the extent of a by-value fixed-array") &&
-             hasDiagnostic(invalidSemantic,
                            "requires a uint64_t compile-time value") &&
              hasDiagnostic(invalidSemantic, "requires a type argument") &&
              hasDiagnostic(invalidSemantic,
@@ -5258,7 +5256,8 @@ int invalid_extent[Missing] = {};
                            "is not an in-scope constexpr integer or uint64_t "
                            "value generic"),
          "value generic diagnostics should identify unsupported parameter "
-         "types, ordering, scope, and argument kind");
+         "types, ordering, scope, and argument kind without requiring every "
+         "value to be inferable");
 
   const std::string formatted = lang::Formatter().format(
       "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
@@ -5283,6 +5282,10 @@ int total<uint64_t N>(int values[N]) {
 
 T first<T, uint64_t N>(T fallback, T values[N]) { return values[0]; }
 
+constexpr uint64_t exact_extent<uint64_t N>() { return N; }
+
+int relay_total<uint64_t N>(int values[N]) { return total<N>(values); }
+
 int choose(int values[2]) { return 2; }
 int choose(int values[3]) { return 3; }
 
@@ -5303,7 +5306,14 @@ int main() {
   int method = object.add({2, 3});
   int named_values[2] = {11, 12};
   int named = total(named_values);
-  return summed + selected + extent + object.read() + method + named - 79;
+  int explicit_total = total<3>({3, 4, 5});
+  int explicit_mixed = first<int, 2>(0, {6, 7});
+  int relayed = relay_total<2>({8, 9});
+  uint64_t explicit_extent = exact_extent<4>();
+  int explicit_method = object.add<2>({1, 1});
+  return summed + selected + extent + object.read() + method + named +
+         explicit_total + explicit_mixed + relayed + int(explicit_extent) +
+         explicit_method - 139;
 }
 )";
 
@@ -5407,6 +5417,8 @@ int main() {
          instance.parameterTypes.front().arrayLength == 2);
   }
   bool foundMethodTwo = false;
+  bool foundExtentFour = false;
+  bool foundRelayTwo = false;
   for (const lang::HirFunctionInstance &instance :
        frontend.hir.functionInstances()) {
     foundMethodTwo =
@@ -5420,10 +5432,81 @@ int main() {
          instance.parameterTypes.size() == 1 &&
          instance.parameterTypes.front().kind == lang::SemanticType::Array &&
          instance.parameterTypes.front().arrayLength == 2);
+    foundExtentFour =
+        foundExtentFour || (instance.source != nullptr &&
+                            instance.source->name().lexeme == "exact_extent" &&
+                            instance.valueArguments.size() == 1 &&
+                            instance.valueArguments.front().kind ==
+                                lang::CompileTimeValue::UInt64 &&
+                            instance.valueArguments.front().value == 4 &&
+                            instance.parameterTypes.empty());
+    foundRelayTwo =
+        foundRelayTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "relay_total" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
   }
-  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo,
-         "HIR instance identity should include inferred function and "
-         "constructor value arguments, including methods");
+  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo &&
+             foundExtentFour && foundRelayTwo,
+         "HIR instance identity should include inferred and explicit function "
+         "and constructor value arguments, including methods and symbolic "
+         "forwarding");
+
+  std::size_t mirroredValueFunctions = 0;
+  bool exactMirIdentity = true;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr || instance.valueArguments.empty()) {
+      continue;
+    }
+    const std::string_view name = instance.source->name().lexeme;
+    if (name != "total" && name != "add" && name != "exact_extent" &&
+        name != "relay_total") {
+      continue;
+    }
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    exactMirIdentity = exactMirIdentity && mir != nullptr &&
+                       mir->typeArguments == instance.typeArguments &&
+                       mir->valueArguments == instance.valueArguments;
+    ++mirroredValueFunctions;
+  }
+  expect(exactMirIdentity && mirroredValueFunctions >= 4,
+         "MIR function identity should preserve every concrete HIR type and "
+         "value argument rather than reconstructing it from parameter types");
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "LoweredProgram should retain and verify the exact MIR function "
+         "value-generic identity");
+
+  lang::MirProgram forged = frontend.mir;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  const auto forgedValue =
+      std::find_if(forgedFunctions.begin(), forgedFunctions.end(),
+                   [](const lang::MirFunctionInstance &instance) {
+                     return !instance.valueArguments.empty() &&
+                            instance.valueArguments.front().kind ==
+                                lang::CompileTimeValue::UInt64;
+                   });
+  if (forgedValue != forgedFunctions.end()) {
+    ++forgedValue->valueArguments.front().value;
+  }
+  const lang::LoweredProgramBuild rejected =
+      lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
+                                          frontend.hir, forged, forged, {},
+                                          lang::TargetInfo::host());
+  expect(forgedValue != forgedFunctions.end() && !rejected.valid(),
+         "the HIR-to-MIR boundary should reject a forged function value "
+         "argument before backend planning");
 
   const std::string generated = gti_test::emitCppText(frontend);
   expect(generated.find("std::initializer_list") == std::string::npos &&
@@ -5447,6 +5530,10 @@ int duplicate<uint64_t M>(int values[M]) { return 2; }
 int uninferable<uint64_t N>() { return int(N); }
 int explicit_extent<uint64_t N>(int values[N]) { return values[0]; }
 T no_common_type<T, uint64_t N>(T values[N]) { return values[0]; }
+T type_only<T>(T value) { return value; }
+int two_extents<uint64_t N, uint64_t M>(int first[N], int second[M]) {
+  return first[0] + second[0];
+}
 
 class DuplicateConstructor {
 public:
@@ -5466,6 +5553,11 @@ int main() {
   int unresolved = uninferable();
   int no_common = no_common_type({1, 2});
   int explicit_value = explicit_extent<2>({1, 2});
+  int wrong_kind = type_only<2>(1);
+  int missing_type_before_value = no_common_type<2>({1, 2});
+  int wrong_value_count = two_extents<2>({1, 2}, {3, 4});
+  int value_then_type = no_common_type<2, int>({1, 2});
+  int non_generic_value = scalar<2>(1);
   int ambiguous_value = ambiguous({1, 2});
   return 0;
 }
@@ -5476,11 +5568,16 @@ int main() {
       !invalid.canGenerateCode() &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2011") == 2 &&
           hasDiagnostic(invalid.diagnostics,
-                        "must be the extent of a by-value fixed-array") &&
-          hasDiagnostic(invalid.diagnostics,
                         "Cannot infer generic type parameter 'T'") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Function value generic arguments are not supported") &&
+                        "wrong number of type arguments") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "wrong number of explicit value arguments") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "type arguments must appear before value") &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "Non-generic functions do not take generic arguments") &&
           hasDiagnostic(invalid.diagnostics,
                         "Constructor-local generic parameters cannot shadow") &&
           hasDiagnostic(invalid.diagnostics,
@@ -5488,9 +5585,9 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Cannot initialize array element") &&
           hasDiagnostic(invalid.diagnostics, "is ambiguous"),
-      "contextual arrays should reject duplicate generic shapes, missing "
-      "array context, invalid elements, and ambiguous overloads at the GTI "
-      "layer");
+      "contextual arrays and explicit value arguments should reject duplicate "
+      "generic shapes, missing array context, invalid argument kinds/counts, "
+      "and ambiguous overloads at the GTI layer");
 
   const auto wrongExtent =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -5510,10 +5607,10 @@ int main() {
 
   const std::string formatted = lang::Formatter().format(
       "int total<uint64_t N>(int values[N]){return values[0];}int "
-      "main(){return total({1,2,3});}");
-  expect(formatted.find("total({1, 2, 3})") != std::string::npos &&
+      "main(){return total<3>({1,2,3});}");
+  expect(formatted.find("total<3>({1, 2, 3})") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
-         "contextual brace arguments and inferred value generics should "
+         "contextual brace arguments and explicit value generics should "
          "format idempotently");
 }
 

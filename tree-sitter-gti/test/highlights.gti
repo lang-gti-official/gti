@@ -284,3 +284,6 @@ struct ConstexprPointHighlight {
   int32_t value;
   constexpr ConstexprPointHighlight(int32_t initial) : value(initial) {}
 };
+
+uint64_t selected_extent_highlight<uint64_t N>() { return N; }
+int explicit_value_highlight() { return int(selected_extent_highlight<4>()); }

@@ -1059,6 +1059,7 @@ struct MirFunctionInstance {
   // empty for non-generic declarations. Emission spells them explicitly
   // where C++ deduction cannot recover them from the parameter types.
   std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;

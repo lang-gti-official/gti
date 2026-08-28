@@ -636,7 +636,8 @@ public:
                                     const MirFunctionInstance *instance,
                                     bool failure, bool insideClass = false,
                                     std::string_view owner = {},
-                                    bool sourceParameterTypes = false) {
+                                    bool sourceParameterTypes = false,
+                                    bool explicitGenericArguments = false) {
     if (insideClass && function.staticMember) {
       output << "static ";
     }
@@ -658,7 +659,18 @@ public:
       output << owner << "::";
     }
     const std::string name = cppFunctionSpelling(function, row.name);
-    output << (failure ? cppMirFailureSiblingSpelling(name) : name) << '(';
+    output << (failure ? cppMirFailureSiblingSpelling(name) : name);
+    if (!failure && explicitGenericArguments && instance != nullptr) {
+      const LoweredFunctionInstance *concrete =
+          loweredFunctionInstance(instance->id);
+      if (concrete == nullptr || (concrete->typeArguments.empty() &&
+                                  concrete->valueArguments.empty())) {
+        throw std::logic_error(
+            "lowered member specialization lost its generic arguments");
+      }
+      emitLoweredExplicitArguments(*concrete);
+    }
+    output << '(';
     std::size_t parameterCount = 0;
     if (instance != nullptr && !sourceParameterTypes) {
       parameterCount = emitLoweredMirParameters(instance->parameterTypes);
@@ -3373,7 +3385,8 @@ public:
             writeIndent();
             output << "template <> ";
             emitLoweredFunctionSignature(*row, *function, instance, false,
-                                         false, ownerSpelling);
+                                         false, ownerSpelling, false,
+                                         !function->genericParameters.empty());
             output << ";\n";
           }
         }
@@ -3557,7 +3570,8 @@ public:
       output << "template <> ";
     }
     emitLoweredFunctionSignature(row, function, &instance, false, false,
-                                 ownerSpelling);
+                                 ownerSpelling, false,
+                                 !function.genericParameters.empty());
     output << " {\n";
     ++indentation;
     writeIndent();
@@ -3830,7 +3844,8 @@ public:
             loweredFailureBodySupported(*instance))) {
         emitPrefix(false);
         emitLoweredFunctionSignature(row, function, instance, false, false,
-                                     ownerSpelling);
+                                     ownerSpelling, false,
+                                     !function.genericParameters.empty());
         output << ' ';
         emitLoweredNormalFunctionBody(*instance);
       }

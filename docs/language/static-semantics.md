@@ -287,10 +287,18 @@ A named array contributes its exact extent; a contextual brace argument
 contributes its written count. Other type parameters must be inferred from
 ordinary typed arguments. The inferred value is part of concrete HIR instance
 identity, but it does not distinguish alpha-equivalent overload declarations.
-Explicit function/constructor value arguments, arbitrary value-generic
-expressions, value-parameter defaults, and value packs are not implemented. A
-constructor-local value parameter cannot shadow an enclosing class or struct
-generic parameter.
+An ordinary function or non-polymorphic method call may instead write every
+value argument explicitly after every type argument, for example `extent<4>()`
+or `first<int, 2>(values)`. A written value is an integer literal, an in-scope
+`constexpr uint64_t` binding, or an enclosing `uint64_t` value parameter; it is
+resolved by the target parameter kind rather than treated as a type. Supplying
+any explicit value argument requires the complete type and value suffix, so
+partial value application and result-context inference do not exist. The exact
+values are retained by semantic selection, concrete reanalysis, HIR, MIR, and
+the detached lowered instance inventory. Constructor-local value parameters
+remain inference-only and cannot shadow an enclosing class or struct generic
+parameter. Arbitrary value-generic expressions, value-parameter defaults, and
+value packs are not implemented.
 
 An ordinary constructor may also declare constructor-local type parameters.
 They are inferred only from supplied, already typed call arguments using the
