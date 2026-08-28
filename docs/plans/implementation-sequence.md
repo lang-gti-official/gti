@@ -2363,9 +2363,11 @@ name recognition.
      arithmetic and ordering errors, and appear coherently in formatting,
      Tree-sitter, and LSP without return-context inference or native-template
      defaults;
-  3. finish public callable/predicate/operation capability relations over the
-     accepted exact read/mut/once callable contract, then use them in
-     comparator `sort` and complete-range algorithm clients without ranking;
+  3. **Completed:** public unary/binary callable, predicate, operation,
+     comparator, indirect iterator-call, and once-action relations expose the
+     accepted exact read/mut/once contract. Comparator `sort`, whole-vector
+     predicate/operation clients, constrained numeric reducers, and
+     `std::invoke_once` use them without ranking or backend validity;
   4. activate `E-SYM-01`/`E-INST-01` for deterministic GTI names and concrete
      function/class/member/constructor instances. A narrowly deduced native
      template may remain only where an unnameable lexical closure is the
@@ -2496,8 +2498,9 @@ name recognition.
   the bounded one-field generic owner are also done. A repeatable confined
   callable may now carry an independent exact-return transport when every
   reachable return moves that same parameter; this serves source-defined
-  `std::for_each`. Broader public callable/predicate capabilities and external
-  owners remain
+  `std::for_each`. Public unary/binary callable, predicate, operation,
+  comparator, indirect iterator-call, and once-action capabilities now expose
+  that same exact contract to reusable generic source. External callable owners remain
   systems-readiness implementation shared by algorithms, tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
@@ -2533,10 +2536,10 @@ name recognition.
   generic-body forms for dereference/subscript/compound assignment, concrete
   satisfaction checks, read-vector-cursor operator coverage, and the
   source-defined `std::copy`, whole-container `std::fill`/`std::transform`/
-  `std::reverse`/`std::sort`, signed `std::advance`/`std::next`, and
-  `std::prev` clients.
-- **Remaining scope:** comparator `sort`; complete-range concepts extending
-  the whole-container generic algorithms beyond `std::vector`; indexed
+  `std::reverse`/ordered and comparator `std::sort`, whole-vector predicate
+  clients, signed `std::advance`/`std::next`, and `std::prev` clients.
+- **Remaining scope:** structural complete-range concepts extending the
+  whole-container generic algorithms beyond `std::vector`; indexed
   element move-out; and further iterator/sentinel overloads behind a
   demonstrated subrange client. Iterator-pair in-place spellings remain
   excluded because `begin_mut()` and `end()` from one container overlap by
@@ -3466,7 +3469,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Production generic functions | type/value/pack declarations, exact type inference and explicit type/value expressions, inferred array extents, declaration defaults, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, and verified-MIR execution are implemented; public callable relations, deterministic concrete emission, and the production stdlib/tooling matrix remain | `L-GEN-01` -> `E-SYM-01` -> `E-INST-01`, sharing the remaining `L-CALL-01`/`L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Production generic functions | type/value/pack declarations, exact type inference and explicit type/value expressions, inferred array extents, declaration defaults, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, public callable relations, and verified-MIR execution are implemented; deterministic concrete emission and the final production stdlib/tooling matrix remain | `L-GEN-01` -> `E-SYM-01` -> `E-INST-01`, sharing the remaining `L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

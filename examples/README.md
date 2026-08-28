@@ -235,6 +235,12 @@ one read-only element loan per iteration. The temporary vector is owned by
 hidden loop storage until cleanup; mutable element iteration remains a separate
 language slice.
 
+`77-callable-concepts.gti` gives reusable generic functions a public exact
+callable contract. It combines a repeatable predicate, a complete-vector sort
+with an explicit comparator, and a consuming `void()` action; invalid argument,
+result, or receiver capabilities are rejected before the generic body is
+instantiated.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

@@ -4661,6 +4661,200 @@ int32_t after() {
          "keyword");
 }
 
+void testCallableConceptCapabilities() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "callable-concepts.gti", R"(
+#include <std/functional>
+
+class reader {
+public:
+  bool operator()(int32_t& value) { return value == 7; }
+};
+
+class counter {
+  mut int32_t calls;
+
+public:
+  counter() : calls(0) {}
+  bool operator()(int32_t& value) mut {
+    this.calls++;
+    return value == 7;
+  }
+};
+
+class once_reader {
+public:
+  bool operator()(int32_t& value) && { return value == 7; }
+};
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+};
+
+class once_action {
+public:
+  void operator()() && {}
+};
+
+bool read_value<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+
+bool mutate_value<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+
+bool consume_value<Function>(int32_t value, Function function)
+  requires std::once_callable<Function, int32_t, bool> {
+  return std::move(function)(value);
+}
+
+bool order_values<Function>(int32_t left, int32_t right,
+                            mut Function function)
+  requires std::comparator<Function, int32_t> {
+  return function(left, right);
+}
+
+int main() {
+  bool read = read_value(7, reader());
+  bool mutable_result = mutate_value(7, counter());
+  bool consumed = consume_value(7, once_reader());
+  bool ordered = order_values(8, 7, descending());
+  std::invoke_once(once_action());
+  return read && mutable_result && consumed && ordered ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected callable-concept diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "public callable concepts should establish exact read, repeatable "
+         "mutable, consuming, predicate, comparator, and once-action "
+         "contracts before concrete generic reanalysis");
+
+  const auto rejects = [&](std::string_view name, const std::string &source,
+                           std::string_view conceptName,
+                           std::string_view hintFragment,
+                           std::string_view message) {
+    const lang::FrontendResult result = lang::Frontend().analyze(
+        std::string(name), source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    if (result.canGenerateCode() ||
+        !hasDiagnosticCode(result.diagnostics, "GTI-S2029")) {
+      for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+        std::cerr << name << " [" << diagnostic.code
+                  << "]: " << diagnostic.message << '\n';
+      }
+    }
+    expect(!result.canGenerateCode() &&
+               hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                     std::string(conceptName) +
+                                                     "'") &&
+               hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
+           std::string(message));
+  };
+
+  rejects("mutable-target-at-read-site.gti", R"(
+#include <std/functional>
+class mutable_only {
+public:
+  bool operator()(int32_t& value) mut { return value > 0; }
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+int main() { return inspect(1, mutable_only()) ? 0 : 1; }
+)",
+          "std::read_callable", "receiver capability",
+          "a mutable-only target should not satisfy a read-only callable "
+          "use site");
+
+  rejects("once-target-at-repeatable-site.gti", R"(
+#include <std/functional>
+class once_only {
+public:
+  bool operator()(int32_t& value) && { return value > 0; }
+};
+bool inspect<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+int main() { return inspect(1, once_only()) ? 0 : 1; }
+)",
+          "std::predicate", "receiver capability",
+          "a consuming target should not satisfy a repeatable predicate use "
+          "site");
+
+  rejects("wrong-predicate-result.gti", R"(
+#include <std/functional>
+class integer_result {
+public:
+  int32_t operator()(int32_t& value) { return value; }
+};
+bool inspect<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+int main() { return inspect(1, integer_result()) ? 0 : 1; }
+)",
+          "std::predicate", "declared owned result",
+          "a predicate should require an exact owned bool result");
+
+  rejects("borrowed-operation-result.gti", R"(
+#include <std/functional>
+class borrowed_result {
+public:
+  int32_t& operator()(int32_t& value) { return value; }
+};
+int32_t transform<Function>(int32_t value, mut Function function)
+  requires std::operation<Function, int32_t, int32_t> {
+  return function(value);
+}
+int main() { return transform(1, borrowed_result()) - 1; }
+)",
+          "std::operation", "declared owned result",
+          "an operation should not satisfy an owned-result relation with a "
+          "borrowed result");
+
+  rejects("ambiguous-callable-relation.gti", R"(
+#include <std/functional>
+class ambiguous {
+public:
+  bool operator()(int32_t value) { return value > 0; }
+  bool operator()(int32_t& value) { return value > 0; }
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+int main() { return inspect(1, ambiguous()) ? 0 : 1; }
+)",
+          "std::read_callable", "one exact public unary operator()",
+          "a callable relation should reject an ambiguous exact readable "
+          "signature");
+
+  const lang::FrontendResult privateBinding =
+      lang::Frontend().analyze("private-callable-intrinsic.gti", R"(
+concept forged<F, A, R> =
+    gti_internal::read_callable_capability<F, A, R>;
+)",
+                               {standardLibraryPrelude()});
+  expect(!privateBinding.canGenerateCode() &&
+             hasDiagnosticCode(privateBinding.diagnostics, "GTI-S2058"),
+         "compiler-owned callable relations should remain private behind the "
+         "public std concepts");
+}
+
 void testSymbolicAutoLocalBinding() {
   const std::string source = R"(
 #include <std/iterator>
@@ -8458,6 +8652,7 @@ constexpr NamedTest kTests[] = {
      testStructuralRequiresAndAccumulate},
     {"testDomainValueOperatorCapabilities",
      testDomainValueOperatorCapabilities},
+    {"testCallableConceptCapabilities", testCallableConceptCapabilities},
     {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
     {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
     {"testValueGenerics", testValueGenerics},

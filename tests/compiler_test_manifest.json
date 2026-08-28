@@ -134,6 +134,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testCallableConceptCapabilities",
+      "suite": "declarations"
+    },
+    {
       "name": "testSymbolicAutoLocalBinding",
       "suite": "declarations"
     },

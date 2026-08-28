@@ -282,20 +282,22 @@ def main() -> int:
             ),
             (
                 "generic_algorithm_for_each_bad_argument.gti",
-                "GTI-S2022",
+                "GTI-S2029",
                 (
-                    "No exact overload of operator() for argument types (int32_t).",
-                    "Candidate: operator()(uint64_t&)",
-                    "Concrete generic instance requested here.",
+                    "Generic arguments do not satisfy concept "
+                    "'std::indirect_operation'.",
+                    "std::indirect_operation<Function, Iterator, void>",
+                    "iterator's read-only dereference result",
                 ),
             ),
             (
                 "generic_algorithm_for_each_bad_return.gti",
-                "GTI-S2046",
+                "GTI-S2029",
                 (
-                    "Callable parameter 'function' must return 'void'",
-                    "selected callable returns 'int32_t'",
-                    "Concrete generic instance requested here.",
+                    "Generic arguments do not satisfy concept "
+                    "'std::indirect_operation'.",
+                    "std::indirect_operation<Function, Iterator, void>",
+                    "returning the required owned result type",
                 ),
             ),
             (

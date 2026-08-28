@@ -1625,6 +1625,7 @@ def test_callable_contract_hover(executable, root):
 
 def test_requires_tooling(executable, root):
     source = (
+        "#include <std/functional>\n"
         "concept pairwise<Left, Right> =\n"
         "    std::numeric<Left> && std::numeric<Right>;\n"
         "Left choose<std::numeric Left, std::numeric Right>(\n"
@@ -1638,10 +1639,19 @@ def test_requires_tooling(executable, root):
         "    return T(value + value);\n"
         "  }\n"
         "};\n"
+        "class positive {\n"
+        "public:\n"
+        "  bool operator()(int32_t& value) { return value > 0; }\n"
+        "};\n"
+        "bool accepts<Predicate>(int32_t value, mut Predicate predicate)\n"
+        "  requires std::predicate<Predicate, int32_t> {\n"
+        "  return predicate(value);\n"
+        "}\n"
         "int main() {\n"
         "  NumericBox<int> box = NumericBox<int>();\n"
         "  int doubled = box.doubled(2);\n"
-        "  return choose(doubled, 2);\n"
+        "  bool accepted = accepts(doubled, positive());\n"
+        "  return accepted ? choose(doubled, 2) : 1;\n"
         "}\n"
     )
     path = root / "requires-tooling.gti"
@@ -1736,10 +1746,26 @@ def test_requires_tooling(executable, root):
             "requires std::numeric<int32_t>\n```"
         )
 
+        callable_declaration = source.index("accepts<Predicate>")
+        callable_declaration_hover = hover(6, callable_declaration + 1)
+        assert callable_declaration_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "bool accepts<Predicate>(int32_t value, mut Predicate predicate) "
+            "requires std::predicate<Predicate, int32_t>\n```"
+        )
+
+        callable_call = source.index("accepts(doubled")
+        callable_call_hover = hover(7, callable_call + 1)
+        assert callable_call_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "bool accepts<positive>(int32_t value, mut positive predicate) "
+            "requires std::predicate<positive, int32_t>\n```"
+        )
+
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 6,
+                "id": 8,
                 "method": "textDocument/definition",
                 "params": {
                     "textDocument": {"uri": uri},
@@ -1747,7 +1773,7 @@ def test_requires_tooling(executable, root):
                 },
             }
         )
-        definition = session.receive_until(lambda message: message.get("id") == 6)[
+        definition = session.receive_until(lambda message: message.get("id") == 8)[
             "result"
         ]
         assert definition == {
@@ -1763,12 +1789,12 @@ def test_requires_tooling(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 7,
+                "id": 9,
                 "method": "textDocument/semanticTokens/full",
                 "params": {"textDocument": {"uri": uri}},
             }
         )
-        data = session.receive_until(lambda message: message.get("id") == 7)[
+        data = session.receive_until(lambda message: message.get("id") == 9)[
             "result"
         ]["data"]
         tokens = semantic_tokens_by_position(data)
@@ -1806,7 +1832,7 @@ def test_requires_tooling(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 8,
+                "id": 10,
                 "method": "textDocument/completion",
                 "params": {
                     "textDocument": {"uri": uri},
@@ -1817,7 +1843,7 @@ def test_requires_tooling(executable, root):
             }
         )
         member_completion = session.receive_until(
-            lambda message: message.get("id") == 8
+            lambda message: message.get("id") == 10
         )["result"]
         doubled = next(
             item
@@ -1830,7 +1856,7 @@ def test_requires_tooling(executable, root):
         )
 
         completion_source = source.replace(
-            "return choose(doubled, 2);", "return cho;"
+            "return accepted ? choose(doubled, 2) : 1;", "return cho;"
         )
         session.send(
             {
@@ -1852,7 +1878,7 @@ def test_requires_tooling(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 9,
+                "id": 11,
                 "method": "textDocument/completion",
                 "params": {
                     "textDocument": {"uri": uri},
@@ -1860,7 +1886,7 @@ def test_requires_tooling(executable, root):
                 },
             }
         )
-        completion = session.receive_until(lambda message: message.get("id") == 9)[
+        completion = session.receive_until(lambda message: message.get("id") == 11)[
             "result"
         ]
         choose = next(item for item in completion["items"] if item["label"] == "choose")

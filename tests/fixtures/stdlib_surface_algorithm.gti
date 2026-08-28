@@ -44,6 +44,13 @@ public:
   }
 };
 
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+};
+
 int main() {
   if (std::min(3, 4) != 3 || std::max(3, 4) != 4 ||
       std::clamp(7, 1, 5) != 5 ||
@@ -144,6 +151,23 @@ int main() {
   std::reverse(source);
   if (source[std::size_t(0)] != 5 || source[std::size_t(3)] != 1) {
     return 12;
+  }
+
+  mut std::vector<int32_t> compared =
+      std::vector<int32_t>({1, 4, 2, 3});
+  std::sort(compared, descending());
+  if (compared[std::size_t(0)] != 4 || compared[std::size_t(3)] != 1 ||
+      !std::all_of(compared, positive()) ||
+      !std::any_of(compared, even()) || std::none_of(compared, positive()) ||
+      std::count_if(compared, even()) != 2) {
+    return 13;
+  }
+
+  sum_values returned_vector_sum = std::for_each(compared, sum_values());
+  int32_t zero = 0;
+  returned_vector_sum(zero);
+  if (algorithm_sum != 25) {
+    return 14;
   }
   return 0;
 }

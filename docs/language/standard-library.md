@@ -92,23 +92,30 @@ The current implemented foundation includes:
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
-  plus `binary_search` over an exact ordered forward-iterator subrange. These
-  algorithms accept a distinct exact sentinel type. `find` returns its moved
-  iterator while retaining the concrete borrowed-owner dependency, and
-  `for_each` returns the exact moved callable after repeated confined
-  invocation. Predicate and operation clients accept read-callable or
-  mut-callable targets but not consuming once-callables; and
+  plus `binary_search` over an exact ordered forward-iterator subrange and
+  complete-`vector` predicate/operation overloads. Whole-vector copy, fill,
+  transform, reverse, ordered sort, and comparator sort are source-defined.
+  Iterator clients accept a distinct exact sentinel type. `find` returns its
+  moved iterator while retaining the concrete borrowed-owner dependency, and
+  both `for_each` forms return the exact moved callable after repeated confined
+  invocation. Predicate, operation, and comparator clients state public exact
+  concepts, accept read-callable or mut-callable targets, and reject consuming
+  once-callables; and
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
   from specified GTI floating-point operations; and
-- `<std/functional>` source-defined `less<T>`, `greater<T>`, `equal_to<T>`, and
-  `not_equal_to<T>` function objects over the corresponding exact comparison
-  concepts; `hash<T>` remains a customization scaffold; and
+- `<std/functional>` public exact `read_callable`, `mut_callable`,
+  `once_callable`, unary/binary predicate and operation, comparator,
+  iterator-aware indirect predicate/operation, and nullary `once_action`
+  concepts; consuming `invoke_once`; and source-defined `less<T>`,
+  `greater<T>`, `equal_to<T>`, and `not_equal_to<T>` function objects over the
+  corresponding exact comparison concepts. `hash<T>` remains a customization
+  scaffold; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
   `std::transform_reduce` over transferable input-iterator values, exact
-  dereference referents, numeric accumulators, and confined exact-result
-  callables. The current reduction algorithms execute deterministically from
+  dereference referents, numeric accumulators, and public exact operation
+  concepts. The current reduction algorithms execute deterministically from
   left to right rather than inheriting C++'s permission to reorder. Each
   operation is retained by value in one confined mutable local, so read-callable
   and mut-callable targets are accepted, consuming once-callables are rejected,

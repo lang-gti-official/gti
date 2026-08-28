@@ -338,7 +338,18 @@ diagnostics or letting a backend message choose either identity.
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
 
-`GTI-S2046` owns the confined-callable boundary. It points at the callable
+`GTI-S2029` owns failure of a declared public callable relationship before a
+generic body is instantiated. It retains the source concept name and required
+application, then gives a shape-specific hint for unary/binary argument and
+owned-result exactness, receiver capability, iterator dereference, or nullary
+`void()` action. An inexact argument, borrowed/wrong result, private or
+ambiguous `operator()`, and a consuming target at a repeatable site therefore
+fail at call viability. Do not postpone these cases to a body-local
+`GTI-S2022` or `GTI-S2046`: concrete reanalysis must confirm the relation, not
+discover that its public contract was insufficient.
+
+`GTI-S2046` owns the confined-callable boundary after public viability. It
+points at the callable
 use, forwarding argument, or enclosing return type that lacks a proven exact
 contract. It rejects inexact arguments/results, `auto` result inference,
 reference or tracked-borrow results, invoked callable escape, and forwarding

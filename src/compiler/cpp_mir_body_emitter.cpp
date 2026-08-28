@@ -22253,11 +22253,7 @@ private:
           if (needsComma) {
             output << ", ";
           }
-          if (operand.kind == MirOperandKind::Loan) {
-            emitLoanArgument(facts, operand);
-          } else {
-            emitOperand(operand);
-          }
+          emitCallArgument(operand, false, false);
           needsComma = true;
         }
         if (instruction.info.type != SemanticType::Void) {
@@ -30552,7 +30548,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const auto invocationOperand = [&](const MirOperand &operand) {
             return valueOperand(operand) ||
                    (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
-                    body.findLoan(operand.loan) != nullptr);
+                    body.findLoan(operand.loan) != nullptr) ||
+                   ((operand.kind == MirOperandKind::BorrowRead ||
+                     operand.kind == MirOperandKind::BorrowWrite) &&
+                    operand.place != 0 &&
+                    body.findPlace(operand.place) != nullptr);
           };
           if (!pendingStaged.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||

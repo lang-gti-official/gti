@@ -5,6 +5,7 @@
 // iterator-pair in-place forms wait on retainable mutable cursors.
 
 #include <std/iterator>
+#include <std/functional>
 #include <std/vector>
 
 namespace std {
@@ -35,7 +36,8 @@ T clamp<std::totally_ordered T>(T value, T low, T high) {
 bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                            mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   for (; first != last; ++first) {
     if (!predicate(*first)) {
       return false;
@@ -47,7 +49,8 @@ bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
 bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                            mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   for (; first != last; ++first) {
     if (predicate(*first)) {
       return true;
@@ -59,7 +62,8 @@ bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
 bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                             mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   for (; first != last; ++first) {
     if (predicate(*first)) {
       return false;
@@ -72,7 +76,8 @@ Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Function function)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_operation<Function, Iterator, void> {
   while (first != last) {
     function(*first);
     ++first;
@@ -98,7 +103,8 @@ Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   for (; first != last; ++first) {
     if (predicate(*first)) {
       return std::move(first);
@@ -111,7 +117,8 @@ Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                     Sentinel last,
                                                     mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   for (; first != last; ++first) {
     if (!predicate(*first)) {
       return std::move(first);
@@ -139,7 +146,8 @@ ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                   Sentinel last,
                                                   mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator> {
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
   mut ptrdiff_t result = 0;
   for (; first != last; ++first) {
     if (predicate(*first)) {
@@ -186,7 +194,8 @@ void fill<std::copyable T>(mut std::vector<T>& values, T& value) {
 // the call site; an undersized destination raises its own checked failure.
 void transform<std::copyable T, Operation>(std::vector<T>& source,
                                            mut std::vector<T>& destination,
-                                           mut Operation operation) {
+                                           mut Operation operation)
+  requires std::operation<Operation, T, T> {
   for (mut size_t index = size_t(0); index < source.size(); index++) {
     T produced = operation(source[index]);
     destination[index] = produced;
@@ -252,6 +261,90 @@ void sort<std::copyable T>(mut std::vector<T>& values)
     detail::sort_range(values, ptrdiff_t(0),
                        ptrdiff_t(values.size()) - ptrdiff_t(1));
   }
+}
+
+// A complete-range comparator overload keeps one exact callable in the same
+// exclusive scope as the vector. The bounded relation guarantees an owned
+// bool result for two readable T values and rejects a consuming target because
+// sorting may compare zero or more times. Insertion sort keeps the first
+// comparator client iterative and deterministic without forwarding callable
+// state through recursive helpers.
+void sort<std::copyable T, Compare>(mut std::vector<T>& values,
+                                    mut Compare compare)
+  requires std::comparator<Compare, T> {
+  for (mut size_t index = size_t(1); index < values.size(); index++) {
+    mut size_t current = index;
+    while (current > size_t(0)) {
+      size_t previous = current - size_t(1);
+      T current_value = values[current];
+      T previous_value = values[previous];
+      if (!compare(current_value, previous_value)) {
+        break;
+      }
+      T lower = values[current];
+      T upper = values[previous];
+      values[current] = upper;
+      values[previous] = lower;
+      current--;
+    }
+  }
+}
+
+// Whole-vector predicate clients avoid manufacturing iterator pairs when the
+// complete range is already the user's intent. They remain ordinary generic
+// source: no vector or algorithm spelling is compiler-known.
+bool all_of<std::movable T, Predicate>(std::vector<T>& values,
+                                       mut Predicate predicate)
+  requires std::predicate<Predicate, T> {
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    if (!predicate(values[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool any_of<std::movable T, Predicate>(std::vector<T>& values,
+                                      mut Predicate predicate)
+  requires std::predicate<Predicate, T> {
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    if (predicate(values[index])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool none_of<std::movable T, Predicate>(std::vector<T>& values,
+                                        mut Predicate predicate)
+  requires std::predicate<Predicate, T> {
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    if (predicate(values[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+ptrdiff_t count_if<std::movable T, Predicate>(std::vector<T>& values,
+                                              mut Predicate predicate)
+  requires std::predicate<Predicate, T> {
+  mut ptrdiff_t result = 0;
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    if (predicate(values[index])) {
+      result++;
+    }
+  }
+  return result;
+}
+
+Function for_each<std::movable T, Function>(std::vector<T>& values,
+                                            mut Function function)
+  requires std::operation<Function, T, void> {
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    function(values[index]);
+  }
+  return std::move(function);
 }
 
 namespace detail {
