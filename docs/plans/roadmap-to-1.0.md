@@ -631,10 +631,11 @@ or a second template metaprogramming language merely to describe them.
   with explicit resource limits and useful stack diagnostics.
 - Exact scoped-enum values, value arguments, array extents, and the initial
   `std::array<T, N>`/`std::gcd<T>` library clients use the same evaluator.
-- Keep default generic arguments client-gated under `L-CONST-01` until canonical
-  type/value identity is stable and a concrete library client justifies them.
-  Do not widen exact specialization into partial or constraint-selected
-  specialization as a side effect.
+- Declaration-owned trailing type/value defaults and closed dependent
+  `uint64_t` arithmetic are implemented by `L-GEN-01`: GTI normalizes them,
+  applies them after exact inference, and carries their complete canonical
+  identity into concrete reanalysis. Do not widen exact specialization into
+  partial or constraint-selected specialization as a side effect.
 
 This is library-enabling work, especially for constants and generic API
 ergonomics, but it is not allowed to block the owner-tied container and
@@ -961,8 +962,8 @@ building the GTI compiler.
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
   partial or constraint-selected specialization, and unrestricted compile-time
   metaprogramming;
-- default generic arguments until a concrete library client and canonical
-  type/value identity justify the bounded `L-CONST-01` design;
+- value packs, non-`uint64_t` value domains, and unrestricted dependent
+  expressions beyond the bounded `L-GEN-01` default/argument model;
 - stored reference captures, general escaping lambdas, and type erasure beyond
   the bounded owned-callable minimum;
 - mutable, reference, nested, inherited, or partial-move structured bindings

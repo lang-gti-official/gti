@@ -63,6 +63,7 @@ def main() -> int:
             "value-arguments=[{1:4:0}]",
             "value-arguments=[{1:5:0}]",
             "value-arguments=[{1:6:0}]",
+            "value-arguments=[{1:7:0}]",
         ):
             if value not in mir:
                 sys.stderr.write(f"MIR lost explicit generic identity {value!r}\n")

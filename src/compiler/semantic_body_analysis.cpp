@@ -13,6 +13,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   externCSymbols.clear();
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
+  genericDefaultConstants.clear();
+  genericDefaultConstantUses.clear();
   requirementScopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
@@ -86,13 +88,16 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerEnums(program.declarations(), {});
   registerConcepts(program.declarations(), {});
   resolveConcepts();
+  genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
   resolveTypeAliases();
   registerClassSpecializations(program.declarations(), {});
   recordClassTypeIdentities();
   resolveEnumPayloads();
   resolveClassInheritance();
+  genericDefaultConstants.clear();
   registerFunctionGenericParameters(program.declarations(), {}, false);
+  genericDefaultConstants.clear();
   registerNamespaceSymbols(program.declarations(), {});
   collectRootNativeStorageSymbols(program.declarations());
   collectClassMembers(program.declarations(), {});
@@ -119,6 +124,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   measureTopLevelStatements = workMetrics != nullptr;
   analyze(program.declarations());
   measureTopLevelStatements = false;
+  recordGenericDefaultConstantUses();
   validateDefaultArgumentCycles();
   endScope();
   if (workMetrics != nullptr) {
@@ -3482,14 +3488,19 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         value = genericValueArgument(argument);
       }
       if (!value) {
-        report(argument.name.last(),
-               "A function value generic argument must be an in-scope "
-               "uint64_t compile-time value.",
-               "GTI-S2026");
+        if (!reportGenericValueArgumentFailure(
+                argument, "Function value generic argument")) {
+          report(argument.name.last(),
+                 "A function value generic argument must be an in-scope "
+                 "uint64_t compile-time value.",
+                 "GTI-S2026");
+        }
         explicitValueArguments.emplace_back();
       } else {
         explicitValueArguments.emplace_back(*value);
-        if (argument.name.last().kind == TokenKind::IDENTIFIER) {
+        if (argument.genericValueExpression) {
+          recordArrayExtentUses(*argument.genericValueExpression);
+        } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
           recordGenericParameterUse(argument.name.last(), *value,
                                     OccurrenceRole::Read);
         }

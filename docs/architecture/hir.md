@@ -93,6 +93,12 @@ Each canonical generic class instance also retains the first source span that
 requested it. That span is diagnostic provenance for concrete semantic
 reanalysis, not part of instance identity or backend representation.
 
+Generic declaration defaults are exhausted before an instance reaches HIR.
+The worklist therefore sees the same complete ordered type/value identity
+whether an argument was written, inferred, or filled from a default. HIR does
+not store default syntax, evaluate dependent arithmetic, or ask a native
+template to complete an instance.
+
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"
 in constant time. It is a lookup structure only: the ordered instance vectors

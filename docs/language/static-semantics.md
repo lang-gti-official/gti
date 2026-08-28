@@ -287,18 +287,35 @@ A named array contributes its exact extent; a contextual brace argument
 contributes its written count. Other type parameters must be inferred from
 ordinary typed arguments. The inferred value is part of concrete HIR instance
 identity, but it does not distinguish alpha-equivalent overload declarations.
-An ordinary function or non-polymorphic method call may instead write every
-value argument explicitly after every type argument, for example `extent<4>()`
-or `first<int, 2>(values)`. A written value is an integer literal, an in-scope
-`constexpr uint64_t` binding, or an enclosing `uint64_t` value parameter; it is
-resolved by the target parameter kind rather than treated as a type. Supplying
-any explicit value argument requires the complete type and value suffix, so
-partial value application and result-context inference do not exist. The exact
-values are retained by semantic selection, concrete reanalysis, HIR, MIR, and
-the detached lowered instance inventory. Constructor-local value parameters
-remain inference-only and cannot shadow an enclosing class or struct generic
-parameter. Arbitrary value-generic expressions, value-parameter defaults, and
-value packs are not implemented.
+An ordinary function or non-polymorphic method call may instead write type and
+value arguments explicitly, for example `extent<4>()`, `first<int, 2>(values)`,
+or `extent<2 + 2>()`. A written value is a closed `uint64_t` expression over
+integer literals, an in-scope `constexpr uint64_t` binding, or an enclosing
+`uint64_t` value parameter, with parentheses and checked `+`, `-`, `*`, `/`,
+and `%`. It is resolved by the target parameter kind rather than treated as a
+type. Exact inference runs before declaration defaults fill any still-unbound
+trailing parameters; there is no result-context inference. A written suffix
+must supply every non-defaulted type parameter; once it supplies a value, it
+must also supply every non-defaulted value parameter. An omitted value may
+still be inferred from a fixed-array argument when the suffix writes only type
+arguments. The full concrete values are retained by semantic selection,
+concrete reanalysis, HIR, MIR, and the detached lowered instance inventory.
+Constructor-local value parameters remain inference-only, cannot declare a
+default, and cannot shadow an enclosing class or struct generic parameter.
+Unrestricted value-generic expressions and value packs are not implemented.
+
+Generic declarations may give their type and value parameter list a trailing
+suffix of defaults. A type default must resolve to an exact non-void type, may
+reference only visible types and earlier generic parameters, and must satisfy
+its inline constraint. A value default uses the closed expression domain above
+and may reference only earlier visible namespace `constexpr uint64_t` bindings
+whose initializers are themselves closed `uint64_t` arithmetic and earlier
+value parameters. Arithmetic is checked in the `uint64_t` domain at the
+earliest concrete substitution; overflow, underflow, division by zero, and
+modulo by zero are ill-formed. Defaults are applied in declaration order after
+inference and therefore may depend on an earlier resolved parameter. A
+non-defaulted parameter cannot follow a defaulted parameter, and a generic
+parameter list containing a pack cannot contain defaults.
 
 An ordinary constructor may also declare constructor-local type parameters.
 They are inferred only from supplied, already typed call arguments using the
@@ -318,11 +335,12 @@ substituted parameter layout happens to match. Constructor generics do not add
 CTAD, partial specialization, implicit conversion, or a concrete-over-generic
 preference.
 
-Omitted default arguments do not participate in generic inference. A generic
-call must infer or explicitly supply its generic arguments from the written
-arguments and context already admitted by GTI. After selection, semantic
-analysis substitutes the concrete generic arguments and rechecks every used
-default expression for the selected instance.
+Omitted ordinary callable-parameter defaults do not participate in generic
+inference. Generic declaration defaults are different: after written generic
+arguments and exact call-argument inference have produced a substitution, they
+fill its unresolved trailing positions in declaration order. Semantic analysis
+then rechecks the concrete generic instance and every used ordinary parameter
+default under that complete substitution.
 
 Contextual braces participate only after candidate parameter shapes are known.
 Fixed extents may remove candidates with a different element count; if more
@@ -386,8 +404,10 @@ program's semantics and must not be re-selected by a backend.
 
 ## 3.7 Generics
 
-Named generic arguments are inferred exactly from value arguments or supplied
-explicitly. Generic classes and structs provide all arguments explicitly.
+Named generic arguments are inferred exactly from value arguments, supplied
+explicitly, or filled from a declaration-owned trailing default suffix. Generic
+classes and structs provide every non-defaulted argument explicitly; a bare
+generic class name is concrete only when every parameter has a default.
 
 The current standard constraints describe frontend-owned primitive, lifecycle,
 and exact structural capabilities. Namespace-scoped user concepts may declare
@@ -417,9 +437,11 @@ references, and unrestricted metaprogramming are not part of the implemented
 language.
 
 Class and struct type parameters may be followed by immutable `uint64_t` value
-parameters. Their arguments and expression contexts are restricted by the
-incorporated grammar. Concrete generic bodies are rechecked after substitution;
-generic validity is not delegated to C++ template instantiation.
+parameters. Their defaults, arguments, and expression contexts are restricted
+by the incorporated grammar. Defaults produce the same complete canonical
+type/value substitution as written or inferred arguments. Concrete generic
+bodies are rechecked after substitution; generic validity and default selection
+are not delegated to C++ template instantiation.
 
 A function or method may own one final type pack and one matching final named,
 immutable, by-value parameter pack. Whole-pack forwarding remains available
