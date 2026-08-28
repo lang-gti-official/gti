@@ -2064,6 +2064,94 @@ void testBindgenImportManifestDiagnostics() {
   }
 }
 
+// C-07 opt-in policy in the manifest: selectors, renames, and declared
+// array returns reach the build plan sorted, and join its model identity so
+// changing the policy cannot reuse a stale generated import.
+void testBindgenImportPolicyManifest() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  writeFile(root / "src" / "main.gti", "int main() { return 0; }\n");
+  writeFile(root / "native" / "engine.h", "int engine_start(int mode);\n");
+  writeFile(root / "gti.toml",
+            validManifest() + "\n[bindgen.engine]\n"
+                              "header = \"native/engine.h\"\n"
+                              "deny = [\"engine_internal_*\"]\n"
+                              "allow = [\"engine_start\", \"Engine\"]\n"
+                              "rename = { engine__state = \"EngineState\" }\n"
+                              "array-returns = ["
+                              "{ function = \"engine_items\", "
+                              "count = \"count\" }]\n");
+
+  const lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", lang::TargetInfo::host()));
+  expect(resolution.succeeded(), "the policy manifest should resolve");
+  if (!resolution.succeeded() || resolution.plan->bindgenImports().empty()) {
+    return;
+  }
+  const lang::driver::BindgenImportPlan &import =
+      resolution.plan->bindgenImports()[0];
+  expect(import.denyPatterns == std::vector<std::string>{"engine_internal_*"},
+         "the deny list should reach the plan");
+  expect(import.allowPatterns ==
+             std::vector<std::string>{"Engine", "engine_start"},
+         "allow patterns should reach the plan sorted");
+  expect(import.renames.size() == 1 &&
+             import.renames[0].first == "engine__state" &&
+             import.renames[0].second == "EngineState",
+         "the rename should reach the plan");
+  expect(import.arrayReturns.size() == 1 &&
+             import.arrayReturns[0].first == "engine_items" &&
+             import.arrayReturns[0].second == "count",
+         "the declared array return should reach the plan");
+  const std::string identity = resolution.plan->projectModelIdentity();
+  expect(identity.find("|deny=engine_internal_*") != std::string::npos &&
+             identity.find("|rename=engine__state>EngineState") !=
+                 std::string::npos &&
+             identity.find("|array=engine_items>count") != std::string::npos,
+         "the policy should participate in the model identity");
+}
+
+void testBindgenImportPolicyDiagnostics() {
+  const auto loadWith = [](std::string_view bindgen,
+                           const std::filesystem::path &root) {
+    writeFile(root / "src" / "main.gti", "int main() { return 0; }\n");
+    writeFile(root / "native" / "engine.h", "int engine_start(int mode);\n");
+    writeFile(root / "gti.toml", validManifest() + std::string(bindgen));
+    return lang::driver::loadProjectManifest(root / "gti.toml");
+  };
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/engine.h\"\n"
+                 "deny = [\"engine_*_bad\"]\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1808") != nullptr,
+           "a wildcard outside the trailing position should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/engine.h\"\n"
+                 "rename = { engine = \"not an identifier\" }\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1808") != nullptr,
+           "a rename target that is not an identifier should be rejected");
+  }
+  {
+    TemporaryDirectory temporary;
+    const lang::driver::ManifestLoadResult loaded =
+        loadWith("\n[bindgen.engine]\nheader = \"native/engine.h\"\n"
+                 "array-returns = [{ function = \"engine_items\" }]\n",
+                 temporary.root());
+    expect(!loaded.succeeded() &&
+               findDiagnostic(loaded.diagnostics, "GTI-B1808") != nullptr,
+           "an array return without a count should be rejected");
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -2082,6 +2170,8 @@ int main() {
   testFormatConfigScaffolding();
   testBindgenImportManifest();
   testBindgenImportManifestDiagnostics();
+  testBindgenImportPolicyManifest();
+  testBindgenImportPolicyDiagnostics();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

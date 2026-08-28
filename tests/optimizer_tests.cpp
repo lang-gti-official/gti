@@ -1,9 +1,11 @@
 #include "gti/frontend.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/pass.h"
-#include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 
@@ -518,14 +520,33 @@ int main() {
       }
     }
   }
-  expect(relayReturnLoan != nullptr && relayReturnLoan->entry &&
+  const lang::MirLoan *relayEntryLoan = nullptr;
+  if (relayMir != nullptr) {
+    for (const lang::MirLoan &loan : relayMir->body.loans) {
+      if (loan.entry) {
+        relayEntryLoan = &loan;
+        break;
+      }
+    }
+  }
+  // A direct borrowed formal return forwards the formal's entry loan into a
+  // fresh escaping Return loan and retires the entry loan at that transfer,
+  // exactly as the by-value carrier and summarized call-result returns do.
+  // Reclassifying the entry loan itself left a Return loan whose address no
+  // instruction ever named, so the emitted callee published a null pointer.
+  expect(relayReturnLoan != nullptr && relayEntryLoan != nullptr &&
+             relayHir != nullptr && !relayReturnLoan->entry &&
+             relayReturnLoan->id != relayEntryLoan->id &&
              relayReturnLoan->kind == lang::MirLoanKind::Return &&
-             relayReturnLoan->escapes &&
-             relayReturnLoan->carriers.size() == 1 && relayHir != nullptr &&
-             relayReturnLoan->carriers.front() ==
+             relayReturnLoan->escapes && relayReturnLoan->parent == 0 &&
+             relayReturnLoan->source == relayEntryLoan->source &&
+             relayEntryLoan->kind == lang::MirLoanKind::Parameter &&
+             !relayEntryLoan->escapes && relayEntryLoan->carriers.size() == 1 &&
+             relayEntryLoan->carriers.front() ==
                  relayHir->parameterBindings.front(),
-         "a direct borrowed formal return should remain one entry loan and "
-         "be attached explicitly to its return terminator");
+         "a direct borrowed formal return should publish a fresh escaping "
+         "Return loan from the formal's entry loan and attach it explicitly "
+         "to its return terminator");
 
   const lang::HirFunctionInstance *aliasHir =
       findHirFunction(frontend, "relay_alias");
@@ -563,23 +584,29 @@ int main() {
   const lang::MirLoan *branchAliasLoan = entryLoan(branchAliasMir);
   const lang::MirLoan *aliasReturnLoan = returnedLoan(aliasMir);
   const lang::MirLoan *branchAliasReturnLoan = returnedLoan(branchAliasMir);
+  // Local read-only aliases still share the one formal entry loan and extend
+  // its carrier set; only the escaping return dependency is published
+  // separately, from that same entry source.
   expect(aliasHir != nullptr && aliasMir != nullptr && aliasLoan != nullptr &&
              aliasReturnLoan != nullptr && aliasLoan->source != 0 &&
              aliasLoan->carriers.size() >= 2 &&
              std::find(aliasLoan->carriers.begin(), aliasLoan->carriers.end(),
                        aliasHir->parameterBindings.front()) !=
                  aliasLoan->carriers.end() &&
-             aliasReturnLoan->id == aliasLoan->id &&
+             aliasReturnLoan->id != aliasLoan->id && !aliasReturnLoan->entry &&
+             aliasReturnLoan->escapes &&
+             aliasReturnLoan->kind == lang::MirLoanKind::Return &&
              aliasReturnLoan->source == aliasLoan->source &&
-             aliasReturnLoan->carriers.size() >= 2 &&
              lang::verifyMirBody(aliasMir->body).valid(),
          "a direct read-only local reference alias should share the formal "
          "entry loan and extend its carrier set");
   expect(branchAliasHir != nullptr && branchAliasMir != nullptr &&
              branchAliasLoan != nullptr && branchAliasReturnLoan != nullptr &&
-             branchAliasReturnLoan->id == branchAliasLoan->id &&
+             branchAliasReturnLoan->id != branchAliasLoan->id &&
+             !branchAliasReturnLoan->entry && branchAliasReturnLoan->escapes &&
+             branchAliasReturnLoan->kind == lang::MirLoanKind::Return &&
              branchAliasReturnLoan->source == branchAliasLoan->source &&
-             branchAliasReturnLoan->carriers.size() >= 3 &&
+             branchAliasLoan->carriers.size() >= 3 &&
              std::find(branchAliasLoan->carriers.begin(),
                        branchAliasLoan->carriers.end(),
                        branchAliasHir->parameterBindings[1]) !=
@@ -603,8 +630,15 @@ int main() {
     }
   }
   const lang::MirLoan *independentEntry = entryLoan(independentMir);
-  expect(independentMir != nullptr && independentChildren.empty() &&
-             independentEntry != nullptr &&
+  const lang::MirLoan *independentReturn = returnedLoan(independentMir);
+  // Both aliases share the one entry loan; the only additional loan is the
+  // escaping Return dependency published from it at the return.
+  expect(independentMir != nullptr && independentChildren.size() == 1 &&
+             independentReturn != nullptr &&
+             independentChildren.front() == independentReturn &&
+             independentReturn->kind == lang::MirLoanKind::Return &&
+             independentReturn->escapes && independentEntry != nullptr &&
+             independentReturn->source == independentEntry->source &&
              independentEntry->semanticLoan != 0 &&
              independentEntry->carriers.size() >= 3 &&
              lang::verifyMirBody(independentMir->body).valid(),
@@ -792,7 +826,9 @@ int main() {
     auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
         wrongFormalCarrier.functionInstances());
     lang::MirFunctionInstance &wrongAlias = functions[aliasHir->id - 1];
-    lang::MirLoan &wrongLoan = wrongAlias.body.loans[aliasReturnLoan->id - 1];
+    // The entry loan is the summarized formal source that also carries the
+    // local aliases; the published Return loan carries nothing.
+    lang::MirLoan &wrongLoan = wrongAlias.body.loans[aliasLoan->id - 1];
     const auto localCarrier =
         std::find_if(wrongLoan.carriers.begin(), wrongLoan.carriers.end(),
                      [&](lang::HirBindingId binding) {
@@ -2508,7 +2544,7 @@ int main() {
            "a non-literal instruction");
   }
 
-  const auto queue = [](lang::MirProgramEditor &editor,
+  const auto queue = [](lang::MirEditor &editor,
                         const PatchCandidate &candidate) {
     editor.queueLiteralReplacement(
         {.body = candidate.address.body, .instruction = candidate.instruction},
@@ -2517,7 +2553,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-atomicity-test");
+    lang::MirEditor editor(invalid, "editor-atomicity-test");
     queue(editor, candidates.front());
     editor.queueLiteralReplacement(
         {.body = candidates.back().address.body,
@@ -2531,7 +2567,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-duplicate-test");
+    lang::MirEditor editor(invalid, "editor-duplicate-test");
     queue(editor, candidates.front());
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
@@ -2542,7 +2578,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-stale-id-test");
+    lang::MirEditor editor(invalid, "editor-stale-id-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = std::numeric_limits<lang::MirInstructionId>::max()},
@@ -2555,7 +2591,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-type-test");
+    lang::MirEditor editor(invalid, "editor-type-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = candidates.front().instruction},
@@ -2570,7 +2606,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-domain-test");
+    lang::MirEditor editor(invalid, "editor-domain-test");
     editor.queueLiteralReplacement(
         {.body = candidates.front().address.body,
          .instruction = candidates.front().instruction},
@@ -2597,7 +2633,7 @@ int main() {
               .body);
     }
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid, "editor-proof-test");
+    lang::MirEditor editor(invalid, "editor-proof-test");
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
     expect(identity != nullptr && !edited.valid() && !edited.changed &&
@@ -2608,8 +2644,8 @@ int main() {
 
   lang::MirProgram forward = frontend.mir;
   lang::MirProgram reverse = frontend.mir;
-  lang::MirProgramEditor forwardEditor(forward, "editor-order-test");
-  lang::MirProgramEditor reverseEditor(reverse, "editor-order-test");
+  lang::MirEditor forwardEditor(forward, "editor-order-test");
+  lang::MirEditor reverseEditor(reverse, "editor-order-test");
   for (const PatchCandidate &candidate : candidates) {
     queue(forwardEditor, candidate);
   }
@@ -2631,6 +2667,26 @@ int main() {
                  lang::MirPrinter().print(o1.mir),
          "patch application should be deterministic regardless of queue "
          "order");
+
+  lang::MirProgram revisioned = frontend.mir;
+  lang::MirBodyAnalysisManager revisionedAnalyses;
+  const lang::MirBodyAddress revisionedBody = candidates.front().address.body;
+  const lang::MirCfgAnalysis *cachedCfg =
+      revisionedAnalyses.cfg(revisioned, revisionedBody);
+  const lang::MirDominanceInfo *cachedDominance =
+      revisionedAnalyses.dominance(revisioned, revisionedBody);
+  lang::MirEditor revisionedEditor(revisioned, "editor-revision-test");
+  queue(revisionedEditor, candidates.front());
+  const lang::MirEditResult revisionedEdit =
+      revisionedEditor.apply(revisionedAnalyses);
+  expect(revisionedEdit.valid() && revisionedEdit.changed &&
+             revisionedEdit.analysesInvalidated &&
+             revisionedAnalyses.revision(revisionedBody) == 1 &&
+             cachedCfg != nullptr && cachedDominance != nullptr &&
+             revisionedEdit.invalidatedAnalyses ==
+                 std::vector<std::string>{"cfg-reachability", "dominance"},
+         "a semantic MIR edit should advance its body revision and invalidate "
+         "every cached fact through the editor boundary");
 
   const lang::HirFunctionInstance *integerHir =
       findHirFunction(frontend, "grouped_integer");
@@ -4680,32 +4736,30 @@ int switch_reactivation(mut int& parent) {
       invokeSuccess(*retainedCallChild, callBlock, callInstruction);
   const lang::MirBlock *callFailure =
       invokeFailure(*retainedCallChild, callBlock, callInstruction);
-  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
-      retainedChildEvents;
-  if (callSuccess != nullptr && callTransient != nullptr &&
-      callChild != nullptr) {
+  // The retained call result keeps its own loan. Ending it on the success
+  // route and recreating a child reborrow from the receiver origin would
+  // give that reborrow a source place recording the returned referent over a
+  // projection chain deriving the receiver's subobject, which no later stage
+  // can key; the failure route still ends the loan.
+  std::size_t retainedChildEndings = 0;
+  if (callSuccess != nullptr && callTransient != nullptr) {
     for (const lang::MirInstruction &instruction : callSuccess->instructions) {
-      if (instruction.loan == callTransient->id &&
-          instruction.kind == lang::MirInstructionKind::EndBorrow) {
-        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
-      } else if (instruction.loan == callChild->id &&
-                 instruction.kind == lang::MirInstructionKind::Borrow) {
-        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan == callTransient->id) {
+        ++retainedChildEndings;
       }
     }
   }
-  expect(
-      callEntry != nullptr && callTransient != nullptr &&
-          callChild != nullptr && callChild->parent == callEntry->id &&
-          callTransient->carriers.empty() && !callTransient->escapes &&
-          retainedChildEvents ==
-              std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>{
-                  {lang::MirInstructionKind::EndBorrow, callTransient->id},
-                  {lang::MirInstructionKind::Borrow, callChild->id}} &&
-          endsLoan(callFailure, callTransient->id) &&
-          lang::verifyMirBody(*retainedCallChild).valid(),
-      "retaining a receiver-tied mutable call result should end its "
-      "unretained transient before producing the semantic child reborrow");
+  expect(callEntry != nullptr && callTransient != nullptr &&
+             callChild == nullptr && callTransient->parent == callEntry->id &&
+             callTransient->carriers.size() == 1 &&
+             callTransient->semanticLoan != 0 && !callTransient->escapes &&
+             retainedChildEndings == 0 &&
+             endsLoan(callFailure, callTransient->id) &&
+             lang::verifyMirBody(*retainedCallChild).valid(),
+         "retaining a receiver-tied mutable call result should keep that call "
+         "result's own loan under the retaining carrier instead of ending it "
+         "for a recreated child reborrow");
 
   const lang::MirLoan *chainEntry = nullptr;
   const lang::MirLoan *chainChild = nullptr;
@@ -4743,50 +4797,49 @@ int switch_reactivation(mut int& parent) {
       invokeSuccess(*retainedCallChain, secondChainCallBlock, secondChainCall);
   const lang::MirBlock *secondChainFailure =
       invokeFailure(*retainedCallChain, secondChainCallBlock, secondChainCall);
-  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
-      chainLoanEvents;
-  if (secondChainSuccess != nullptr && chainEntry != nullptr &&
-      chainChild != nullptr && chainTransients.size() == 2) {
+  // `parent.get_inner().get_left()` reaches the retained referent through two
+  // call-result links hanging off the reference parameter's entry loan. The
+  // binding retains the outermost link itself; lowering does not end the chain
+  // on the success route to recreate a child reborrow from the semantic place,
+  // because that place records the returned referent's type over a projection
+  // chain that stops at the entry loan plus the receiver subobject. Both links
+  // stay live for the retained loan's extent instead, and the defined-failure
+  // routes still end them child-first.
+  std::size_t chainSuccessEndings = 0;
+  if (secondChainSuccess != nullptr && chainTransients.size() == 2) {
     for (const lang::MirInstruction &instruction :
          secondChainSuccess->instructions) {
-      if (!instruction.loan) {
-        continue;
-      }
-      if ((instruction.kind == lang::MirInstructionKind::EndBorrow &&
-           (*instruction.loan == chainTransients[0]->id ||
-            *instruction.loan == chainTransients[1]->id)) ||
-          (instruction.kind == lang::MirInstructionKind::Borrow &&
-           *instruction.loan == chainChild->id)) {
-        chainLoanEvents.emplace_back(instruction.kind, *instruction.loan);
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan &&
+          (*instruction.loan == chainTransients[0]->id ||
+           *instruction.loan == chainTransients[1]->id)) {
+        ++chainSuccessEndings;
       }
     }
   }
-  const bool orderedChainRetirement =
-      chainEntry != nullptr && chainChild != nullptr &&
+  const bool retainedChainAncestry =
+      chainEntry != nullptr && chainChild == nullptr &&
       chainTransients.size() == 2 &&
-      firstChainSuccess == secondChainCallBlock &&
-      chainLoanEvents.size() == 3 &&
-      chainLoanEvents[0] == std::pair{lang::MirInstructionKind::EndBorrow,
-                                      chainTransients[1]->id} &&
-      chainLoanEvents[1] == std::pair{lang::MirInstructionKind::EndBorrow,
-                                      chainTransients[0]->id} &&
-      chainLoanEvents[2] ==
-          std::pair{lang::MirInstructionKind::Borrow, chainChild->id};
-  expect(orderedChainRetirement &&
-             chainTransients[0]->parent == chainEntry->id &&
-             chainTransients[1]->parent == chainTransients[0]->id &&
-             chainChild->parent == chainEntry->id &&
+      firstChainSuccess == secondChainCallBlock && chainSuccessEndings == 0 &&
+      chainTransients[0]->parent == chainEntry->id &&
+      chainTransients[0]->carriers.empty() &&
+      chainTransients[0]->semanticLoan == 0 &&
+      chainTransients[1]->parent == chainTransients[0]->id &&
+      chainTransients[1]->carriers.size() == 1 &&
+      chainTransients[1]->semanticLoan != 0 && !chainTransients[1]->escapes;
+  expect(retainedChainAncestry &&
              endsLoan(firstChainFailure, chainTransients[0]->id) &&
              endsLoan(secondChainFailure, chainTransients[1]->id) &&
              endsLoan(secondChainFailure, chainTransients[0]->id) &&
              lang::verifyMirBody(*retainedCallChain).valid() &&
              lang::verifyMirBody(*nonretainedCallMember).valid(),
-         "receiver-tied call-result chains should retain exact transient "
-         "ancestry, retire leaf-to-root when retained, and authorize "
-         "non-retained member access through the derived result");
+         "receiver-tied call-result chains reached through a reference "
+         "parameter should retain the outermost link under the retaining "
+         "carrier, keep exact transient ancestry, end child-first only on the "
+         "failure routes, and authorize non-retained member access through the "
+         "derived result");
 
-  if (chainEntry != nullptr && chainChild != nullptr &&
-      chainTransients.size() == 2) {
+  if (chainEntry != nullptr && chainTransients.size() == 2) {
     lang::MirBody wrongCallParent = *retainedCallChain;
     wrongCallParent.loans[chainTransients[1]->id - 1].parent = chainEntry->id;
     expect(hasError(lang::verifyMirBody(wrongCallParent),
@@ -4794,11 +4847,12 @@ int switch_reactivation(mut int& parent) {
            "a derived call result should reject a parent that is not its "
            "actual receiver loan");
 
-    lang::MirBody siblingCallParent = *retainedCallChain;
-    siblingCallParent.loans[chainTransients[1]->id - 1].parent = chainChild->id;
-    expect(!lang::verifyMirBody(siblingCallParent).valid(),
-           "a derived call result should reject an unrelated sibling as its "
-           "loan parent");
+    lang::MirBody invertedChain = *retainedCallChain;
+    invertedChain.loans[chainTransients[0]->id - 1].parent =
+        chainTransients[1]->id;
+    expect(!lang::verifyMirBody(invertedChain).valid(),
+           "a retained call-result chain should reject ancestry that makes a "
+           "link its own descendant");
   }
 
   if (entry != nullptr && field != nullptr && leaf != nullptr &&

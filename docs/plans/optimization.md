@@ -302,7 +302,7 @@ struct OptimizedProgram {
   OptimizationReport report;
 };
 
-class MirProgramEditor;
+class MirEditor;
 class MirBodyEditor;
 ```
 
@@ -361,7 +361,7 @@ struct PassOutcome {
 class MirPass {
 public:
   virtual std::string_view name() const = 0;
-  virtual PassOutcome run(MirPassContext &, MirProgramEditor &) = 0;
+  virtual PassOutcome run(MirPassContext &, MirEditor &) = 0;
 };
 ```
 
@@ -848,7 +848,7 @@ the required fact. Implement O-MIR-08 only if a replayable loop fact reaches
 real source MIR and the workload shows runtime value after native
 optimization. The safety client must consume only loop, dominance, alias,
 effect, and fixed-array facts, record near misses, invalidate safety analysis
-after edits, replay coherently, use `MirProgramEditor`, preserve O0 identity
+after edits, replay coherently, use `MirEditor`, preserve O0 identity
 and all checked failure behavior, and remain backend-neutral.
 
 ### Milestone 6: interprocedural optimization

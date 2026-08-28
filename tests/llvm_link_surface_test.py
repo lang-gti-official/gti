@@ -39,6 +39,21 @@ build gti: CXX_EXECUTABLE_LINKER main.o | libgti_compiler.a
             + result.stderr
         )
 
+    bundled_order_dependencies_graph = """\
+build _deps/llvm/libLLVMSupportBlake3.a: CXX_STATIC_LIBRARY_LINKER blake3.o
+build _deps/llvm/libLLVMTableGenBasic.a: CXX_STATIC_LIBRARY_LINKER tablegen.o
+build _deps/llvm/libLLVMTableGen.a: CXX_STATIC_LIBRARY_LINKER tablegen-main.o
+build gti: CXX_EXECUTABLE_LINKER main.o | libgti_compiler.a || _deps/llvm/libLLVMSupportBlake3.a _deps/llvm/libLLVMTableGenBasic.a _deps/llvm/libLLVMTableGen.a
+  LINK_LIBRARIES = libgti_compiler.a libLLVMSupport.a libLLVMTargetParser.a libLLVMDemangle.a
+"""
+    result = run(checker, bundled_order_dependencies_graph)
+    if result.returncode != 0:
+        raise AssertionError(
+            "bundled LLVM order-only dependencies are not linked libraries:\n"
+            + result.stdout
+            + result.stderr
+        )
+
     forbidden_graph = """\
 build gti: CXX_EXECUTABLE_LINKER main.o
   LINK_LIBRARIES = libLLVMSupport.a libLLVMCore.a

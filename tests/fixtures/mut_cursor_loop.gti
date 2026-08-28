@@ -1,0 +1,30 @@
+#include <std/vector>
+#include <std/iterator>
+
+int32_t drain<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, int32_t> {
+  mut int32_t total = 0;
+  while (first != last) {
+    total = total + *first;
+    ++first;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(3));
+  {
+    auto sentinel = values.end();
+    mut auto cursor = values.begin_mut();
+    while (cursor != sentinel) {
+      *cursor = 7;
+      ++cursor;
+    }
+  }
+  auto last = values.end();
+  int32_t total = drain(values.begin_mut(), last);
+  std::println(total == 21 ? "filled" : "wrong");
+  return total == 21 ? 0 : 1;
+}

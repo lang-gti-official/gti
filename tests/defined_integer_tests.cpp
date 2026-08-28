@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 
 #include "cpp_backend_test_support.h"
 

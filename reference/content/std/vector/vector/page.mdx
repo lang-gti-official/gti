@@ -16,6 +16,7 @@ api:
   - std/vector|method|std::vector::begin
   - std/vector|method|std::vector::begin_mut
   - std/vector|method|std::vector::end
+  - std/vector|method|std::vector::as_span
   - std/vector|method|std::vector::reserve
   - std/vector|method|std::vector::resize
   - std/vector|method|std::vector::shrink_to_fit
@@ -80,11 +81,12 @@ promise C++ perfect-forwarding behavior.
 An ordinary range loop uses the read-only iterator. A mutable range loop uses
 the separate `begin_mut()` path and holds one exclusive parent loan for the
 vector. Capacity changes, movement, and other overlapping mutable operations
-are rejected while that traversal is active.
+are rejected while that traversal is active. `as_span()` provides a checked
+read-only view with the same owner-dependent lifetime.
 
 ## Current limitations
 
-Iterator-position insertion and erasure, allocator policy, retained cursors,
-and owner-tied spans are not implemented. `swap` is currently declared as API
-scaffolding but has no library body, so using it in a native build will fail to
-link until that implementation lands.
+Iterator-position insertion and erasure, allocator policy, and retained
+cursors are not implemented. `swap` is currently declared as API scaffolding
+but has no library body, so using it in a native build will fail to link until
+that implementation lands.

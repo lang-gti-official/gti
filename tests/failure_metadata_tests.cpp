@@ -1,6 +1,8 @@
 #include "gti/failure_metadata.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -251,7 +253,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v50 ") &&
+      snapshot.starts_with("mir-v51 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&

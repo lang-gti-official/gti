@@ -39,6 +39,31 @@ gti build|check|run|test|clean|metadata project mode
   so LSP availability no longer depends on discovering or bundling a separate
   json-c library.
 
+The root `CMakeLists.txt` owns product targets, build options, the installed
+target graph, and package/install rules. When `BUILD_TESTING` is enabled it
+delegates once to `tests/CMakeLists.txt`; that file owns test executables,
+corpus tools, and every CTest registration. Test executables retain their
+project-build-root locations so repository scripts and structural evidence do
+not acquire a path-dependent compatibility branch. A static CMake ownership
+gate rejects test registrations or test-source paths returning to the root.
+
+The installed `gti_compiler` and `gti_cpp_backend` archives remain the public
+compiled phase boundary. One private `gti_semantic_analysis` object target has
+exactly one client: its objects enter `gti_compiler`, it exports no target, and
+it cannot link back to the compiler archive it helps construct. This makes the
+already-separated semantic implementation units one real build-DAG node. The
+node precompiles only its private declaration/state contract; that optimization
+was retained after measuring reduced aggregate semantic compile work, not as a
+substitute for the source ownership split.
+
+Other semantic, MIR, lowered-program, and C++ backend APIs enforce direction
+through self-contained headers and repository boundary checks rather than
+additional object targets without independent clients. Formatting-only C++
+writers are additionally forbidden from including MIR or `LoweredProgram`
+authority. The partitioned compiler tests similarly reuse one test-only
+precompiled fixture after a measured reduction; the neutral emitter-fixture
+trial is deliberately absent.
+
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
 seam. The driver runs the same frontend and optimization gates, constructs and
 verifies one `LoweredProgram`, and then invokes a caller-provided `Backend`
@@ -273,12 +298,27 @@ namespace = "counter_ffi"         # optional GTI namespace
 include-dirs = ["native/include"] # optional, package-contained
 defines = ["COUNTER_STEP=2"]      # -D for the import's preprocessing only
 undefines = ["COUNTER_TRACE"]     # -U likewise
+
+# Opt-in import policy (C-07); every entry joins the model identity.
+allow = ["counter_*"]                 # import only matching declarations
+deny = ["counter_internal_*"]         # never import matching declarations
+rename = { counter__impl = "CounterImpl" }   # types and constants only
+array-returns = [{ function = "counter_all", count = "count" }]
 ```
+
+`allow`/`deny` patterns are an exact name or one trailing `*`. An excluded
+declaration still resolves uses exactly like a system-provenance one.
+`rename` gives a type or constant whose C spelling GTI cannot use a usable
+name; functions are refused because a function's GTI name is its link
+symbol. `array-returns` declares the pointer-plus-count contract a C header
+cannot state, emitting `[[c_array(count)]]` after the planner validates the
+language's rule. A configured entry that matches nothing is reported.
 
 During `gti build`, `check`, `run`, and `test`, the driver generates GTI
 declarations from the header with the same pipeline as `gti bindgen`
-(Clang preprocessing with kept system includes and retained user macros,
-then the in-process importer) into
+(one Clang preprocessing pass resolving the full include graph with line
+markers preserved, then the in-process importer applying provenance-based
+import policy) into
 `build/gti/bindgen/<package>/<alias>/bindings.gti`, published atomically
 through a staged sibling. The declaring package's sources reach them as
 `#include <alias/bindings>`: the generated directory is a synthetic package

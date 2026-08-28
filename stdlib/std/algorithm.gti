@@ -1,9 +1,11 @@
-// Algorithms that need ordering, input iteration, confined predicates, or one
-// exact-return callable are implemented here. The remaining declarations need
-// writable-output or bidirectional/random-access contracts that GTI cannot yet
-// express honestly.
+// Algorithms that need ordering, input iteration, confined predicates, one
+// exact-return callable, writable output iteration, or whole-range in-place
+// element rewriting are implemented here. In-place algorithms take the owning
+// container so the exclusive borrow and the element type stay explicit;
+// iterator-pair in-place forms wait on retainable mutable cursors.
 
 #include <std/iterator>
+#include <std/vector>
 
 namespace std {
 T min<std::totally_ordered T>(T left, T right) {
@@ -147,16 +149,110 @@ ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
   return result;
 }
 
-OutputIterator copy<InputIterator, OutputIterator>(InputIterator first,
-                                                    InputIterator last,
-                                                    OutputIterator output);
-OutputIterator transform<InputIterator, OutputIterator, UnaryOperation>(
-    InputIterator first, InputIterator last, OutputIterator output,
-    UnaryOperation operation);
+// Writable-output iteration: the destination cursor's mut dereference and
+// prefix increment come from std::output_iterator; every write stays checked
+// at the destination access itself, so an exhausted destination raises the
+// destination's own defined failure. Unlike the C++-familiar signature, the
+// advanced cursor is not returned: a mutable owner-tied cursor cannot escape
+// through a return value under the current ownership model.
+void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
+                                              Sentinel last,
+                                              mut OutputIterator output)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::output_iterator<OutputIterator> {
+  while (first != last) {
+    *output = *first;
+    ++first;
+    ++output;
+  }
+}
 
-void reverse<Iterator>(Iterator first, Iterator last);
-void sort<Iterator>(Iterator first, Iterator last);
-void sort<Iterator, Compare>(Iterator first, Iterator last, Compare compare);
+// Whole-container fill takes the owner directly: spelling the C++-familiar
+// `fill(values.begin_mut(), values.end(), value)` would need a read borrow
+// of the vector while its exclusive mutable cursor is still live, which
+// ownership correctly rejects. An iterator-pair fill additionally waits on
+// read-receiver loan modeling for parameter-held mutable cursors.
+void fill<std::copyable T>(mut std::vector<T>& values, T& value) {
+  for (mut size_t index = size_t(0); index < values.size(); index++) {
+    values[index] = value;
+  }
+}
+
+// Same-type whole-range transformation: the operation receives each source
+// element by reference and its owned result is assigned into the destination
+// slot.
+// Reading and writing the same vector is rejected by borrow exclusivity at
+// the call site; an undersized destination raises its own checked failure.
+void transform<std::copyable T, Operation>(std::vector<T>& source,
+                                           mut std::vector<T>& destination,
+                                           mut Operation operation) {
+  for (mut size_t index = size_t(0); index < source.size(); index++) {
+    T produced = operation(source[index]);
+    destination[index] = produced;
+  }
+}
+
+// In-place families rewrite one owning container through a single exclusive
+// borrow, copying each element out and assigning it back into place. Element
+// types must therefore be copyable until place-aware initialization tracking
+// allows moving directly out of an indexed element.
+void reverse<std::copyable T>(mut std::vector<T>& values) {
+  if (values.size() < std::size_t(2)) {
+    return;
+  }
+  mut ptrdiff_t left = ptrdiff_t(0);
+  mut ptrdiff_t right = ptrdiff_t(values.size()) - ptrdiff_t(1);
+  while (left < right) {
+    T low = values[size_t(left)];
+    T high = values[size_t(right)];
+    values[size_t(left)] = high;
+    values[size_t(right)] = low;
+    left++;
+    right--;
+  }
+}
+
+namespace detail {
+// Lomuto partition quicksort over a copied pivot. Recursion always descends
+// into the smaller side while the loop continues on the larger, so the stack
+// stays logarithmic in the range length.
+void sort_range<std::copyable T>(mut std::vector<T>& values,
+                                 mut ptrdiff_t low, mut ptrdiff_t high)
+  requires std::totally_ordered<T> {
+  while (low < high) {
+    T pivot = values[size_t(high)];
+    mut ptrdiff_t store = low;
+    for (mut ptrdiff_t scan = low; scan < high; scan++) {
+      if (values[size_t(scan)] < pivot) {
+        T lower = values[size_t(scan)];
+        T kept = values[size_t(store)];
+        values[size_t(scan)] = kept;
+        values[size_t(store)] = lower;
+        store++;
+      }
+    }
+    T boundary = values[size_t(store)];
+    values[size_t(high)] = boundary;
+    values[size_t(store)] = pivot;
+    if (store - low < high - store) {
+      sort_range(values, low, store - ptrdiff_t(1));
+      low = store + ptrdiff_t(1);
+    } else {
+      sort_range(values, store + ptrdiff_t(1), high);
+      high = store - ptrdiff_t(1);
+    }
+  }
+}
+}
+
+void sort<std::copyable T>(mut std::vector<T>& values)
+  requires std::totally_ordered<T> {
+  if (values.size() > std::size_t(1)) {
+    detail::sort_range(values, ptrdiff_t(0),
+                       ptrdiff_t(values.size()) - ptrdiff_t(1));
+  }
+}
 
 namespace detail {
 bool binary_search_counted<Iterator, T>(mut Iterator first,

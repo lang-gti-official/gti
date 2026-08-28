@@ -1,4 +1,6 @@
 #include "gti/optimization/pass.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <array>

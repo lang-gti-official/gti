@@ -282,13 +282,12 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
     }
     const CppMirBodyEmissionMap overlay(std::move(rows));
     const CppMirBodyEmitter emitter(program.mir(), overlay);
-    const CppMirBodyEmissionAnalysis overlayAnalysis =
-        emitter.analyze(analysis.body);
-    if (!overlayAnalysis.ready()) {
+    const CppMirBodyEmissionPlan plan = emitter.buildPlan(analysis.body);
+    if (!plan.analysis().ready()) {
       return false;
     }
-    const bool failure = emitter.supportsFailureBodyText(analysis.body);
-    const bool plain = emitter.supportsBodyText(analysis.body);
+    const bool failure = plan.supportsFailureText();
+    const bool plain = plan.supportsPlainText();
     return instance->mayRaiseDefinedFailure ? failure || plain : plain;
   }
   case MirBodyKind::Constructor: {
@@ -313,8 +312,8 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
     }
     const CppMirBodyEmissionMap overlay(std::move(rows));
     const CppMirBodyEmitter emitter(program.mir(), overlay);
-    return emitter.analyze(analysis.body).ready() &&
-           emitter.supportsFailureBodyText(analysis.body);
+    const CppMirBodyEmissionPlan plan = emitter.buildPlan(analysis.body);
+    return plan.analysis().ready() && plan.supportsFailureText();
   }
   case MirBodyKind::Module:
   case MirBodyKind::FieldInitializers:
@@ -593,6 +592,7 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
   }
 
   CppMirRepresentationSnapshot snapshot;
+  std::optional<CppMirProgramEmissionPlan> emissionPlan;
   snapshot.mir = program.mir();
   for (const LoweredBody &body : program.bodies()) {
     // The C++-private plan predates constructor declaration identities in the
@@ -683,8 +683,9 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
     const CppMirBodyEmissionMapRows emissionRows =
         buildCppMirBodyEmissionMapRows(program, standard);
     const CppMirBodyEmissionMap emissionMap(emissionRows);
-    const CppMirProgramEmissionAnalysis emission =
-        CppMirBodyEmitter(program.mir(), emissionMap).analyzeProgram();
+    CppMirBodyEmitter bodyEmitter(program.mir(), emissionMap);
+    emissionPlan = bodyEmitter.buildProgramPlan();
+    const CppMirProgramEmissionAnalysis emission = emissionPlan->analysis();
     bool emissionReady = emission.ready();
     bool knownLimitationsOnly = true;
     bool sawKnownLimitation = false;
@@ -757,6 +758,7 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
   if (build.issues.empty()) {
     CppMirRepresentationSnapshotBuilderAccess::seal(snapshot);
     build.snapshot = std::move(snapshot);
+    build.emissionPlan = std::move(emissionPlan);
   }
   return build;
 }

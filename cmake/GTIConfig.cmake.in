@@ -82,8 +82,14 @@ else()
     endif()
   endforeach()
 
-  # The bindgen archive's one clang-project dependency (ADR 021).
-  find_dependency(Clang CONFIG)
+  # The bindgen archive's one clang-project dependency (ADR 021). Clang must
+  # be the one matching the LLVM resolved above: a host carrying several
+  # clang CMake packages otherwise resolves whichever it finds first, which
+  # then references component archives that its distribution never shipped.
+  # The hint mirrors GTI's own build-time discovery and anchors the lookup
+  # beside the located LLVM package.
+  find_dependency(Clang @GTI_LLVM_VERSION@ EXACT CONFIG
+                  HINTS "${LLVM_DIR}/../clang")
   if(NOT TARGET libclang)
     set(GTI_FOUND FALSE)
     set(GTI_NOT_FOUND_MESSAGE

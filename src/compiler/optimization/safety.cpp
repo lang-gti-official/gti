@@ -2,9 +2,9 @@
 
 #include "gti/checked_integer.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/alias.h"
 #include "gti/optimization/dataflow.h"
-#include "gti/optimization/effects.h"
 #include "gti/optimization/loops.h"
 
 #include <algorithm>
@@ -998,6 +998,22 @@ struct FixedArrayProjection {
 [[nodiscard]] IntegerFact joinedInteger(const IntegerFact &left,
                                         const IntegerFact &right, bool widen);
 
+// The sibling array place one Index projection above `projected`, whatever
+// its element type. A nonterminal dimension of a chained element access has
+// an array element type, so it stays outside fixedArrayProjection()'s
+// scalar-element shape while still owning a concrete bound.
+[[nodiscard]] const MirPlace *fixedArrayParentPlace(const MirBody &body,
+                                                    const MirPlace &projected) {
+  const auto parent = std::find_if(
+      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+        return candidate.type.kind == SemanticType::Array &&
+               candidate.type.arrayLength != 0 &&
+               candidate.type.arguments.size() == 1 &&
+               samePlacePrefix(candidate, projected);
+      });
+  return parent == body.places.end() ? nullptr : &*parent;
+}
+
 [[nodiscard]] FixedArrayProjection
 fixedArrayProjection(const MirBody &body, MirPlaceId projectedId) {
   const MirPlace *projected = body.findPlace(projectedId);
@@ -1530,7 +1546,64 @@ struct FixedArrayIndex {
   MirPlaceId elementPlace = 0;
   std::uint64_t length = 0;
   std::optional<IntegerFact> index;
+  // A multidimensional element access folds every dimension into one place
+  // and one bounds site, and the emitted text checks each dimension in turn.
+  // The site is therefore dischargeable only when every earlier dimension is
+  // also proven; an unresolved or unproven parent leaves this false.
+  bool parentsProven = false;
 };
+
+[[nodiscard]] std::optional<IntegerFact>
+fixedArrayDimensionIndex(const MirBody &body, const AbstractState &state,
+                         MirPlaceId elementPlace,
+                         const MirPlaceProjection &projection) {
+  if (projection.constantIndex) {
+    const std::optional<CheckedIntegerDomain> domain =
+        constantIntegerDomain(SemanticType::UInt64);
+    if (!domain) {
+      return std::nullopt;
+    }
+    Evidence evidence;
+    addPlace(evidence, elementPlace);
+    return IntegerFact{.domain = *domain,
+                       .lower = {.magnitude = *projection.constantIndex},
+                       .upper = {.magnitude = *projection.constantIndex},
+                       .evidence = std::move(evidence)};
+  }
+  if (projection.index == 0) {
+    return std::nullopt;
+  }
+  return integerForValue(body, state, projection.index);
+}
+
+[[nodiscard]] bool fixedArrayDimensionWithin(const IntegerFact &index,
+                                             std::uint64_t length) {
+  return !normalizeCheckedInteger(index.lower).negative &&
+         compare(index.upper, CheckedIntegerValue{.magnitude = length}) < 0;
+}
+
+// Walks the nonterminal Index dimensions above `element` and reports whether
+// each one is provably in bounds of its own sibling array place.
+[[nodiscard]] bool fixedArrayParentsProven(const MirBody &body,
+                                           const AbstractState &state,
+                                           MirPlaceId arrayPlace) {
+  const MirPlace *parent = body.findPlace(arrayPlace);
+  while (parent != nullptr && !parent->projections.empty() &&
+         parent->projections.back().kind == MirProjectionKind::Index) {
+    const MirPlace *grandparent = fixedArrayParentPlace(body, *parent);
+    if (grandparent == nullptr) {
+      return false;
+    }
+    const std::optional<IntegerFact> index = fixedArrayDimensionIndex(
+        body, state, parent->id, parent->projections.back());
+    if (!index ||
+        !fixedArrayDimensionWithin(*index, grandparent->type.arrayLength)) {
+      return false;
+    }
+    parent = grandparent;
+  }
+  return parent != nullptr;
+}
 
 [[nodiscard]] FixedArrayIndex
 fixedArrayIndex(const MirBody &body, const AbstractState &state,
@@ -1553,26 +1626,14 @@ fixedArrayIndex(const MirBody &body, const AbstractState &state,
   if (projected.arrayPlace == 0) {
     return {};
   }
-  std::optional<IntegerFact> index;
-  if (projected.projection.constantIndex) {
-    const std::optional<CheckedIntegerDomain> domain =
-        constantIntegerDomain(SemanticType::UInt64);
-    if (domain) {
-      Evidence evidence;
-      addPlace(evidence, projectedId);
-      index = IntegerFact{
-          .domain = *domain,
-          .lower = {.magnitude = *projected.projection.constantIndex},
-          .upper = {.magnitude = *projected.projection.constantIndex},
-          .evidence = std::move(evidence)};
-    }
-  } else if (projected.projection.index != 0) {
-    index = integerForValue(body, state, projected.projection.index);
-  }
+  std::optional<IntegerFact> index =
+      fixedArrayDimensionIndex(body, state, projectedId, projected.projection);
   return {.arrayPlace = projected.arrayPlace,
           .elementPlace = projectedId,
           .length = projected.length,
-          .index = std::move(index)};
+          .index = std::move(index),
+          .parentsProven =
+              fixedArrayParentsProven(body, state, projected.arrayPlace)};
 }
 
 [[nodiscard]] bool within(const IntegerFact &index,
@@ -3765,10 +3826,8 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         }
       }
       const FixedArrayIndex fixed = fixedArrayIndex(body, state, instruction);
-      if (fixed.index &&
-          !normalizeCheckedInteger(fixed.index->lower).negative &&
-          compare(fixed.index->upper,
-                  CheckedIntegerValue{.magnitude = fixed.length}) < 0) {
+      if (fixed.index && fixed.parentsProven &&
+          fixedArrayDimensionWithin(*fixed.index, fixed.length)) {
         Evidence evidence = fixed.index->evidence;
         addPlace(evidence, fixed.arrayPlace);
         addPlace(evidence, fixed.elementPlace);

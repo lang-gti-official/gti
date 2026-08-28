@@ -1,0 +1,13 @@
+---
+title: std::vector::as_span
+description: Returns a checked read-only span over the vector's live elements.
+kind: member
+api:
+  - std/vector|method|std::vector::as_span
+examples: []
+---
+
+The result covers the vector's logical size, not its reserved capacity. It
+allocates nothing and retains a read-only borrow of the vector storage, so
+movement, reallocation, and mutation remain unavailable while the span is
+live.

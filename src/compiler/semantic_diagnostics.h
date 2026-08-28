@@ -9,7 +9,7 @@
 #include "gti/constant_evaluator.h"
 #include "gti/diagnostic.h"
 #include "gti/generic_constraint.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 
 #include <string>
 #include <vector>

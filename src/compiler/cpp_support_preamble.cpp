@@ -1,0 +1,2286 @@
+#include "cpp_support_preamble.h"
+
+#include <ostream>
+#include <stdexcept>
+#include <string_view>
+
+namespace lang {
+namespace {
+
+void writeCppBackendMacroIsolation(std::ostream &output) {
+  // Native compiler arguments may force-include a header before this
+  // translation unit, and generated includes may themselves provide legacy
+  // macros.  This fixed token set is cleared on both sides of the includes.
+  // Source symbol spellings are handled separately, immediately before
+  // source declarations.
+  static constexpr std::string_view helperNames[] = {
+      "Args",
+      "Allowed",
+      "Argument",
+      "Arguments",
+      "Array",
+      "Binding",
+      "Base",
+      "Capability",
+      "Callable",
+      "Count",
+      "Derived",
+      "Error",
+      "Index",
+      "Left",
+      "Parameters",
+      "Parameter",
+      "Result",
+      "Right",
+      "Source",
+      "T",
+      "Target",
+      "Unsigned",
+      "UnsignedCount",
+      "UnsignedResult",
+      "Value",
+      "__gti_invoke",
+      "add",
+      "add_assign",
+      "allocate",
+      "allocate_storage",
+      "allocation",
+      "allocation_",
+      "allocation_bytes",
+      "allocation_error",
+      "aligned",
+      "args",
+      "array",
+      "array_at",
+      "array_bounds_error",
+      "available",
+      "backend",
+      "bitwise_and_assign",
+      "bitwise_or_assign",
+      "bitwise_xor_assign",
+      "bits",
+      "bytes",
+      "callable",
+      "call_argument",
+      "call_parameter",
+      "callable_binding",
+      "callable_capability",
+      "capacity",
+      "capacity_",
+      "checked_add",
+      "checked_index",
+      "checked_initialized_index",
+      "checked_mul",
+      "checked_sub",
+      "construct",
+      "count",
+      "data_",
+      "destination",
+      "destroy",
+      "divide",
+      "divide_assign",
+      "empty_owner_error",
+      "effective_alignment",
+      "elements",
+      "error",
+      "exact_call",
+      "exact_call_type_compatible",
+      "exact_type",
+      "expected_result",
+      "forward_pack_argument",
+      "gti_internal",
+      "integer_domain_error",
+      "index",
+      "initialized_",
+      "invoke",
+      "invoke_mutable",
+      "invoke_once",
+      "invoke_read",
+      "invoke_selected",
+      "left",
+      "lower",
+      "make_unexpected_result",
+      "make_unique",
+      "max",
+      "maximum",
+      "message",
+      "min",
+      "minimum",
+      "minimum_alignment",
+      "modulo",
+      "multiply",
+      "multiply_assign",
+      "mutable_call",
+      "mutable_reference",
+      "mutable_receiver",
+      "negate",
+      "numeric_cast",
+      "numeric_conversion_error",
+      "once_call",
+      "offset",
+      "other",
+      "outside",
+      "overflow",
+      "padding",
+      "owner_access",
+      "owner",
+      "post_decrement",
+      "post_increment",
+      "pre_decrement",
+      "pre_increment",
+      "previous",
+      "promoted",
+      "promoted_left",
+      "promoted_right",
+      "read",
+      "read_call",
+      "read_reference",
+      "read_mut",
+      "read_only_receiver",
+      "release",
+      "relocate_to",
+      "remainder_assign",
+      "retag_call",
+      "requested",
+      "requested_alignment",
+      "result",
+      "right",
+      "saturating_add",
+      "saturating_mul",
+      "saturating_sub",
+      "selected",
+      "shift_count",
+      "shift_left",
+      "shift_left_assign",
+      "shift_right",
+      "shift_right_assign",
+      "shifted",
+      "slot",
+      "status",
+      "storage",
+      "storage_capacity",
+      "storage_construct",
+      "storage_destroy",
+      "storage_error",
+      "storage_initialized",
+      "storage_read",
+      "storage_read_mut",
+      "storage_read_mut_unchecked",
+      "storage_read_unchecked",
+      "storage_relocate",
+      "storage_shift_left",
+      "storage_shift_right",
+      "storage_try_allocate",
+      "string_view_at",
+      "string_view_bounds_error",
+      "subtract",
+      "subtract_assign",
+      "source",
+      "take",
+      "target",
+      "to_c_string_view",
+      "truncated",
+      "try_allocate",
+      "unique_owner_is_null",
+      "unique_owner_upcast",
+      "unsigned_count",
+      "upper",
+      "unchecked_read",
+      "unchecked_read_mut",
+      "value",
+      "wrapping_add",
+      "wrapping_mul",
+      "wrapping_sub",
+  };
+  static constexpr std::string_view usedLanguageAndLibraryNames[] = {
+      "abort",
+      "align",
+      "align_val_t",
+      "alignof",
+      "auto",
+      "bad_alloc",
+      "bit_cast",
+      "bool",
+      "byte",
+      "catch",
+      "char",
+      "class",
+      "cmp_greater_equal",
+      "cmp_less",
+      "const",
+      "constexpr",
+      "construct_at",
+      "data",
+      "decltype",
+      "delete",
+      "destroy_at",
+      "digits",
+      "double",
+      "else",
+      "expected",
+      "explicit",
+      "false",
+      "float",
+      "for",
+      "forward",
+      "fputc",
+      "fputs",
+      "gti_c_string_view",
+      "if",
+      "in_range",
+      "inline",
+      "is_arithmetic_v",
+      "is_copy_constructible_v",
+      "is_floating_point_v",
+      "is_iec559",
+      "is_integral_v",
+      "is_signed_v",
+      "is_unsigned_v",
+      "isfinite",
+      "launder",
+      "ldexp",
+      "make_unexpected",
+      "make_unsigned_t",
+      "max_exponent",
+      "move",
+      "namespace",
+      "new",
+      "nodiscard",
+      "noexcept",
+      "nonstd",
+      "noreturn",
+      "nothrow",
+      "nullptr",
+      "numeric_limits",
+      "operator",
+      "private",
+      "public",
+      "radix",
+      "reinterpret_cast",
+      "remove_cvref_t",
+      "remove_reference_t",
+      "requires",
+      "reset",
+      "return",
+      "size",
+      "size_t",
+      "sizeof",
+      "static_assert",
+      "static_cast",
+      "std",
+      "string_view",
+      "struct",
+      "template",
+      "this",
+      "trunc",
+      "try",
+      "typename",
+      "uint32_t",
+      "uint64_t",
+      "uint8_t",
+      "unexpected",
+      "unique_ptr",
+      "unsigned",
+      "using",
+      "void",
+  };
+  output
+      << "\n// Forced native headers must not rewrite GTI backend helpers.\n";
+  for (const std::string_view name : helperNames) {
+    output << "#undef " << name << '\n';
+  }
+  for (const std::string_view name : usedLanguageAndLibraryNames) {
+    output << "#undef " << name << '\n';
+  }
+  output << '\n';
+}
+
+} // namespace
+
+void writeCppSupportPreamble(std::ostream &output,
+                             CppSupportPreambleFeatures features) {
+  if (!features.storage || !features.definedFailure) {
+    throw std::logic_error(
+        "the current C++ artifact contract requires storage and failure "
+        "support");
+  }
+  output << "// Generated by GTI.\n";
+  writeCppBackendMacroIsolation(output);
+  output << "#include <array>\n"
+            "#include <bit>\n"
+            "#include <cmath>\n"
+            "#include <cstddef>\n"
+            "#include <cstdint>\n"
+            "#include <cstdio>\n"
+            "#include <cstdlib>\n"
+            "#include <exception>\n"
+            "#include <iterator>\n"
+            "#include <limits>\n"
+            "#include <memory>\n"
+            "#include <new>\n"
+            "#include <string_view>\n"
+            "#include <type_traits>\n"
+            "#include <utility>\n"
+            "#include <variant>\n";
+  const bool usesExpected = features.expected;
+  const bool usesManagedThreads = features.managedThreads;
+  if (usesExpected) {
+    if (features.standard == CppStandard::Cpp23) {
+      output << "#include <expected>\n";
+    } else {
+      output << "#include <nonstd/expected.hpp>\n";
+    }
+  }
+  if (features.runtimeBinding) {
+    output << "#include <gti/runtime.hpp>\n";
+  }
+  output << "#include <gti/runtime_failure.h>\n";
+  if (usesManagedThreads) {
+    output << "#include <gti/runtime_thread.hpp>\n";
+  }
+  const bool usesCAbiTextView = features.cAbiTextView;
+  if (usesCAbiTextView) {
+    output << "#include <gti/c_abi.h>\n";
+  }
+  writeCppBackendMacroIsolation(output);
+  output << R"(
+
+// The lifetime-slot template only transports this ABI record by pointer, so
+// the lowered translation unit needs the type name but not the definition.
+struct gti_failure_record_v1;
+
+namespace gti_internal::backend {
+)";
+  if (usesExpected) {
+    output << (features.standard == CppStandard::Cpp23 ? R"(
+template <typename Value, typename Error>
+using expected_result = std::expected<Value, Error>;
+
+template <typename Error>
+inline constexpr auto make_unexpected_result(Error error) {
+  return std::unexpected<Error>(error);
+}
+)"
+                                                       : R"(
+template <typename Value, typename Error>
+using expected_result = ::nonstd::expected<Value, Error>;
+
+template <typename Error>
+inline constexpr auto make_unexpected_result(Error error) {
+  return ::nonstd::make_unexpected(error);
+}
+)");
+  }
+  output << R"(
+
+static_assert(__gti_strict_ieee754 == 1,
+              "compile GTI output with strict IEEE-754 flags and "
+              "-D__gti_strict_ieee754=1");
+static_assert(sizeof(float) == sizeof(std::uint32_t) &&
+              std::numeric_limits<float>::is_iec559 &&
+              std::numeric_limits<float>::radix == 2 &&
+              std::numeric_limits<float>::digits == 24 &&
+              std::numeric_limits<float>::max_exponent == 128,
+              "GTI requires IEEE-754 binary32 host float semantics");
+static_assert(sizeof(double) == sizeof(std::uint64_t) &&
+              std::numeric_limits<double>::is_iec559 &&
+              std::numeric_limits<double>::radix == 2 &&
+              std::numeric_limits<double>::digits == 53 &&
+              std::numeric_limits<double>::max_exponent == 1024,
+              "GTI requires IEEE-754 binary64 host double semantics");
+
+[[noreturn]] inline void integer_domain_error(const char *message) {
+  std::fputs("GTI runtime error: ", stderr);
+  std::fputs(message, stderr);
+  std::fputc('\n', stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void numeric_conversion_error() {
+  std::fputs("GTI runtime error: numeric conversion is out of range\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void array_bounds_error() {
+  std::fputs("GTI runtime error: fixed array index out of bounds\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void string_view_bounds_error() {
+  std::fputs("GTI runtime error: string view index out of bounds\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void allocation_error() {
+  std::fputs("GTI runtime error: memory allocation failed\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void empty_owner_error() {
+  std::fputs("GTI runtime error: dereferenced an empty unique owner\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void storage_error(const char *message) {
+  std::fputs("GTI runtime error: ", stderr);
+  std::fputs(message, stderr);
+  std::fputc('\n', stderr);
+  std::abort();
+}
+
+// A verified MIR body owns the lifetime of values stored here. Unlike a
+// normal C++ local or std::optional, this guard deliberately refuses to clean
+// up an engaged value from its destructor: every successful construction must
+// reach an explicit verified-MIR Drop instruction.
+template <typename T, bool DestroyRepresentationAtScopeExit = false>
+class mir_lifetime_slot {
+public:
+  mir_lifetime_slot() = default;
+  mir_lifetime_slot(const mir_lifetime_slot &) = delete;
+  mir_lifetime_slot &operator=(const mir_lifetime_slot &) = delete;
+
+  ~mir_lifetime_slot() {
+    if (!engaged_) {
+      return;
+    }
+    if constexpr (DestroyRepresentationAtScopeExit) {
+      // Some GTI values need a non-trivial C++ representation even though MIR
+      // assigns no semantic Drop here, or has already transferred the value.
+      // End only that backend representation lifetime.
+      destroy();
+    } else {
+      storage_error("verified MIR lifetime slot escaped without Drop");
+    }
+  }
+
+  template <typename... Args>
+  void construct(Args &&...args) {
+    if (engaged_) {
+      storage_error("verified MIR lifetime slot was constructed twice");
+    }
+    std::construct_at(slot(), std::forward<Args>(args)...);
+    engaged_ = true;
+  }
+
+  template <typename Factory>
+  void construct_from(Factory &&factory) {
+    if (engaged_) {
+      storage_error("verified MIR lifetime slot was constructed twice");
+    }
+    ::new (static_cast<void *>(slot()))
+        T(std::forward<Factory>(factory)());
+    engaged_ = true;
+  }
+
+  [[nodiscard]] T *construction_address() {
+    if (engaged_) {
+      storage_error("verified MIR lifetime slot requested construction while engaged");
+    }
+    return slot();
+  }
+
+  void mark_constructed() {
+    if (engaged_) {
+      storage_error("verified MIR lifetime slot marked constructed twice");
+    }
+    engaged_ = true;
+  }
+
+  void destroy() {
+    if (!engaged_) {
+      storage_error("verified MIR lifetime slot was dropped while empty");
+    }
+    engaged_ = false;
+    std::destroy_at(std::launder(slot()));
+  }
+
+  [[nodiscard]] bool
+  destroy_with_failure(::gti_failure_record_v1 *failure_record) {
+    if (!engaged_) {
+      storage_error("verified MIR lifetime slot was dropped while empty");
+    }
+    engaged_ = false;
+    T *value = std::launder(slot());
+    bool success = false;
+    try {
+      success = value->__gti_mir_destruct_failure(failure_record);
+    } catch (...) {
+      std::destroy_at(value);
+      throw;
+    }
+    // The transformed helper ran the source destructor body and disarmed its
+    // lifecycle state. End the C++ object lifetime so generated field/base
+    // teardown still runs; the ordinary destructor wrapper now observes the
+    // disarmed state and cannot run the source body twice.
+    std::destroy_at(value);
+    return success;
+  }
+
+  [[nodiscard]] bool
+  destroy_with_failure_if_engaged(
+      ::gti_failure_record_v1 *failure_record) {
+    return !engaged_ || destroy_with_failure(failure_record);
+  }
+
+  // MIR supplies the exact fixed-array extents. This slot validates those
+  // extents against its C++ representation, then completes each leaf lifetime
+  // in reverse order without invoking std::array's recursive destructor.
+  template <std::size_t... Extents>
+  [[nodiscard]] bool destroy_fixed_array_with_failure(
+      ::gti_failure_record_v1 *failure_record, bool cleanup_failure,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    static_assert(sizeof...(Extents) != 0);
+    if (!engaged_) {
+      storage_error("verified MIR lifetime slot was dropped while empty");
+    }
+    engaged_ = false;
+    bool success = true;
+    if (!destroy_fixed_array_level<Extents...>(
+            *std::launder(slot()), failure_record, cleanup_failure, artifact,
+            success)) {
+      return false;
+    }
+    return success;
+  }
+
+  void destroy_if_engaged() {
+    if (engaged_) {
+      destroy();
+    }
+  }
+
+  [[nodiscard]] T &get() {
+    if (!engaged_) {
+      storage_error("verified MIR lifetime slot was read while empty");
+    }
+    return *std::launder(slot());
+  }
+
+private:
+  template <std::size_t Extent, std::size_t... Rest, typename Array>
+  [[nodiscard]] static bool destroy_fixed_array_level(
+      Array &array, ::gti_failure_record_v1 *failure_record,
+      bool cleanup_failure,
+      const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
+    static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
+    for (std::size_t index = Extent; index != 0; --index) {
+      auto &element = array[index - 1];
+      // The leaf arm must be the discarded statement of this constexpr
+      // branch: a trailing statement after `continue` would still
+      // instantiate the leaf destructor call against a nested array level.
+      if constexpr (sizeof...(Rest) != 0) {
+        if (!destroy_fixed_array_level<Rest...>(
+                element, failure_record, cleanup_failure, artifact, success)) {
+          return false;
+        }
+      } else {
+        ::gti_failure_record_v1 secondary{};
+        const bool already_cleaning = !success;
+        ::gti_failure_record_v1 *element_record =
+            already_cleaning ? &secondary : failure_record;
+        const bool element_success =
+            element.__gti_mir_destruct_failure(element_record);
+        std::destroy_at(&element);
+        if (!element_success && cleanup_failure) {
+          return false;
+        }
+        if (!element_success && already_cleaning) {
+          const ::gti_failure_emergency_v1 emergency{
+              GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *failure_record,
+              secondary};
+          ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact,
+                                                artifact);
+        }
+        success = success && element_success;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] T *slot() {
+    return reinterpret_cast<T *>(storage_);
+  }
+
+  alignas(T) std::byte storage_[sizeof(T)];
+  bool engaged_ = false;
+};
+
+template <typename T>
+class storage {
+public:
+  storage() = default;
+  explicit storage(std::uint64_t capacity) { allocate(capacity); }
+
+  storage(const storage &) = delete;
+  storage &operator=(const storage &) = delete;
+
+  storage(storage &&other) noexcept { take(std::move(other)); }
+
+  storage &operator=(storage &&other) noexcept {
+    if (this != &other) {
+      release();
+      take(std::move(other));
+    }
+    return *this;
+  }
+
+  ~storage() { release(); }
+
+  [[nodiscard]] std::uint64_t capacity() const {
+    return static_cast<std::uint64_t>(capacity_);
+  }
+
+  [[nodiscard]] bool initialized(std::uint64_t index) const noexcept {
+    return index < capacity() && initialized_ != nullptr &&
+           initialized_[static_cast<std::size_t>(index)] != 0;
+  }
+
+  template <typename... Args>
+  [[nodiscard]] bool try_construct(std::uint64_t index, Args &&...args) {
+    const std::size_t offset = static_cast<std::size_t>(index);
+    try {
+      std::construct_at(slot(offset), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      return false;
+    }
+    initialized_[offset] = 1;
+    return true;
+  }
+
+  template <typename... Args>
+  void construct(std::uint64_t index, Args &&...args) {
+    const std::size_t offset = checked_index(index);
+    if (initialized_[offset] != 0) {
+      storage_error("constructed an initialized storage slot");
+    }
+    try {
+      std::construct_at(slot(offset), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    initialized_[offset] = 1;
+  }
+
+  [[nodiscard]] const T &read(std::uint64_t index) const {
+    const std::size_t offset = checked_initialized_index(index);
+    return *std::launder(slot(offset));
+  }
+
+  [[nodiscard]] T &read_mut(std::uint64_t index) {
+    const std::size_t offset = checked_initialized_index(index);
+    return *std::launder(slot(offset));
+  }
+
+  // Used only after verified GTI MIR discharges both the bounds and
+  // initialized-slot outcomes. These methods are backend representation
+  // details and are not part of the source-visible intrinsic vocabulary.
+  [[nodiscard]] const T &unchecked_read(std::uint64_t index) const {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  [[nodiscard]] T &unchecked_read_mut(std::uint64_t index) {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  void destroy(std::uint64_t index) {
+    const std::size_t offset = checked_initialized_index(index);
+    std::destroy_at(std::launder(slot(offset)));
+    initialized_[offset] = 0;
+  }
+
+  void relocate_to(storage &destination, std::uint64_t count) {
+    if (count > capacity() || count > destination.capacity()) {
+      storage_error("storage relocation exceeds capacity");
+    }
+    const std::size_t elements = static_cast<std::size_t>(count);
+    for (std::size_t index = 0; index < elements; ++index) {
+      if (initialized_[index] == 0 || destination.initialized_[index] != 0) {
+        storage_error("storage relocation requires initialized source and empty destination slots");
+      }
+    }
+    for (std::size_t index = 0; index < elements; ++index) {
+      try {
+        std::construct_at(destination.slot(index),
+                          std::move(*std::launder(slot(index))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      destination.initialized_[index] = 1;
+      std::destroy_at(std::launder(slot(index)));
+      initialized_[index] = 0;
+    }
+  }
+
+  void shift_right(std::uint64_t first, std::uint64_t last) {
+    if (first > last || last >= capacity()) {
+      storage_error("storage right shift exceeds capacity or has an invalid range");
+    }
+    const std::size_t begin = static_cast<std::size_t>(first);
+    const std::size_t end = static_cast<std::size_t>(last);
+    if (initialized_[end] != 0) {
+      storage_error("storage right shift requires an empty destination slot");
+    }
+    for (std::size_t index = begin; index < end; ++index) {
+      if (initialized_[index] == 0) {
+        storage_error("storage right shift requires initialized source slots");
+      }
+    }
+    for (std::size_t destination = end; destination > begin; --destination) {
+      const std::size_t source = destination - 1;
+      try {
+        std::construct_at(slot(destination),
+                          std::move(*std::launder(slot(source))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      initialized_[destination] = 1;
+      std::destroy_at(std::launder(slot(source)));
+      initialized_[source] = 0;
+    }
+  }
+
+  void shift_left(std::uint64_t first, std::uint64_t last) {
+    if (first >= last || last > capacity()) {
+      storage_error("storage left shift exceeds capacity or has an invalid range");
+    }
+    const std::size_t begin = static_cast<std::size_t>(first);
+    const std::size_t end = static_cast<std::size_t>(last);
+    if (initialized_[begin] != 0) {
+      storage_error("storage left shift requires an empty destination slot");
+    }
+    for (std::size_t index = begin + 1; index < end; ++index) {
+      if (initialized_[index] == 0) {
+        storage_error("storage left shift requires initialized source slots");
+      }
+    }
+    for (std::size_t destination = begin; destination + 1 < end;
+         ++destination) {
+      const std::size_t source = destination + 1;
+      try {
+        std::construct_at(slot(destination),
+                          std::move(*std::launder(slot(source))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      initialized_[destination] = 1;
+      std::destroy_at(std::launder(slot(source)));
+      initialized_[source] = 0;
+    }
+  }
+
+  // Recoverable public allocation statuses. These values are consumed by the
+  // ordinary-GTI std::storage wrapper and are deliberately not language
+  // failure codes: no owner is published until every allocation succeeds.
+  //   0 success
+  //   1 invalid minimum alignment
+  //   2 byte-count or alignment-padding overflow
+  //   3 host resource exhaustion
+  [[nodiscard]] static std::int32_t
+  try_allocate(std::uint64_t requested, std::uint64_t minimum_alignment,
+               storage *result) noexcept {
+    // Recoverable publication is valid only into a pristine destination. This
+    // keeps failure side-effect-free and prevents an intrinsic call from
+    // hiding destruction of an earlier allocation from MIR's lifecycle model.
+    if (result == nullptr || result->allocation_ != nullptr ||
+        result->data_ != nullptr || result->capacity_ != 0 ||
+        result->initialized_ != nullptr) {
+      return 3;
+    }
+    storage pending;
+    const std::int32_t status =
+        pending.allocate_nothrow(requested, minimum_alignment);
+    if (status != 0) {
+      return status;
+    }
+    *result = std::move(pending);
+    return 0;
+  }
+
+private:
+  void allocate(std::uint64_t requested) {
+    if (allocate_nothrow(requested, 0) != 0) {
+      allocation_error();
+    }
+  }
+
+  [[nodiscard]] std::int32_t
+  allocate_nothrow(std::uint64_t requested,
+                   std::uint64_t minimum_alignment) noexcept {
+    if (minimum_alignment != 0 &&
+        (minimum_alignment & (minimum_alignment - 1)) != 0) {
+      return 1;
+    }
+    if (minimum_alignment > (std::numeric_limits<std::size_t>::max)() ||
+        requested > (std::numeric_limits<std::size_t>::max)() ||
+        (requested != 0 &&
+         requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
+      return 2;
+    }
+    const std::size_t capacity = static_cast<std::size_t>(requested);
+    if (capacity == 0) {
+      return 0;
+    }
+    const std::size_t requested_alignment =
+        static_cast<std::size_t>(minimum_alignment);
+    const std::size_t effective_alignment =
+        requested_alignment > alignof(T) ? requested_alignment : alignof(T);
+    const std::size_t bytes = sizeof(T) * capacity;
+    const std::size_t padding = effective_alignment - 1;
+    if (bytes > (std::numeric_limits<std::size_t>::max)() - padding) {
+      return 2;
+    }
+    const std::size_t allocation_bytes = bytes + padding;
+    void *allocation = ::operator new(allocation_bytes, std::nothrow);
+    if (allocation == nullptr) {
+      return 3;
+    }
+    void *aligned = allocation;
+    std::size_t available = allocation_bytes;
+    if (std::align(effective_alignment, bytes, aligned, available) == nullptr) {
+      ::operator delete(allocation);
+      return 3;
+    }
+    initialized_.reset(new (std::nothrow) unsigned char[capacity]{});
+    if (!initialized_) {
+      ::operator delete(allocation);
+      return 3;
+    }
+    allocation_ = allocation;
+    data_ = aligned;
+    capacity_ = capacity;
+    return 0;
+  }
+
+  [[nodiscard]] std::size_t checked_index(std::uint64_t index) const {
+    if (index >= capacity()) {
+      storage_error("storage index out of bounds");
+    }
+    return static_cast<std::size_t>(index);
+  }
+
+  [[nodiscard]] std::size_t
+  checked_initialized_index(std::uint64_t index) const {
+    const std::size_t offset = checked_index(index);
+    if (initialized_[offset] == 0) {
+      storage_error("accessed an uninitialized storage slot");
+    }
+    return offset;
+  }
+
+  [[nodiscard]] T *slot(std::size_t index) {
+    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
+                                 sizeof(T) * index);
+  }
+
+  [[nodiscard]] const T *slot(std::size_t index) const {
+    return reinterpret_cast<const T *>(static_cast<const std::byte *>(data_) +
+                                       sizeof(T) * index);
+  }
+
+  void release() noexcept {
+    if (allocation_ != nullptr) {
+      for (std::size_t index = capacity_; index > 0; --index) {
+        if (initialized_[index - 1] != 0) {
+          std::destroy_at(std::launder(slot(index - 1)));
+        }
+      }
+      ::operator delete(allocation_);
+    }
+    initialized_.reset();
+    allocation_ = nullptr;
+    data_ = nullptr;
+    capacity_ = 0;
+  }
+
+  void take(storage &&other) noexcept {
+    allocation_ = other.allocation_;
+    data_ = other.data_;
+    capacity_ = other.capacity_;
+    initialized_ = std::move(other.initialized_);
+    other.allocation_ = nullptr;
+    other.data_ = nullptr;
+    other.capacity_ = 0;
+  }
+
+  void *allocation_ = nullptr;
+  void *data_ = nullptr;
+  std::size_t capacity_ = 0;
+  std::unique_ptr<unsigned char[]> initialized_;
+};
+
+template <typename T>
+inline storage<T> allocate_storage(std::uint64_t capacity) {
+  return storage<T>(capacity);
+}
+
+template <typename T>
+inline std::int32_t
+storage_try_allocate(storage<T> &destination, std::uint64_t capacity,
+                     std::uint64_t minimum_alignment) noexcept {
+  return storage<T>::try_allocate(capacity, minimum_alignment, &destination);
+}
+
+template <typename T>
+inline std::uint64_t storage_capacity(const storage<T> &value) noexcept {
+  return value.capacity();
+}
+
+template <typename T>
+inline bool storage_initialized(const storage<T> &value,
+                                std::uint64_t index) noexcept {
+  return value.initialized(index);
+}
+
+template <typename T, typename... Args>
+inline void storage_construct(storage<T> &value, std::uint64_t index,
+                              Args &&...args) {
+  value.construct(index, std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline const T &storage_read(const storage<T> &value, std::uint64_t index) {
+  return value.read(index);
+}
+
+template <typename T>
+inline T &storage_read_mut(storage<T> &value, std::uint64_t index) {
+  return value.read_mut(index);
+}
+
+template <typename T>
+inline const T &storage_read_unchecked(const storage<T> &value,
+                                       std::uint64_t index) {
+  return value.unchecked_read(index);
+}
+
+template <typename T>
+inline T &storage_read_mut_unchecked(storage<T> &value,
+                                     std::uint64_t index) {
+  return value.unchecked_read_mut(index);
+}
+
+template <typename T>
+inline void storage_destroy(storage<T> &value, std::uint64_t index) {
+  value.destroy(index);
+}
+
+template <typename T>
+inline void storage_relocate(storage<T> &source, storage<T> &destination,
+                             std::uint64_t count) {
+  source.relocate_to(destination, count);
+}
+
+template <typename T>
+inline void storage_shift_right(storage<T> &value, std::uint64_t first,
+                                std::uint64_t last) {
+  value.shift_right(first, last);
+}
+
+template <typename T>
+inline void storage_shift_left(storage<T> &value, std::uint64_t first,
+                               std::uint64_t last) {
+  value.shift_left(first, last);
+}
+
+// The identity-bound public logical-size check (P-STORAGE-01): container
+// indexing reports the logical bound instead of leaking the private
+// storage invariant.
+inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
+  if (index >= size) {
+    storage_error("container index out of logical bounds");
+  }
+}
+
+// Prefix-initialized storage (P-STORAGE-01): the live elements always form
+// the prefix [0, length_). Construction appends exactly at the live length,
+// destruction removes exactly the last live element, relocation transfers
+// the complete prefix, and reads check the logical prefix, so no per-slot
+// initialization bitmap exists.
+template <typename T>
+class prefix_storage {
+public:
+  prefix_storage() = default;
+  explicit prefix_storage(std::uint64_t requested) { allocate(requested); }
+  prefix_storage(const prefix_storage &) = delete;
+  prefix_storage &operator=(const prefix_storage &) = delete;
+  prefix_storage(prefix_storage &&other) noexcept { take(std::move(other)); }
+  prefix_storage &operator=(prefix_storage &&other) noexcept {
+    if (this != &other) {
+      release();
+      take(std::move(other));
+    }
+    return *this;
+  }
+  ~prefix_storage() { release(); }
+
+  [[nodiscard]] std::uint64_t capacity() const noexcept { return capacity_; }
+  [[nodiscard]] std::uint64_t length() const noexcept { return length_; }
+
+  template <typename... Args>
+  void append(Args &&...args) {
+    if (length_ >= capacity_) {
+      storage_error("prefix storage append exceeds its capacity");
+    }
+    try {
+      std::construct_at(slot(length_), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    ++length_;
+  }
+
+  void pop() {
+    if (length_ == 0) {
+      storage_error("prefix storage pop on an empty prefix");
+    }
+    --length_;
+    std::destroy_at(std::launder(slot(length_)));
+  }
+
+  [[nodiscard]] const T &read(std::uint64_t index) const {
+    return *std::launder(slot(checked_prefix_index(index)));
+  }
+
+  [[nodiscard]] T &read_mut(std::uint64_t index) {
+    return *std::launder(slot(checked_prefix_index(index)));
+  }
+
+  [[nodiscard]] const T &read_unchecked(std::uint64_t index) const noexcept {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  [[nodiscard]] T &read_mut_unchecked(std::uint64_t index) noexcept {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  template <typename... Args>
+  void insert_at(std::uint64_t index, Args &&...args) {
+    if (index > length_) {
+      storage_error("prefix storage insert outside the live prefix");
+    }
+    if (length_ >= capacity_) {
+      storage_error("prefix storage insert exceeds its capacity");
+    }
+    for (std::size_t position = length_;
+         position > static_cast<std::size_t>(index); --position) {
+      try {
+        std::construct_at(slot(position),
+                          std::move(*std::launder(slot(position - 1))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      std::destroy_at(std::launder(slot(position - 1)));
+    }
+    try {
+      std::construct_at(slot(static_cast<std::size_t>(index)),
+                        std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    ++length_;
+  }
+
+  void erase_at(std::uint64_t index) {
+    if (index >= length_) {
+      storage_error("prefix storage erase outside the live prefix");
+    }
+    std::destroy_at(std::launder(slot(static_cast<std::size_t>(index))));
+    for (std::size_t position = static_cast<std::size_t>(index) + 1;
+         position < length_; ++position) {
+      try {
+        std::construct_at(slot(position - 1),
+                          std::move(*std::launder(slot(position))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      std::destroy_at(std::launder(slot(position)));
+    }
+    --length_;
+  }
+
+  void relocate_to(prefix_storage &destination) {
+    if (destination.length_ != 0) {
+      storage_error("prefix storage relocation destination is occupied");
+    }
+    if (destination.capacity_ < length_) {
+      storage_error("prefix storage relocation exceeds the destination "
+                    "capacity");
+    }
+    for (std::size_t index = 0; index < length_; ++index) {
+      try {
+        std::construct_at(destination.slot(index),
+                          std::move(*std::launder(slot(index))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      ++destination.length_;
+      std::destroy_at(std::launder(slot(index)));
+    }
+    length_ = 0;
+  }
+
+  [[nodiscard]] static bool try_allocate(std::uint64_t requested,
+                                         prefix_storage *result) noexcept {
+    if (result == nullptr) {
+      return false;
+    }
+    prefix_storage pending;
+    if (!pending.allocate_nothrow(requested)) {
+      return false;
+    }
+    *result = std::move(pending);
+    return true;
+  }
+
+private:
+  void allocate(std::uint64_t requested) {
+    if (!allocate_nothrow(requested)) {
+      allocation_error();
+    }
+  }
+
+  [[nodiscard]] bool allocate_nothrow(std::uint64_t requested) noexcept {
+    if (requested > (std::numeric_limits<std::size_t>::max)() ||
+        (requested != 0 &&
+         requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
+      return false;
+    }
+    capacity_ = static_cast<std::size_t>(requested);
+    if (capacity_ == 0) {
+      return true;
+    }
+    data_ = ::operator new(sizeof(T) * capacity_, std::align_val_t{alignof(T)},
+                           std::nothrow);
+    if (data_ == nullptr) {
+      capacity_ = 0;
+      return false;
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::size_t checked_prefix_index(std::uint64_t index) const {
+    if (index >= length_) {
+      storage_error("prefix storage index out of the live prefix");
+    }
+    return static_cast<std::size_t>(index);
+  }
+
+  [[nodiscard]] T *slot(std::size_t index) const {
+    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
+                                 sizeof(T) * index);
+  }
+
+  void release() noexcept {
+    if (data_ != nullptr) {
+      for (std::size_t index = length_; index > 0; --index) {
+        std::destroy_at(std::launder(slot(index - 1)));
+      }
+      ::operator delete(data_, std::align_val_t{alignof(T)});
+    }
+    data_ = nullptr;
+    capacity_ = 0;
+    length_ = 0;
+  }
+
+  void take(prefix_storage &&other) noexcept {
+    data_ = other.data_;
+    capacity_ = other.capacity_;
+    length_ = other.length_;
+    other.data_ = nullptr;
+    other.capacity_ = 0;
+    other.length_ = 0;
+  }
+
+  void *data_ = nullptr;
+  std::size_t capacity_ = 0;
+  std::size_t length_ = 0;
+};
+
+template <typename T>
+inline prefix_storage<T> allocate_prefix_storage(std::uint64_t capacity) {
+  return prefix_storage<T>(capacity);
+}
+
+template <typename T, typename... Args>
+inline void prefix_storage_append(prefix_storage<T> &value, Args &&...args) {
+  value.append(std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline void prefix_storage_pop(prefix_storage<T> &value) {
+  value.pop();
+}
+
+template <typename T>
+inline const T &prefix_storage_read(const prefix_storage<T> &value,
+                                    std::uint64_t index) {
+  return value.read(index);
+}
+
+template <typename T>
+inline T &prefix_storage_read_mut(prefix_storage<T> &value,
+                                  std::uint64_t index) {
+  return value.read_mut(index);
+}
+
+template <typename T>
+inline const T &prefix_storage_read_unchecked(const prefix_storage<T> &value,
+                                              std::uint64_t index) noexcept {
+  return value.read_unchecked(index);
+}
+
+template <typename T>
+inline T &prefix_storage_read_mut_unchecked(prefix_storage<T> &value,
+                                            std::uint64_t index) noexcept {
+  return value.read_mut_unchecked(index);
+}
+
+template <typename T>
+inline std::uint64_t prefix_storage_length(const prefix_storage<T> &value) {
+  return value.length();
+}
+
+inline std::string_view
+prefix_storage_text_view(const prefix_storage<std::uint8_t> &value) noexcept {
+  if (value.length() == 0) {
+    return {};
+  }
+  return {reinterpret_cast<const char *>(
+              std::addressof(value.read_unchecked(0))),
+          static_cast<std::size_t>(value.length())};
+}
+
+template <typename T>
+inline void prefix_storage_relocate(prefix_storage<T> &source,
+                                    prefix_storage<T> &destination) {
+  source.relocate_to(destination);
+}
+
+template <typename T, typename... Args>
+inline void prefix_storage_insert(prefix_storage<T> &value,
+                                  std::uint64_t index, Args &&...args) {
+  value.insert_at(index, std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline void prefix_storage_erase(prefix_storage<T> &value,
+                                 std::uint64_t index) {
+  value.erase_at(index);
+}
+
+template <typename T, typename... Args>
+inline std::unique_ptr<T> make_unique(Args &&...args) {
+  try {
+    return std::make_unique<T>(std::forward<Args>(args)...);
+  } catch (const std::bad_alloc &) {
+    allocation_error();
+  }
+}
+
+template <typename T>
+inline T &owner_access(std::unique_ptr<T> &owner) {
+  if (!owner) {
+    empty_owner_error();
+  }
+  return *owner;
+}
+
+template <typename T>
+inline const T &owner_access(const std::unique_ptr<T> &owner) {
+  if (!owner) {
+    empty_owner_error();
+  }
+  return *owner;
+}
+
+template <typename T>
+inline bool unique_owner_is_null(const std::unique_ptr<T> &owner) noexcept {
+  return !owner;
+}
+
+template <typename Base, typename Derived>
+inline std::unique_ptr<Base>
+unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
+  return std::unique_ptr<Base>(std::move(owner));
+}
+
+)";
+  if (usesManagedThreads) {
+    output << R"(
+
+class thread_handle final {
+public:
+  thread_handle() noexcept = default;
+  thread_handle(const thread_handle &) = delete;
+  thread_handle &operator=(const thread_handle &) = delete;
+
+  thread_handle(thread_handle &&other) noexcept
+      : state_(std::exchange(other.state_, nullptr)) {}
+
+  thread_handle &operator=(thread_handle &&other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+    if (state_ != nullptr) {
+      std::terminate();
+    }
+    state_ = std::exchange(other.state_, nullptr);
+    return *this;
+  }
+
+  ~thread_handle() {
+    // The source-defined thread destructor must discharge this obligation.
+    // Reaching the representation destructor with a live state would detach
+    // ownership from the language's mandatory-join policy.
+    if (state_ != nullptr) {
+      std::terminate();
+    }
+  }
+
+  [[nodiscard]] bool joinable() const noexcept { return state_ != nullptr; }
+  [[nodiscard]] ::gti_thread_state_v1 **state_address() noexcept {
+    return &state_;
+  }
+  void adopt(::gti_thread_state_v1 *state) noexcept {
+    if (state_ != nullptr || state == nullptr) {
+      std::terminate();
+    }
+    state_ = state;
+  }
+  void quarantine_for_terminal_failure() noexcept {
+    ::gti_runtime_detail::quarantine_managed_thread_state(&state_);
+  }
+
+private:
+  ::gti_thread_state_v1 *state_ = nullptr;
+};
+
+template <typename Task> struct managed_thread_task_box final {
+  Task task;
+};
+
+template <typename Task, typename Result>
+struct managed_thread_value_box final {
+  mir_lifetime_slot<Task, true> task;
+  mir_lifetime_slot<Result, true> result;
+
+  template <typename Input>
+  explicit managed_thread_value_box(Input &&input) {
+    task.construct(std::forward<Input>(input));
+  }
+};
+
+template <std::uint64_t Adapter> struct managed_thread_task_adapter;
+
+[[noreturn]] inline void malformed_thread_runtime_result() noexcept {
+  std::terminate();
+}
+
+inline bool zero_thread_failure_record(
+    const ::gti_failure_record_v1 &record) noexcept {
+  if (record.abi_version != 0 || record.code != GTI_FAILURE_CODE_NONE_V1 ||
+      record.detail != GTI_FAILURE_DETAIL_NONE_V1 || record.site_index != 0 ||
+      record.reserved != 0) {
+    return false;
+  }
+  for (const std::uint8_t byte : record.artifact_identity) {
+    if (byte != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool zero_thread_cleanup_failure(
+    const ::gti_failure_emergency_v1 &failure) noexcept {
+  return failure.abi_version == 0 && failure.reserved == 0 &&
+         zero_thread_failure_record(failure.primary) &&
+         zero_thread_failure_record(failure.secondary);
+}
+
+inline bool valid_thread_spawn_status(
+    ::gti_thread_spawn_status_v1 status) noexcept {
+  return status == GTI_THREAD_SPAWN_OK_V1 ||
+         status == GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1 ||
+         status == GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1;
+}
+
+inline bool valid_thread_join_status(
+    ::gti_thread_join_status_v1 status) noexcept {
+  return status == GTI_THREAD_JOIN_OK_V1 ||
+         status == GTI_THREAD_JOIN_NOT_JOINABLE_V1 ||
+         status == GTI_THREAD_JOIN_FAILED_V1 ||
+         status == GTI_THREAD_JOIN_WORKER_FAILURE_V1;
+}
+
+inline bool valid_thread_join_payload(
+    const ::gti_thread_join_result_v1 &result) noexcept {
+  if (result.status != GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
+    return result.failure_kind == GTI_THREAD_WORKER_FAILURE_NONE_V1 &&
+           zero_thread_failure_record(result.failure) &&
+           zero_thread_cleanup_failure(result.cleanup_failure) &&
+           result.primary_artifact == nullptr &&
+           result.secondary_artifact == nullptr;
+  }
+  if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
+    return result.failure.abi_version == GTI_FAILURE_ABI_VERSION_V1 &&
+           result.failure.reserved == 0 &&
+           zero_thread_cleanup_failure(result.cleanup_failure) &&
+           result.primary_artifact != nullptr &&
+           result.secondary_artifact == nullptr;
+  }
+  if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) {
+    return zero_thread_failure_record(result.failure) &&
+           result.cleanup_failure.abi_version ==
+               GTI_FAILURE_ABI_VERSION_V1 &&
+           result.cleanup_failure.reserved == 0 &&
+           result.cleanup_failure.primary.abi_version ==
+               GTI_FAILURE_ABI_VERSION_V1 &&
+           result.cleanup_failure.primary.reserved == 0 &&
+           result.cleanup_failure.secondary.abi_version ==
+               GTI_FAILURE_ABI_VERSION_V1 &&
+           result.cleanup_failure.secondary.reserved == 0 &&
+           result.primary_artifact != nullptr &&
+           result.secondary_artifact != nullptr;
+  }
+  return false;
+}
+
+template <std::uint64_t Adapter, typename Task>
+inline std::int32_t managed_thread_spawn(thread_handle &handle, Task &&task) {
+  if (handle.joinable()) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1);
+  }
+  using Stored = std::remove_cvref_t<Task>;
+  auto *context = new (std::nothrow)
+      managed_thread_task_box<Stored>{std::forward<Task>(task)};
+  if (context == nullptr) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1);
+  }
+  const ::gti_thread_spawn_result_v1 result = ::gti_rt_thread_spawn_v1(
+      &managed_thread_task_adapter<Adapter>::template entry<Stored>, context,
+      &managed_thread_task_adapter<Adapter>::template destroy<Stored>);
+  if (result.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      !valid_thread_spawn_status(result.status) ||
+      ((result.status == GTI_THREAD_SPAWN_OK_V1) !=
+       (result.state != nullptr))) {
+    malformed_thread_runtime_result();
+  }
+  if (result.status == GTI_THREAD_SPAWN_OK_V1) {
+    handle.adopt(result.state);
+  }
+  return static_cast<std::int32_t>(result.status);
+}
+
+template <std::uint64_t Adapter, typename Result, typename Task>
+inline std::int32_t
+managed_thread_spawn_value(thread_handle &handle, Task &&task) {
+  if (handle.joinable()) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1);
+  }
+  using Stored = std::remove_cvref_t<Task>;
+  using Box = managed_thread_value_box<Stored, Result>;
+  auto *context = new (std::nothrow) Box(std::forward<Task>(task));
+  if (context == nullptr) {
+    return static_cast<std::int32_t>(
+        GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1);
+  }
+  const ::gti_thread_spawn_result_v1 result =
+      ::gti_rt_thread_spawn_value_v1(
+          &managed_thread_task_adapter<Adapter>::
+              template entry_value<Stored, Result>,
+          context,
+          &managed_thread_task_adapter<Adapter>::
+              template complete_task<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template abandon_task<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template take_result<Stored, Result>,
+          &managed_thread_task_adapter<Adapter>::
+              template abandon_result<Stored, Result>);
+  if (result.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      !valid_thread_spawn_status(result.status) ||
+      ((result.status == GTI_THREAD_SPAWN_OK_V1) !=
+       (result.state != nullptr))) {
+    malformed_thread_runtime_result();
+  }
+  if (result.status == GTI_THREAD_SPAWN_OK_V1) {
+    handle.adopt(result.state);
+  }
+  return static_cast<std::int32_t>(result.status);
+}
+
+inline ::gti_thread_join_result_v1
+managed_thread_join(thread_handle &handle) noexcept {
+  const bool wasJoinable = handle.joinable();
+  const ::gti_thread_join_result_v1 result =
+      ::gti_rt_thread_join_v1(handle.state_address());
+  const bool isJoinable = handle.joinable();
+  if (result.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      result.reserved != 0 || !valid_thread_join_status(result.status) ||
+      !valid_thread_join_payload(result)) {
+    malformed_thread_runtime_result();
+  }
+  if ((!wasJoinable &&
+       (result.status != GTI_THREAD_JOIN_NOT_JOINABLE_V1 || isJoinable)) ||
+      (wasJoinable &&
+       ((result.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) ||
+        ((result.status == GTI_THREAD_JOIN_OK_V1 ||
+          result.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) ==
+         isJoinable) ||
+        (result.status == GTI_THREAD_JOIN_FAILED_V1 && !isJoinable)))) {
+    malformed_thread_runtime_result();
+  }
+  return result;
+}
+
+inline bool valid_thread_value_join_payload(
+    const ::gti_thread_value_join_result_v1 &result) noexcept {
+  if (!valid_thread_join_payload(result.join)) {
+    return false;
+  }
+  const bool ownsResult = result.result_context != nullptr &&
+                          result.take_result != nullptr &&
+                          result.abandon_result != nullptr;
+  const bool ownsNothing = result.result_context == nullptr &&
+                           result.take_result == nullptr &&
+                           result.abandon_result == nullptr;
+  return result.join.status == GTI_THREAD_JOIN_OK_V1 ? ownsResult
+                                                     : ownsNothing;
+}
+
+inline ::gti_thread_value_join_result_v1
+managed_thread_join_value(thread_handle &handle) noexcept {
+  const bool wasJoinable = handle.joinable();
+  ::gti_thread_value_join_result_v1 result =
+      ::gti_rt_thread_join_value_v1(handle.state_address());
+  const bool isJoinable = handle.joinable();
+  if (result.join.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+      result.join.reserved != 0 ||
+      !valid_thread_join_status(result.join.status) ||
+      !valid_thread_value_join_payload(result)) {
+    malformed_thread_runtime_result();
+  }
+  if ((!wasJoinable &&
+       (result.join.status != GTI_THREAD_JOIN_NOT_JOINABLE_V1 ||
+        isJoinable)) ||
+      (wasJoinable &&
+       ((result.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) ||
+        ((result.join.status == GTI_THREAD_JOIN_OK_V1 ||
+          result.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) ==
+         isJoinable) ||
+        (result.join.status == GTI_THREAD_JOIN_FAILED_V1 && !isJoinable)))) {
+    malformed_thread_runtime_result();
+  }
+  return result;
+}
+
+template <typename Result, typename Error>
+inline expected_result<Result, Error> managed_thread_take_join_result(
+    ::gti_thread_value_join_result_v1 &joined) {
+  if (joined.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) {
+    return make_unexpected_result(static_cast<Error>(2));
+  }
+  if (joined.join.status == GTI_THREAD_JOIN_FAILED_V1) {
+    return make_unexpected_result(static_cast<Error>(3));
+  }
+  if (joined.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
+    // The paired MIR invoke edge immediately propagates the exact worker
+    // record. This unreachable value only gives the C++ local a total
+    // representation before that edge is emitted.
+    return make_unexpected_result(static_cast<Error>(3));
+  }
+  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
+      joined.result_context == nullptr || joined.take_result == nullptr ||
+      joined.abandon_result == nullptr) {
+    malformed_thread_runtime_result();
+  }
+  mir_lifetime_slot<Result, true> result;
+  void *context = std::exchange(joined.result_context, nullptr);
+  const auto take = std::exchange(joined.take_result, nullptr);
+  joined.abandon_result = nullptr;
+  take(context, result.construction_address());
+  result.mark_constructed();
+  expected_result<Result, Error> output{std::move(result.get())};
+  result.destroy();
+  return output;
+}
+
+inline void managed_thread_abandon_join_result(
+    ::gti_thread_value_join_result_v1 &joined) noexcept {
+  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
+      joined.result_context == nullptr || joined.take_result == nullptr ||
+      joined.abandon_result == nullptr) {
+    malformed_thread_runtime_result();
+  }
+  void *context = std::exchange(joined.result_context, nullptr);
+  joined.take_result = nullptr;
+  const auto abandon = std::exchange(joined.abandon_result, nullptr);
+  abandon(context);
+}
+
+inline void
+managed_thread_quarantine_for_terminal_failure(thread_handle &handle) noexcept {
+  handle.quarantine_for_terminal_failure();
+}
+
+)";
+  }
+  output << R"(
+
+template <typename T>
+inline decltype(auto) forward_pack_argument(T &value) noexcept {
+  if constexpr (std::is_copy_constructible_v<T>) {
+    return static_cast<const T &>(value);
+  } else {
+    return static_cast<T &&>(value);
+  }
+}
+
+template <typename T>
+inline const std::remove_reference_t<T> &read_only_receiver(T &&value) noexcept {
+  return value;
+}
+
+template <typename T>
+inline std::remove_reference_t<T> &mutable_receiver(T &&value) noexcept {
+  return static_cast<std::remove_reference_t<T> &>(value);
+}
+
+template <typename T> struct exact_type {};
+
+enum class callable_capability { read_call, mutable_call, once_call };
+
+enum class callable_binding : std::uint8_t {
+  value = 1,
+  read_reference = 2,
+  mutable_reference = 4,
+};
+
+template <std::uint8_t Allowed, typename T> struct call_argument {};
+
+template <typename Parameter, typename Argument>
+inline constexpr bool exact_call_type_compatible =
+    std::is_same_v<Parameter, Argument> ||
+    (std::is_pointer_v<Parameter> &&
+     std::is_same_v<Argument, std::nullptr_t>) ||
+    (std::is_pointer_v<Parameter> && std::is_pointer_v<Argument> &&
+     std::is_same_v<std::remove_cv_t<std::remove_pointer_t<Parameter>>,
+                    std::remove_cv_t<std::remove_pointer_t<Argument>>> &&
+     (std::is_const_v<std::remove_pointer_t<Parameter>> ||
+      !std::is_const_v<std::remove_pointer_t<Argument>>));
+
+template <callable_binding Binding, typename T> struct call_parameter {
+  template <std::uint8_t Allowed, typename Argument>
+    requires((Allowed & static_cast<std::uint8_t>(Binding)) != 0 &&
+             exact_call_type_compatible<T, Argument>)
+  call_parameter(call_argument<Allowed, Argument>) {}
+};
+
+template <callable_capability Capability, typename... Parameters>
+struct exact_call {
+  exact_call() = default;
+
+  template <typename... Arguments>
+    requires(sizeof...(Parameters) == sizeof...(Arguments) &&
+             (std::is_constructible_v<Parameters, Arguments> && ...))
+  exact_call(const exact_call<Capability, Arguments...> &) {}
+};
+
+template <callable_capability Target, callable_capability Source,
+          typename... Parameters>
+inline exact_call<Target, Parameters...>
+retag_call(exact_call<Source, Parameters...>) {
+  return {};
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_read(Callable &&callable,
+            exact_call<callable_capability::read_call, Parameters...> selected,
+            Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(
+                      read_only_receiver(std::forward<Callable>(callable)),
+                      selected,
+                      std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(
+        read_only_receiver(std::forward<Callable>(callable)),
+        selected, std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(std::forward<Callable>(callable))(
+        std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto) invoke_mutable(
+    Callable &&callable,
+    exact_call<callable_capability::mutable_call, Parameters...> selected,
+    Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(
+                      mutable_receiver(std::forward<Callable>(callable)),
+                      selected,
+                      std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(
+        mutable_receiver(std::forward<Callable>(callable)),
+        selected, std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             read_only_receiver(
+                                 std::forward<Callable>(callable)),
+                             retag_call<callable_capability::read_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        read_only_receiver(std::forward<Callable>(callable)),
+        retag_call<callable_capability::read_call>(selected),
+        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(std::forward<Callable>(callable))(
+        std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_once(Callable &&callable,
+            exact_call<callable_capability::once_call, Parameters...> selected,
+            Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(
+                      std::move(callable),
+                      selected,
+                      std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(
+        std::move(callable), selected, std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             mutable_receiver(callable),
+                             retag_call<callable_capability::mutable_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        mutable_receiver(callable),
+        retag_call<callable_capability::mutable_call>(selected),
+        std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             read_only_receiver(callable),
+                             retag_call<callable_capability::read_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        read_only_receiver(callable),
+        retag_call<callable_capability::read_call>(selected),
+        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(callable)(std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, callable_capability Capability,
+          typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_selected(Callable &&callable,
+                exact_call<Capability, Parameters...> selected,
+                Args &&...args) {
+  if constexpr (Capability == callable_capability::once_call) {
+    return __gti_invoke(std::forward<Callable>(callable), selected,
+                        std::forward<Args>(args)...);
+  } else if constexpr (Capability == callable_capability::mutable_call) {
+    return __gti_invoke(mutable_receiver(callable), selected,
+                        std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(read_only_receiver(callable), selected,
+                                      std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(read_only_receiver(callable), selected,
+                        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(callable)(std::forward<Args>(args)...);
+  }
+}
+
+template <typename Array, typename Index>
+inline decltype(auto) array_at(Array &&array, Index index) {
+  static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
+  if (std::cmp_less(index, 0) ||
+      std::cmp_greater_equal(index, std::size(array))) {
+    array_bounds_error();
+  }
+  return std::forward<Array>(array)[static_cast<std::size_t>(index)];
+}
+
+template <typename Index>
+inline std::uint8_t string_view_at(std::string_view value, Index index) {
+  static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
+  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+    string_view_bounds_error();
+  }
+  return static_cast<std::uint8_t>(static_cast<unsigned char>(
+      value[static_cast<std::size_t>(index)]));
+}
+
+template <typename Target, typename Source>
+inline Target numeric_cast(Source value) {
+  static_assert(std::is_arithmetic_v<Target> && std::is_arithmetic_v<Source>);
+  if constexpr (std::is_integral_v<Target> &&
+                std::is_integral_v<Source>) {
+    if (!std::in_range<Target>(value)) {
+      numeric_conversion_error();
+    }
+  } else if constexpr (std::is_integral_v<Target> &&
+                       std::is_floating_point_v<Source>) {
+    if (!std::isfinite(value)) {
+      numeric_conversion_error();
+    }
+    const Source truncated = std::trunc(value);
+    const Source upper =
+        std::ldexp(Source{1}, std::numeric_limits<Target>::digits);
+    const Source lower = std::is_unsigned_v<Target> ? Source{0} : -upper;
+    if (truncated < lower || truncated >= upper) {
+      numeric_conversion_error();
+    }
+  }
+  return static_cast<Target>(value);
+}
+
+template <typename Left, typename Right>
+inline auto add(Left left, Right right) {
+  using Result = decltype(left + right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_left >
+          (std::numeric_limits<Result>::max)() - promoted_right) {
+        integer_domain_error("integer addition overflow");
+      }
+    } else if ((promoted_right > 0 &&
+                promoted_left >
+                    (std::numeric_limits<Result>::max)() - promoted_right) ||
+               (promoted_right < 0 &&
+                promoted_left <
+                    (std::numeric_limits<Result>::min)() - promoted_right)) {
+      integer_domain_error("integer addition overflow");
+    }
+  }
+  return static_cast<Result>(promoted_left + promoted_right);
+}
+
+template <typename Left, typename Right>
+inline auto subtract(Left left, Right right) {
+  using Result = decltype(left - right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_left < promoted_right) {
+        integer_domain_error("integer subtraction overflow");
+      }
+    } else if ((promoted_right > 0 &&
+                promoted_left <
+                    (std::numeric_limits<Result>::min)() + promoted_right) ||
+               (promoted_right < 0 &&
+                promoted_left >
+                    (std::numeric_limits<Result>::max)() + promoted_right)) {
+      integer_domain_error("integer subtraction overflow");
+    }
+  }
+  return static_cast<Result>(promoted_left - promoted_right);
+}
+
+template <typename Left, typename Right>
+inline auto multiply(Left left, Right right) {
+  using Result = decltype(left * right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_right != 0 &&
+          promoted_left >
+              (std::numeric_limits<Result>::max)() / promoted_right) {
+        integer_domain_error("integer multiplication overflow");
+      }
+    } else if (promoted_left != 0 && promoted_right != 0) {
+      if ((promoted_left == -1 &&
+           promoted_right == (std::numeric_limits<Result>::min)()) ||
+          (promoted_right == -1 &&
+           promoted_left == (std::numeric_limits<Result>::min)())) {
+        integer_domain_error("integer multiplication overflow");
+      }
+      if (promoted_left > 0) {
+        if ((promoted_right > 0 &&
+             promoted_left >
+                 (std::numeric_limits<Result>::max)() / promoted_right) ||
+            (promoted_right < 0 &&
+             promoted_right <
+                 (std::numeric_limits<Result>::min)() / promoted_left)) {
+          integer_domain_error("integer multiplication overflow");
+        }
+      } else if ((promoted_right > 0 &&
+                  promoted_left <
+                      (std::numeric_limits<Result>::min)() / promoted_right) ||
+                 (promoted_right < 0 &&
+                  promoted_left <
+                      (std::numeric_limits<Result>::max)() / promoted_right)) {
+        integer_domain_error("integer multiplication overflow");
+      }
+    }
+  }
+  return static_cast<Result>(promoted_left * promoted_right);
+}
+
+template <typename Value>
+inline constexpr Value wrapping_add(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) + static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value wrapping_sub(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) - static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value wrapping_mul(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) * static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value saturating_add(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  if constexpr (std::is_unsigned_v<Value>) {
+    if (left > maximum - right) {
+      return maximum;
+    }
+  } else if (right > 0 && left > maximum - right) {
+    return maximum;
+  } else if (right < 0 && left < minimum - right) {
+    return minimum;
+  }
+  return static_cast<Value>(left + right);
+}
+
+template <typename Value>
+inline constexpr Value saturating_sub(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  if constexpr (std::is_unsigned_v<Value>) {
+    if (left < right) {
+      return minimum;
+    }
+  } else if (right > 0 && left < minimum + right) {
+    return minimum;
+  } else if (right < 0 && left > maximum + right) {
+    return maximum;
+  }
+  return static_cast<Value>(left - right);
+}
+
+template <typename Value>
+inline constexpr Value saturating_mul(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  if (left == 0 || right == 0) {
+    return Value{0};
+  }
+  bool overflow = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    overflow = left > maximum / right;
+  } else if (left > 0) {
+    overflow = right > 0 ? left > maximum / right : right < minimum / left;
+  } else {
+    overflow = right > 0 ? left < minimum / right : left < maximum / right;
+  }
+  if (overflow) {
+    if constexpr (std::is_unsigned_v<Value>) {
+      return maximum;
+    }
+    return (left < 0) != (right < 0) ? minimum : maximum;
+  }
+  return static_cast<Value>(left * right);
+}
+)";
+  if (usesExpected) {
+    output << R"(
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_add(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left > maximum - right;
+  } else {
+    outside = (right > 0 && left > maximum - right) ||
+              (right < 0 && left < minimum - right);
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left + right);
+}
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_sub(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left < right;
+  } else {
+    outside = (right > 0 && left < minimum + right) ||
+              (right < 0 && left > maximum + right);
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left - right);
+}
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_mul(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  if (left == 0 || right == 0) {
+    return Value{0};
+  }
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left > maximum / right;
+  } else if (left > 0) {
+    outside = right > 0 ? left > maximum / right : right < minimum / left;
+  } else {
+    outside = right > 0 ? left < minimum / right : left < maximum / right;
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left * right);
+}
+)";
+  }
+  output << R"(
+
+template <typename Left, typename Right>
+inline auto divide(Left left, Right right) {
+  using Result = decltype(left / right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if (promoted_right == 0) {
+      integer_domain_error("division by zero");
+    }
+    if constexpr (std::is_signed_v<Result>) {
+      if (promoted_left == (std::numeric_limits<Result>::min)() &&
+          promoted_right == -1) {
+        integer_domain_error("integer division overflow");
+      }
+    }
+  }
+  return static_cast<Result>(promoted_left / promoted_right);
+}
+
+template <typename Value>
+inline auto negate(Value value) {
+  using Result = decltype(-value);
+  const Result promoted = static_cast<Result>(value);
+  if constexpr (std::is_integral_v<Result> && std::is_signed_v<Result>) {
+    if (promoted == (std::numeric_limits<Result>::min)()) {
+      integer_domain_error("integer negation overflow");
+    }
+  }
+  return static_cast<Result>(-promoted);
+}
+
+template <typename Left, typename Right>
+inline auto modulo(Left left, Right right) {
+  using Result = decltype(left % right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if (promoted_right == 0) {
+    integer_domain_error("modulo by zero");
+  }
+  if constexpr (std::is_signed_v<Result>) {
+    if (promoted_left == (std::numeric_limits<Result>::min)() &&
+        promoted_right == -1) {
+      return Result{0};
+    }
+  }
+  return static_cast<Result>(promoted_left % promoted_right);
+}
+
+template <typename Result, typename Count>
+inline std::uint32_t shift_count(Count count) {
+  if constexpr (std::is_signed_v<Count>) {
+    if (count < 0) {
+      integer_domain_error("negative shift count");
+    }
+  }
+  using UnsignedCount = std::make_unsigned_t<Count>;
+  using UnsignedResult = std::make_unsigned_t<Result>;
+  const auto unsigned_count = static_cast<UnsignedCount>(count);
+  if (static_cast<std::uint64_t>(unsigned_count) >=
+      std::numeric_limits<UnsignedResult>::digits) {
+    integer_domain_error("shift count exceeds operand width");
+  }
+  return static_cast<std::uint32_t>(unsigned_count);
+}
+
+template <typename Left, typename Right>
+inline auto shift_left(Left left, Right right) {
+  using Result = decltype(+left);
+  using UnsignedResult = std::make_unsigned_t<Result>;
+  const std::uint32_t count = shift_count<Result>(right);
+  const auto bits = static_cast<UnsignedResult>(static_cast<Result>(left));
+  const auto shifted = static_cast<UnsignedResult>(bits << count);
+  return std::bit_cast<Result>(shifted);
+}
+
+template <typename Left, typename Right>
+inline auto shift_right(Left left, Right right) {
+  using Result = decltype(+left);
+  const std::uint32_t count = shift_count<Result>(right);
+  return static_cast<Result>(static_cast<Result>(left) >> count);
+}
+
+template <typename Target, typename Value>
+inline Target &add_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(add(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &subtract_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(subtract(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &multiply_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(multiply(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &divide_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(divide(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &remainder_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(modulo(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_and_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target & value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_or_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target | value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_xor_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target ^ value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &shift_left_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(shift_left(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &shift_right_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(shift_right(target, value));
+  return target;
+}
+
+template <typename Target>
+inline Target &pre_increment(Target &target) {
+  return add_assign(target, 1);
+}
+
+template <typename Target>
+inline Target &pre_decrement(Target &target) {
+  return subtract_assign(target, 1);
+}
+
+template <typename Target>
+inline Target post_increment(Target &target) {
+  const Target previous = target;
+  add_assign(target, 1);
+  return previous;
+}
+
+template <typename Target>
+inline Target post_decrement(Target &target) {
+  const Target previous = target;
+  subtract_assign(target, 1);
+  return previous;
+}
+
+} // namespace gti_internal::backend
+
+)";
+}
+
+void writeCppCAbiTextViewAdapter(std::ostream &output,
+                                 CppSupportPreambleFeatures features) {
+  if (features.cAbiTextView) {
+    output << R"(
+namespace gti_internal::backend {
+
+inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
+  return ::gti_c_string_view{value.data(),
+                             static_cast<std::uint64_t>(value.size())};
+}
+
+} // namespace gti_internal::backend
+
+)";
+  }
+}
+
+} // namespace lang

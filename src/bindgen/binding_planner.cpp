@@ -1,5 +1,6 @@
 #include "gti/bindgen/binding_planner.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <iterator>
@@ -55,6 +56,44 @@ namespace {
   return false;
 }
 
+// Names the generated native bridge already occupies in the C ordinary
+// namespace, and the C17 keywords. GTI rejects both on a native-facing
+// identifier (GTI-S2065); mirroring the list here turns what would be a
+// frontend rejection of generated source into a recorded skip with its
+// reason — which matters most for a configured rename, where the caller
+// chose the spelling.
+[[nodiscard]] bool reservedNativeName(std::string_view name) {
+  static constexpr std::array<std::string_view, 51> names = {
+      "FILE",           "gti_c_string_view",
+      "ptrdiff_t",      "size_t",
+      "max_align_t",    "wchar_t",
+      "int8_t",         "int16_t",
+      "int32_t",        "int64_t",
+      "uint8_t",        "uint16_t",
+      "uint32_t",       "uint64_t",
+      "int_least8_t",   "int_least16_t",
+      "int_least32_t",  "int_least64_t",
+      "uint_least8_t",  "uint_least16_t",
+      "uint_least32_t", "uint_least64_t",
+      "int_fast8_t",    "int_fast16_t",
+      "int_fast32_t",   "int_fast64_t",
+      "uint_fast8_t",   "uint_fast16_t",
+      "uint_fast32_t",  "uint_fast64_t",
+      "intptr_t",       "uintptr_t",
+      "intmax_t",       "uintmax_t",
+      "char",           "const",
+      "double",         "enum",
+      "extern",         "float",
+      "inline",         "int",
+      "long",           "short",
+      "signed",         "sizeof",
+      "static",         "struct",
+      "typedef",        "union",
+      "unsigned",
+  };
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
 // `fileScope` marks names the generated header surface would emit at C file
 // scope (records, opaque handles, functions), which reject any leading
 // underscore; reserved `__x` / `_X` spellings reject everywhere.
@@ -80,6 +119,10 @@ identifierProblem(std::string_view name, bool fileScope) {
     return "'" + std::string(name) +
            "' contains an implementation-reserved '__' spelling";
   }
+  if (fileScope && reservedNativeName(name)) {
+    return "'" + std::string(name) +
+           "' is reserved by C or by the generated native bridge headers";
+  }
   return std::nullopt;
 }
 
@@ -92,7 +135,15 @@ enum class RecordBinding { CAbi, Opaque, Unavailable };
 // callback boundaries, and the `Handle**` out-parameter form exists only as
 // a direct function parameter. `RecordField` marks uses inside a [[c_abi]]
 // record, whose field set admits neither.
-enum class TypeUse { Ordinary, DirectFunctionParameter, RecordField };
+// `ArrayResult` marks the result of a function the caller annotated with
+// `[[c_array(count)]]`, which the language admits one pointer level deeper
+// than an ordinary result.
+enum class TypeUse {
+  Ordinary,
+  DirectFunctionParameter,
+  RecordField,
+  ArrayResult,
+};
 
 struct MappedType {
   bool supported = false;
@@ -129,10 +180,24 @@ public:
         usedNames_.insert(enumerator.name);
       }
     }
+    for (const NativeDeclarationId id : model_.order) {
+      const NativeDeclaration *declaration = model_.findDeclaration(id);
+      if (declaration == nullptr ||
+          declaration->kind != NativeDeclarationKind::Function) {
+        continue;
+      }
+      if (options_.renames.count(declaration->name) != 0) {
+        // A function's GTI name is its link symbol; renaming one would bind
+        // a different function than the header declares.
+        matchedRenames_.insert(declaration->name);
+        renamedFunctions_.insert(declaration->name);
+      }
+    }
     classifyRecords();
     commitSynthesis_ = true;
     BindingPlan plan;
     plan.options = options_;
+    plan.sourceFiles = model_.sources;
     for (const NativeDeclarationId id : model_.order) {
       const NativeDeclaration *declaration = model_.findDeclaration(id);
       if (declaration == nullptr) {
@@ -142,6 +207,16 @@ public:
           duplicateRecords_.count(id) != 0) {
         // The first declaration of this name already produced the binding;
         // every use of this entity spells the same name.
+        continue;
+      }
+      if (!admitted(*declaration)) {
+        // Excluded by provenance (C-05) or by the configured policy (C-07):
+        // the declaration resolves uses but is not part of the import. A
+        // skipped-typedef outcome makes those uses spell the canonical type;
+        // a referenced record is pulled below as an opaque handle.
+        if (declaration->kind == NativeDeclarationKind::Typedef) {
+          typedefImported_.emplace(id, false);
+        }
         continue;
       }
       synthesisOrigin_ = declaration->origin;
@@ -187,6 +262,66 @@ public:
       pendingCallbacks_.clear();
       plan.items.push_back(std::move(planned));
     }
+    // Out-of-policy records that in-policy bindings reference through
+    // pointers surface as opaque handles ahead of every use, in model
+    // order, so the emitted file stays self-contained.
+    std::vector<BindingItem> pulled;
+    for (const NativeDeclarationId id : model_.order) {
+      if (pulledRecords_.count(id) == 0) {
+        continue;
+      }
+      const NativeDeclaration *declaration = model_.findDeclaration(id);
+      if (declaration == nullptr) {
+        continue;
+      }
+      BindingItem handle;
+      handle.kind = BindingItemKind::Opaque;
+      handle.name = spelled(*declaration);
+      handle.origin = declaration->origin;
+      const NativeSourceFile *source =
+          model_.findSource(declaration->origin.file);
+      handle.reason =
+          "declared in " +
+          (source != nullptr ? source->path : std::string("a system header")) +
+          "; imported as an opaque handle because pointer uses reach it";
+      pulled.push_back(std::move(handle));
+    }
+    plan.items.insert(plan.items.begin(),
+                      std::make_move_iterator(pulled.begin()),
+                      std::make_move_iterator(pulled.end()));
+
+    // A configured entry that matched nothing is almost always a typo; it
+    // must be visible rather than silently doing nothing.
+    for (const BindingNamePattern &pattern : options_.allow) {
+      if (matchedPatterns_.count("allow:" + pattern.text) == 0) {
+        plan.policyProblems.push_back("allow pattern '" + pattern.text +
+                                      "' matched no declaration");
+      }
+    }
+    for (const BindingNamePattern &pattern : options_.deny) {
+      if (matchedPatterns_.count("deny:" + pattern.text) == 0) {
+        plan.policyProblems.push_back("deny pattern '" + pattern.text +
+                                      "' matched no declaration");
+      }
+    }
+    for (const std::string &name : renamedFunctions_) {
+      plan.policyProblems.push_back(
+          "rename '" + name +
+          "' names a function; a function's GTI name is its link symbol and "
+          "cannot be renamed");
+    }
+    for (const auto &[from, to] : options_.renames) {
+      if (matchedRenames_.count(from) == 0) {
+        plan.policyProblems.push_back("rename '" + from +
+                                      "' matched no imported type or constant");
+      }
+    }
+    for (const BindingArrayReturn &entry : options_.arrayReturns) {
+      if (matchedArrayReturns_.count(entry.function) == 0) {
+        plan.policyProblems.push_back("array return '" + entry.function +
+                                      "' matched no imported function");
+      }
+    }
     return plan;
   }
 
@@ -217,6 +352,57 @@ private:
   // duplicates leave the plan.
   std::unordered_map<std::string, NativeDeclarationId> recordIdByName_;
   std::set<NativeDeclarationId> duplicateRecords_;
+  // Out-of-policy records referenced by committed in-policy bindings; each
+  // becomes one opaque handle at the head of the plan.
+  mutable std::set<NativeDeclarationId> pulledRecords_;
+  // Which configured entries actually applied, so the unmatched ones can be
+  // reported instead of silently doing nothing.
+  mutable std::set<std::string> matchedPatterns_;
+  mutable std::set<std::string> matchedRenames_;
+  std::set<std::string> matchedArrayReturns_;
+  std::set<std::string> renamedFunctions_;
+
+  // -- Opt-in policy (C-07) -------------------------------------------------
+
+  // Provenance (C-05) first, then the configured lists. A declaration the
+  // policy excludes behaves exactly like a system one: it still resolves
+  // uses, and a referenced record still pulls in as an opaque handle.
+  [[nodiscard]] bool admitted(const NativeDeclaration &declaration) const {
+    if (!declaration.inPolicy) {
+      return false;
+    }
+    for (const BindingNamePattern &pattern : options_.deny) {
+      if (pattern.matches(declaration.name)) {
+        matchedPatterns_.insert("deny:" + pattern.text);
+        return false;
+      }
+    }
+    if (options_.allow.empty()) {
+      return true;
+    }
+    for (const BindingNamePattern &pattern : options_.allow) {
+      if (pattern.matches(declaration.name)) {
+        matchedPatterns_.insert("allow:" + pattern.text);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The GTI spelling of a declaration's name: a configured rename, or the C
+  // name. Functions never rename — their name is the link symbol.
+  [[nodiscard]] const std::string &
+  spelled(const NativeDeclaration &declaration) const {
+    if (declaration.kind == NativeDeclarationKind::Function) {
+      return declaration.name;
+    }
+    const auto rename = options_.renames.find(declaration.name);
+    if (rename == options_.renames.end()) {
+      return declaration.name;
+    }
+    matchedRenames_.insert(declaration.name);
+    return rename->second;
+  }
 
   [[nodiscard]] static BindingItem skipped(const NativeDeclaration &declaration,
                                            std::string reason) {
@@ -285,7 +471,7 @@ private:
         if (!shape.supported) {
           return shape;
         }
-        return supportedType(alias->name);
+        return supportedType(spelled(*alias));
       }
       const MappedType canonicalMapping =
           mapType(alias->aliased, allowVoid, use, pointerDepth);
@@ -298,7 +484,7 @@ private:
           outcome != typedefImported_.end() && !outcome->second) {
         return canonicalMapping;
       }
-      return supportedType(alias->name);
+      return supportedType(spelled(*alias));
     }
     switch (direct->kind) {
     case NativeTypeKind::Void:
@@ -342,7 +528,7 @@ private:
             "' is only available as an opaque handle; it can only be used "
             "through a pointer");
       }
-      return supportedType(record->name);
+      return supportedType(spelled(*record));
     }
     case NativeTypeKind::Enum: {
       const NativeDeclaration *target =
@@ -350,7 +536,11 @@ private:
       if (target == nullptr) {
         return unsupportedType("the enum reference is invalid");
       }
-      return supportedType(target->name);
+      if (!admitted(*target)) {
+        return unsupportedType("enum '" + target->name +
+                               "' is outside the import policy");
+      }
+      return supportedType(spelled(*target));
     }
     case NativeTypeKind::Function:
       return unsupportedType(
@@ -405,8 +595,18 @@ private:
         const auto binding = recordBindings_.find(innerPointee->declaration);
         if (record != nullptr && binding != recordBindings_.end() &&
             binding->second == RecordBinding::Opaque) {
-          return supportedType(record->name + "**");
+          return supportedType(spelled(*record) + "**");
         }
+      }
+      if (use == TypeUse::ArrayResult) {
+        // The language's `[[c_array(count)]]` result rule: one outer pointer
+        // over an otherwise admitted one-level pointer.
+        const MappedType inner =
+            mapType(pointer.pointee, false, TypeUse::Ordinary, 0);
+        if (inner.supported) {
+          return supportedType(inner.spelling + "*");
+        }
+        return inner;
       }
       return unsupportedType(
           "two-level pointers are limited to const char** and exact opaque "
@@ -444,9 +644,19 @@ private:
         return unsupportedType("record " +
                                recordReasons_.at(pointee->declaration));
       }
+      if (!admitted(*record) && commitSynthesis_) {
+        // A committed use of a system record pulls its opaque handle into
+        // the plan; name unification keeps one handle per tag name.
+        NativeDeclarationId pulledId = pointee->declaration;
+        if (const auto first = recordIdByName_.find(record->name);
+            first != recordIdByName_.end()) {
+          pulledId = first->second;
+        }
+        pulledRecords_.insert(pulledId);
+      }
       // Both [[c_abi]] records and [[c_opaque]] handles admit one-level
       // pointers; degradation to opaque keeps exactly these uses alive.
-      return supportedType(qualifier + record->name + "*");
+      return supportedType(qualifier + spelled(*record) + "*");
     }
     if (pointee->kind == NativeTypeKind::Enum) {
       const NativeDeclaration *target =
@@ -454,7 +664,7 @@ private:
       if (target == nullptr) {
         return unsupportedType("the pointee enum reference is invalid");
       }
-      return supportedType(qualifier + target->name + "*");
+      return supportedType(qualifier + spelled(*target) + "*");
     }
     return unsupportedType("this pointee type is outside the bounded GTI C "
                            "ABI pointer surface");
@@ -581,7 +791,7 @@ private:
         continue;
       }
       if (const std::optional<std::string> problem =
-              identifierProblem(declaration->name, true);
+              identifierProblem(spelled(*declaration), true);
           problem.has_value() && !declaration->name.empty()) {
         recordBindings_.emplace(id, RecordBinding::Unavailable);
         recordReasons_.emplace(id, *problem);
@@ -589,6 +799,15 @@ private:
         continue;
       }
       std::string reason;
+      if (!admitted(*declaration)) {
+        // A system record is a handle at most: binding a platform layout by
+        // value would freeze facts the header owner never promised GTI.
+        recordBindings_.emplace(id, RecordBinding::Opaque);
+        if (!declaration->name.empty()) {
+          recordIdByName_.emplace(declaration->name, id);
+        }
+        continue;
+      }
       if (!declaration->complete) {
         // A genuinely opaque handle; no degradation note.
       } else if (declaration->recordIsUnion) {
@@ -634,10 +853,10 @@ private:
   [[nodiscard]] BindingItem planRecord(NativeDeclarationId id,
                                        const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, true)) {
+            identifierProblem(item.name, true)) {
       return skipped(declaration, *problem);
     }
     if (recordBindings_.at(id) == RecordBinding::Opaque) {
@@ -672,13 +891,13 @@ private:
 
   [[nodiscard]] BindingItem planEnum(const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     // An anonymous enum is a pure constant list: C cannot name it in a later
     // declaration, and GTI needs only the `constexpr int32_t` constants.
     if (!declaration.name.empty()) {
       if (const std::optional<std::string> problem =
-              identifierProblem(declaration.name, false)) {
+              identifierProblem(item.name, false)) {
         return skipped(declaration, *problem);
       }
     }
@@ -702,11 +921,11 @@ private:
 
   [[nodiscard]] BindingItem planTypedef(const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     synthesisHint_ = declaration.name;
     if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, false)) {
+            identifierProblem(item.name, false)) {
       return skipped(declaration, *problem);
     }
     const NativeType *target = model_.findType(declaration.aliased);
@@ -748,14 +967,43 @@ private:
     if (type == nullptr || type->kind != NativeTypeKind::Function) {
       return skipped(declaration, "the function type is invalid");
     }
+    if (!declaration.asmLabel.empty()) {
+      return skipped(declaration,
+                     "the assembler label '" + declaration.asmLabel +
+                         "' renames the link symbol; importing the C name "
+                         "would bind a different function");
+    }
+    if (!declaration.callingConvention.empty()) {
+      return skipped(declaration, "the '" + declaration.callingConvention +
+                                      "' calling convention is outside the "
+                                      "bounded C surface");
+    }
     if (type->variadic) {
       return skipped(declaration,
                      "variadic C calls are outside the bounded GTI C ABI");
     }
+    // A caller-declared pointer-plus-count contract (C-07) changes both what
+    // the result may be and what the emitted declaration carries.
+    const BindingArrayReturn *arrayReturn = nullptr;
+    for (const BindingArrayReturn &candidate : options_.arrayReturns) {
+      if (candidate.function == declaration.name) {
+        arrayReturn = &candidate;
+        matchedArrayReturns_.insert(candidate.function);
+        break;
+      }
+    }
     synthesisHint_ = declaration.name + "_result";
-    const MappedType result = mapType(type->result, true);
+    const MappedType result = mapType(
+        type->result, true,
+        arrayReturn != nullptr ? TypeUse::ArrayResult : TypeUse::Ordinary);
     if (!result.supported) {
       return skipped(declaration, "result: " + result.reason);
+    }
+    if (arrayReturn != nullptr &&
+        result.spelling.find('*') == std::string::npos) {
+      return skipped(declaration,
+                     "the declared array return is not a pointer result, "
+                     "which '[[c_array]]' requires");
     }
     item.resultSpelling = result.spelling;
     for (std::size_t index = 0; index < type->parameters.size(); ++index) {
@@ -775,8 +1023,53 @@ private:
       }
       item.parameters.push_back({std::move(name), parameter.spelling});
     }
+    if (arrayReturn != nullptr) {
+      if (const std::optional<std::string> problem = arrayCountProblem(
+              declaration, *type, arrayReturn->countParameter, item)) {
+        return skipped(declaration, *problem);
+      }
+      item.arrayCountParameter = arrayReturn->countParameter;
+    }
     item.kind = BindingItemKind::Function;
     return item;
+  }
+
+  // The language requires the named count to be a parameter of type `I*`
+  // with `I` a fixed-width integer and the pointee writable. Emitting
+  // `[[c_array]]` against anything else would produce source the frontend
+  // rejects, so the contract is validated here and refused with its reason.
+  [[nodiscard]] std::optional<std::string>
+  arrayCountProblem(const NativeDeclaration &declaration,
+                    const NativeType &signature, const std::string &countName,
+                    const BindingItem &item) const {
+    std::size_t index = item.parameters.size();
+    for (std::size_t candidate = 0; candidate < item.parameters.size();
+         ++candidate) {
+      if (item.parameters[candidate].name == countName) {
+        index = candidate;
+        break;
+      }
+    }
+    if (index == item.parameters.size()) {
+      return "the declared array count '" + countName +
+             "' does not name a parameter of '" + declaration.name + "'";
+    }
+    if (index >= signature.parameters.size()) {
+      return "the declared array count '" + countName + "' has no type";
+    }
+    const NativeType *parameter = canonical(signature.parameters[index]);
+    if (parameter == nullptr || parameter->kind != NativeTypeKind::Pointer ||
+        parameter->constPointee) {
+      return "the declared array count '" + countName +
+             "' must be a pointer to a writable fixed-width integer";
+    }
+    const NativeType *pointee = canonical(parameter->pointee);
+    if (pointee == nullptr || pointee->kind != NativeTypeKind::Integer ||
+        !admittedScalar(*pointee)) {
+      return "the declared array count '" + countName +
+             "' must point to a fixed-width integer";
+    }
+    return std::nullopt;
   }
 
   // The GTI type of an imported macro constant follows its value: int32_t
@@ -784,23 +1077,41 @@ private:
   // scalars on the GTI side.
   [[nodiscard]] BindingItem planConstant(const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, false)) {
+            identifierProblem(item.name, false)) {
       return skipped(declaration, *problem);
     }
-    if (declaration.constantValue == std::numeric_limits<std::int64_t>::min()) {
-      // The one int64 value whose literal cannot be spelled directly.
-      return skipped(declaration,
-                     "the constant is outside the bounded int64 range");
-    }
     item.kind = BindingItemKind::Constant;
-    item.constantValue = declaration.constantValue;
-    const bool fits32 =
-        declaration.constantValue >= std::numeric_limits<std::int32_t>::min() &&
-        declaration.constantValue <= std::numeric_limits<std::int32_t>::max();
-    item.aliasSpelling = fits32 ? "int32_t" : "int64_t";
+    item.constantKind = declaration.constantKind;
+    switch (declaration.constantKind) {
+    case NativeConstantKind::Integer: {
+      if (declaration.constantValue ==
+          std::numeric_limits<std::int64_t>::min()) {
+        // The one int64 value whose literal cannot be spelled directly.
+        return skipped(declaration,
+                       "the constant is outside the bounded int64 range");
+      }
+      item.constantValue = declaration.constantValue;
+      const bool fits32 =
+          declaration.constantValue >=
+              std::numeric_limits<std::int32_t>::min() &&
+          declaration.constantValue <= std::numeric_limits<std::int32_t>::max();
+      item.aliasSpelling = fits32 ? "int32_t" : "int64_t";
+      break;
+    }
+    case NativeConstantKind::Floating:
+      item.constantFloating = declaration.constantFloating;
+      item.aliasSpelling = "double";
+      break;
+    case NativeConstantKind::String:
+      // A string constant is an ordinary GTI string view; the language's own
+      // conversion carries it into a c_string parameter at a call site.
+      item.constantText = declaration.constantText;
+      item.aliasSpelling = "std::string_view";
+      break;
+    }
     return item;
   }
 };

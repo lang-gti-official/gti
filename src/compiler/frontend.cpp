@@ -1,7 +1,8 @@
 #include "gti/frontend.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
-#include "gti/mir.h"
+#include "gti/mir_lowering.h"
+#include "gti/mir_verifier.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
@@ -359,7 +360,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto hirStart = std::chrono::steady_clock::now();
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
-    return HirLowerer(options.target).lower(result.program, semantic);
+    return HirLowerer(options.target)
+        .lower(result.program, semantic.model(), semantic);
   }();
   if (options.workMetrics != nullptr) {
     options.workMetrics->hirMicroseconds = static_cast<std::size_t>(

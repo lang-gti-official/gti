@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce ADR 016's one-way LoweredProgram backend dependency."""
+"""Enforce the one-way LoweredProgram and backend-writer dependencies."""
 
 from __future__ import annotations
 
@@ -16,16 +16,40 @@ BACKEND_FILES = (
     "include/gti/native_header.h",
     "src/compiler/cpp_backend.cpp",
     "src/compiler/cpp_emitter.cpp",
+    "src/compiler/cpp_failure_support_writer.cpp",
+    "src/compiler/cpp_failure_support_writer.h",
+    "src/compiler/cpp_mir_body_emission_plan.cpp",
+    "src/compiler/cpp_mir_body_emission_plan.h",
     "src/compiler/cpp_mir_body_emitter.cpp",
     "src/compiler/cpp_mir_body_emitter.h",
+    "src/compiler/cpp_mir_body_text_writer.cpp",
+    "src/compiler/cpp_mir_body_text_writer.h",
     "src/compiler/cpp_mir_program_plan.cpp",
     "src/compiler/cpp_mir_program_plan.h",
     "src/compiler/cpp_mir_representation_snapshot.cpp",
     "src/compiler/cpp_mir_representation_snapshot.h",
+    "src/compiler/cpp_program_emission_plan.cpp",
+    "src/compiler/cpp_program_emission_plan.h",
+    "src/compiler/cpp_program_emission_planner.cpp",
+    "src/compiler/cpp_program_text_writer.cpp",
+    "src/compiler/cpp_program_text_writer.h",
     "src/compiler/cpp_representation.cpp",
     "src/compiler/cpp_representation.h",
+    "src/compiler/cpp_support_preamble.cpp",
+    "src/compiler/cpp_support_preamble.h",
     "src/compiler/mir_backend.cpp",
     "src/compiler/native_header.cpp",
+)
+
+FORMATTING_WRITER_FILES = (
+    "src/compiler/cpp_failure_support_writer.cpp",
+    "src/compiler/cpp_failure_support_writer.h",
+    "src/compiler/cpp_mir_body_text_writer.cpp",
+    "src/compiler/cpp_mir_body_text_writer.h",
+    "src/compiler/cpp_program_text_writer.cpp",
+    "src/compiler/cpp_program_text_writer.h",
+    "src/compiler/cpp_support_preamble.cpp",
+    "src/compiler/cpp_support_preamble.h",
 )
 
 CONTRACT_FILES = (
@@ -43,6 +67,14 @@ FORBIDDEN_IDENTIFIERS = re.compile(
 CONTRACT_FORBIDDEN = re.compile(
     r"\b(?:FrontendResult|HirProgram|OptimizationResult|Program|SemanticModel)\b|"
     r"\bHir[A-Z][A-Za-z0-9_]*\b|lowered_program_builder"
+)
+WRITER_FORBIDDEN_INCLUDES = re.compile(
+    r'^\s*#\s*include\s*[<"]gti/(?:frontend|lowered_program|mir|optimizer|semantic_analyzer)\.h[>"]',
+    re.MULTILINE,
+)
+WRITER_FORBIDDEN_IDENTIFIERS = re.compile(
+    r"\b(?:LoweredProgram|MirProgram|CppMirBodyEmitter|"
+    r"CppMirBodyEmissionMap|CppMirRepresentationSnapshot)\b"
 )
 
 
@@ -78,6 +110,18 @@ def main() -> int:
                 f"{relative}: lowered contract exposes frontend identity: {match.group(0)}"
             )
 
+    for relative in FORMATTING_WRITER_FILES:
+        source = (root / relative).read_text(encoding="utf-8")
+        if match := WRITER_FORBIDDEN_INCLUDES.search(source):
+            failures.append(
+                f"{relative}: formatting writer includes program authority: "
+                f"{match.group(0).strip()}"
+            )
+        if match := WRITER_FORBIDDEN_IDENTIFIERS.search(without_comments(source)):
+            failures.append(
+                f"{relative}: formatting writer performs program lookup: {match.group(0)}"
+            )
+
     backend_header = (root / "include/gti/backend.h").read_text(encoding="utf-8")
     if not re.search(
         r"generate\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*\)\s*=\s*0",
@@ -99,7 +143,10 @@ def main() -> int:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
         return 1
-    print("backend boundary: LoweredProgram is the only production input")
+    print(
+        "backend boundary: LoweredProgram is the only production input and "
+        "formatting writers are plan-only"
+    )
     return 0
 
 

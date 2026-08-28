@@ -1,0 +1,5 @@
+{
+  "title": "Allocate and reuse pool storage",
+  "description": "Handles allocation explicitly and reuses an erased checked slot.",
+  "mode": "run"
+}

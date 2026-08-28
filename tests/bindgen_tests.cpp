@@ -249,23 +249,60 @@ int sum_row(Row row);
 )");
   expect(read.usable(), "the ABI-safety header should read");
   const std::string printed = lang::bindgen::printNativeModel(read.model);
-  expect(!contains(printed, "renamed_symbol"),
-         "an assembler-labeled function should not import under its C name");
-  bool sawAsmLabel = false;
-  for (const lang::bindgen::ReaderDiagnostic &diagnostic : read.diagnostics) {
-    sawAsmLabel =
-        sawAsmLabel || contains(diagnostic.message, "assembler label");
-  }
-  expect(sawAsmLabel, "the assembler-label skip should report its reason");
+  // C-06: the assembler label is a model fact; the planner owns the
+  // rejection so nothing is silently misread and nothing is lost.
+  expect(contains(printed, "function renamed_symbol(value: i32) -> i32 "
+                           "[asm \"_actual_symbol\"]"),
+         "an assembler label should model as a function fact");
   expect(contains(printed, "function sum_row(row: ptr(i32)) -> i32"),
          "a typedef'd array parameter should decay to its element pointer");
   const lang::bindgen::BindingPlan plan =
       lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *renamed = findItem(plan, "renamed_symbol");
+  expect(renamed != nullptr &&
+             renamed->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(renamed->reason, "assembler label '_actual_symbol'"),
+         "the planner should skip the assembler-labeled function with its "
+         "reason");
+  // C-06: the layout attribute is a model fact, so the degradation reason
+  // names which attribute rather than saying "an attribute".
+  expect(contains(printed, "record Squeezed [packed]"),
+         "a packed record should carry its layout fact");
   const lang::bindgen::BindingItem *squeezed = findItem(plan, "Squeezed");
   expect(squeezed != nullptr &&
              squeezed->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(squeezed->reason, "attribute"),
-         "a packed record should degrade to opaque with its reason");
+             contains(squeezed->reason, "the record is packed"),
+         "a packed record should degrade to opaque naming the attribute");
+}
+
+// A non-C calling convention is likewise a model fact the planner rejects
+// explicitly; the canonical LLP64 parse target understands the Windows
+// convention spellings.
+void testCallingConventionFacts() {
+  const lang::bindgen::ReadResult read =
+      readC(R"(
+int __vectorcall win_callback(int value);
+int plain(int value);
+)",
+            lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
+  expect(read.usable(), "the calling-convention header should read");
+  const std::string printed = lang::bindgen::printNativeModel(read.model);
+  expect(contains(printed, "function win_callback(value: i32) -> i32 "
+                           "[callconv vectorcall]"),
+         "a non-C calling convention should model as a function fact");
+  expect(contains(printed, "function plain(value: i32) -> i32\n"),
+         "the C calling convention should carry no fact");
+  const lang::bindgen::BindingPlan plan =
+      lang::bindgen::planBindings(read.model, {});
+  const lang::bindgen::BindingItem *item = findItem(plan, "win_callback");
+  expect(item != nullptr &&
+             item->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(item->reason, "'vectorcall' calling convention"),
+         "the planner should skip the non-C convention with its reason");
+  const lang::bindgen::BindingItem *plain = findItem(plan, "plain");
+  expect(plain != nullptr &&
+             plain->kind == lang::bindgen::BindingItemKind::Function,
+         "the C-convention function should import");
 }
 
 void testReaderFieldAndQualifierForms() {
@@ -637,16 +674,20 @@ int use_base(int value);
          "redefinition should keep the latest value");
   expect(!contains(source, "GUARD_ONLY") && !contains(source, "CALL"),
          "guards and function-like macros should stay silent");
-  expect(!contains(source, "STRINGY = ") && !contains(source, "FLOATY = ") &&
-             !contains(source, "TOO_BIG"),
-         "non-integer and out-of-range macros should not import");
-  bool notedString = false;
+  // C-06 constants cover every bounded form a C macro body can hold.
+  expect(contains(source, "constexpr std::string_view STRINGY = \"text\";"),
+         "a string macro should import as a string-view constant");
+  expect(contains(source, "constexpr double FLOATY = 1.5;"),
+         "a floating macro should import as a double constant");
+  expect(!contains(source, "TOO_BIG"),
+         "an out-of-range macro should not import");
+  bool notedUnevaluable = false;
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : result.diagnostics) {
-    notedString =
-        notedString || contains(diagnostic.message,
-                                "'STRINGY' is not a bounded integer constant");
+    notedUnevaluable =
+        notedUnevaluable ||
+        contains(diagnostic.message, "'TOO_BIG' is not a bounded constant");
   }
-  expect(notedString,
+  expect(notedUnevaluable,
          "a non-evaluable object-like macro should be noted, not dropped");
 }
 
@@ -767,6 +808,230 @@ int queue_size(struct util__queue *queue);
          "a use of the reserved-spelling record should skip with the reason");
 }
 
+// C-05: line markers in preprocessed input carry the include graph. System
+// declarations are modeled — a system typedef resolves canonically and a
+// system macro's value feeds user constants — but only root and user-header
+// declarations emit; a system record referenced through pointers is pulled
+// in as one opaque handle, and every origin reports its original file.
+void testSourceProvenanceAndImportPolicy() {
+  const lang::bindgen::BindgenResult result = lang::bindgen::runCBindgen(
+      "# 1 \"/work/app.h\"\n"
+      "# 1 \"<built-in>\" 1\n"
+      "# 1 \"/work/app.h\" 2\n"
+      "# 1 \"/usr/include/systime.h\" 1 3\n"
+      "typedef long time_t;\n"
+      "struct timespec { time_t seconds; long nanoseconds; };\n"
+      "#define CLOCK_MONO 1\n"
+      "int system_only(int value);\n"
+      "# 2 \"/work/app.h\" 2\n"
+      "# 1 \"/work/util.h\" 1\n"
+      "int util_helper(int value);\n"
+      "# 3 \"/work/app.h\" 2\n"
+      "#define APP_FLAG (CLOCK_MONO | 4)\n"
+      "time_t app_now(void);\n"
+      "struct timespec *app_timespec(void);\n"
+      "struct timespec app_by_value(void);\n",
+      "app.h");
+  expect(result.usable(), "the provenance input should read");
+  expect(result.plan.sourceFiles.size() == 2,
+         "the consumed-file table should list both included files");
+  if (result.plan.sourceFiles.size() == 2) {
+    expect(result.plan.sourceFiles[0].path == "/usr/include/systime.h" &&
+               result.plan.sourceFiles[0].system,
+           "the system header should classify as system provenance");
+    expect(result.plan.sourceFiles[1].path == "/work/util.h" &&
+               !result.plan.sourceFiles[1].system,
+           "the user include should classify as user provenance");
+  }
+  const std::string &source = result.gtiSource;
+  expect(contains(source, "int64_t app_now()"),
+         "a system typedef should spell canonically at its use");
+  expect(!contains(source, "using time_t"),
+         "the system typedef itself should not emit");
+  expect(contains(source, "[[c_opaque]] struct timespec;") &&
+             contains(source, "declared in /usr/include/systime.h"),
+         "a referenced system record should pull in as one opaque handle");
+  expect(contains(source, "timespec* app_timespec()"),
+         "pointer uses of the pulled system record should import");
+  expect(contains(source, "constexpr int32_t APP_FLAG = 5;"),
+         "a user macro referencing a system macro should evaluate");
+  expect(!contains(source, "CLOCK_MONO ="),
+         "the system macro itself should not emit");
+  expect(contains(source, "int32_t util_helper(int32_t value)"),
+         "user-include declarations should import");
+  expect(!contains(source, "system_only"),
+         "system functions should stay out of the import and its skip "
+         "report");
+  const lang::bindgen::BindingItem *byValue =
+      findItem(result.plan, "app_by_value");
+  expect(byValue != nullptr &&
+             byValue->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(byValue->reason, "opaque handle"),
+         "a by-value use of a system record should skip with its reason");
+  const std::string printed = lang::bindgen::printNativeModel(
+      lang::bindgen::ClangCReader(lang::bindgen::CTargetProfile{})
+          .read("# 1 \"/work/app.h\"\n"
+                "# 1 \"/usr/include/systime.h\" 1 3\n"
+                "typedef long time_t;\n"
+                "# 2 \"/work/app.h\" 2\n"
+                "time_t app_now(void);\n")
+          .model);
+  expect(contains(printed, "typedef time_t = i64 (external)"),
+         "system declarations should print with external provenance");
+
+  // The closing gate: the policy-filtered source is real GTI.
+  const std::string program = result.gtiSource + "\nint main() {\n"
+                                                 "  return 0;\n"
+                                                 "}\n";
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "bindgen-provenance.gti", program, {standardLibrary / "prelude.gti"}, {},
+      {standardLibrary});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(),
+         "the frontend should accept the policy-filtered bindings");
+}
+
+// C-07: opt-in policy. Allow/deny narrow the import by name while excluded
+// declarations still resolve uses exactly like out-of-policy ones; a rename
+// gives a type whose C spelling GTI cannot use a usable name; and a declared
+// pointer-plus-count contract emits `[[c_array(count)]]`, including the
+// two-level result form the bounded surface otherwise refuses.
+void testOptInImportPolicy() {
+  const std::string header = R"(
+typedef struct Point { int x; int y; } Point;
+typedef struct Handle Handle;
+struct lib__internal { int state; };
+const Point *lib_points(unsigned int *count);
+Handle **lib_handles(int *count);
+int lib_take_internal(struct lib__internal *state);
+int lib_internal_helper(int value);
+int lib_public(int value);
+)";
+
+  {
+    lang::bindgen::BindingOptions options;
+    options.deny.push_back({"lib_internal_*"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(result.usable(), "the deny-configured header should read");
+    expect(!contains(result.gtiSource, "lib_internal_helper"),
+           "a denied declaration should not emit");
+    expect(contains(result.gtiSource, "lib_public"),
+           "declarations outside the deny list should emit");
+  }
+  {
+    lang::bindgen::BindingOptions options;
+    options.allow.push_back({"lib_public"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "lib_public") &&
+               !contains(result.gtiSource, "lib_points"),
+           "a non-empty allow list should admit only matching declarations");
+  }
+  {
+    // The rename gives the reserved-spelling record a usable name, so the
+    // function taking it through a pointer becomes importable.
+    lang::bindgen::BindingOptions options;
+    options.renames.emplace("lib__internal", "LibInternal");
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "[[c_abi]]\nstruct LibInternal {"),
+           "the renamed record should emit under its GTI name");
+    expect(contains(result.gtiSource, "lib_take_internal(LibInternal* state)"),
+           "uses of the renamed record should spell the new name");
+  }
+  {
+    // A function's GTI name is its link symbol, so renaming one is refused
+    // rather than silently binding a different symbol.
+    lang::bindgen::BindingOptions options;
+    options.renames.emplace("lib_public", "lib_renamed");
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource, "int32_t lib_public(int32_t value)"),
+           "a function keeps its C name regardless of a rename entry");
+    bool refused = false;
+    for (const lang::bindgen::ReaderDiagnostic &diagnostic :
+         result.diagnostics) {
+      refused = refused ||
+                contains(diagnostic.message, "'lib_public' names a function");
+    }
+    expect(refused, "renaming a function should report why it cannot apply");
+  }
+  {
+    lang::bindgen::BindingOptions options;
+    options.arrayReturns.push_back({"lib_points", "count"});
+    options.arrayReturns.push_back({"lib_handles", "count"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(contains(result.gtiSource,
+                    "[[c_array(count)]] const Point* lib_points("
+                    "uint32_t* count)"),
+           "a one-level array result should carry the attribute");
+    expect(contains(result.gtiSource,
+                    "[[c_array(count)]] Handle** lib_handles(int32_t* count)"),
+           "the two-level array result form should import with the "
+           "attribute");
+    const lang::bindgen::BindgenResult unannotated =
+        lang::bindgen::runCBindgen(header, "lib.h", {});
+    const lang::bindgen::BindingItem *handles =
+        findItem(unannotated.plan, "lib_handles");
+    expect(handles != nullptr &&
+               handles->kind == lang::bindgen::BindingItemKind::Skipped,
+           "without the contract the two-level result stays refused");
+  }
+  {
+    // An unusable count parameter must refuse the function rather than emit
+    // an attribute the frontend rejects.
+    lang::bindgen::BindingOptions options;
+    options.arrayReturns.push_back({"lib_points", "missing"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    const lang::bindgen::BindingItem *points =
+        findItem(result.plan, "lib_points");
+    expect(points != nullptr &&
+               points->kind == lang::bindgen::BindingItemKind::Skipped &&
+               contains(points->reason, "does not name a parameter"),
+           "an array count naming no parameter should refuse the function");
+  }
+  {
+    // A configured entry that matches nothing is reported, never silent.
+    lang::bindgen::BindingOptions options;
+    options.deny.push_back({"lib_absent_*"});
+    options.renames.emplace("AbsentType", "Present");
+    options.arrayReturns.push_back({"lib_absent", "count"});
+    const lang::bindgen::BindgenResult result =
+        lang::bindgen::runCBindgen(header, "lib.h", options);
+    expect(result.plan.policyProblems.size() == 3,
+           "every unmatched configuration entry should be reported");
+  }
+
+  // The closing gate: a fully configured import is real GTI.
+  lang::bindgen::BindingOptions options;
+  options.deny.push_back({"lib_internal_*"});
+  options.renames.emplace("lib__internal", "LibInternal");
+  options.arrayReturns.push_back({"lib_points", "count"});
+  options.arrayReturns.push_back({"lib_handles", "count"});
+  const lang::bindgen::BindgenResult configured =
+      lang::bindgen::runCBindgen(header, "lib.h", std::move(options));
+  const std::string program = configured.gtiSource + "\nint main() {\n"
+                                                     "  return 0;\n"
+                                                     "}\n";
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "bindgen-policy.gti", program, {standardLibrary / "prelude.gti"}, {},
+      {standardLibrary});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(),
+         "the frontend should accept the configured bindings");
+}
+
 // -- Frontend acceptance ----------------------------------------------------
 
 // The closing gate: generated bindings must be accepted by the real
@@ -834,6 +1099,9 @@ int main() {
   testReaderCorpusGoldens();
   testReaderExpandedSurface();
   testReaderAbiSafetyGates();
+  testCallingConventionFacts();
+  testSourceProvenanceAndImportPolicy();
+  testOptInImportPolicy();
   testReaderFieldAndQualifierForms();
   testRecordDegradation();
   testFieldPositionDegradation();

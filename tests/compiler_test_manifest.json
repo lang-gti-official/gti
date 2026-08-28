@@ -1,0 +1,545 @@
+{
+  "schema_version": 1,
+  "tests": [
+    {
+      "name": "testDefiniteReturnAnalysis",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSourceUnitDependencyGraph",
+      "suite": "frontend"
+    },
+    {
+      "name": "testStandardLibraryImports",
+      "suite": "frontend"
+    },
+    {
+      "name": "testPackageImports",
+      "suite": "frontend"
+    },
+    {
+      "name": "testLoopControlStatements",
+      "suite": "frontend"
+    },
+    {
+      "name": "testDoWhileStatements",
+      "suite": "frontend"
+    },
+    {
+      "name": "testConditionalExpressions",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSwitchStatements",
+      "suite": "frontend"
+    },
+    {
+      "name": "testParserRecovery",
+      "suite": "frontend"
+    },
+    {
+      "name": "testParserNestingLimit",
+      "suite": "frontend"
+    },
+    {
+      "name": "testExecutablePathDiscovery",
+      "suite": "frontend"
+    },
+    {
+      "name": "testFrontendStopPhase",
+      "suite": "frontend"
+    },
+    {
+      "name": "testTargetTripleParsing",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSupportFacilities",
+      "suite": "frontend"
+    },
+    {
+      "name": "testContainerScaffoldSurfaces",
+      "suite": "declarations"
+    },
+    {
+      "name": "testMovedLoopLocalRedeclarations",
+      "suite": "declarations"
+    },
+    {
+      "name": "testInferredVoidGenericArguments",
+      "suite": "declarations"
+    },
+    {
+      "name": "testTrustedIntrinsicDeclarations",
+      "suite": "declarations"
+    },
+    {
+      "name": "testThisReceiverKeyword",
+      "suite": "declarations"
+    },
+    {
+      "name": "testClassesStructsAndAccess",
+      "suite": "declarations"
+    },
+    {
+      "name": "testMutableFieldGroups",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConstructorsAndReceiverMutability",
+      "suite": "declarations"
+    },
+    {
+      "name": "testInheritanceAndInterfaces",
+      "suite": "declarations"
+    },
+    {
+      "name": "testInheritedGenericTargetInstances",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDirectBraceConstruction",
+      "suite": "declarations"
+    },
+    {
+      "name": "testRecursiveClassLayouts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testNamedGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testExactQualifiedClassSpecializations",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConstrainedGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConcurrencyTypeCapabilities",
+      "suite": "declarations"
+    },
+    {
+      "name": "testSourceDefinedConcepts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testStructuralRequiresAndAccumulate",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDomainValueOperatorCapabilities",
+      "suite": "declarations"
+    },
+    {
+      "name": "testSymbolicAutoLocalBinding",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConstructorLocalTypeGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testValueGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testContextualArrayArguments",
+      "suite": "declarations"
+    },
+    {
+      "name": "testVariadicGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testExactFunctionOverloadsAndConversions",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFixedArrays",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFixedArrayDynamicWriteFailureEdge",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFixedArrayChainedDynamicIndex",
+      "suite": "declarations"
+    },
+    {
+      "name": "testLocalTypeInference",
+      "suite": "declarations"
+    },
+    {
+      "name": "testStructuredBindings",
+      "suite": "declarations"
+    },
+    {
+      "name": "testTypeAliases",
+      "suite": "declarations"
+    },
+    {
+      "name": "testNamespacesAndAliases",
+      "suite": "declarations"
+    },
+    {
+      "name": "testExternCInterop",
+      "suite": "declarations"
+    },
+    {
+      "name": "testScopedEnums",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDefaultParameters",
+      "suite": "declarations"
+    },
+    {
+      "name": "testOwnershipSemanticFoundation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testExplicitValueMoves",
+      "suite": "ownership"
+    },
+    {
+      "name": "testEdgeSensitiveMoveFlow",
+      "suite": "ownership"
+    },
+    {
+      "name": "testProjectedFieldMoves",
+      "suite": "ownership"
+    },
+    {
+      "name": "testIndexedPlaceMovesAndInitialization",
+      "suite": "ownership"
+    },
+    {
+      "name": "testExclusiveReborrowLoanGraph",
+      "suite": "ownership"
+    },
+    {
+      "name": "testDisjointFieldReceiverBorrowsThroughReferenceParameters",
+      "suite": "ownership"
+    },
+    {
+      "name": "testNonNullReferences",
+      "suite": "ownership"
+    },
+    {
+      "name": "testGlobalReferencePlaces",
+      "suite": "ownership"
+    },
+    {
+      "name": "testGlobalBorrowReturns",
+      "suite": "ownership"
+    },
+    {
+      "name": "testPrefixStorageCapability",
+      "suite": "ownership"
+    },
+    {
+      "name": "testReceiverTiedReferenceReturns",
+      "suite": "ownership"
+    },
+    {
+      "name": "testArgumentTiedReferenceReturns",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceGroundwork",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredCarrierReturnProvenance",
+      "suite": "ownership"
+    },
+    {
+      "name": "testNestedMemberReferenceReturnForwarding",
+      "suite": "ownership"
+    },
+    {
+      "name": "testReferenceArgumentRuntimePlaceCoherence",
+      "suite": "ownership"
+    },
+    {
+      "name": "testCallSiblingArgumentBorrowConflicts",
+      "suite": "ownership"
+    },
+    {
+      "name": "testForwardIteratorContractsAndBinarySearch",
+      "suite": "ownership"
+    },
+    {
+      "name": "testWritableAndMovementIteratorCapabilities",
+      "suite": "ownership"
+    },
+    {
+      "name": "testGeneralOwnerDependentReturns",
+      "suite": "ownership"
+    },
+    {
+      "name": "testSwitchAndBreakLoanFlow",
+      "suite": "ownership"
+    },
+    {
+      "name": "testSharedReadOnlyLoanAliases",
+      "suite": "ownership"
+    },
+    {
+      "name": "testUniqueOwnershipAndAllocation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testPolymorphicUniqueOwnerUpcast",
+      "suite": "ownership"
+    },
+    {
+      "name": "testCompilerPrivateStorage",
+      "suite": "ownership"
+    },
+    {
+      "name": "testVariadicStorageConstructionAndVector",
+      "suite": "ownership"
+    },
+    {
+      "name": "testAggregateOwnershipTraits",
+      "suite": "ownership"
+    },
+    {
+      "name": "testDefaultedDefaultLifecycle",
+      "suite": "ownership"
+    },
+    {
+      "name": "testDestructorsAndActiveDropState",
+      "suite": "ownership"
+    },
+    {
+      "name": "testRestrictedMemberOperators",
+      "suite": "ownership"
+    },
+    {
+      "name": "testCallableMemberOperators",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConsumingCallableOperators",
+      "suite": "ownership"
+    },
+    {
+      "name": "testRangeBasedForAndIteratorProtocol",
+      "suite": "ownership"
+    },
+    {
+      "name": "testReadOnlyRangeLoans",
+      "suite": "ownership"
+    },
+    {
+      "name": "testMutableRangeLoans",
+      "suite": "ownership"
+    },
+    {
+      "name": "testLambdas",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConfinedCallableParameters",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConfinedCallableResults",
+      "suite": "ownership"
+    },
+    {
+      "name": "testOwnedCallableTransport",
+      "suite": "ownership"
+    },
+    {
+      "name": "testExpectedValues",
+      "suite": "ownership"
+    },
+    {
+      "name": "testExpectedPropagationOperator",
+      "suite": "ownership"
+    },
+    {
+      "name": "testFieldInitializerRollbackAndFailureEdges",
+      "suite": "ownership"
+    },
+    {
+      "name": "testDefaultFieldRollbackEntersConstructor",
+      "suite": "ownership"
+    },
+    {
+      "name": "testOwnedParameterStageArmsRollback",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConstructorPartialRollbackRepresentation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testMutableTemporaryReceivers",
+      "suite": "ownership"
+    },
+    {
+      "name": "testTemporaryArgumentBorrows",
+      "suite": "ownership"
+    },
+    {
+      "name": "testRetainedBorrowedCallResults",
+      "suite": "ownership"
+    },
+    {
+      "name": "testNestedBorrowChainLoanOrdering",
+      "suite": "ownership"
+    },
+    {
+      "name": "testCleanupOwningTemporaryArguments",
+      "suite": "ownership"
+    },
+    {
+      "name": "testFixedWidthIntegers",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testContextualSignedIntegerLiterals",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testBinaryFloatSemantics",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testCharactersAndStringViews",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testStandardString",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testLogicalOperatorSpellings",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testComparisonOperatorFormattingStability",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testIntegerBitwiseAndModuloOperators",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testCheckedArithmeticAndCompoundAssignments",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprBindings",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testStaticAssertions",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testStaticStorageAndMembers",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConcurrentGlobalPolicy",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testCompileTimeConditionals",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testSemanticVisitorRequestReuse",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testSemanticDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testDiagnosticFoundation",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testCppReservedIdentifiers",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testDefaultImmutability",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testDefaultNodiscard",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testPrintIsAnIdentifier",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testFormatting",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testLanguageQueries",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testToolingOccurrenceOptOut",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testReadOnlyReceiverDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testFrontendBackendAndOptimizationPipeline",
+      "suite": "e2e"
+    },
+    {
+      "name": "testMirControlFlowAndOwnershipEffects",
+      "suite": "e2e"
+    },
+    {
+      "name": "testOrderedOrdinaryCallInputs",
+      "suite": "e2e"
+    },
+    {
+      "name": "testOrderedClassValueCallInputs",
+      "suite": "e2e"
+    },
+    {
+      "name": "testOrderedOrdinaryConstructorInputs",
+      "suite": "e2e"
+    },
+    {
+      "name": "testMirTemporaryAndDropObligations",
+      "suite": "e2e"
+    },
+    {
+      "name": "testProgramArgumentsEntryPoint",
+      "suite": "e2e"
+    },
+    {
+      "name": "testProgramInitializationPlans",
+      "suite": "e2e"
+    },
+    {
+      "name": "testTypedHirGenericInstances",
+      "suite": "e2e"
+    },
+    {
+      "name": "testCompletePipeline",
+      "suite": "e2e"
+    }
+  ]
+}

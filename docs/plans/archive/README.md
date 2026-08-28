@@ -27,6 +27,7 @@ debugging and fuzzing tools cite that established path.
 - [Compiler bug-finding and triage tooling](compiler-bug-finding-and-triage.md)
 - [Compiler library migration](compiler-library-migration.md)
 - [Compiler roadmap checkpoint](compiler-roadmap-status.md)
+- [Compiler structural refactor](compiler-structural-refactor.md)
 - [Conditional compilation and configuration flags](conditional-compilation.md)
 - [Constructor-local type generics and constraints](constructor-local-type-generics.md)
 - [Mutable field groups](mutable-field-groups.md)

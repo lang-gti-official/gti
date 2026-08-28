@@ -1,8 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
-#include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 
@@ -502,8 +502,7 @@ int32_t main() {
     lang::MirBodyAnalysisManager cachedAnalyses;
     const lang::MirClosedCallSafetyAnalysis *cachedSafety =
         cachedAnalyses.closedCallSafety(cachedCandidate);
-    lang::MirProgramEditor cachedEditor(cachedCandidate,
-                                        "cached-safety-replay-test");
+    lang::MirEditor cachedEditor(cachedCandidate, "cached-safety-replay-test");
     cachedEditor.queueSafetyDischarge(
         {.body = firstSafetyRecord->body,
          .instruction = firstSafetyRecord->instruction},
@@ -511,9 +510,13 @@ int32_t main() {
     const lang::MirEditResult cachedEdit = cachedEditor.apply(cachedAnalyses);
     expect(cachedSafety != nullptr && cachedSafety->converged &&
                cachedEdit.valid() && cachedEdit.changed &&
-               cachedEdit.appliedPatches == 1,
+               cachedEdit.appliedPatches == 1 &&
+               cachedEdit.analysesInvalidated &&
+               cachedEdit.invalidatedAnalyses.empty() &&
+               cachedAnalyses.revision(firstSafetyRecord->body) == 1 &&
+               cachedAnalyses.closedCallSafety(cachedCandidate) == cachedSafety,
            "metadata-only safety edits should reuse the manager's canonical "
-           "snapshot without weakening proof replay");
+           "snapshot while advancing the edited body revision");
 
     std::vector<lang::MirTransformRecord> forged = o2.report.transformations;
     const std::size_t index = static_cast<std::size_t>(
@@ -592,7 +595,7 @@ int32_t main() {
   }
   lang::MirProgram editorCandidate = frontend.mir;
   const std::string beforeEditor = lang::MirPrinter().print(editorCandidate);
-  lang::MirProgramEditor editor(editorCandidate, "forged-bounds-proof");
+  lang::MirEditor editor(editorCandidate, "forged-bounds-proof");
   if (unproven) {
     editor.queueSafetyDischarge(
         {.body = dynamicAddress, .instruction = unproven->first},
@@ -1100,6 +1103,107 @@ int32_t main() {
          "checks");
 }
 
+// A multidimensional fixed-array element access folds every dimension into one
+// place and one bounds site, so the site describes the whole chain. Proving the
+// last index alone would let the emitted text drop the earlier dimension's
+// bound and subscript past the array, so the discharge must hold for every
+// dimension or for none.
+void testChainedFixedArrayDimensionBounds() {
+  const std::string source = R"(
+int32_t proven_chain() {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(1)) {
+    row = row + uint64_t(1);
+  }
+  mut uint64_t column = uint64_t(0);
+  while (column < uint64_t(2)) {
+    column = column + uint64_t(1);
+  }
+  return matrix[row][column];
+}
+
+int32_t dynamic_parent_chain(uint64_t row) {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t column = uint64_t(0);
+  while (column < uint64_t(2)) {
+    column = column + uint64_t(1);
+  }
+  return matrix[row][column];
+}
+
+int32_t dynamic_terminal_chain(uint64_t column) {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(1)) {
+    row = row + uint64_t(1);
+  }
+  return matrix[row][column];
+}
+
+// The dynamic entries stay uncalled so no closed-call context can refine
+// their parameters into constants; the bounds-site count below proves the
+// accesses survive rather than passing vacuously.
+int32_t main() { return proven_chain(); }
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("chained-fixed-array-bounds.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the chained fixed-array bounds fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizedProgram o3 =
+      pipeline.run({.hir = frontend.hir,
+                    .mir = frontend.mir,
+                    .level = lang::OptimizationLevel::O3});
+  const auto bounds = [&](std::string_view name) {
+    return functionDischarges(frontend, o3, name,
+                              lang::MirSafetyCheckFamily::Bounds);
+  };
+  const auto boundsSites = [&](std::string_view name) {
+    const lang::HirFunctionInstance *hir = findFunction(frontend, name);
+    const lang::MirFunctionInstance *function =
+        hir == nullptr ? nullptr : o3.mir.findFunctionInstance(hir->id);
+    std::size_t count = 0;
+    if (function == nullptr) {
+      return count;
+    }
+    for (const lang::MirBlock &block : function->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        for (const lang::DefinedFailureOrigin &origin :
+             instruction.definedFailure.localOrigins) {
+          count += static_cast<std::size_t>(
+              std::count_if(origin.outcomes.begin(), origin.outcomes.end(),
+                            [](const lang::DefinedFailureOutcome &outcome) {
+                              return outcome.code ==
+                                     lang::DefinedFailureCode::IndexOutOfBounds;
+                            }));
+        }
+      }
+    }
+    return count;
+  };
+
+  expect(o3.valid() && boundsSites("proven_chain") == 1 &&
+             boundsSites("dynamic_parent_chain") == 1 &&
+             boundsSites("dynamic_terminal_chain") == 1,
+         "each chained element access should carry exactly one bounds site "
+         "for the whole chain");
+  expect(o3.valid() && bounds("proven_chain") == 1,
+         "a chained element access whose every dimension is proven should "
+         "discharge its single bounds site");
+  expect(o3.valid() && bounds("dynamic_parent_chain") == 0 &&
+             bounds("dynamic_terminal_chain") == 0,
+         "an unproven dimension anywhere in the chain must leave the access "
+         "checked, whichever dimension it is");
+}
+
 } // namespace
 
 int main() {
@@ -1109,6 +1213,7 @@ int main() {
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
+  testChainedFixedArrayDimensionBounds();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";
     return 1;

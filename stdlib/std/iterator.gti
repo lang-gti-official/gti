@@ -13,6 +13,40 @@ concept forward_iterator<Iterator> =
     std::copy_constructible<Iterator> &&
     std::sentinel_for<Iterator, Iterator>;
 
+// A writable position: mut dereference yields a mutable element reference and
+// prefix increment advances the position. `writes_to` is the exact-element
+// refinement, mirroring how `dereferences_to` refines `input_iterator`.
+concept output_iterator<Iterator> =
+    gti_internal::writable_iterator_capability<Iterator>;
+concept writes_to<Iterator, T> =
+    gti_internal::writes_to_capability<Iterator, T>;
+
+// Movement categories compose over the input contract the same way the
+// C++-familiar hierarchy does, but each level is an exact structural
+// capability rather than a tag: bidirectional adds `void operator--() mut`,
+// and random access adds `void operator+=(std::ptrdiff_t) mut` plus
+// `void operator-=(std::ptrdiff_t) mut`.
+concept bidirectional_iterator<Iterator> =
+    std::forward_iterator<Iterator> &&
+    gti_internal::bidirectional_iterator_capability<Iterator>;
+concept random_access_iterator<Iterator> =
+    std::bidirectional_iterator<Iterator> &&
+    gti_internal::random_access_iterator_capability<Iterator>;
+
+// Positioned mutable access without moving the cursor: a mut iterator whose
+// `mut operator[](std::ptrdiff_t)` returns a mutable reference to exactly T.
+// One exclusive cursor plus offsets reaches every element of its range, which
+// is how in-place algorithms keep a single mutable borrow of the owner.
+concept subscripts_to_mut<Iterator, T> =
+    gti_internal::subscripts_to_mut_capability<Iterator, T>;
+
+// A sentinel whose distance is known without walking: the iterator provides
+// read-only `std::ptrdiff_t operator-(Sentinel&)` returning the signed
+// number of increments from the iterator to the sentinel.
+concept sized_sentinel_for<Sentinel, Iterator> =
+    std::sentinel_for<Sentinel, Iterator> &&
+    gti_internal::sized_sentinel_for_capability<Sentinel, Iterator>;
+
 struct input_iterator_tag {};
 struct output_iterator_tag {};
 struct forward_iterator_tag : public input_iterator_tag {};
@@ -20,11 +54,21 @@ struct bidirectional_iterator_tag : public forward_iterator_tag {};
 struct random_access_iterator_tag : public bidirectional_iterator_tag {};
 struct contiguous_iterator_tag : public random_access_iterator_tag {};
 
-// Forward-only utilities take an unsigned distance. A future bidirectional
-// iterator contract can add the signed overload without assigning a silent
-// meaning to negative input-iterator movement.
-void advance<Iterator>(mut Iterator& iterator, ptrdiff_t distance)
-  requires std::input_iterator<Iterator>;
+// Forward-only utilities take an unsigned distance; the signed overload
+// requires bidirectional movement so a negative distance always has an exact
+// meaning. Movement steps rather than jumping so the reference receiver only
+// needs the increment/decrement contract.
+void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
+  requires std::bidirectional_iterator<Iterator> {
+  while (distance > 0) {
+    ++iterator;
+    distance--;
+  }
+  while (distance < 0) {
+    --iterator;
+    distance++;
+  }
+}
 
 void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
@@ -52,7 +96,10 @@ Iterator next<Iterator>(mut Iterator iterator)
 }
 
 Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
-  requires std::input_iterator<Iterator>;
+  requires std::random_access_iterator<Iterator> {
+  iterator += distance;
+  return std::move(iterator);
+}
 
 Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
@@ -63,9 +110,19 @@ Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   return std::move(iterator);
 }
 
-// GTI does not yet expose a bidirectional-iterator capability or overloadable
-// prefix decrement, so prev remains a naming placeholder rather than claiming
-// an input-iterator implementation contract.
-Iterator prev<Iterator>(mut Iterator iterator);
-Iterator prev<Iterator>(mut Iterator iterator, ptrdiff_t distance);
+Iterator prev<Iterator>(mut Iterator iterator)
+  requires std::bidirectional_iterator<Iterator> {
+  --iterator;
+  return std::move(iterator);
+}
+
+Iterator prev<Iterator>(mut Iterator iterator, mut size_t distance)
+  requires std::bidirectional_iterator<Iterator> {
+  while (distance > 0) {
+    --iterator;
+    distance--;
+  }
+  return std::move(iterator);
+}
+
 }

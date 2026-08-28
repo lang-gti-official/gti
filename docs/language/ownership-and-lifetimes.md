@@ -430,9 +430,18 @@ Within one call or construction, receivers and arguments evaluate strictly
 left to right under [Execution Section 4.2](execution.md#42-evaluation-order).
 A transient borrow produced by an earlier argument remains active through the
 invocation and its enclosing full-expression, so a later overlapping mutation
-is invalid. A mutation that completes in an earlier argument may be followed
-by a later borrow when no other active loan conflicts. Known-disjoint origin
-places remain valid in either order.
+is invalid. When the earlier transient borrow is exclusive, a later operand of
+the same call may not read the borrowed owner either, even through an
+ephemeral receiver access whose result carries no borrow, such as
+`values.end()` or `values.size()`. The classic
+`f(values.begin_mut(), values.end())` spelling is therefore a semantic
+rejection pointing at the reading argument, with a note at the exclusive
+argument and a hint that whole-container operations take the container
+itself. A read that completes in an earlier operand does not conflict with a
+later exclusive borrow, so the reversed order remains valid. A mutation that
+completes in an earlier argument may be followed by a later borrow when no
+other active loan conflicts. Known-disjoint origin places remain valid in
+either order.
 
 A plain overloaded subscript or dereference store over a local, parameter,
 receiver, or existing loan uses one non-escaping two-phase mutable call-result
@@ -508,6 +517,17 @@ being stored ends its MIR loan at the enclosing full-expression boundary. This
 includes a borrow used to compute an `if`, loop, or switch condition. Retaining
 the result in a reference or borrowed-state value still uses the applicable
 retained-loan rule above.
+
+A plain assignment to a field projected from an element reached through a
+mutable checked subscript confines the element's exclusive loan to the
+commit. The right operand is evaluated first and its transient element loans
+end before the checked access call that begins the write loan, so
+`points[i].x = points[i].x + delta` on a container of class elements is valid
+under
+[Execution Section 4.2.1](execution.md#421-operands-calls-and-assignments)
+and behaves like its cross-statement read-then-store form. A retained
+overlapping borrow still rejects the write through the ordinary loan rules
+above.
 
 Nested owner projections remain outside this checkpoint. In particular, a
 borrow reached through `expected<owner, E>.value()` may be consumed immediately
