@@ -1,0 +1,5 @@
+{
+  "title": "Compare exact values",
+  "description": "Invokes all implemented comparison function objects for one exact type.",
+  "mode": "run"
+}

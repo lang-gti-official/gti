@@ -1,0 +1,26 @@
+---
+title: <std/format>
+description: Recoverable sequential integral formatting and output.
+kind: library-header
+api:
+  - std/format|enum|std::format_errc
+  - std/format|function|std::format
+  - std/format|function|std::try_print
+  - std/format|function|std::try_println
+examples:
+  - format-integral-values
+---
+
+```gti
+#include <std/format>
+```
+
+The current formatter replaces sequential `{}` fields with fixed-width
+integral arguments. `{{` and `}}` produce literal braces. Malformed braces or
+an argument-count mismatch return `std::format_errc`; formatting does not
+panic for those recoverable errors.
+
+`std::format` returns an owning string. `try_print` and `try_println` format
+first and write only after validation succeeds. Positional fields, format
+specifiers, floating-point conversion, and user-defined formatter
+customization are not implemented.

@@ -1,0 +1,17 @@
+#include <std/filesystem>
+
+int main() {
+  std::filesystem::path root = std::filesystem::path("/srv");
+  std::filesystem::path directory = std::filesystem::path("assets");
+  mut std::filesystem::path joined = root / directory;
+  std::filesystem::path file = std::filesystem::path("image.png");
+  joined /= file;
+
+  mut std::filesystem::path filename = joined.filename();
+  mut std::filesystem::path extension = joined.extension();
+  if (filename != "image.png" || extension != ".png" ||
+      !joined.is_absolute()) {
+    return 1;
+  }
+  return 0;
+}

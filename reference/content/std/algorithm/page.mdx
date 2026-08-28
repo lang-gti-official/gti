@@ -1,0 +1,45 @@
+---
+title: <std/algorithm>
+description: Selection, predicates, traversal, searching, copying, transformation, ordering, and binary search.
+kind: library-header
+api:
+  - std/algorithm|function|std::min
+  - std/algorithm|function|std::max
+  - std/algorithm|function|std::clamp
+  - std/algorithm|function|std::all_of
+  - std/algorithm|function|std::any_of
+  - std/algorithm|function|std::none_of
+  - std/algorithm|function|std::for_each
+  - std/algorithm|function|std::find
+  - std/algorithm|function|std::find_if
+  - std/algorithm|function|std::find_if_not
+  - std/algorithm|function|std::count
+  - std/algorithm|function|std::count_if
+  - std/algorithm|function|std::copy
+  - std/algorithm|function|std::fill
+  - std/algorithm|function|std::transform
+  - std/algorithm|function|std::reverse
+  - std/algorithm|function|std::sort
+  - std/algorithm|function|std::binary_search
+examples:
+  - transform-and-sort
+---
+
+```gti
+#include <std/algorithm>
+```
+
+The iterator-pair algorithms consume their cursor values and use structural
+iterator concepts from `<std/iterator>`. They do not use C++ iterator-category
+dispatch, implicit conversions, or argument-dependent lookup.
+
+`copy` advances a mutable output cursor but returns `void`: a mutable
+owner-tied cursor cannot currently escape through the return value. The
+in-place `fill`, `transform`, `reverse`, and `sort` overloads operate on
+`std::vector<T>` owners so one exclusive borrow covers the complete rewrite.
+Those overloads require copyable elements; they do not move values out through
+mutable references.
+
+`binary_search` accepts a forward iterator and a distinct sentinel. It counts
+the range before searching and therefore remains valid for non-random-access
+forward ranges.

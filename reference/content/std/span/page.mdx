@@ -1,0 +1,34 @@
+---
+title: <std/span>
+description: Checked read-only contiguous views tied to a source owner.
+kind: library-header
+api:
+  - std/span|class|std::span
+  - std/span|method|std::span::size
+  - std/span|method|std::span::empty
+  - std/span|method|std::span::front
+  - std/span|method|std::span::back
+  - std/span|method|std::span::at
+  - std/span|operator|std::span::operator[]
+  - std/span|method|std::span::first
+  - std/span|method|std::span::last
+  - std/span|method|std::span::subspan
+  - std/span|method|std::span::begin
+  - std/span|method|std::span::end
+examples:
+  - view-vector-storage
+---
+
+```gti
+#include <std/span>
+```
+
+`std::span<T>` is a read-only, owner-dependent view. Applications obtain one
+from source-defined owners such as `std::vector<T>::as_span()` and
+`std::string::as_span()`; its storage-adopting constructor is not available to
+application lookup.
+
+Every index and subspan boundary is checked. The span keeps its source owner
+borrowed, preventing movement or mutation of that owner while the view remains
+live. `first`, `last`, and `subspan` return new views with the same owner
+dependency, and iteration retains that dependency as well.

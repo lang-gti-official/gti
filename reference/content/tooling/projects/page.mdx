@@ -1,15 +1,25 @@
 ---
 title: Projects and gti.toml
-description: Packages, targets, profiles, workspaces, dependencies, native inputs, and reproducible project commands.
+description: Packages, targets, profiles, workspaces, dependencies, native inputs, caching, and reproducible project commands.
 kind: tooling
 api: []
 examples: []
 ---
 
-Project mode discovers the nearest `gti.toml`, resolves a target and profile,
-then invokes the same frontend and backend used by direct compilation.
+Project mode discovers the nearest `gti.toml`, resolves one package, target,
+profile, and target platform, then invokes the same frontend and backend used
+by direct compilation. The manifest describes build policy and native inputs;
+it does not change GTI source semantics or replace `#include` dependencies
+between source units.
 
 ## Minimal executable package
+
+```text
+hello/
+|-- gti.toml
+`-- src/
+    `-- main.gti
+```
 
 ```toml
 manifest-version = 1
@@ -39,28 +49,226 @@ gti run
 gti build --release
 ```
 
-Test targets use `kind = "test"` and run through `gti test`. When more than
-one eligible target exists, name the target explicitly. `gti run` accepts
-program arguments after `--`.
+Plain commands select the `dev` profile. `--release` is exactly
+`--profile release`. A missing `dev` or `release` table still has a built-in
+default: optimization level 0 for `dev`, level 3 for `release`, C++23, and no
+retained generated C++.
+
+## Project commands
+
+| Command | Behavior |
+| --- | --- |
+| `gti build [target]` | Build an executable or test target. |
+| `gti build --all --jobs 2` | Build every target with bounded concurrency and deterministic output ordering. |
+| `gti check [target]` | Run source loading and frontend analysis without C++ emission or native compilation. |
+| `gti run [target] -- args...` | Build and run one executable with exact program arguments. |
+| `gti test [target]` | Build and run all test targets, or one named test. |
+| `gti metadata --format json` | Print the resolved package graph and target/profile plans without building. |
+| `gti fetch` | Acquire pinned Git dependencies and write `gti.lock`. |
+| `gti clean` | Remove only the validated, driver-owned `build/gti` subtree. |
+
+When more than one target is eligible, name it explicitly. A package with one
+executable and any number of test targets keeps that executable as the default
+for `build`, `check`, and `run`. Runtime failure in one test does not prevent
+later test targets from running.
+
+Common one-command overrides include `--profile`, `--release`, `-O0` through
+`-O3`, `--std c++20|c++23`, `--execution-profile`, `--keep-cpp`,
+`--no-keep-cpp`, `--no-cache`, `--offline`, and `--locked`. Run `gti --help`
+for the exact options accepted by the installed release.
+
+## Packages, targets, and profiles
+
+The top-level schema is deliberately closed. Manifest version 1 accepts
+`package`, `targets`, `profiles`, `dependencies`, `workspace`, `build`, and
+`bindgen` in addition to `manifest-version`; an unknown or misspelled field is
+a manifest diagnostic.
+
+```toml
+[package]
+name = "engine-tools"
+version = "0.3.0"
+source-root = "src" # optional; "src" is the default
+
+[targets.editor]
+kind = "executable"
+root = "src/editor.gti"
+
+[targets.math-tests]
+kind = "test"
+root = "tests/math.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+execution-profile = "single-threaded"
+keep-cpp = true
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+execution-profile = "concurrent"
+keep-cpp = false
+```
+
+Target roots must be existing package-contained `.gti` files. Package,
+target, and profile names have portable artifact identity: names that collide
+under case folding or use reserved platform device names are rejected before
+the build tree is changed.
+
+`execution-profile` selects static language policy. `concurrent` is required
+for managed-thread operations, but does not itself add a native thread flag or
+grant an unavailable runtime capability.
+
+## Configuration flags
+
+```toml
+[build]
+defines = ["EDITOR", "TRACING"]
+```
+
+These are valueless GTI configuration flags used by compile-time directives.
+The command line can add flags with `-D NAME`. Names must be ordinary GTI
+identifiers; the resolved set is sorted, deduplicated, and included in build
+identity. These flags are separate from C preprocessor definitions in native
+or bindgen tables.
 
 ## Dependencies and workspaces
 
 ```toml
 [dependencies]
 math = { path = "../math" }
+image = { git = "https://example.invalid/image.git", rev = "0123456789abcdef0123456789abcdef01234567" }
 
 [workspace]
 members = ["packages/game", "packages/math"]
 ```
 
-Local dependencies never perform network access. Pinned Git dependencies are
-acquired explicitly with `gti fetch`; `--offline` forbids Git access and
-`--locked` requires complete lockfile coverage.
+GTI source reaches a direct dependency through its alias:
 
-## Build policy
+```gti
+#include <math/vector>
+```
 
-Profiles select optimization, C++ standard, generated-source retention, and
-the execution profile. A top-level `[build]` table can supply valueless GTI
-configuration flags. Manifests can also declare bounded C/C++ sources, include
-directories, libraries, and platform fragments. The driver validates output
-paths and publishes artifacts atomically inside its managed build tree.
+Aliases are package-local and do not leak transitively. Quoted includes cannot
+cross a package boundary. Local path dependencies perform no network access.
+Git dependencies require a full 40-hex revision and lockfile coverage;
+branches, tags, registry ranges, and arbitrary package build scripts are not
+implemented.
+
+Use `gti fetch` to produce `gti.lock`, then use
+`gti build --locked` in reproducible automation. `--offline` prevents Git
+access. Acquisition extracts the pinned tree without running repository hooks,
+filters, submodules, or package code.
+
+## Native C and C++ inputs
+
+Native inputs may be declared at package, profile, or target scope. More
+specific structured inputs are ordered before broader ones, while exact
+argument arrays are applied from package through profile to target so the more
+specific arguments occur later.
+
+```toml
+[package.native]
+include-dirs = ["native/include"]
+c-sources = ["native/helper.c"]
+cpp-sources = ["native/support.cpp"]
+c-standard = "c17"
+c-compile-args = ["-DHELPER_API=1"]
+library-dirs = ["native/lib"]
+link-files = ["native/lib/bootstrap.o"]
+libraries = ["helper"]
+compile-args = ["-DENGINE_NATIVE=1"]
+link-args = ["-pthread"]
+
+[[package.native.platforms]]
+os = "macos"
+frameworks = ["CoreFoundation"]
+
+[profiles.release.native]
+compile-args = ["-DNATIVE_RELEASE=1"]
+
+[targets.editor.native]
+libraries = ["editor_support"]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `include-dirs` | Existing package-contained C/C++ header search directories. |
+| `c-sources` | Existing package-contained `.c` files. |
+| `c-standard` | `c11`, `c17` (default), or `c23`. |
+| `c-compile-args` | Ordered exact arguments used only for declared C sources. |
+| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, or `.cxx` files. |
+| `library-dirs` | Existing package-contained native library search directories. |
+| `link-files` | Existing object, archive, or other exact link inputs. |
+| `libraries` | Names passed through the native toolchain's library option. |
+| `frameworks` | macOS framework names; invalid for another selected OS. |
+| `compile-args` | Exact arguments for declared C++ and generated GTI C++ compilation. |
+| `link-args` | Exact linker arguments after structured link operands. |
+| `raw-args` | Trusted exact trailing compiler-driver arguments. |
+
+Structured paths are resolved relative to `gti.toml`, canonicalized, and
+confined to the package even through symbolic links. Exact argument fields are
+trusted escape hatches: GTI does not shell-split or interpolate them, and
+rejects arguments that would replace driver-owned output, target, language,
+optimization, response-file, or compilation-mode policy.
+
+The C compiler is selected by `--cc`, `GTI_CC`, `CC`, then `cc`. C++
+compilation and final linking use `--cxx`, `GTI_CXX`, `CXX`, then `c++`.
+Objects are published atomically, and a failed native compile preserves a
+previous successful object and executable.
+
+`gti check` validates selected native paths and configuration but does not run
+a native compiler or prove that a C definition matches its GTI declaration.
+That cross-language ABI agreement remains the programmer's responsibility.
+See [C bindgen and native interop](/tooling/bindgen/) for generating the GTI
+side of the boundary.
+
+## Platform fragments
+
+`[[...native.platforms]]` entries may select `os`, `vendor`, and `arch`. Every
+specified selector must match the resolved target. Unmatched fragments add no
+inputs, and their host-specific paths do not need to exist. `c-standard` is
+valid only on a base native table, not in a platform fragment.
+
+## Bindgen imports
+
+A top-level `[bindgen.<alias>]` table generates ordinary GTI declarations
+before source loading during `build`, `check`, `run`, and `test`:
+
+```toml
+[bindgen.counter]
+header = "native/counter.h"
+namespace = "counter_native"
+```
+
+Source includes the generated package unit as:
+
+```gti
+#include <counter/bindings>
+```
+
+The alias shares the same namespace as dependency aliases and cannot collide
+with one. Bindgen options, import policy, native implementation/linking, cache
+behavior, and an end-to-end example are documented under
+[C bindgen and native interop](/tooling/bindgen/).
+
+## Build outputs and caching
+
+Standalone artifacts live under
+`build/gti/<profile>/<arch>-<vendor>-<os>/`; workspace builds add package
+qualification. Generated C++, native objects, and bindgen output stay in
+driver-owned intermediate directories and publish atomically.
+
+Project `build`, `run`, and `test` use a workspace-local whole-program cache.
+GTI source, resolved configuration, toolchain identity, declared native
+sources, discovered native header dependencies, include-directory trees, and
+content-complete exact link files participate in cache identity. Opaque native
+argument vectors, named libraries/frameworks, external search paths, shared
+libraries, linker scripts, and other inputs whose complete identity cannot be
+proved conservatively bypass the cache. `--verbose` reports hit, miss, corrupt
+entry recovery, or the bypass reason; `--no-cache` disables lookup and
+publication for one command.
+
+The cache is whole-program and local. Per-unit, HIR/MIR, native-object,
+remote, and shared caches are not implemented.
