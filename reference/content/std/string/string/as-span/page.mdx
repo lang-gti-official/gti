@@ -1,0 +1,12 @@
+---
+title: std::string::as_span
+description: Returns a checked read-only character span tied to the owning string.
+kind: member
+api:
+  - std/string|method|std::string::as_span
+examples: []
+---
+
+The returned `std::span<char>` covers every initialized character. It supports
+checked indexing, subviews, and read-only iteration while retaining a borrow
+of the source string. No allocation or character copy occurs.

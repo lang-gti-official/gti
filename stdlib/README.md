@@ -39,13 +39,15 @@ See
 [`docs/language/native-c-interop.md`](../docs/language/native-c-interop.md) for the exact
 source and ABI contract.
 
-`<std/cstdio>` provides the first host-input slice with C++-familiar names:
-`std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and the move-only
-RAII class `std::FILE`. It is intentionally read-only and unbuffered: each read
-requests one byte from the operating system, and only modes `"r"` and `"rb"`
-are accepted. Recoverable outcomes use `expected` and `std::io_errc`; `fopen`
-returns `expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a
-nullable or forgeable native handle. See
+`<std/cstdio>` provides the byte-oriented host-I/O foundation with
+C++-familiar names and typed policy: counted stdout/stderr, bounded owned stdin
+and file chunks, file writes, seek/tell, explicit close, and the move-only RAII
+class `std::FILE`. Familiar `r/w/a` mode spellings and their `+`/`b` variants
+map to `std::file_mode`. Recoverable outcomes use `expected` and
+`std::io_errc`; `fopen` returns
+`expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a nullable or
+forgeable native handle. The public layer exposes no native descriptor or raw
+buffer. See
 [`docs/language/io.md`](../docs/language/io.md) for the exact contract.
 
 `<std/tcp>` provides the first POSIX-only public networking ownership slice.
@@ -369,8 +371,8 @@ Some familiar C++ facilities are deliberately not scaffolded yet:
   represent honestly.
 - buffered streams still require an owner/view buffer model and a decision on
   `<<` and `>>` customization; type traits require constant evaluation and
-  substantially more compile-time reflection. The unbuffered read-only
-  `<std/cstdio>` slice does not promise that eventual stream design.
+  substantially more compile-time reflection. The unbuffered byte-oriented
+  `<std/cstdio>` layer does not promise that eventual stream design.
 - associative containers should wait for stable hashing, comparison,
   allocation, and iterator-invalidation contracts rather than exposing hollow
   classes whose eventual semantics are unknown.

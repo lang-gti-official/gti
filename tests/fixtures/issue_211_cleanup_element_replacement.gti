@@ -1,0 +1,30 @@
+#include <std/vector>
+
+mut int32_t drops_total = 0;
+mut int32_t dropped_value_sum = 0;
+
+class tracked {
+public:
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {
+    drops_total = drops_total + 1;
+    dropped_value_sum = dropped_value_sum + this.value;
+  }
+
+  mut int32_t value = 0;
+};
+
+int main() {
+  {
+    mut std::vector<tracked> items = std::vector<tracked>();
+    items.push_back(tracked(2));
+    items[std::size_t(0)] = tracked(7);
+    if (items[std::size_t(0)].value != 7) {
+      return 1;
+    }
+    if (drops_total != 1 || dropped_value_sum != 2) {
+      return 2;
+    }
+  }
+  return drops_total == 2 && dropped_value_sum == 9 ? 0 : 3;
+}

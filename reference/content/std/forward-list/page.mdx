@@ -1,0 +1,27 @@
+---
+title: <std/forward_list>
+description: Move-only singly linked ownership with implemented front operations.
+kind: library-header
+api:
+  - std/forward_list|class|std::forward_list
+  - std/forward_list|constructor|std::forward_list::forward_list
+  - std/forward_list|destructor|std::forward_list::~forward_list
+  - std/forward_list|method|std::forward_list::empty
+  - std/forward_list|method|std::forward_list::front
+  - std/forward_list|method|std::forward_list::push_front
+  - std/forward_list|method|std::forward_list::pop_front
+  - std/forward_list|method|std::forward_list::clear
+examples: []
+---
+
+```gti
+#include <std/forward_list>
+```
+
+The implemented slice owns a recursive `std::unique_ptr` node chain and
+provides constant-time insertion, removal, and access at the front. The list
+is move-only and deterministic destruction clears the complete chain.
+
+Iteration and the remaining C++-familiar declarations in the source unit are
+currently scaffolds. They are intentionally absent from this executable API
+synopsis.

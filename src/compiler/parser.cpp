@@ -2350,7 +2350,7 @@ private:
       consume(TokenKind::RIGHT_PAREN, "Expect ')' after layout query type.");
       return std::make_unique<LayoutQuery>(std::move(keyword), std::move(type));
     }
-    if (isNumericTypeToken(peek().kind) &&
+    if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
       TypeRef targetType = parseType();
       consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");

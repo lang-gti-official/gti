@@ -1,0 +1,44 @@
+---
+title: <std/numeric>
+description: Defined integer arithmetic, interpolation, integral utilities, and bounded reductions.
+kind: library-header
+api:
+  - std/numeric|enum|std::arithmetic_errc
+  - std/numeric|concept|std::accumulates_into
+  - std/numeric|function|std::wrapping_add
+  - std/numeric|function|std::wrapping_sub
+  - std/numeric|function|std::wrapping_mul
+  - std/numeric|function|std::saturating_add
+  - std/numeric|function|std::saturating_sub
+  - std/numeric|function|std::saturating_mul
+  - std/numeric|function|std::checked_add
+  - std/numeric|function|std::checked_sub
+  - std/numeric|function|std::checked_mul
+  - std/numeric|function|std::gcd
+  - std/numeric|function|std::lcm
+  - std/numeric|function|std::midpoint
+  - std/numeric|function|std::lerp
+  - std/numeric|function|std::negated
+  - std/numeric|function|std::accumulate
+  - std/numeric|function|std::inner_product
+  - std/numeric|function|std::transform_reduce
+examples:
+  - checked-and-defined-arithmetic
+---
+
+```gti
+#include <std/numeric>
+```
+
+The wrapping, saturating, and checked families cover every fixed-width signed
+and unsigned integer type. Checked arithmetic returns
+`expected<T, std::arithmetic_errc>` instead of invoking undefined behavior or
+silently changing overflow policy.
+
+`gcd`, `lcm`, and `midpoint` are constrained integral utilities. `accumulate`,
+`inner_product`, and `transform_reduce` consume structural input iterators and
+exact callables. The `lerp` overload family includes built-in floating-point
+arithmetic and source-defined vector-space values.
+
+Primitive hash specializations are not part of the supported API even though
+latent source declarations remain in this unit.

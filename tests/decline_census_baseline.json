@@ -1,0 +1,154 @@
+{
+  "totals": {
+    "decline": 16,
+    "invalid-mir": 0,
+    "ok": 20,
+    "rejected": 0,
+    "tool-error": 0
+  },
+  "vocabularies": [
+    {
+      "body_kind": "Function",
+      "count": 3,
+      "example": "cleanup-owning class / constructor prvalue / vector element",
+      "signature": [
+        "assign:dest=Loan:Replace"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-free class / call result / existing binding",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary",
+        "move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-free class / call result / class field",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary",
+        "move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-owning class / call result / array element",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj:Replace",
+        "call",
+        "call:staged",
+        "construct:staged",
+        "drop:dest=Binding:Drop",
+        "drop:dest=Value:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Reparent",
+        "initialize:dest=Temporary",
+        "move:Move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-owning class / moved local / array element",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj:Replace",
+        "call",
+        "construct:staged",
+        "drop:dest=Binding:Drop",
+        "drop:dest=Value:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Reparent",
+        "initialize:dest=Temporary",
+        "move:Move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 2,
+      "example": "cleanup-free class / call result / vector element",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Loan",
+        "call",
+        "call:TransferOut",
+        "construct",
+        "construct:staged",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Binding:Reparent",
+        "initialize:dest=Temporary",
+        "move"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 1,
+      "example": "cleanup-free class / constructor prvalue / class field",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj",
+        "call",
+        "construct",
+        "drop:dest=Binding:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Initialize",
+        "initialize:dest=Temporary"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 1,
+      "example": "cleanup-owning class / constructor prvalue / class field",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding+proj:Replace",
+        "call",
+        "construct:staged",
+        "drop:dest=Binding:Drop",
+        "drop:dest=Value:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Reparent",
+        "initialize:dest=Temporary"
+      ]
+    },
+    {
+      "body_kind": "Function",
+      "count": 1,
+      "example": "cleanup-owning class / call result / existing binding",
+      "signature": [
+        "(every feature is spellable alone; the combination is not)",
+        "assign:dest=Binding:Replace",
+        "call",
+        "call:staged",
+        "construct:staged",
+        "drop:dest=Binding:Drop",
+        "drop:dest=Value:Drop",
+        "initialize:dest=Binding",
+        "initialize:dest=Binding:Reparent",
+        "initialize:dest=Temporary",
+        "move:Move"
+      ]
+    }
+  ]
+}

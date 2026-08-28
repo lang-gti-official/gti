@@ -3278,6 +3278,145 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         session.close()
 
 
+def test_io_tooling_boundary(executable, root):
+    source = (
+        "#include <std/cstdio>\n"
+        "int main() {\n"
+        "  char code_unit = char(uint8_t(65));\n"
+        '  mut auto opened = std::fopen("input.csv", std::file_mode::read);\n'
+        "  if (code_unit != 'A' or opened) { return 1; }\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "io-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True},
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            },
+                            "hover": {
+                                "contentFormat": ["markdown", "plaintext"]
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"],
+            timeout=20,
+        )
+
+        scope = source.index("std::fopen") + len("std::")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, scope),
+                },
+            }
+        )
+        completion = session.receive_until(
+            lambda message: message.get("id") == 2
+        )["result"]
+        labels = {item["label"] for item in completion["items"]}
+        assert {
+            "FILE",
+            "file_mode",
+            "fopen",
+            "fread",
+            "fseek",
+            "fwrite",
+            "read_stdin_some",
+            "try_write_stderr",
+        } <= labels, labels
+
+        function = source.index("fopen")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, function + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert "std::fopen" in hover["contents"]["value"], hover
+        assert "file_mode" in hover["contents"]["value"], hover
+
+        private_source = source.replace(
+            "  return 0;",
+            "  int64_t hidden = "
+            "gti_internal::runtime::gti_rt_open_file_v1;\n"
+            "  return 0;",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": private_source}],
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2,
+            timeout=20,
+        )["params"]["diagnostics"]
+        private = next(
+            diagnostic
+            for diagnostic in diagnostics
+            if diagnostic.get("code") == "GTI-S2058"
+        )
+        assert "gti_internal::runtime::gti_rt_open_file_v1" in private["message"]
+    finally:
+        session.close()
+
+
 def test_compiler_private_tooling_boundary(executable, root):
     source = (
         "#include <std/memory>\n"
@@ -8579,7 +8718,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "owner-dependent-views]"
+            "io|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -8609,6 +8748,10 @@ def main():
             with tempfile.TemporaryDirectory(prefix="gti-lsp-owner-view-") as root:
                 test_owner_dependent_span_tooling(sys.argv[1], pathlib.Path(root))
             print("GTI owner-dependent view LSP test passed")
+        elif sys.argv[2] == "io":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
+                test_io_tooling_boundary(sys.argv[1], pathlib.Path(root))
+            print("GTI I/O LSP test passed")
         else:
             raise SystemExit(f"unknown focused LSP test: {sys.argv[2]}")
         return
@@ -8657,6 +8800,7 @@ def main():
     test_semantic_definition(sys.argv[1], root)
     test_exact_qualified_specialization_tooling(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
+    test_io_tooling_boundary(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_atomic_tooling(sys.argv[1], root)
     test_mutex_tooling(sys.argv[1], root)

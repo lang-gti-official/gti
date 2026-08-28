@@ -1,0 +1,19 @@
+class leaf {
+public:
+  leaf(int32_t value) : value(value) {}
+  ~leaf() {}
+
+  int32_t value;
+};
+
+class holder {
+public:
+  holder(int32_t unused) : held(leaf(3)) {}
+
+  leaf held;
+};
+
+int main() {
+  holder value = holder(3);
+  return value.held.value == 3 ? 0 : 1;
+}

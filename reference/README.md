@@ -40,21 +40,23 @@ site's content model; each reference page owns purpose-built examples beside
 its MDX.
 
 The current end-to-end coverage includes complete member-page families for
-`std::array`, `std::string`, and `std::vector`, plus the owning-string
-`print`/`println` overloads and `to_string`. Every constructor or member shown
-on those type pages has one canonical child route. A detail route renders its
-exact compiler signature, authored operation-specific guidance, an
-availability tag drawn from repository history, and a dedicated example where
-the operation is callable. Declaration-only `swap` scaffolds are documented
-without misleading examples.
+`std::array`, `std::string`, and `std::vector`, plus compiler-bound implemented
+surface pages for algorithms, numeric and iterator utilities, memory policies,
+views, I/O, filesystem paths, formatting, randomness, threading, TCP, and
+utility types. Every constructor or member shown on the detailed type pages
+has one canonical child route. A detail route renders its exact compiler
+signature, authored operation-specific guidance, an availability tag drawn
+from repository history, and a dedicated example where the operation is
+callable. Declaration-only scaffolds are identified without misleading
+examples.
 
 The standard-library landing page also distinguishes implemented, partial, and
 scaffolded shipped units. A separate tooling section documents direct
 compilation, project manifests and commands, C bindgen, formatting, and the
 language server. Tooling prose is authored against the canonical driver and
 tooling documentation; source API signatures continue to come only from the
-compiler index. CI currently validates 70 authored pages and compiles or runs
-55 displayed GTI programs.
+compiler index. CI currently validates 88 authored pages and compiles or runs
+63 displayed GTI programs.
 
 ## Local workflow
 
