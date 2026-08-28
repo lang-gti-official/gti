@@ -5,7 +5,9 @@ normal-exit lifecycle substrate complete. The `M-BACK-01/02` executable-body
 cutover is also complete: every accepted body reaches the backend through
 verified MIR. Remaining per-family M-EXEC, failure rollback, provenance, and
 aggregate lifecycle work extends the represented schedule without restoring a
-backend fallback.
+backend fallback. M-OWN-04 is a proposed bounded extension for read-only range
+loans over the active value of one stable named `expected<T, E>`; it does not
+generalize retained nested-owner borrows.
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete
@@ -399,7 +401,93 @@ place behavior. Raw-pointer partial movement, vector slot extraction, general
 provenance, return-field inference, a general alias solver, and complete drop
 obligations remain non-goals of this row.
 
-## 9. Decision Summary
+## 9. Proposed M-OWN-04 Named Expected-Payload Range Slice
+
+The portable byte-I/O surface supplies the first concrete client that changes
+the priority of one previously broad restriction:
+
+```gti
+mut expected<std::string, std::io_errc> chunk =
+    std::fread(stream, std::size_t(4096));
+if (!chunk) {
+  return unexpected(parse_errc::read_failed);
+}
+for (auto& byte : chunk.value()) {
+  consume(byte);
+}
+```
+
+The named `chunk` storage already outlives the loop. The source is nevertheless
+rejected today because range lowering retains its hidden owner reference for
+the loop region, while `ExpectedValue` does not publish an exact receiver-rooted
+place transform. The generic `GTI-S2017` fallback consequently describes the
+payload as temporary storage even though the actual gap is an unrepresented
+nested owner dependency. Moving the string out is sound but makes ordinary
+fallible byte input compose poorly with ordinary range iteration.
+
+M-OWN-04 proposes one deliberately bounded place extension rather than general
+nested borrowing. A successful `value()` extraction from a stable named
+`expected<T, E>` receiver may form one exact active-value projection rooted at
+that receiver, but only as the source of a read-only range plan. The range loan
+protects the entire expected root conservatively: movement, replacement,
+mutable access, or destruction of the expected conflicts until every loop exit
+ends the range and element loans. The concrete payload address still comes
+from the checked `ExpectedValue` operation; the place projection supplies
+source ownership and invalidation identity, not backend representation.
+
+The bounded contract is:
+
+1. The receiver is an available named local or by-value parameter place of
+   exact `expected<T, E>` type. It is not a temporary, returned reference,
+   global/static owner, or opaque call result.
+2. `T` independently satisfies the existing read-only range contract. The
+   compiler does not recognize `std::string`, `std::fread`, or another public
+   library name.
+3. The existing expected-state check completes before range `begin`; its
+   defined-failure edge performs the normal cleanup and creates no range loan.
+4. On success, semantics records one receiver-rooted active-value projection
+   and one loop-bounded read loan. Every element loan remains a child of that
+   range loan and cannot escape its iteration.
+5. `continue`, `break`, `return`, normal exhaustion, and defined-failure cleanup
+   end child then parent loans before any expected move, replacement, or drop.
+6. HIR preserves the selected expected extraction, projection, range source,
+   and loan identities. MIR maps them to concrete places and verifies begin,
+   dominance, endpoints, cleanup, and conflict behavior. The backend consumes
+   the verified plan and performs no expected- or range-specific lifetime
+   inference.
+7. The LSP publishes and clears the compiler-owned diagnostic; it does not
+   recognize `value()` or range syntax independently.
+
+The first slice intentionally excludes a retained local reference such as
+`T& payload = result.value()`, mutable payload-range iteration, `error()`
+iteration, fields/captures/globals, returned or stored payload borrows,
+multiple nested owners, conditional-origin merges, and callee-internal
+return-field transforms. Those shapes remain under the broader nested-owner
+restriction. A later client may reuse the active-alternative projection, but
+it must add its own carrier and invalidation proof rather than inheriting range
+permission automatically.
+
+Focused evidence must include:
+
+- positive read-only iteration over `expected<std::string, E>.value()` and one
+  non-string nominal range, including empty input, nested read-only traversal,
+  `continue`, `break`, `return`, and failure cleanup;
+- rejection of moving, replacing, mutating, or dropping the expected during
+  traversal and rejection of element escape or unsupported receiver shapes;
+- semantic, HIR, and MIR assertions for the exact expected root, active-value
+  projection, extraction, range/element ancestry, and all endpoints;
+- verifier mutations for a forged root/projection, a loan begun before the
+  checked extraction, missing child/parent ends, and premature owner drop;
+- O0/O3 and C++20/C++23 execution of the `<std/cstdio>` chunk-consumption
+  client; and
+- LSP publication and clearing with the diagnostic anchored to the written
+  range expression rather than generated lowering syntax.
+
+This is a systems-readiness integration slice: it unlocks allocation-free
+streaming parsers and serializers over the new byte-I/O API. It is not evidence
+for a general nested-owner graph.
+
+## 10. Decision Summary
 
 M-OWN-01 adopts one structural `PlaceKey`, one exhaustive conservative
 relation, and one finite ownership-state transfer contract. M-OWN-02 implements
