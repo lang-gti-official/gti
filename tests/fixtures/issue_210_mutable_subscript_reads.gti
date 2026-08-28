@@ -1,0 +1,23 @@
+#include <std/vector>
+
+class pair {
+public:
+  pair(int32_t first, int32_t second) : first_(first), second_(second) {}
+
+  int32_t first() { return this.first_; }
+  int32_t second() { return this.second_; }
+
+private:
+  int32_t first_;
+  int32_t second_;
+};
+
+int main() {
+  mut std::vector<pair> rows = std::vector<pair>();
+  rows.push_back(pair(1, 2));
+  rows.push_back(pair(3, 4));
+  return (rows[std::size_t(0)].first() == 1 &&
+          rows[std::size_t(1)].second() == 4)
+             ? 0
+             : 1;
+}

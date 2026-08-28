@@ -7,12 +7,15 @@ Next.js site with a compiler-backed content pipeline. An author can add one
 trustworthy language or library page, bind it to current compiler
 declarations, give it dedicated examples, and have CI reject structural,
 semantic-binding, compilation, or rendering drift. The implemented site
-publishes 70 authored pages. Its complete API families cover `std::array`,
-`std::string`, and `std::vector`, including a canonical child route for every
-constructor/member group shown by those type pages. It also publishes a
-compiler-truthful standard-library status catalogue and an authored tooling
-section for direct/project compilation, manifests, C bindgen, formatting, and
-the LSP.
+publishes 88 authored pages and verifies 63 displayed programs. Its complete
+member-page families cover `std::array`, `std::string`, and `std::vector`,
+including a canonical child route for every constructor/member group shown by
+those type pages. Compiler-bound header pages additionally cover every
+currently implemented slice in `algorithm`, `cmath`, `cstdio`, `filesystem`,
+`format`, `forward_list`, `functional`, `iterator`, `memory`, `numeric`,
+`random`, `span`, `tcp`, `thread`, and `utility`, while explicitly excluding
+bodyless scaffolds. The site also publishes an authored tooling section for
+direct/project compilation, manifests, C bindgen, formatting, and the LSP.
 
 The foundation separates three authorities:
 
@@ -184,11 +187,12 @@ Reference-only changes run this job without forcing the general compiler
 matrix. Any compiler/toolchain-visible change also runs it, because semantic
 or signature drift can invalidate existing reference bindings and examples.
 
-Complete language/library coverage, richer overload and constraint
-presentation, and ranked symbol search remain later vertical slices. They must
-consume these boundaries rather than replacing them with source-text scraping
-or a second language model. The implemented array, string, and vector families
-are the baseline for adding another class: bind the compiler-owned type/member
+Complete language coverage, member-detail expansion for the broad header
+pages, richer overload and constraint presentation, and ranked symbol search
+remain later vertical slices. They must consume these boundaries rather than
+replacing them with source-text scraping or a second language model. The
+implemented array, string, and vector families are the baseline for expanding
+another class into detailed routes: bind the compiler-owned type/member
 groups, author one canonical route per presented member, identify
 declaration-only operations explicitly, and verify every displayed callable
 example with the real toolchain.

@@ -32,6 +32,42 @@ _Static_assert(_Generic(&gti_rt_close_file,
                    int32_t (*)(int64_t): 1,
                    default: 0),
                "the file-close runtime entry must retain its C prototype");
+_Static_assert(GTI_FILE_OPEN_READ_V1 == 0 && GTI_FILE_OPEN_READ_APPEND_V1 == 5,
+               "the v1 file-open mode ordinals must remain stable");
+_Static_assert(GTI_FILE_SEEK_BEGIN_V1 == 0 && GTI_FILE_SEEK_END_V1 == 2,
+               "the v1 file-seek origin ordinals must remain stable");
+_Static_assert(_Generic(&gti_rt_write_stdout_bytes_v1,
+                   int64_t (*)(gti_c_string_view): 1,
+                   default: 0),
+               "the v1 stdout entry must consume the counted-text record");
+_Static_assert(_Generic(&gti_rt_write_stderr_bytes_v1,
+                   int64_t (*)(gti_c_string_view): 1,
+                   default: 0),
+               "the v1 stderr entry must consume the counted-text record");
+_Static_assert(
+    _Generic(&gti_rt_flush_stdout_v1, int32_t (*)(void): 1, default: 0) &&
+        _Generic(&gti_rt_flush_stderr_v1, int32_t (*)(void): 1, default: 0),
+    "the v1 standard-stream flush entries must remain exact");
+_Static_assert(_Generic(&gti_rt_read_stdin_bytes_v1,
+                   int64_t (*)(uint8_t *, uint64_t): 1,
+                   default: 0),
+               "the v1 stdin chunk entry must retain its C prototype");
+_Static_assert(_Generic(&gti_rt_open_file_v1,
+                   int64_t (*)(gti_c_string_view, gti_file_open_mode_v1): 1,
+                   default: 0),
+               "the v1 file-open entry must retain its C prototype");
+_Static_assert(_Generic(&gti_rt_read_file_v1,
+                   int64_t (*)(int64_t, uint8_t *, uint64_t): 1,
+                   default: 0),
+               "the v1 file-read entry must retain its C prototype");
+_Static_assert(_Generic(&gti_rt_write_file_v1,
+                   int64_t (*)(int64_t, gti_c_string_view): 1,
+                   default: 0),
+               "the v1 file-write entry must retain its C prototype");
+_Static_assert(_Generic(&gti_rt_seek_file_v1,
+                   int64_t (*)(int64_t, int64_t, gti_file_seek_origin_v1): 1,
+                   default: 0),
+               "the v1 file-seek entry must retain its C prototype");
 
 _Static_assert(UINTPTR_MAX == UINT64_MAX,
                "the shipped GTI runtime ABI requires a 64-bit pointer");

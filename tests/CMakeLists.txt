@@ -29,6 +29,12 @@ target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
 
+add_executable("gti_runtime_io_tests"
+               "${PROJECT_SOURCE_DIR}/tests/runtime_io_tests.cpp")
+target_compile_features("gti_runtime_io_tests" PRIVATE cxx_std_23)
+target_link_libraries("gti_runtime_io_tests" PRIVATE gti_runtime)
+add_test(NAME runtime_io_boundary COMMAND gti_runtime_io_tests)
+
 add_executable("gti_runtime_failure_header_smoke"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_header_smoke.cpp")
 target_compile_features("gti_runtime_failure_header_smoke" PRIVATE cxx_std_20)
@@ -932,6 +938,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(issues_117_120_regressions PROPERTIES TIMEOUT 180)
   add_test(
+    NAME issues_208_210_211_regressions
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/issues_208_210_211_regression_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(issues_208_210_211_regressions PROPERTIES TIMEOUT 300)
+  add_test(
     NAME issue_144_class_array_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/issue_144_class_array_field_runtime_test.py"
@@ -1360,6 +1374,7 @@ if(Python3_Interpreter_FOUND)
         issue_127_constructor_temporary_field_runtime
         constructor_constructed_field_runtime
         issues_117_120_regressions
+        issues_208_210_211_regressions
         issue_143_polymorphic_class_array_runtime
         issue_144_class_array_field_runtime
         issue_146_class_value_positions_runtime

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
-"""Exercise the Q-FUZZ-01A failure capture and replay tool.
+"""Exercise the Q-FUZZ-01 debug capture and census tools.
 
     python3 tests/compiler_debug_tooling_test.py <gti> <repo-root>
 
-Covers the proposal's exit gate directly: a deliberately failing fixture is
-captured, the bundle is moved to a different root, replay reproduces the same
-signature, and a changed earlier failure is rejected as a replacement rather
-than a reproduction.
+The decline-census unit gate first checks body-local MIR feature extraction,
+body-kind spellability, deterministic generation, backend-only classification,
+and argument validation. The capture gate then captures a deliberately failing
+fixture, moves the bundle to a different root, reproduces the same signature,
+and rejects a changed earlier failure as a replacement rather than a
+reproduction.
 
 Signal and timeout signatures use an injected stub compiler instead of a real
 compiler defect, per the proposal's rule that tool tests must not depend on a
@@ -64,6 +66,11 @@ def main() -> int:
     gti = Path(sys.argv[1]).resolve()
     root = Path(sys.argv[2]).resolve()
     script = root / "scripts/debug/capture_compiler_failure.py"
+
+    census_checks = run_tool(root / "tests/decline_census_test.py", str(root))
+    check(census_checks.returncode == 0,
+          "decline census parser and measurement boundary",
+          census_checks.stdout + census_checks.stderr)
 
     with tempfile.TemporaryDirectory(prefix="gti-debug-tooling-") as name:
         temp = Path(name)

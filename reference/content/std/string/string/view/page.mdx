@@ -1,0 +1,13 @@
+---
+title: std::string::view
+description: Returns a counted read-only text view tied to the owning string.
+kind: member
+api:
+  - std/string|method|std::string::view
+examples: []
+---
+
+The result references the string's initialized character prefix without
+allocation or copying. Its owner dependency prevents mutation or movement of
+the string while the view remains live. It is suitable for APIs accepting
+`std::string_view`; it is not a null-terminated C string.

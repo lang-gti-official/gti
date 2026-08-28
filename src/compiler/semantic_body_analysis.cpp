@@ -3886,7 +3886,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
 
 auto SemanticVisitor::Impl::isCharacterCodeConversion(
     const SemanticType &source, const SemanticType &target) -> bool {
-  return source == SemanticType::Char && target == SemanticType::UInt8;
+  return (source == SemanticType::Char && target == SemanticType::UInt8) ||
+         (source == SemanticType::UInt8 && target == SemanticType::Char);
 }
 
 auto SemanticVisitor::Impl::analyzeTypeParameterCall(
@@ -7002,6 +7003,21 @@ auto SemanticVisitor::Impl::convertConstantToType(const ConstantValue &value,
       return {.value = value};
     }
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+  if (target == SemanticType::UInt8) {
+    if (const auto *character = std::get_if<CharacterLiteral>(&value)) {
+      return {.value = ConstantValue{
+                  makeConstantInteger({.magnitude = character->value},
+                                      CheckedIntegerDomain{.width = 8})}};
+    }
+  }
+  if (target == SemanticType::Char) {
+    if (const auto *integer = std::get_if<ConstantInteger>(&value);
+        integer != nullptr && !integer->negative &&
+        integer->domain.width == 8 && !integer->domain.signedValue) {
+      return {.value = ConstantValue{CharacterLiteral{
+                  static_cast<std::uint8_t>(integer->magnitude)}}};
+    }
   }
   if (const std::optional<CheckedIntegerDomain> domain =
           constantIntegerDomain(target)) {
