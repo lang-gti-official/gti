@@ -1296,8 +1296,10 @@ if(Python3_Interpreter_FOUND)
         class_prvalue_assignment_runtime
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
+        class_payload_enum_runtime
         argument_reference_return_runtime
         temporary_argument_borrow_runtime
+        field_subscript_store_runtime
         disjoint_field_projection_runtime
         retained_borrowed_call_result_runtime
         nested_borrow_chain_runtime
@@ -1308,6 +1310,7 @@ if(Python3_Interpreter_FOUND)
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime managed_thread_end_to_end
+      domain_operator_runtime
       PROPERTIES ENVIRONMENT
         "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
     )

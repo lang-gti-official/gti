@@ -105,12 +105,31 @@ def scan_ninja(path: Path) -> tuple[set[str], int]:
         if not any(is_gti_ninja_output(output) for output in outputs):
             continue
         selected += 1
-        block_text = "\n".join(block)
-        for match in LIBRARY.finditer(block_text):
+        # A Ninja build edge also names explicit, implicit, and order-only
+        # dependencies.  Bundled LLVM places tools and implementation archives
+        # such as LLVMTableGen and LLVMSupportBlake3 on those dependency lists;
+        # their presence orders the build but does not link them into the GTI
+        # output.  CMake records the actual per-edge link surface in these
+        # variables, so inspect only their values (including Ninja `$` line
+        # continuations) instead of treating every dependency as a library.
+        link_lines: list[str] = []
+        capture_continuation = False
+        for block_line in block[1:]:
+            stripped = block_line.lstrip()
+            if capture_continuation:
+                link_lines.append(block_line)
+                capture_continuation = block_line.rstrip().endswith("$")
+                continue
+            if stripped.startswith(("LINK_LIBRARIES =", "LINK_FLAGS =")):
+                link_lines.append(block_line)
+                capture_continuation = block_line.rstrip().endswith("$")
+
+        link_text = "\n".join(link_lines)
+        for match in LIBRARY.finditer(link_text):
             component = match.group(1)
             if component == "LLVM" or component not in ALLOWED:
                 violations.add(component)
-        violations |= scan_clang(block_text)
+        violations |= scan_clang(link_text)
 
     return violations, selected
 
