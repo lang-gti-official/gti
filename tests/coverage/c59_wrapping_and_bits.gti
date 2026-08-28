@@ -1,0 +1,22 @@
+// Wrapping arithmetic, bit operations and shifts across widths.
+#include <std/numeric>
+class Anchor { public: int32_t id() { return 0; } };
+
+int main() {
+  uint8_t small = std::wrapping_add(uint8_t(250), uint8_t(10));
+  int32_t wrapped = std::wrapping_add(2147483647, 1);
+  uint64_t big = std::wrapping_mul(uint64_t(1) << uint64_t(63), uint64_t(2));
+
+  std::print(int32_t(small)); std::print(" ");
+  std::print(wrapped); std::print(" ");
+  std::print(int32_t(big)); std::print(" ");
+
+  uint32_t bits = uint32_t(0b1010);
+  std::print(int32_t(bits & uint32_t(0b0110))); std::print(" ");
+  std::print(int32_t(bits | uint32_t(0b0101))); std::print(" ");
+  std::print(int32_t(bits ^ uint32_t(0b1111))); std::print(" ");
+  std::print(int32_t(bits << uint32_t(2))); std::print(" ");
+  std::print(int32_t(bits >> uint32_t(1))); std::print(" ");
+  std::println(int32_t(~bits == uint32_t(4294967285) ? 1 : 0));
+  return 0;
+}

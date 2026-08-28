@@ -1,0 +1,26 @@
+// Mixed-width arithmetic, explicit conversions and float/integer boundaries.
+#include <std/cmath>
+class Anchor { public: int32_t id() { return 0; } };
+
+int main() {
+  int32_t i = 7;
+  int64_t l = int64_t(i) * int64_t(1000000000);
+  uint32_t u = uint32_t(i) * uint32_t(3);
+  float f = float(i) / 2.0;
+  double d = double(i) / 4.0;
+
+  std::print(int32_t(l / int64_t(1000000000))); std::print(" ");
+  std::print(int32_t(u)); std::print(" ");
+  std::print(int32_t(f * 2.0)); std::print(" ");
+  std::print(int32_t(d * 4.0)); std::print(" ");
+
+  std::print(std::isnan(f) ? 1 : 0);
+  std::print(std::isfinite(f) ? 1 : 0);
+  std::print(std::isinf(f) ? 1 : 0); std::print(" ");
+  std::print(int32_t(std::abs(-3.5))); std::print(" ");
+
+  int32_t truncated = int32_t(2.99);
+  int32_t negative = int32_t(-2.99);
+  std::println(truncated + negative);
+  return 0;
+}

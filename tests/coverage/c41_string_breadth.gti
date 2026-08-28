@@ -1,0 +1,26 @@
+// string and string_view construction, mutation, comparison and search.
+#include <std/string>
+
+int main() {
+  mut std::string s = std::string("hello");
+  s.append(" world");
+  s.push_back('!');
+  std::print(s.view()); std::print(" ");
+  std::print(int32_t(s.size())); std::print(" ");
+  std::print(s.empty() ? 1 : 0); std::print(" ");
+
+  std::string_view v = s.view();
+  std::print(int32_t(v.size())); std::print(" ");
+  std::print(v == s.view() ? 1 : 0); std::print(" ");
+
+  mut std::string other = std::string("hello world!");
+  std::print(s.view() == other.view() ? 1 : 0); std::print(" ");
+
+  s.clear();
+  std::print(s.empty() ? 1 : 0); std::print(" ");
+
+  mut std::string built = std::string("");
+  for (mut int32_t i = 0; i < 3; i++) { built.append("ab"); }
+  std::println(built.view());
+  return 0;
+}

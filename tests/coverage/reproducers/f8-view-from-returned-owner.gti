@@ -1,0 +1,7 @@
+#include <std/filesystem>
+#include <std/string>
+int main() {
+  mut std::filesystem::path p = std::filesystem::path("/a/b/thing.txt");
+  std::println(p.string().view());
+  return 0;
+}

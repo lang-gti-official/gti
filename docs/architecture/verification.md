@@ -252,19 +252,19 @@ example graph.
 
 ## Language coverage corpus
 
-`tests/coverage/` holds the registered `language_coverage_corpus` breadth
-sweep. It compiles and runs ordinary GTI programs chosen to combine as much
-syntax and stdlib surface as possible, on the premise that feature-owned tests
-exercise each construct in isolation and can miss defects that appear only in
-combination. Run it through CTest or directly with
-`tests/coverage/run_coverage.sh build/gti`.
+`tests/coverage/` holds a breadth sweep of ordinary GTI programs chosen to
+combine syntax and stdlib surface. The fixed c01–c30 tranche is registered as
+`language_coverage_fixed_corpus`; run that exact release gate directly with
+`tests/coverage/run_coverage.sh build/gti <output> --fixed-baseline`. The full
+65-program audit runs with `tests/coverage/run_coverage.sh build/gti` and
+deliberately retains unresolved findings, so it is not a green CTest
+expectation yet.
 
-All corpus programs must compile and exit successfully; the runner separately
-classifies an ICE (`GTI-B0001`), a diagnostic rejection, a silent compiler
-failure, and a runtime failure so no class can be mistaken for another.
-`tests/coverage/FINDINGS.md` preserves the original six reductions and their
-resolutions. Programs added here must be valid GTI — a failure is a compiler
-finding, not a corpus expectation to edit away.
+The runner separately classifies an ICE (`GTI-B0001`), link failure,
+diagnostic rejection, silent compiler failure, and runtime failure so no class
+can be mistaken for another. `tests/coverage/FINDINGS.md` records the fixed
+F1–F6 reductions and the unresolved F7–F20 audit. Programs here must be valid
+GTI — a failure is a compiler finding, not a corpus expectation to edit away.
 
 For exact qualified class specializations, `compiler_pipeline` owns qualified
 syntax, canonical type/value keys, declaration-order independence, primary

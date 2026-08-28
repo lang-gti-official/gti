@@ -1,0 +1,27 @@
+// Integer widths, explicit conversions, wrapping helpers and boundary values.
+class Anchor { public: int32_t id() { return 0; } };
+
+int main() {
+  int8_t a = int8_t(-128);
+  uint8_t b = uint8_t(255);
+  int16_t c = int16_t(-32768);
+  uint16_t d = uint16_t(65535);
+  int32_t e = -2147483648;
+  uint32_t f = uint32_t(4294967295);
+  int64_t g = int64_t(-9223372036854775807);
+  uint64_t h = uint64_t(18446744073709551615);
+
+  std::print(int32_t(a)); std::print(" ");
+  std::print(int32_t(b)); std::print(" ");
+  std::print(int32_t(c)); std::print(" ");
+  std::print(int32_t(d)); std::print(" ");
+  std::print(e); std::print(" ");
+  std::print(int64_t(f)); std::print(" ");
+  std::print(g); std::print(" ");
+  std::print(h == uint64_t(18446744073709551615) ? 1 : 0); std::print(" ");
+
+  std::size_t s = std::size_t(7);
+  std::ptrdiff_t p = std::ptrdiff_t(-7);
+  std::println(int32_t(s) + int32_t(p));
+  return 0;
+}
