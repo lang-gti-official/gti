@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -51,6 +52,34 @@ def main() -> int:
             executed = run([str(executable)])
             if executed.returncode != 0 or executed.stdout or executed.stderr:
                 return fail(f"run {fixture_name}", executed)
+
+        indirect_source = fixtures / "issue_117_generic_indirect.gti"
+        indirect_cpp = root / "issue_117_generic_indirect.cpp"
+        emitted_indirect = run(
+            [
+                str(compiler),
+                str(indirect_source),
+                "--emit-cpp",
+                "-o",
+                str(indirect_cpp),
+            ]
+        )
+        if emitted_indirect.returncode != 0:
+            return fail("emit indirect concrete generic classes", emitted_indirect)
+        indirect_text = indirect_cpp.read_text(encoding="utf8")
+        indirect_definitions = re.findall(
+            r"class (__gti_type_[0-9a-f]{64}_(?:cell|box)) [{]",
+            indirect_text,
+        )
+        if (
+            len(indirect_definitions) != 5
+            or len(set(indirect_definitions)) != 5
+        ):
+            sys.stderr.write(
+                "finite nested generic applications lost their five exact "
+                "concrete class definitions\n"
+            )
+            return 1
 
         for fixture_name in (
             "issue_117_array_cleanup.gti",
@@ -105,6 +134,21 @@ def main() -> int:
             or "Internal compiler error" in invalid.stderr
         ):
             return fail("diagnose short-circuit assignment", invalid)
+
+        recursive_source = root / "recursive_generic_layout.gti"
+        recursive_source.write_text(
+            "class node<T> { node<T> next; };\nint main() { return 0; }\n",
+            encoding="utf8",
+        )
+        recursive = run(
+            [str(compiler), str(recursive_source), "-o", str(root / "recursive")]
+        )
+        if (
+            recursive.returncode != 65
+            or "error[GTI-S2082]" not in recursive.stderr
+            or "Internal compiler error" in recursive.stderr
+        ):
+            return fail("diagnose recursive generic layout", recursive)
 
     return 0
 
