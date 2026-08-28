@@ -1,0 +1,27 @@
+#include <std/thread>
+
+[[unsafe_transfer]] class result_value {
+  int32_t value;
+
+public:
+  result_value(int32_t value) : value(value) {}
+  result_value(result_value& other) = delete;
+  result_value(result_value&& other) = default;
+  int32_t read() { return this.value; }
+  ~result_value() {}
+};
+
+int main() {
+  mut std::thread_result<result_value> worker =
+      std::thread_result<result_value>();
+  auto started = worker.start([]() -> result_value {
+    return result_value(42);
+  });
+  if (!started.has_value()) { return 1; }
+
+  auto joined = worker.join();
+  if (!joined.has_value()) { return 2; }
+  mut result_value result = std::move(joined).value();
+  if (result.read() != 42) { return 3; }
+  return 0;
+}
