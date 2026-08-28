@@ -2332,6 +2332,61 @@ These rows validate the execution/lifetime foundations in ordinary GTI. Public
 containers and algorithms remain source-defined and must not gain compiler
 name recognition.
 
+### L-GEN-01: Production Generic Function System
+
+- **State/role:** in progress; systems-readiness language and standard-library
+  capability. The current implementation already owns generic declaration
+  syntax, exact type inference and explicit type arguments, inferred
+  fixed-array `uint64_t` values, bounded type packs, source concepts and
+  trailing requirements, concrete semantic reanalysis, HIR/MIR instance
+  identity, ownership/effects, and verified-MIR execution. It is not yet the
+  production boundary because several source surfaces remain intentionally
+  disconnected and generic representation still relies on native template
+  mechanics after GTI has selected the concrete instances.
+- **User-facing unlock:** reusable source-defined standard-library algorithms,
+  containers, allocators, and concurrency utilities can state their complete
+  type/value/callable requirements, instantiate deterministically, and retain
+  the same ownership, failure, diagnostics, and tooling behavior as a concrete
+  function. A library author must not need a dummy deduction argument, a
+  public-name compiler special case, or native C++ substitution to express a
+  valid generic operation.
+- **Required slices, in dependency order:**
+  1. admit explicit immutable `uint64_t` function and method arguments that
+     the parser already represents, preserving ordered type/value identity
+     through concrete reanalysis, HIR, MIR, effects, constexpr evaluation,
+     backend calls, formatting, Tree-sitter, and LSP signatures;
+  2. add declaration-owned default type/value arguments and closed dependent
+     `uint64_t` constant expressions, with exact call identity and no return-
+     context inference or native-template defaults;
+  3. finish public callable/predicate/operation capability relations over the
+     accepted exact read/mut/once callable contract, then use them in
+     comparator `sort` and complete-range algorithm clients without ranking;
+  4. activate `E-SYM-01`/`E-INST-01` for deterministic GTI names and concrete
+     function/class/member/constructor instances. A narrowly deduced native
+     template may remain only where an unnameable lexical closure is the
+     physical ABI carrier; it must consume one GTI-selected concrete callable
+     contract and cannot perform validity, lookup, overload, ownership, or
+     failure decisions; and
+  5. close the production conformance matrix across direct and project builds,
+     installed stdlib clients, invalid/constrained/ownership/failure cases,
+     HIR/MIR verifier mutations, O0/O1/O3 and C++20/C++23 execution, formatter,
+     Tree-sitter/Neovim, and LSP hover/completion/signature help.
+- **Durable boundaries:** exact unique-match overload resolution, explicit
+  ownership transfer, no ADL or implicit call conversions, validity-only
+  requirements, frontend-owned substitution, and verified-MIR execution do
+  not change. General C++ requires-expressions, partial specialization,
+  subsumption/ranking, CTAD, type erasure, arbitrary reflection, and
+  unrestricted compile-time execution are not production prerequisites unless
+  a standard-library client cannot be expressed by the bounded exact model.
+- **Exit gate:** at least one value-parameterized utility, one constrained
+  multi-type algorithm, one repeatable callable/predicate algorithm, one
+  consuming callable utility, and one move-only generic owner compile as
+  ordinary installed GTI library clients. Every discovered concrete instance
+  has one semantic/HIR/MIR/lowered identity and executes only its verified MIR;
+  invalid substitutions and ownership/failure violations are GTI diagnostics;
+  generated C++ performs no semantic selection; and the complete production
+  matrix above passes.
+
 ### L-INIT-01: Contextual Fixed-Array Arguments
 
 - **State/role:** done in 0.130.0; bounded generic initialization capability
@@ -3308,8 +3363,8 @@ it is not a competing active queue.
 
 | ID | State | Scope and dependency |
 | --- | --- | --- |
-| `E-SYM-01` | measured defer | When `E-INST-01` or persistent build artifacts provide the client, replace counter-shaped generated symbols with deterministic declaration + concrete-argument identity. The printed form stays GTI-owned and does not require TypeContext pointer identity. |
-| `E-INST-01` | blocked | After `M-BACK-01` and `E-SYM-01`, emit concrete GTI generic/class/function instances instead of asking native C++ templates to instantiate them, one instance family at a time. |
+| `E-SYM-01` | ready under `L-GEN-01` | Production concrete generic emission is now the client: replace counter-shaped generated symbols with deterministic declaration + concrete-argument identity. The printed form stays GTI-owned and does not require TypeContext pointer identity. |
+| `E-INST-01` | queued after `E-SYM-01` | `M-BACK-01` is complete. After deterministic names land, emit concrete GTI generic/class/function instances instead of asking native C++ templates to instantiate them, one instance family at a time; retain a deduced physical carrier only for an otherwise-unnameable lexical closure and never as semantic authority. |
 | `E-EMBED-01` | bounded-first | After `M-FAIL-01` and the allowlisted entry's closed-call-graph `M-BACK-02` slice, generate one host-callable containment wrapper over an allowlisted signature. The row itself owns context validity/poisoning, descriptor lifetime, observer configuration, record return, invocation cleanup, native-exception firewalling, and same-process re-entry tests; it is not yet the stable GTI ABI. |
 | `E-ABI-01` | later breadth | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
 
@@ -3406,7 +3461,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward/bidirectional/random-access-iterator, sentinel, sized-sentinel, exact-dereference, writable-dereference, and mutable-subscript relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Production generic functions | type/value/pack declarations, exact type inference and explicit type arguments, inferred array extents, bounded concepts/requirements, concrete semantic reanalysis, HIR/MIR identity, callable confinement, and verified-MIR execution are implemented; explicit callable value arguments, generic defaults/dependent constants, public callable relations, deterministic concrete emission, and the production stdlib/tooling matrix remain | `L-GEN-01` -> `E-SYM-01` -> `E-INST-01`, sharing the remaining `L-CALL-01`/`L-RANGE-04` clients; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
