@@ -764,13 +764,18 @@ Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.
 They belong to the toolchain so platform selection, ordering, diagnostics, and
-cache policy remain explicit. Declared native source, trusted exact argument
-vectors, native include/library search directories, exact link files and
-ordered link operands, name-resolved library/framework inputs, and
-dependency-injecting native environment search paths bypass the whole-program
-project cache because their complete compiler/linker-discovered dependencies
-are not yet modeled. A header, linker script, or thin archive can name
-transitive inputs outside the declared tree, file, or environment value.
+cache policy remain explicit. Declared native sources, native include and
+library search directories, content-complete exact link files, and `-l` names
+that resolve to exactly one content-complete file inside a declared search
+directory join whole-program cache identity through compiler dependency
+discovery and full-tree content identity; a dependency package's composed
+native group joins on the same terms. Opaque argument vectors, frameworks,
+`-l` names that resolve outside the declared search directories or ambiguously
+within one, non-content-complete link inputs, and dependency-injecting native
+environment search paths bypass the cache because their complete
+compiler/linker-discovered dependencies are not modeled. A forced header,
+linker script, or thin archive can name transitive inputs outside the declared
+tree, file, or environment value.
 
 ## Runtime Relationship
 
