@@ -2761,8 +2761,7 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
     return true;
   }
   if (owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
-      owner->compilerCapability ==
-          CompilerCapabilityTypeKind::MutexLockToken) {
+      owner->compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
     return true;
   }
   if (!visiting.insert(owner->id).second) {

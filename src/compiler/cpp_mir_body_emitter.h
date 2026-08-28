@@ -418,8 +418,9 @@ cppMirConstructorStatusCannotFail(const MirProgram &program,
 cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
                                            HirClassInstanceId instance);
 
-[[nodiscard]] bool cppMirFailureConstructorEmptyStateTypeEligible(
-    const MirProgram &program, const SemanticType &type);
+[[nodiscard]] bool
+cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
+                                               const SemanticType &type);
 
 // An explicit base initializer whose arguments are exact copy-loads of this
 // constructor's scalar parameters. The native C++ initializer list may spell

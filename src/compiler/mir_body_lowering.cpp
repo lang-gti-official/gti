@@ -1092,8 +1092,7 @@ private:
     return std::find(loans.begin(), loans.end(), loan) != loans.end();
   }
 
-  [[nodiscard]] MirLoanId
-  lifecycleLoanForBinding(HirBindingId binding) const {
+  [[nodiscard]] MirLoanId lifecycleLoanForBinding(HirBindingId binding) const {
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto candidate = scope->loans.rbegin();
            candidate != scope->loans.rend(); ++candidate) {
@@ -1207,10 +1206,9 @@ private:
                          .category = ValueCategory::Place,
                          .access = place->access,
                          .traits = place->traits});
-      if (lifecycleLoan != 0 &&
-          !containsLoan(endedLoans, lifecycleLoan)) {
-        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                 .loan = lifecycleLoan});
+      if (lifecycleLoan != 0 && !containsLoan(endedLoans, lifecycleLoan)) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = lifecycleLoan});
       }
       cleanup.push_back(obligation);
     }
@@ -1378,10 +1376,9 @@ private:
                          .access = place->access,
                          .traits = place->traits},
           entry.conditional);
-      if (lifecycleLoan != 0 &&
-          !containsLoan(endedLoans, lifecycleLoan)) {
-        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                 .loan = lifecycleLoan});
+      if (lifecycleLoan != 0 && !containsLoan(endedLoans, lifecycleLoan)) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = lifecycleLoan});
       }
       cleanup.push_back(entry.obligation);
     }
@@ -1427,10 +1424,10 @@ private:
     if (instruction != 0 && routeFailureEdgesHere() &&
         normalizedDestructorPropagation(obligation) ==
             FailurePropagationKind::Destructor) {
-      appendFailureControlFlow(
-          instruction, 0, consumedDrops, endedLoans,
-          producerEndedLoan == 0 ? std::vector<MirLoanId>{}
-                                 : std::vector<MirLoanId>{producerEndedLoan});
+      appendFailureControlFlow(instruction, 0, consumedDrops, endedLoans,
+                               producerEndedLoan == 0
+                                   ? std::vector<MirLoanId>{}
+                                   : std::vector<MirLoanId>{producerEndedLoan});
     }
     return instruction;
   }
@@ -3981,8 +3978,7 @@ private:
     const bool transferableBorrowedResult =
         call.loan && value.info.type.kind == SemanticType::Class &&
         value.info.category == ValueCategory::Value &&
-        value.info.traits.movable &&
-        value.info.traits.containsBorrowedState;
+        value.info.traits.movable && value.info.traits.containsBorrowedState;
     // A cleanup-owning result exists only after a failure-capable call
     // succeeds, regardless of whether it is the full-expression root or a
     // nested input to another call. Arm its value obligation on the Invoke
@@ -4410,8 +4406,8 @@ private:
             std::find(before.begin(), before.end(), *candidate) == before.end();
         const MirLoan *loan = output.findLoan(*candidate);
         if (added && loan != nullptr && !loan->lifecycleBound &&
-            loan->carriers.empty() &&
-            !loan->escapes && !retained.contains(*candidate)) {
+            loan->carriers.empty() && !loan->escapes &&
+            !retained.contains(*candidate)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
           candidate = after.erase(candidate);
@@ -6071,8 +6067,8 @@ private:
                                                 .source = obligation}},
           consumedDrops, endedLoans, 0, 0, 0, lifecycleLoan);
       if (lifecycleLoan != 0 && !containsLoan(endedLoans, lifecycleLoan)) {
-        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                 .loan = lifecycleLoan});
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = lifecycleLoan});
         endedLoans.push_back(lifecycleLoan);
       }
     }

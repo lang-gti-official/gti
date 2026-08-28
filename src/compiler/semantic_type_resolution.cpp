@@ -2190,26 +2190,24 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
     const bool storage =
         compilerCapability == CompilerCapabilityTypeKind::MutexStorage;
-    const std::string_view name =
-        storage ? "gti_internal::mutex_storage"
-                : "gti_internal::mutex_lock_token";
+    const std::string_view name = storage ? "gti_internal::mutex_storage"
+                                          : "gti_internal::mutex_lock_token";
     if (type.arguments.size() != 1) {
-      report(type.name.last(), std::string(name) +
-                                   "<T> requires exactly one movable value "
-                                   "type.",
+      report(type.name.last(),
+             std::string(name) + "<T> requires exactly one movable value "
+                                 "type.",
              "GTI-S2088");
     } else {
       if (type.arguments.front().genericArgumentSyntax ==
           GenericArgumentSyntax::Value) {
         report(type.arguments.front().name.last(),
-               std::string(name) + " requires a type argument.",
-               "GTI-S2088");
+               std::string(name) + " requires a type argument.", "GTI-S2088");
         return;
       }
       validateType(type.arguments.front());
       const SemanticType valueType = typeOf(type.arguments.front());
-      if (!satisfiesConstraint(
-              valueType, constraintBit(GenericConstraintKind::Movable)) ||
+      if (!satisfiesConstraint(valueType,
+                               constraintBit(GenericConstraintKind::Movable)) ||
           valueType == SemanticType::Void ||
           valueType.kind == SemanticType::Reference ||
           valueType.kind == SemanticType::RawPointer) {
@@ -2788,16 +2786,16 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     if (temporary != nullptr) {
       return EscapingMutexGuardReceiver::Temporary;
     }
-    const Symbol *symbol = variable == nullptr ? nullptr
-                                                : resolve(variable->name());
+    const Symbol *symbol =
+        variable == nullptr ? nullptr : resolve(variable->name());
     return symbol != nullptr &&
                    symbol->bindingKind == SemanticBindingKind::LocalVariable
                ? EscapingMutexGuardReceiver::Local
                : EscapingMutexGuardReceiver::None;
   }();
   if (escapingMutexGuardReceiver != EscapingMutexGuardReceiver::None) {
-    const bool temporary = escapingMutexGuardReceiver ==
-                           EscapingMutexGuardReceiver::Temporary;
+    const bool temporary =
+        escapingMutexGuardReceiver == EscapingMutexGuardReceiver::Temporary;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
         temporary

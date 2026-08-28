@@ -185,27 +185,26 @@ void testPublicPipeline() {
   std::size_t mutexInstructions = 0;
   std::size_t untrustedMutexBodies = 0;
   lang::MirProgram inspected = frontend.mir;
-  forEachInstruction(
-      inspected, [&](lang::MirBody &body, lang::MirInstruction &instruction) {
-        if (!isMutex(instruction.intrinsic)) {
-          return;
-        }
-        ++mutexInstructions;
-        const bool lock = instruction.intrinsic == lang::IntrinsicKind::MutexLock;
-        const bool unlock =
-            instruction.intrinsic == lang::IntrinsicKind::MutexUnlock;
-        untrustedMutexBodies +=
-            (lock || unlock) && !body.compilerTrustedSynchronization ? 1 : 0;
-        expect(instruction.synchronization.kind ==
-                   (lock ? lang::SynchronizationOperationKind::MutexLock
-                         : unlock
-                               ? lang::SynchronizationOperationKind::MutexUnlock
-                               : lang::SynchronizationOperationKind::None) &&
-                   !instruction.synchronization.order &&
-                   !instruction.synchronization.failureOrder,
-               "each private mutex intrinsic should retain its exact "
-               "synchronization identity");
-      });
+  forEachInstruction(inspected, [&](lang::MirBody &body,
+                                    lang::MirInstruction &instruction) {
+    if (!isMutex(instruction.intrinsic)) {
+      return;
+    }
+    ++mutexInstructions;
+    const bool lock = instruction.intrinsic == lang::IntrinsicKind::MutexLock;
+    const bool unlock =
+        instruction.intrinsic == lang::IntrinsicKind::MutexUnlock;
+    untrustedMutexBodies +=
+        (lock || unlock) && !body.compilerTrustedSynchronization ? 1 : 0;
+    expect(instruction.synchronization.kind ==
+                   (lock     ? lang::SynchronizationOperationKind::MutexLock
+                    : unlock ? lang::SynchronizationOperationKind::MutexUnlock
+                             : lang::SynchronizationOperationKind::None) &&
+               !instruction.synchronization.order &&
+               !instruction.synchronization.failureOrder,
+           "each private mutex intrinsic should retain its exact "
+           "synchronization identity");
+  });
   expect(mutexInstructions >= 6 && untrustedMutexBodies == 0,
          "public mutex wrappers should lower lock/unlock only through trusted "
          "private synchronization bodies");
@@ -219,9 +218,9 @@ void testPublicPipeline() {
   expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
          "O3 should preserve the verified guard lifecycle and mutex barriers");
 
-  const lang::LoweredProgram lowered = gti_test::lowerProgram(
-      frontend, optimized.sourceMir, optimized.mir, target,
-      optimized.report.transformations);
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, optimized.sourceMir, optimized.mir,
+                             target, optimized.report.transformations);
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "mutex synchronization should cross the sealed LoweredProgram "
          "boundary");
@@ -253,7 +252,8 @@ int main() {
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
   const lang::FrontendResult singleResult =
       analyze("mutex-single-profile.gti", use, single);
-  expect(!singleResult.canGenerateCode() && hasCode(singleResult, "GTI-S2084") &&
+  expect(!singleResult.canGenerateCode() &&
+             hasCode(singleResult, "GTI-S2084") &&
              hasMessage(singleResult, "concurrent execution profile") &&
              !hasCode(singleResult, "GTI-B0001"),
          "mutex use should fail before lowering in the single-threaded "
@@ -261,12 +261,12 @@ int main() {
 
   const lang::FrontendResult unsupported =
       analyze("mutex-unsupported-target.gti", use, concurrentTarget(false));
-  expect(!unsupported.canGenerateCode() &&
-             hasCode(unsupported, "GTI-S2084") &&
-             hasMessage(unsupported,
-                        "does not provide thread-capable concurrency support") &&
-             !hasCode(unsupported, "GTI-B0001"),
-         "mutex use should fail before lowering on a target without threads");
+  expect(
+      !unsupported.canGenerateCode() && hasCode(unsupported, "GTI-S2084") &&
+          hasMessage(unsupported,
+                     "does not provide thread-capable concurrency support") &&
+          !hasCode(unsupported, "GTI-B0001"),
+      "mutex use should fail before lowering on a target without threads");
 
   const lang::FrontendResult privateStorage =
       analyze("mutex-private-storage.gti", R"(
@@ -319,14 +319,13 @@ int main() {
          "an outstanding guard should statically exclude moving its owner");
 
   for (const auto &[name, source] :
-       std::vector<std::pair<std::string, std::string>>{
-           {"temporary", R"(
+       std::vector<std::pair<std::string, std::string>>{{"temporary", R"(
 #include <std/mutex>
 int32_t& escape(std::mutex<int32_t>& value) {
   return value.lock().get();
 }
 )"},
-           {"local", R"(
+                                                        {"local", R"(
 #include <std/mutex>
 int32_t& escape(std::mutex<int32_t>& value) {
   std::mutex_guard<int32_t> guard = value.lock();
@@ -351,8 +350,7 @@ int main() {
   return 0;
 }
 )");
-  expect(!transferred.canGenerateCode() &&
-             !hasCode(transferred, "GTI-B0001"),
+  expect(!transferred.canGenerateCode() && !hasCode(transferred, "GTI-B0001"),
          "a guard should not cross the thread-transfer boundary");
 }
 
@@ -398,14 +396,13 @@ void testVerifierMutations() {
       findMutex(staleTrust, lang::IntrinsicKind::MutexGuardRead);
   bool changedTrust = false;
   if (read != nullptr) {
-    forEachInstruction(
-        staleTrust,
-        [&](lang::MirBody &body, lang::MirInstruction &instruction) {
-          if (&instruction == read) {
-            body.compilerTrustedSynchronization = true;
-            changedTrust = true;
-          }
-        });
+    forEachInstruction(staleTrust, [&](lang::MirBody &body,
+                                       lang::MirInstruction &instruction) {
+      if (&instruction == read) {
+        body.compilerTrustedSynchronization = true;
+        changedTrust = true;
+      }
+    });
   }
   expect(changedTrust && !lang::verifyMirProgram(staleTrust).valid(),
          "MIR should reject a stale trusted-synchronization marker on a "
