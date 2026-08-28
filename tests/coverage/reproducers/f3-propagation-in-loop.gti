@@ -1,0 +1,19 @@
+class Anchor { public: int32_t id() { return 0; } };
+enum class parse_errc { bad_digit };
+expected<int32_t, parse_errc> digit_value(int32_t c) {
+  if (c < 0) { return unexpected(parse_errc::bad_digit); }
+  return c;
+}
+expected<int32_t, parse_errc> sum_three() {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i++) {
+    int32_t d = ?digit_value(i);
+    total = total + d;
+  }
+  return total;
+}
+int main() {
+  mut auto r = sum_three();
+  std::println(r.has_value() ? r.value() : -1);
+  return 0;
+}

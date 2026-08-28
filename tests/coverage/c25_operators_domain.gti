@@ -1,0 +1,25 @@
+#include <std/numeric>
+class Vec2 {
+public:
+  Vec2(float x, float y) : x(x), y(y) {}
+  mut float x;
+  mut float y;
+  Vec2 operator+(Vec2& o) { return Vec2(this.x + o.x, this.y + o.y); }
+  Vec2 operator-(Vec2& o) { return Vec2(this.x - o.x, this.y - o.y); }
+  Vec2 operator-() { return Vec2(-this.x, -this.y); }
+  Vec2 operator*(float s) { return Vec2(this.x * s, this.y * s); }
+  bool operator==(Vec2& o) { return this.x == o.x && this.y == o.y; }
+  void operator+=(Vec2& o) mut { this.x = this.x + o.x; this.y = this.y + o.y; }
+};
+int main() {
+  mut Vec2 a = Vec2(1.0, 2.0);
+  Vec2 b = Vec2(0.5, 0.5);
+  Vec2 sum = a + b;
+  Vec2 diff = a - b;
+  Vec2 neg = -a;
+  Vec2 scaled = a * 3.0;
+  a += b;
+  Vec2 mid = std::lerp(sum, diff, 0.5);
+  std::println((sum == sum ? 1 : 0) + int32_t(neg.x) + int32_t(scaled.y) + int32_t(a.x) + int32_t(mid.x));
+  return 0;
+}

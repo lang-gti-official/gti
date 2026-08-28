@@ -1,0 +1,16 @@
+namespace geometry {
+  namespace planar {
+    int32_t area(int32_t w, int32_t h) { return w * h; }
+    int32_t area(int32_t side) { return side * side; }
+    int32_t scaled(int32_t v, int32_t factor = 2) { return v * factor; }
+  }
+  using Length = int32_t;
+}
+using Area = int32_t;
+int main() {
+  geometry::Length side = 3;
+  Area a = geometry::planar::area(side);
+  Area b = geometry::planar::area(2, 5);
+  std::println(a + b + geometry::planar::scaled(4) + geometry::planar::scaled(4, 3));
+  return 0;
+}

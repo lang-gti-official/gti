@@ -1,0 +1,19 @@
+#include <std/vector>
+#include <std/span>
+#include <std/array>
+int32_t sum_span(std::span<int32_t>& view) {
+  mut int32_t total = 0;
+  for (mut std::size_t i = std::size_t(0); i < view.size(); i++) { total = total + view[i]; }
+  return total;
+}
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(1); v.push_back(2); v.push_back(3); v.push_back(4);
+  mut std::span<int32_t> whole = v.as_span();
+  mut std::span<int32_t> tail = whole.subspan(std::size_t(1), std::size_t(3));
+  mut std::span<int32_t> head = whole.first(std::size_t(2));
+  std::print(sum_span(whole)); std::print(" ");
+  std::print(sum_span(tail)); std::print(" ");
+  std::println(sum_span(head) + int32_t(whole.front()) + int32_t(whole.back()));
+  return 0;
+}
