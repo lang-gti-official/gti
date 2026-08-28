@@ -161,6 +161,14 @@ matrix, and the sealed C++ plan maps private storage and the verified order to
 their native representations. The backend never infers an atomic from a class
 name or reconstructs an order from source syntax.
 
+Fixed-width integer `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
+`fetch_xor` remain source-library policy: private generic update helpers form
+strong compare/exchange loops from those same exact declarations. Consequently
+MIR sees and verifies every initial load, retry, and order pair, while the
+backend gains no fetch-specific public-name rule. Checked add/subtract failure
+occurs before the attempted compare/exchange publishes a value; native C++
+wrapping is not semantic authority.
+
 Only the irreducible host boundary is compiler-private. Its capability surface
 is the identity-bound `gti_internal::thread_handle` and
 `gti_internal::thread_result_handle<Result>` plus their empty, spawn,

@@ -96,8 +96,8 @@ Before 1.0, public GTI must be able to support these representative workloads:
 1. a safe wrapper for a real C library using layout-stable records, opaque
    handles, and callbacks;
 2. an arena or pool allocator implemented by an application or library;
-3. a multithreaded work queue using owned tasks, sequentially consistent
-   atomics, mutex/guard access, join, and contained failure;
+3. a multithreaded work queue using owned tasks, ordered scalar atomics with
+   integer fetch operations, mutex/guard access, join, and contained failure;
 4. a renderer or game-style update loop using mutable containers, iteration,
    domain arithmetic, files, time, and allocation;
 5. a compiler-style AST or protocol modeled with payload enums and exhaustive
@@ -261,13 +261,15 @@ choices that affect every backend and optimization level.
   [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing),
   and [ADR 008](../decisions/008-safe-concurrency-memory-model.md) adopt the
   concurrency boundary. Safe GTI is data-race-free; transfer/share are
-  structural semantic facts; the future first profile is owned-only,
-  sequentially consistent, automatic-join, and detach-free; worker failure is
-  contained and re-raised at join. C-TYPE-01 and C-GLOBAL-01 now implement
+  structural semantic facts; the implemented bounded profile is owned-only,
+  ordered-scalar-atomic, automatic-join, and detach-free; worker failure is
+  contained and re-raised at join. C-TYPE-01 and C-GLOBAL-01 implement
   transfer/share facts, explicit pre-semantics profile selection, and the
   concurrent global/static policy. The default remains single-threaded. A
-  minimal public concurrent profile is now a systems-readiness outcome; weaker
-  orders, detach, and advanced reclamation remain later breadth.
+  public concurrent profile now includes all accepted scalar orders, integer
+  fetch operations, and scoped mutex guards. Detach, scoped cross-thread
+  borrows, pointer atomics, condition variables, and advanced reclamation
+  remain later breadth.
 - [Execution Section 4.2](../language/execution.md#42-evaluation-order), with
   rationale in
   [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md),
@@ -304,10 +306,9 @@ choices that affect every backend and optimization level.
   temporary/drop obligations, ordered MIR, and closed production-backend
   families. Do not inherit whichever order the selected C++ mode happens to
   provide.
-- Deliver the bounded public concurrency profile required by the work-queue
-  workload, using the implemented capability/global policy plus its lifetime,
-  ordered-execution, failure, runtime, MIR-effect, and conformance
-  prerequisites rather than lowering directly to host facilities.
+- Keep the delivered bounded public concurrency profile gated by its
+  capability/global policy, lifetime, ordered-execution, failure, runtime,
+  MIR-effect, and conformance prerequisites as later families are added.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
@@ -775,8 +776,9 @@ uses them internally.
 Linked lists, deques, regex, broad filesystem traversal/watch, locale-heavy
 text, Unicode grapheme algorithms, parallel algorithms, weak memory-order
 breadth, and detached threads are not required for the first systems-ready
-library. Minimal atomics, joined tasks/threads, and mutex-guard access are
-required by the concurrency workload. Omitted breadth should be documented
+library. Ordered scalar atomics including integer fetch operations, joined
+tasks/threads, and mutex-guard access are required by the concurrency workload.
+Omitted breadth should be documented
 rather than covered by thin unsafe wrappers.
 
 ### Exit gate
@@ -1015,8 +1017,8 @@ capability or release gate changes.
 - Integer, floating-point, evaluation-order, temporary, borrow, move, and drop
   behavior is backend-independent.
 - The safe concurrency/data-race boundary, ownership transfer/share rules, and
-  bounded public thread/task, SC atomic, and mutex-guard profile are executable
-  and verified.
+  bounded public thread/task, ordered scalar atomic/fetch, and mutex-guard
+  profile are executable and verified.
 - All public standard-library features are expressible through ordinary GTI
   declarations plus narrowly audited runtime/internal capabilities.
 - A compatibility and future-edition policy is published.

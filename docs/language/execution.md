@@ -705,13 +705,17 @@ edges:
   acquisition of the same mutex.
 
 The implemented atomic value domains are fixed-width integers and `bool`.
-Construction, load, store, exchange, and strong compare/exchange default to
-sequential consistency and promise neither lock freedom nor C-compatible
-layout. Strong compare/exchange never fails spuriously and reports success plus
-the actual observation without exposing a reference. Static `std` tag types
-select `relaxed`, `acquire`, `release`, `acq_rel`, or `seq_cst`; `consume` is
-absent. Operation-specific legality is checked by source overload resolution
-and again in MIR before lowering.
+Construction, load, store, exchange, strong compare/exchange, and fixed-width
+integer fetch add/subtract/bitwise operations default to sequential consistency
+and promise neither lock freedom nor C-compatible layout. Strong
+compare/exchange never fails spuriously and reports success plus the actual
+observation without exposing a reference. Fetch operations return the value
+before their successful update; add/subtract retain GTI's checked-overflow
+failure instead of adopting C++ wrapping. Static `std` tag types select
+`relaxed`, `acquire`, `release`, `acq_rel`, or `seq_cst`; `consume` is absent.
+Operation-specific legality is checked by source overload resolution and again
+in MIR before lowering. The fetch families are source-defined strong-CAS loops,
+so their exact success/failure pair and every retry remain visible to MIR.
 
 The first managed thread model transfers one owned exact `void()` task through
 `std::thread` or one exact `Result()` task through

@@ -143,11 +143,15 @@ The current implemented foundation includes:
   token, separate argument pack, or cross-thread borrow; and
 - `<std/atomic>` source-defined move-only `std::atomic<T>` for `bool` and every
   fixed-width signed and unsigned integer. Construction, load, store, exchange,
-  and strong compare/exchange default to sequential consistency. Static
+  strong compare/exchange, and integer `fetch_add`, `fetch_sub`, `fetch_and`,
+  `fetch_or`, and `fetch_xor` default to sequential consistency. Static
   `std::memory_order_relaxed()`, `acquire()`, `release()`, `acq_rel()`, and
   `seq_cst()` tag types expose only operation-legal overloads. Strong
   compare/exchange never fails spuriously and returns success plus the actual
-  observation without exposing storage. The wrapper is transfer- and
+  observation without exposing storage. Fetch operations return the replaced
+  value and are source-defined strong-CAS loops; add/subtract use defined
+  checked-overflow failure rather than native wrapping. The wrapper is
+  transfer- and
   share-capable but promises neither lock freedom, stable layout, nor native
   ABI compatibility; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
@@ -392,8 +396,8 @@ The following component families remain planned or incomplete:
 - indexed/named/specifier-based and floating-point formatting, formatter
   customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, random distributions and engine
-  breadth, connected networking, traffic buffers, atomic fetch/wait/fence
-  breadth, condition variables, recursive/read-write mutexes, stop tokens,
+  breadth, connected networking, traffic buffers, atomic wait/notify, pointer
+  atomics and fences, condition variables, recursive/read-write mutexes, stop tokens,
   detached/scoped tasks, typed argument packs, and broader threading;
 - stateful allocator policy, allocator-aware growing containers,
   generation-bearing pool handles, and heterogeneous arenas;

@@ -1,0 +1,8 @@
+#include <std/atomic>
+
+std::atomic<int32_t> value{2147483647};
+
+int main() {
+  [[discard]] value.fetch_add(1);
+  return 1;
+}

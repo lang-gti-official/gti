@@ -109,10 +109,95 @@ namespace std {
 ///
 /// Operations without an order argument are sequentially consistent. Explicit
 /// static order tags select only combinations valid for that operation. The
+/// fixed-width integer domain also has source-defined fetch add/subtract and
+/// bitwise operations; add/subtract retain checked-overflow failure. The
 /// value is move-only; GTI's borrow rules prevent moving it while shared
 /// references are live, preserving the storage identity used by an operation.
 class atomic<std::atomic_scalar T> {
   gti_internal::atomic_storage<T> storage;
+
+  T fetch_update_impl<Update>(mut Update update) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
+
+  T fetch_update_impl<Update>(mut Update update,
+                              memory_order_relaxed order) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange_relaxed_relaxed(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
+
+  T fetch_update_impl<Update>(mut Update update,
+                              memory_order_acquire order) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange_acquire_acquire(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
+
+  T fetch_update_impl<Update>(mut Update update,
+                              memory_order_release order) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange_release_relaxed(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
+
+  T fetch_update_impl<Update>(mut Update update,
+                              memory_order_acq_rel order) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange_acq_rel_acquire(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
+
+  T fetch_update_impl<Update>(mut Update update,
+                              memory_order_seq_cst order) {
+    mut T observed = gti_internal::atomic_load_relaxed(this.storage);
+    while (true) {
+      T desired = update(observed);
+      mut T actual = observed;
+      if (gti_internal::atomic_compare_exchange(
+              this.storage, observed, desired, actual)) {
+        return observed;
+      }
+      observed = actual;
+    }
+  }
 
 public:
   /// Creates one atomic scalar initialized to `value`.
@@ -327,6 +412,219 @@ public:
     bool exchanged = gti_internal::atomic_compare_exchange(
         this.storage, expected_value, desired, observed);
     return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  /// Atomically adds `operand`, returning the prior value. Integer arithmetic
+  /// is checked before each compare/exchange attempt; overflow raises defined
+  /// failure without publishing that attempted update.
+  T fetch_add(T operand) requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    });
+  }
+
+  T fetch_add(T operand, memory_order_relaxed order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    }, order);
+  }
+
+  T fetch_add(T operand, memory_order_acquire order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    }, order);
+  }
+
+  T fetch_add(T operand, memory_order_release order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    }, order);
+  }
+
+  T fetch_add(T operand, memory_order_acq_rel order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    }, order);
+  }
+
+  T fetch_add(T operand, memory_order_seq_cst order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed + operand);
+    }, order);
+  }
+
+  /// Atomically subtracts `operand`, returning the prior value. Integer
+  /// arithmetic is checked before each compare/exchange attempt.
+  T fetch_sub(T operand) requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    });
+  }
+
+  T fetch_sub(T operand, memory_order_relaxed order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    }, order);
+  }
+
+  T fetch_sub(T operand, memory_order_acquire order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    }, order);
+  }
+
+  T fetch_sub(T operand, memory_order_release order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    }, order);
+  }
+
+  T fetch_sub(T operand, memory_order_acq_rel order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    }, order);
+  }
+
+  T fetch_sub(T operand, memory_order_seq_cst order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed - operand);
+    }, order);
+  }
+
+  /// Atomically applies bitwise AND with `operand`, returning the prior value.
+  T fetch_and(T operand) requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    });
+  }
+
+  T fetch_and(T operand, memory_order_relaxed order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    }, order);
+  }
+
+  T fetch_and(T operand, memory_order_acquire order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    }, order);
+  }
+
+  T fetch_and(T operand, memory_order_release order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    }, order);
+  }
+
+  T fetch_and(T operand, memory_order_acq_rel order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    }, order);
+  }
+
+  T fetch_and(T operand, memory_order_seq_cst order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed & operand);
+    }, order);
+  }
+
+  /// Atomically applies bitwise OR with `operand`, returning the prior value.
+  T fetch_or(T operand) requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    });
+  }
+
+  T fetch_or(T operand, memory_order_relaxed order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    }, order);
+  }
+
+  T fetch_or(T operand, memory_order_acquire order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    }, order);
+  }
+
+  T fetch_or(T operand, memory_order_release order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    }, order);
+  }
+
+  T fetch_or(T operand, memory_order_acq_rel order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    }, order);
+  }
+
+  T fetch_or(T operand, memory_order_seq_cst order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed | operand);
+    }, order);
+  }
+
+  /// Atomically applies bitwise XOR with `operand`, returning the prior value.
+  T fetch_xor(T operand) requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    });
+  }
+
+  T fetch_xor(T operand, memory_order_relaxed order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, order);
+  }
+
+  T fetch_xor(T operand, memory_order_acquire order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, order);
+  }
+
+  T fetch_xor(T operand, memory_order_release order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, order);
+  }
+
+  T fetch_xor(T operand, memory_order_acq_rel order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, order);
+  }
+
+  T fetch_xor(T operand, memory_order_seq_cst order)
+      requires std::integral<T> {
+    return this.fetch_update_impl([operand](T observed) -> T {
+      return T(observed ^ operand);
+    }, order);
   }
 };
 }

@@ -27,6 +27,27 @@ def execute(command: list[str], *, timeout: int = 300) -> subprocess.CompletedPr
     return result
 
 
+def expect_overflow(command: list[str]) -> None:
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if (
+        result.returncode != 70
+        or result.stdout != ""
+        or "runtime error[GTI-R0001]: integer_overflow in addition"
+        not in result.stderr
+    ):
+        raise AssertionError(
+            "fetch_add overflow did not preserve defined failure\n"
+            f"command: {command}\nexit: {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+
 def executable_path(root: pathlib.Path, name: str) -> pathlib.Path:
     return root / (f"{name}.exe" if sys.platform == "win32" else name)
 
@@ -55,10 +76,10 @@ def build(
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 7:
         raise SystemExit(
             "usage: atomic_runtime_test.py /path/to/gti scalar.gti "
-            "concurrent.gti orders.gti"
+            "concurrent.gti orders.gti fetch.gti fetch-overflow.gti"
         )
     requested_compiler = pathlib.Path(sys.argv[1])
     resolved_compiler = (
@@ -72,6 +93,8 @@ def main() -> int:
     scalar = pathlib.Path(sys.argv[2]).resolve()
     concurrent = pathlib.Path(sys.argv[3]).resolve()
     orders = pathlib.Path(sys.argv[4]).resolve()
+    fetch = pathlib.Path(sys.argv[5]).resolve()
+    fetch_overflow = pathlib.Path(sys.argv[6]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-") as scratch:
         root = pathlib.Path(scratch)
@@ -81,6 +104,8 @@ def main() -> int:
                 scalar_binary = executable_path(root, f"atomic_scalar_{suffix}")
                 concurrent_binary = executable_path(root, f"atomic_concurrent_{suffix}")
                 orders_binary = executable_path(root, f"atomic_orders_{suffix}")
+                fetch_binary = executable_path(root, f"atomic_fetch_{suffix}")
+                overflow_binary = executable_path(root, f"atomic_overflow_{suffix}")
                 build(
                     compiler,
                     scalar,
@@ -102,7 +127,23 @@ def main() -> int:
                     standard=standard,
                     optimization=optimization,
                 )
+                build(
+                    compiler,
+                    fetch,
+                    fetch_binary,
+                    standard=standard,
+                    optimization=optimization,
+                )
+                build(
+                    compiler,
+                    fetch_overflow,
+                    overflow_binary,
+                    standard=standard,
+                    optimization=optimization,
+                )
                 execute([str(scalar_binary)])
+                execute([str(fetch_binary)])
+                expect_overflow([str(overflow_binary)])
                 for _ in range(10):
                     execute([str(concurrent_binary)])
                     execute([str(orders_binary)])

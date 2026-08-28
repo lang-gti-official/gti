@@ -111,7 +111,9 @@ jobs:
           python3 "${{ github.workspace }}/tests/atomic_runtime_test.py" gti \
             "${{ github.workspace }}/tests/fixtures/atomic_scalar.gti" \
             "${{ github.workspace }}/tests/fixtures/atomic_concurrent.gti" \
-            "${{ github.workspace }}/tests/fixtures/atomic_orders.gti"
+            "${{ github.workspace }}/tests/fixtures/atomic_orders.gti" \
+            "${{ github.workspace }}/tests/fixtures/atomic_fetch.gti" \
+            "${{ github.workspace }}/tests/fixtures/atomic_fetch_overflow.gti"
           cmake \
             -S "${{ github.workspace }}/tests/installed_library_smoke" \
             -B "${{ runner.temp }}/gti-installed-library-smoke" \

@@ -1,7 +1,8 @@
 # Concurrency And Atomic Values
 
-Status: Current language contract for the implemented concurrent profile,
-managed threads, ordered scalar atomics, and scoped mutex guards.
+Status: Current language contract for the bounded production concurrent
+profile: owned managed threads, ordered scalar atomics, and scoped mutex
+guards.
 
 Rationale is recorded in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining
@@ -105,11 +106,13 @@ int32_t prior = value.exchange(3);
 auto changed = value.compare_exchange_strong(3, 4);
 bool success = changed.exchanged();
 int32_t observed = changed.observed();
+int32_t fetched = value.fetch_add(2);
 ```
 
 Construction initializes the atomic before ordinary ownership publication.
-`load`, `store`, `exchange`, and `compare_exchange_strong` are sequentially
-consistent when no order argument is supplied.
+`load`, `store`, `exchange`, `compare_exchange_strong`, and the integer
+`fetch_*` operations are sequentially consistent when no order argument is
+supplied.
 
 Strong compare/exchange performs one atomic read-modify-write on success and
 one atomic load on failure. It succeeds exactly when the value observed at the
@@ -119,11 +122,12 @@ reference into atomic storage. On success `observed()` is the replaced value.
 On failure it is the value that prevented the exchange.
 
 Every atomic object has one modification order over its stores and
-read-modify-writes. All current atomic operations additionally participate in
-one program-wide total sequentially consistent order consistent with each
-thread's sequenced-before order. A load observes the most recent preceding
-store or read-modify-write to that object in this total order. Sequentially
-consistent stores release, loads acquire, and read-modify-writes do both.
+read-modify-writes. Every sequentially consistent atomic operation additionally
+participates in one program-wide total order consistent with each thread's
+sequenced-before order. A sequentially consistent load observes the most recent
+preceding store or read-modify-write to that object in this total order.
+Sequentially consistent stores release, loads acquire, and read-modify-writes
+do both.
 
 The compiler records operation identity and order in HIR and verified MIR.
 Optimization treats those records as synchronization barriers. The public
@@ -190,6 +194,40 @@ and the sealed backend maps that verified record to the corresponding native
 order spelling. Native overload resolution never supplies or strengthens GTI
 semantics.
 
+## Integer Fetch Operations
+
+Every fixed-width signed or unsigned integer atomic exposes these
+read-modify-write operations:
+
+```gti
+int32_t before_add = value.fetch_add(2);
+int32_t before_sub = value.fetch_sub(1, std::memory_order_relaxed());
+int32_t before_and = value.fetch_and(0xff, std::memory_order_acquire());
+int32_t before_or = value.fetch_or(0x10, std::memory_order_release());
+int32_t before_xor = value.fetch_xor(0x03, std::memory_order_acq_rel());
+```
+
+Each returns the value immediately before its successful update. All five
+order tags are accepted because every operation is a read-modify-write. `bool`
+remains available for load, store, exchange, and strong compare/exchange, but
+does not satisfy the integer constraint for these fetch operations.
+
+`fetch_add` and `fetch_sub` use GTI's checked integer arithmetic. Overflow is a
+defined failure raised before that attempted update is published; these
+operations deliberately do not inherit C++'s wrapping integral `fetch_add` or
+`fetch_sub` behavior. Bitwise fetch operations are total after the normal
+checked conversion back to the atomic's fixed-width type.
+
+The standard library defines the fetch families as strong compare/exchange
+loops over the sealed atomic operations rather than as new backend
+instructions. The initial observation is relaxed. A successful attempt uses
+these success/failure pairs: relaxed/relaxed, acquire/acquire,
+release/relaxed, acq_rel/acquire, or seq_cst/seq_cst. Contention may cause the
+pure built-in update expression to be recomputed; the successful
+compare/exchange is the operation's linearization point. HIR/MIR verification
+therefore sees the same exact atomic identities and barriers as an explicitly
+written strong compare/exchange loop.
+
 ## Mutexes And Scoped Guards
 
 `<std/mutex>` provides `std::mutex<T>` for an owned movable `T`. The mutex is
@@ -240,10 +278,27 @@ layout, C/C++ ABI compatibility, nor that moving a mutex preserves waiter
 identity. A move constructs a fresh unlocked native mutex around the moved
 payload and is legal only when ordinary ownership proves no guard is live.
 
+## Bounded Production Guarantee
+
+The combination of owned automatic-join tasks (including typed results), the
+closed scalar atomic domain with all five accepted orders and integer fetch
+operations, and owner-tied mutex guards is GTI's bounded production concurrent
+surface. “Production” here means that each admitted operation has a complete
+source contract, semantic and verified-HIR/MIR authority, deterministic
+failure/cleanup behavior, native C++20/C++23 execution coverage, optimizer
+barriers, installed-toolchain coverage, and sanitizer coverage where the host
+supports it. It does not mean C++ API parity or a lock-free guarantee.
+
+This boundary supports owned worker tasks, result handoff, counters/flags, and
+lock-protected shared values without exposing native handles or raw pointers.
+Programs needing an omitted family must wait for that family's own lifetime,
+ordering, and failure contract instead of treating a similarly named native
+facility as part of safe GTI.
+
 ## Current Omissions
 
 The current surface deliberately excludes weak compare/exchange, spurious
-failure, fetch arithmetic, wait/notify, atomic references, and fences.
+failure, wait/notify, atomic references, pointer atomics, and fences.
 Condition variables, public manual unlock, recursive/read-write mutexes,
 scoped cross-thread borrows, detach, thread locals, and foreign-created-thread
 entry are also not implemented.

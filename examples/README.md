@@ -81,7 +81,7 @@ own `main` function.
 | `73-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
 | `74-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
 | `75-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
-| `76-scalar-atomics.gti` | share-safe scalar atomics with explicit relaxed, acquire, and acquire-release orders across managed threads |
+| `76-scalar-atomics.gti` | share-safe integer fetch operations with explicit relaxed, acquire, and acquire-release orders across managed threads |
 
 Build and run an example from the repository root:
 
@@ -246,11 +246,11 @@ language slice.
 ```
 
 It uses an immutable namespace-global `std::atomic<int32_t>` for synchronized
-interior mutation from two managed threads. Strong compare/exchange returns a
-value object containing both success and the actual observation, so retry code
-never receives a reference into atomic storage. The first surface is entirely
-source-defined, defaults to sequential consistency, and uses static explicit
-order tags without making a lock-free or layout promise.
+interior mutation from two managed threads. `fetch_add` returns the value before
+its successful update and is implemented by the source library as a verified
+strong compare/exchange loop; checked overflow fails before publication. The
+surface defaults to sequential consistency and uses static explicit order tags
+without making a lock-free or layout promise.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

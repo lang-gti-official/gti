@@ -551,6 +551,139 @@ void testExplicitOrders() {
   }
 }
 
+void testFetchOperations() {
+  const lang::FrontendResult frontend =
+      analyze("atomic-fetch.gti", fixtureSource("atomic_fetch.gti"));
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "integer fetch operations should complete exact HIR and MIR "
+         "verification for every public memory order");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  constexpr std::size_t orderCount =
+      static_cast<std::size_t>(lang::AtomicMemoryOrder::Count);
+  std::array<std::array<bool, orderCount>, orderCount> compareOrders{};
+  std::size_t compareExchanges = 0;
+  std::size_t untrustedAtomics = 0;
+  lang::MirProgram inspected = frontend.mir;
+  forEachInstruction(inspected, [&](lang::MirBody &body,
+                                    lang::MirInstruction &instruction) {
+    if (!isAtomic(instruction.intrinsic)) {
+      return;
+    }
+    untrustedAtomics += body.compilerTrustedSynchronization ? 0 : 1;
+    if (instruction.intrinsic != lang::IntrinsicKind::AtomicCompareExchange ||
+        !instruction.synchronization.order ||
+        !instruction.synchronization.failureOrder) {
+      return;
+    }
+    ++compareExchanges;
+    const std::size_t success =
+        static_cast<std::size_t>(*instruction.synchronization.order);
+    const std::size_t failure =
+        static_cast<std::size_t>(*instruction.synchronization.failureOrder);
+    if (success < orderCount && failure < orderCount) {
+      compareOrders[success][failure] = true;
+    }
+  });
+  const auto cas = [&](lang::AtomicMemoryOrder success,
+                       lang::AtomicMemoryOrder failure) {
+    return compareOrders[static_cast<std::size_t>(success)]
+                        [static_cast<std::size_t>(failure)];
+  };
+  expect(compareExchanges == 33 && untrustedAtomics == 0 &&
+             cas(lang::AtomicMemoryOrder::Relaxed,
+                 lang::AtomicMemoryOrder::Relaxed) &&
+             cas(lang::AtomicMemoryOrder::Acquire,
+                 lang::AtomicMemoryOrder::Acquire) &&
+             cas(lang::AtomicMemoryOrder::Release,
+                 lang::AtomicMemoryOrder::Relaxed) &&
+             cas(lang::AtomicMemoryOrder::AcquireRelease,
+                 lang::AtomicMemoryOrder::Acquire) &&
+             cas(lang::AtomicMemoryOrder::SequentiallyConsistent,
+                 lang::AtomicMemoryOrder::SequentiallyConsistent),
+         "the five fetch families should remain trusted CAS loops with the "
+         "exact requested read-modify-write order pairs");
+  bool exactFetchMatrix = true;
+  for (std::size_t success = 0; success < orderCount; ++success) {
+    for (std::size_t failure = 0; failure < orderCount; ++failure) {
+      const auto successOrder = static_cast<lang::AtomicMemoryOrder>(success);
+      const auto failureOrder = static_cast<lang::AtomicMemoryOrder>(failure);
+      const bool expected =
+          (successOrder == lang::AtomicMemoryOrder::Relaxed &&
+           failureOrder == lang::AtomicMemoryOrder::Relaxed) ||
+          (successOrder == lang::AtomicMemoryOrder::Acquire &&
+           failureOrder == lang::AtomicMemoryOrder::Acquire) ||
+          (successOrder == lang::AtomicMemoryOrder::Release &&
+           failureOrder == lang::AtomicMemoryOrder::Relaxed) ||
+          (successOrder == lang::AtomicMemoryOrder::AcquireRelease &&
+           failureOrder == lang::AtomicMemoryOrder::Acquire) ||
+          (successOrder == lang::AtomicMemoryOrder::SequentiallyConsistent &&
+           failureOrder == lang::AtomicMemoryOrder::SequentiallyConsistent);
+      exactFetchMatrix =
+          exactFetchMatrix && compareOrders[success][failure] == expected;
+    }
+  }
+  expect(exactFetchMatrix,
+         "fetch loops should not manufacture an unrequested order pair");
+
+  const lang::TargetInfo target = concurrentTarget();
+  const lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O3,
+                                        .target = target});
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid() &&
+             atomicCount(optimized.mir,
+                         lang::IntrinsicKind::AtomicCompareExchange) ==
+                 atomicCount(frontend.mir,
+                             lang::IntrinsicKind::AtomicCompareExchange) &&
+             atomicCount(optimized.mir, lang::IntrinsicKind::AtomicLoad) ==
+                 atomicCount(frontend.mir, lang::IntrinsicKind::AtomicLoad),
+         "O3 should preserve every fetch loop synchronization barrier");
+  if (!optimized.valid()) {
+    return;
+  }
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, optimized.sourceMir, optimized.mir,
+                             target, optimized.report.transformations);
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "verified fetch loops should cross the sealed backend boundary");
+  for (const lang::CppStandard standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const std::string cpp =
+        lang::CppBackend(standard).generate(lowered).contents;
+    expect(cpp.find("atomic_compare_exchange(") != std::string::npos &&
+               cpp.find("std::memory_order_relaxed") != std::string::npos &&
+               cpp.find("std::memory_order_acquire") != std::string::npos &&
+               cpp.find("std::memory_order_release") != std::string::npos &&
+               cpp.find("std::memory_order_acq_rel") != std::string::npos &&
+               cpp.find("std::memory_order_seq_cst") != std::string::npos,
+           "both native standards should emit the source-defined CAS loops "
+           "with every verified fetch order");
+  }
+
+  for (const std::string &operation : {"fetch_add", "fetch_or"}) {
+    const lang::FrontendResult invalid =
+        analyze("atomic-bool-" + operation + ".gti",
+                "#include <std/atomic>\nint main() {\n  std::atomic<bool> "
+                "flag{false};\n  [[discard]] flag." +
+                    operation + "(true);\n  return 0;\n}\n");
+    expect(!invalid.canGenerateCode() && !invalid.diagnostics.empty() &&
+               !hasCode(invalid, "GTI-B0001"),
+           operation + " should reject bool through public constraints before "
+                       "lowering");
+  }
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("atomic-verifier.gti", validProgram());
@@ -618,6 +751,7 @@ int main() {
   testScalarDomain();
   testSemanticBoundaries();
   testExplicitOrders();
+  testFetchOperations();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;
 }

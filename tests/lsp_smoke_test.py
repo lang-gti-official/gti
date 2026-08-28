@@ -3562,9 +3562,10 @@ def test_atomic_tooling(executable, root):
         "int main() {\n"
         "  counter.store(1, std::memory_order_release());\n"
         "  int32_t prior = counter.exchange(2);\n"
-        "  auto changed = counter.compare_exchange_strong(2, 3);\n"
-        "  return counter.load(std::memory_order_acquire()) == 3 && "
-        "changed.exchanged() && prior == 1 ? 0 : 1;\n"
+        "  int32_t fetched = counter.fetch_add(1);\n"
+        "  auto changed = counter.compare_exchange_strong(3, 4);\n"
+        "  return counter.load(std::memory_order_acquire()) == 4 && "
+        "changed.exchanged() && prior == 1 && fetched == 2 ? 0 : 1;\n"
         "}\n"
     )
     path.write_text(source, encoding="utf-8")
@@ -3656,6 +3657,9 @@ def test_atomic_tooling(executable, root):
         assert "Returns the current value with acquire ordering" in load_hover[
             "contents"
         ]["value"]
+        fetch_use = source.index("fetch_add(")
+        fetch_hover = position_request(11, "textDocument/hover", fetch_use + 1)
+        assert "Atomically adds" in fetch_hover["contents"]["value"]
         order_use = source.index("memory_order_release")
         order_hover = position_request(9, "textDocument/hover", order_use + 1)
         assert "Static tag selecting release atomic ordering" in order_hover[
@@ -3684,6 +3688,7 @@ def test_atomic_tooling(executable, root):
             (type_use, 4),
             (source.index("store("), 6),
             (source.index("exchange("), 6),
+            (fetch_use, 6),
             (source.index("compare_exchange_strong("), 6),
             (load_use, 6),
             (order_use, 6),
@@ -3695,7 +3700,7 @@ def test_atomic_tooling(executable, root):
             assert actual_type == expected_type, (offset, actual_type, tokens)
 
         completion_source = source.replace(
-            "counter.load(std::memory_order_acquire())", "counter.lo"
+            "counter.fetch_add(1)", "counter.fe"
         )
         session.send(
             {
@@ -3713,14 +3718,14 @@ def test_atomic_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
         )
-        prefix = completion_source.index("counter.lo") + len("counter.lo")
+        prefix = completion_source.index("counter.fe") + len("counter.fe")
         completion = position_request(
             6, "textDocument/completion", prefix, completion_source
         )
-        load_item = next(
-            item for item in completion["items"] if item["label"] == "load"
+        fetch_item = next(
+            item for item in completion["items"] if item["label"] == "fetch_add"
         )
-        assert "load" in load_item["detail"]
+        assert "fetch_add" in fetch_item["detail"]
 
         private_source = (
             "#include <std/atomic>\n"

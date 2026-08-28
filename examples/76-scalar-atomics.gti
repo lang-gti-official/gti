@@ -4,17 +4,7 @@
 std::atomic<int32_t> shared_count{0};
 
 void add_one() {
-  mut int32_t observed =
-      shared_count.load(std::memory_order_relaxed());
-  while (true) {
-    auto update = shared_count.compare_exchange_strong(
-        observed, observed + 1, std::memory_order_acq_rel(),
-        std::memory_order_acquire());
-    if (update.exchanged()) {
-      return;
-    }
-    observed = update.observed();
-  }
+  [[discard]] shared_count.fetch_add(1, std::memory_order_acq_rel());
 }
 
 int main() {

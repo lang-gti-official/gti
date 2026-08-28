@@ -95,11 +95,15 @@ remain outside this surface.
 
 `<std/atomic>` provides move-only `std::atomic<T>` for `bool` and every
 fixed-width signed and unsigned integer. Construction, load, store, exchange,
-and strong compare/exchange default to sequential consistency. Static order
-tag types expose every legal relaxed/acquire/release/acquire-release/SC
-combination without a runtime enum. The strong operation never fails spuriously
-and returns both success and the actual observed value without exposing a
-reference into storage. Atomic values are transfer- and
+strong compare/exchange, and the fixed-width integer `fetch_add`, `fetch_sub`,
+`fetch_and`, `fetch_or`, and `fetch_xor` families default to sequential
+consistency. Static order tag types expose every legal
+relaxed/acquire/release/acquire-release/SC combination without a runtime enum.
+The strong operation never fails spuriously and returns both success and the
+actual observed value without exposing a reference into storage. Fetch
+operations are source-defined strong-CAS loops and return the replaced value;
+add/subtract retain GTI's defined checked-overflow failure rather than wrapping.
+Atomic values are transfer- and
 share-capable, but no lock-free, stable-layout, or native ABI promise is made.
 
 `<std/mutex>` provides noncopyable `std::mutex<T>` and the move-only,
