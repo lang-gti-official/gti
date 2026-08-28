@@ -82,6 +82,9 @@ struct ProjectOptions {
   ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> package;
   std::optional<std::string> target;
+  // The `--target <triple>` cross-compilation selection, distinct from the
+  // manifest build target named by `target`.
+  std::optional<std::string> targetTriple;
   std::string profile = "dev";
   bool profileSelected = false;
   std::optional<std::string> cxx;
@@ -191,6 +194,10 @@ void printUsage(std::ostream &stream) {
          "Project build options:\n"
          "      --package <name> Select a package from the active workspace.\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
+         "      --target <triple>\n"
+         "                       Build for a target triple (default: host).\n"
+         "                       A non-host triple requires a matching\n"
+         "                       [toolchains.<triple>] manifest table.\n"
          "      --release        Shorthand for --profile release.\n"
          "      --all            Build every declared target (gti build "
          "only).\n"
@@ -637,6 +644,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.package = argv[index];
+      continue;
+    }
+    if (argument == "--target") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing target triple after --target\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.targetTriple) {
+        std::cerr << "gti: --target may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.targetTriple = argv[index];
       continue;
     }
     if (argument == "--release") {
@@ -1731,9 +1750,84 @@ void reportProjectSuccess(std::ostream &stream, std::string_view action,
          << plan.output().string() << '\n';
 }
 
+// Resolves the project command's selected target. Omitting `--target`
+// keeps the build host, so an existing manifest needs no change. An
+// explicit triple is parsed with the compiler's own vocabulary; a malformed
+// or unsupported spelling is a usage error, and a triple GTI can name but
+// cannot lay out is a toolchain-configuration error.
+struct ProjectTargetSelection {
+  std::optional<lang::TargetInfo> target;
+  int failure = 0;
+};
+
+ProjectTargetSelection selectProjectTarget(const ProjectOptions &options) {
+  if (!options.targetTriple) {
+    return {.target = lang::TargetInfo::host()};
+  }
+  // `run` and `test` execute the produced program on this machine. GTI
+  // models no runner or emulator, so a foreign target is refused here
+  // rather than left to fail as an exec-format error after a full build.
+  if (options.command == ProjectCommand::Run ||
+      options.command == ProjectCommand::Test) {
+    const lang::TargetTripleParseResult requested =
+        lang::parseTargetTripleResult(*options.targetTriple);
+    const lang::TargetInfo host = lang::TargetInfo::host();
+    if (requested.succeeded() &&
+        lang::driver::targetTriple(*requested.target) !=
+            lang::driver::targetTriple(host)) {
+      std::cerr << "gti: " << projectCommandName(options.command)
+                << " executes the built program on this machine and cannot "
+                   "select target '"
+                << *options.targetTriple << "'\n"
+                << "gti: build it with gti build --target "
+                << *options.targetTriple << '\n';
+      return {.failure = exitCode(ExitStatus::Usage)};
+    }
+  }
+  const lang::TargetTripleParseResult parsed =
+      lang::parseTargetTripleResult(*options.targetTriple);
+  if (!parsed.succeeded()) {
+    std::cerr << "gti: invalid --target '" << *options.targetTriple
+              << "': " << lang::targetTripleErrorMessage(parsed.error) << '\n';
+    return {.failure = exitCode(ExitStatus::Usage)};
+  }
+  if (!parsed.target->supported()) {
+    std::cerr << "gti: target '" << *options.targetTriple
+              << "' has no supported GTI data layout\n";
+    return {.failure = exitCode(ExitStatus::ToolchainConfiguration)};
+  }
+  return {.target = *parsed.target};
+}
+
+// `gti check` performs no native compilation, so it analyzes any supported
+// target without a declared toolchain. Every command that publishes a native
+// artifact fails closed instead of reusing host tools.
+lang::driver::ToolchainSelectionPolicy
+projectToolchainPolicy(const ProjectOptions &options) {
+  return options.command == ProjectCommand::Check
+             ? lang::driver::ToolchainSelectionPolicy::HostTools
+             : lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget;
+}
+
 int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                      const ProjectOptions &options,
                      const lang::driver::ToolchainLayout &toolchain) {
+  // Configuration precedence: an explicit command-line option, then the
+  // manifest's declared toolchain for the selected target, then the existing
+  // environment/default discovery order. A declared toolchain deliberately
+  // outranks GTI_CXX/CXX, because those describe the host.
+  const lang::driver::ResolvedProjectToolchain &declaredToolchain =
+      plan.toolchain();
+  const std::optional<std::string> selectedCxx =
+      options.cxx ? options.cxx
+      : declaredToolchain.declared()
+          ? std::optional<std::string>(declaredToolchain.cxx)
+          : std::nullopt;
+  const std::optional<std::string> selectedCc =
+      options.cc ? options.cc
+      : declaredToolchain.declared() && !declaredToolchain.cc.empty()
+          ? std::optional<std::string>(declaredToolchain.cc)
+          : std::nullopt;
   std::optional<std::string> cCompiler;
   const bool dependencyCSources =
       std::any_of(plan.nativeInputs().dependencyGroups.begin(),
@@ -1742,7 +1836,7 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                     return !group.cSources.empty();
                   });
   if (!plan.nativeInputs().cSources.empty() || dependencyCSources) {
-    cCompiler = lang::driver::discoverCCompiler(options.cc);
+    cCompiler = lang::driver::discoverCCompiler(selectedCc);
   }
   std::optional<lang::driver::BuildCachePolicy> cache;
   if (options.useCache) {
@@ -1763,7 +1857,7 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
               plan.optimization(), plan.cppStandard(), plan.packageSources(),
               plan.configurationFlags()),
           toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(options.cxx),
+          lang::driver::discoverNativeCompiler(selectedCxx),
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
                                             .outputRoot = plan.workspaceRoot() /
@@ -1790,11 +1884,16 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   const lang::driver::ProjectTargetSetResolutionResult resolution =
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
-          *currentDirectory, std::nullopt, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package, {},
-          lang::driver::RuntimeProfile::Hosted));
+          *currentDirectory, std::nullopt, options.profile, *selection.target,
+          std::move(overrides), options.package, {},
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1817,6 +1916,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
+    }
+    if (options.targetTriple) {
+      command.emplace_back("--target");
+      command.push_back(*options.targetTriple);
     }
     if (options.cxx) {
       command.emplace_back("--cxx");
@@ -1956,13 +2059,18 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
-          *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package,
+          *currentDirectory, options.target, options.profile, *selection.target,
+          std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted));
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2082,13 +2190,18 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   overrides.configurationFlags = options.configurationFlags;
+  const ProjectTargetSelection selection = selectProjectTarget(options);
+  if (!selection.target) {
+    return selection.failure;
+  }
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
-          *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package,
+          *currentDirectory, options.target, options.profile, *selection.target,
+          std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted));
+          lang::driver::RuntimeProfile::Hosted,
+          projectToolchainPolicy(options)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
