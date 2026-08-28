@@ -511,6 +511,37 @@ overwrite any loaded source. When capture is not requested, ordinary driver
 callers retain no optimizer dump/report strings and compilation output is
 unchanged.
 
+### Read-Only Project Facts
+
+`gti/driver/project_facts.h` publishes the resolved project as a read-only
+value for consumers that must agree with `gti build` and `gti check` about
+what a project means without building, fetching, or mutating project state.
+`resolveProjectFacts` answers for the project containing a directory;
+`projectFactsFromWorkspace` describes a workspace a caller already resolved.
+
+The published facts are the workspace root and whether a `[workspace]` table
+declared it, the resolved package closure with each package's identity,
+membership, manifest/package/source roots, selectability, git provenance, and
+direct alias edges, the package source-root graph, the selected package's
+declared profiles and targets, package-level configuration flags, the profile
+a command selects when none is named, and the workspace-graph model identity.
+`analysisConfiguration` assembles one declared profile's configuration exactly
+as the build path assembles it. Native settings, output layout, and cache
+policy are build concerns and are deliberately absent.
+
+Resolution runs no native tool, no git process, and no build, and creates no
+directories. It uses the same dependency policy as `gti metadata`: a stored
+checkout is still checksum-verified and `gti.lock` remains the coverage
+authority, so an unmaterialized or unlocked git dependency is reported as a
+diagnostic rather than acquired.
+
+The package source-root graph is the fact that makes this a shared answer
+rather than a convenience. It cannot be reconstructed from one manifest, so a
+consumer that reads `gti.toml` itself resolves no package includes at all
+while the build path resolves them, and the two silently disagree. A build
+plan's model identity extends the workspace-graph identity these facts publish
+with its configuration flags and bindgen imports.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
@@ -668,5 +699,9 @@ are composed into builds, but plans containing them bypass the whole-program
 cache until dependency discovery covers their source and link inputs.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
-The LSP must consume reusable resolved project facts rather than parse manifest
-semantics independently or mutate project state while opening a document.
+The driver publishes resolved project facts, but the LSP does not consume them
+yet: it still reads the manifest directly for configuration flags and the
+default profile's execution profile, and analyzes with no package source
+roots, so package includes an editor opens do not resolve the way `gti check`
+resolves them. Consuming `ProjectFacts` without fetching or building, with
+dirty buffers authoritative, remains `T-LSP-04`.
