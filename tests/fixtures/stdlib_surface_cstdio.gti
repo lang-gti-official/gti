@@ -11,7 +11,9 @@ expected<std::string, std::io_errc> read_all(mut std::FILE& stream) {
     if (chunk.value().empty()) {
       return std::move(result);
     }
-    result.append(chunk.value().view());
+    for (auto& byte : chunk.value()) {
+      result.push_back(byte);
+    }
   }
 }
 

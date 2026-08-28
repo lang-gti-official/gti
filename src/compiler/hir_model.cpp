@@ -427,12 +427,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool exactSemantic =
           semantic != nullptr && range != nullptr && exactConcreteTypes &&
           range->strategy == semantic->strategy &&
-          (genericSemantic ||
-           (range->rangeType == semantic->rangeType &&
-            range->iteratorType == semantic->iteratorType &&
-            range->sentinelType == semantic->sentinelType &&
-            range->elementType == semantic->elementType &&
-            range->arrayLength == semantic->arrayLength)) &&
+          (genericSemantic || (range->rangeType == semantic->rangeType &&
+                               range->iteratorType == semantic->iteratorType &&
+                               range->sentinelType == semantic->sentinelType &&
+                               range->elementType == semantic->elementType &&
+                               range->arrayLength == semantic->arrayLength)) &&
           range->elementAccess == semantic->elementAccess &&
           exactLoanProvenance &&
           range->beginFunction == semantic->beginFunction &&
@@ -440,7 +439,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           range->compareFunction == semantic->compareFunction &&
           range->dereferenceFunction == semantic->dereferenceFunction &&
           range->incrementFunction == semantic->incrementFunction &&
-          range->ownsRangeTemporary == semantic->ownsRangeTemporary;
+          range->ownsRangeTemporary == semantic->ownsRangeTemporary &&
+          range->expectedPayloadProjection ==
+              semantic->expectedPayloadProjection;
       const bool exactStructure =
           source != nullptr && range != nullptr && statement.body &&
           body.findStatement(*statement.body) != nullptr &&
@@ -494,8 +495,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (range == nullptr ||
            range->ownsRangeTemporary ==
                (owner->info.type.kind != SemanticType::Reference));
+      const HirValue *sourceValue =
+          range == nullptr ? nullptr : body.findValue(range->source);
+      const bool exactExpectedPayloadProjection =
+          range != nullptr &&
+          (!range->expectedPayloadProjection ||
+           (sourceValue != nullptr &&
+            sourceValue->intrinsic == IntrinsicKind::ExpectedValue &&
+            sourceValue->borrowOrigin == BorrowOriginKind::Receiver &&
+            sourceValue->borrowAccess == AccessMode::ReadOnly &&
+            owner != nullptr &&
+            owner->info.type.kind == SemanticType::Reference));
       if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
-          !exactOwner) {
+          !exactOwner || !exactExpectedPayloadProjection) {
         result.errors.emplace_back(
             "range HIR plan differs from semantic owner/loan/protocol facts");
       }

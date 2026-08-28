@@ -2079,6 +2079,7 @@ private:
         range.incrementFunction = resolved->incrementFunction;
         range.arrayLength = resolved->arrayLength;
         range.ownsRangeTemporary = resolved->ownsRangeTemporary;
+        range.expectedPayloadProjection = resolved->expectedPayloadProjection;
       }
       range.owner = bindingFor(rangeFor->ownerBinding());
       range.rangeCarrier = bindingFor(rangeFor->rangeBinding());

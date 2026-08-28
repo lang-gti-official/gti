@@ -8718,7 +8718,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "io|owner-dependent-views]"
+            "expected-payload-range|io|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -8736,6 +8736,14 @@ def main():
             with tempfile.TemporaryDirectory(prefix="gti-lsp-mutex-") as root:
                 test_mutex_tooling(sys.argv[1], pathlib.Path(root))
             print("GTI mutex LSP test passed")
+        elif sys.argv[2] == "expected-payload-range":
+            with tempfile.TemporaryDirectory(
+                prefix="gti-lsp-expected-range-"
+            ) as root:
+                test_expected_payload_range_tooling(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            print("GTI Expected payload range LSP test passed")
         elif sys.argv[2] == "constexpr-aggregate":
             with tempfile.TemporaryDirectory(
                 prefix="gti-lsp-constexpr-"
@@ -8833,6 +8841,7 @@ def main():
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
     test_range_loan_tooling(sys.argv[1], root)
+    test_expected_payload_range_tooling(sys.argv[1], root)
     test_owner_dependent_span_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
@@ -9926,6 +9935,98 @@ def test_range_loan_tooling(executable, root):
         assert not any(
             item.get("code") == "GTI-S2083" for item in incomplete_diagnostics
         ), incomplete_diagnostics
+    finally:
+        session.close()
+
+
+def test_expected_payload_range_tooling(executable, root):
+    invalid_source = (
+        "#include <std/string>\n"
+        "expected<std::string, int32_t> make_text() {\n"
+        '  return std::string("ab");\n'
+        "}\n"
+        "int main() {\n"
+        "  mut auto text = make_text();\n"
+        "  for (auto& byte : text.value()) { text = make_text(); }\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    valid_source = (
+        "#include <std/string>\n"
+        "expected<std::string, int32_t> make_text() {\n"
+        '  return std::string("ab");\n'
+        "}\n"
+        "int main() {\n"
+        "  mut auto text = make_text();\n"
+        "  mut int32_t count = 0;\n"
+        "  for (auto& byte : text.value()) { count += 1; }\n"
+        "  return count - 2;\n"
+        "}\n"
+    )
+    path = root / "expected-payload-range.gti"
+    path.write_text(invalid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": invalid_source,
+                    }
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        diagnostics = invalid["params"]["diagnostics"]
+        conflict = next(
+            item for item in diagnostics if item.get("code") == "GTI-S2017"
+        )
+        assignment = invalid_source.index(
+            "text = make_text", invalid_source.index("for (")
+        )
+        assert conflict["range"]["start"] == lsp_position(
+            invalid_source, assignment
+        ), conflict
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
     finally:
         session.close()
 

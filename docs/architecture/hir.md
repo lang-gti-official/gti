@@ -192,6 +192,13 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+For the bounded named-Expected payload range, `HirRangeIteration` carries
+`expectedPayloadProjection` in addition to its exact source value and range
+loan. Verification requires that marker to equal the semantic range fact, the
+source to be exact `ExpectedValue` with receiver-origin read access, and the
+hidden owner to be reference storage. A backend therefore cannot authorize a
+general retained Expected reference by rediscovering source call syntax.
+
 For a selected call or construction with omitted arguments, HIR lowers the
 semantic model's exact default-expression suffix at the caller after every
 written operand. The expressions use the selected target instance's concrete

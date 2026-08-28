@@ -3620,6 +3620,10 @@ private:
     const Expr *currentDefaultArgumentRoot = nullptr;
     std::unordered_set<std::string> currentDefaultParameterNames;
     bool analyzingCallCallee = false;
+    // Non-null only while analysing the compiler-generated read-only range
+    // owner initializer. An exact expected.value() at this identity may
+    // publish the bounded receiver-rooted payload borrow.
+    const Expr *expectedPayloadRangeCandidate = nullptr;
     bool analyzingPackFoldElement = false;
     bool analyzingStaticAssertCondition = false;
     bool staticAssertGenericDependency = false;
@@ -3772,6 +3776,8 @@ private:
   std::unordered_set<std::string> &currentDefaultParameterNames =
       requestSession.currentDefaultParameterNames;
   bool &analyzingCallCallee = requestSession.analyzingCallCallee;
+  const Expr *&expectedPayloadRangeCandidate =
+      requestSession.expectedPayloadRangeCandidate;
   bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;
   bool &analyzingStaticAssertCondition =
       requestSession.analyzingStaticAssertCondition;

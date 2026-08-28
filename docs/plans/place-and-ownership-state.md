@@ -1,13 +1,14 @@
 # Place Identity And Ownership-State Authority
 
-Status: M-OWN-01 design, M-OWN-02 bounded implementation, and M-LIFE-01
-normal-exit lifecycle substrate complete. The `M-BACK-01/02` executable-body
+Status: M-OWN-01 design, M-OWN-02 bounded implementation, M-LIFE-01
+normal-exit lifecycle substrate, and M-OWN-04 named Expected-payload range
+slice complete. The `M-BACK-01/02` executable-body
 cutover is also complete: every accepted body reaches the backend through
 verified MIR. Remaining per-family M-EXEC, failure rollback, provenance, and
 aggregate lifecycle work extends the represented schedule without restoring a
-backend fallback. M-OWN-04 is a proposed bounded extension for read-only range
-loans over the active value of one stable named `expected<T, E>`; it does not
-generalize retained nested-owner borrows.
+backend fallback. M-OWN-04 is the implemented bounded exception for read-only
+range loans over the active value of one stable named `expected<T, E>`; it
+does not generalize retained nested-owner borrows.
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete
@@ -401,7 +402,7 @@ place behavior. Raw-pointer partial movement, vector slot extraction, general
 provenance, return-field inference, a general alias solver, and complete drop
 obligations remain non-goals of this row.
 
-## 9. Proposed M-OWN-04 Named Expected-Payload Range Slice
+## 9. Implemented M-OWN-04 Named Expected-Payload Range Slice
 
 The portable byte-I/O surface supplies the first concrete client that changes
 the priority of one previously broad restriction:
@@ -417,16 +418,15 @@ for (auto& byte : chunk.value()) {
 }
 ```
 
-The named `chunk` storage already outlives the loop. The source is nevertheless
-rejected today because range lowering retains its hidden owner reference for
-the loop region, while `ExpectedValue` does not publish an exact receiver-rooted
-place transform. The generic `GTI-S2017` fallback consequently describes the
-payload as temporary storage even though the actual gap is an unrepresented
-nested owner dependency. Moving the string out is sound but makes ordinary
-fallible byte input compose poorly with ordinary range iteration.
+The named `chunk` storage already outlives the loop. Before M-OWN-04 the source
+was rejected because range lowering retained its hidden owner reference for
+the loop region, while `ExpectedValue` did not publish the exact bounded
+receiver-rooted relation needed by that plan. Moving the string out was sound
+but made ordinary fallible byte input compose poorly with ordinary range
+iteration.
 
-M-OWN-04 proposes one deliberately bounded place extension rather than general
-nested borrowing. A successful `value()` extraction from a stable named
+M-OWN-04 implements one deliberately bounded place extension rather than
+general nested borrowing. A successful `value()` extraction from a stable named
 `expected<T, E>` receiver may form one exact active-value projection rooted at
 that receiver, but only as the source of a read-only range plan. The range loan
 protects the entire expected root conservatively: movement, replacement,
@@ -467,7 +467,7 @@ restriction. A later client may reuse the active-alternative projection, but
 it must add its own carrier and invalidation proof rather than inheriting range
 permission automatically.
 
-Focused evidence must include:
+Landed focused evidence includes:
 
 - positive read-only iteration over `expected<std::string, E>.value()` and one
   non-string nominal range, including empty input, nested read-only traversal,
@@ -483,7 +483,7 @@ Focused evidence must include:
 - LSP publication and clearing with the diagnostic anchored to the written
   range expression rather than generated lowering syntax.
 
-This is a systems-readiness integration slice: it unlocks allocation-free
+This systems-readiness integration slice unlocks allocation-free
 streaming parsers and serializers over the new byte-I/O API. It is not evidence
 for a general nested-owner graph.
 
@@ -496,4 +496,7 @@ semantics remains the source-language authority, HIR preserves the concrete
 decision, and MIR verifies its reachable CFG realization. This bounded
 evidence is the place-state basis consumed by M-LIFE-01 without claiming
 dynamic-index precision, arbitrary provenance, or general custom-lifecycle
-semantics.
+semantics. M-OWN-04 adds only the exact checked active-value relation needed by
+one read-only range plan over a named Expected local or by-value parameter; its
+complete-root conflict rule and semantic/HIR/MIR verification do not imply a
+general nested-owner graph.

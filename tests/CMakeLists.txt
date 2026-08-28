@@ -726,6 +726,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME expected_payload_range_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/expected_payload_range_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  add_test(
     NAME returned_class_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/returned_class_field_runtime_test.py"
@@ -1374,6 +1380,7 @@ if(Python3_Interpreter_FOUND)
       defined_integer_runtime_1of4 defined_integer_runtime_2of4
       defined_integer_runtime_3of4 defined_integer_runtime_4of4
       expected_wrong_state_runtime expected_propagation_runtime
+      expected_payload_range_runtime
       returned_class_field_runtime
       reference_parameter_range_runtime mutable_range_runtime
       span_owner_dependent_runtime
@@ -1449,6 +1456,11 @@ if(Python3_Interpreter_FOUND)
       NAME mutex_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" mutex
+    )
+    add_test(
+      NAME expected_payload_range_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
+              "$<TARGET_FILE:gti_lsp>" expected-payload-range
     )
     add_test(
       NAME block_comment_lsp

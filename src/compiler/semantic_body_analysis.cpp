@@ -44,6 +44,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentDefaultArgumentRoot = nullptr;
   currentDefaultParameterNames.clear();
   analyzingCallCallee = false;
+  expectedPayloadRangeCandidate = nullptr;
   analyzingPackFoldElement = false;
   analyzingStaticAssertCondition = false;
   staticAssertGenericDependency = false;
@@ -1371,36 +1372,46 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
         "'mut T&', or use a read-only element reference.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
+  const auto *sourceCall =
+      stmt.ownerBinding() == nullptr
+          ? nullptr
+          : exprAs<Call>(stmt.ownerBinding()->initializer().get());
+  const ResolvedCallInfo *resolvedSource =
+      sourceCall == nullptr ? nullptr : semanticModel.findCall(*sourceCall);
+  const bool expectedPayloadProjection =
+      resolvedSource != nullptr &&
+      resolvedSource->intrinsic == IntrinsicKind::ExpectedValue &&
+      resolvedSource->borrowOrigin == BorrowOriginKind::Receiver;
   semanticModel.record(
-      stmt,
-      {.strategy = rangeType.kind == SemanticType::Array
-                       ? RangeIterationStrategy::FixedArray
-                       : RangeIterationStrategy::Structural,
-       .rangeType = rangeType,
-       .iteratorType =
-           iterator == nullptr ? SemanticType::Unknown : iterator->type,
-       .sentinelType =
-           sentinel == nullptr ? SemanticType::Unknown : sentinel->type,
-       .elementType = elementType,
-       .elementAccess = elementAccess,
-       .owner = owner == nullptr ? 0 : owner->symbol,
-       .rangeCarrier = range == nullptr ? 0 : range->symbol,
-       .iterator = iterator == nullptr ? 0 : iterator->symbol,
-       .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
-       .element = element == nullptr ? 0 : element->symbol,
-       .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
-       .elementLoan = element == nullptr ? 0 : element->retainedLoan,
-       .beginFunction = beginFunction,
-       .endFunction = endFunction,
-       .compareFunction = compareFunction,
-       .dereferenceFunction = dereferenceFunction,
-       .incrementFunction = incrementFunction,
-       .arrayLength = rangeType.kind == SemanticType::Array &&
-                              rangeType.arrayLengthParameterId == 0
-                          ? rangeType.arrayLength
-                          : 0,
-       .ownsRangeTemporary =
-           owner != nullptr && owner->type.kind != SemanticType::Reference});
+      stmt, {.strategy = rangeType.kind == SemanticType::Array
+                             ? RangeIterationStrategy::FixedArray
+                             : RangeIterationStrategy::Structural,
+             .rangeType = rangeType,
+             .iteratorType =
+                 iterator == nullptr ? SemanticType::Unknown : iterator->type,
+             .sentinelType =
+                 sentinel == nullptr ? SemanticType::Unknown : sentinel->type,
+             .elementType = elementType,
+             .elementAccess = elementAccess,
+             .owner = owner == nullptr ? 0 : owner->symbol,
+             .rangeCarrier = range == nullptr ? 0 : range->symbol,
+             .iterator = iterator == nullptr ? 0 : iterator->symbol,
+             .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
+             .element = element == nullptr ? 0 : element->symbol,
+             .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
+             .elementLoan = element == nullptr ? 0 : element->retainedLoan,
+             .beginFunction = beginFunction,
+             .endFunction = endFunction,
+             .compareFunction = compareFunction,
+             .dereferenceFunction = dereferenceFunction,
+             .incrementFunction = incrementFunction,
+             .arrayLength = rangeType.kind == SemanticType::Array &&
+                                    rangeType.arrayLengthParameterId == 0
+                                ? rangeType.arrayLength
+                                : 0,
+             .ownsRangeTemporary = owner != nullptr &&
+                                   owner->type.kind != SemanticType::Reference,
+             .expectedPayloadProjection = expectedPayloadProjection});
 }
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
@@ -8780,11 +8791,18 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
            "GTI-S2028");
   }
 
+  const Expr *enclosingExpectedPayloadRangeCandidate =
+      expectedPayloadRangeCandidate;
+  if (declaration.isRangeOwner() && !declaration.isMutable() &&
+      declaration.initializer()) {
+    expectedPayloadRangeCandidate = declaration.initializer().get();
+  }
   const SemanticType initializerType =
       declaration.initializer()
           ? analyzeExpectedCallableResult(declaration.initializer(),
                                           SemanticType::Unknown)
           : SemanticType::Unknown;
+  expectedPayloadRangeCandidate = enclosingExpectedPayloadRangeCandidate;
   SemanticType inferredType = initializerType;
   const ExpressionInfo *initializerInfo =
       declaration.initializer()

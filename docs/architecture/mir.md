@@ -1030,24 +1030,37 @@ widened access, and an immediately following `EndBorrow` of the forwarded loan
 — and continues to reject every other parentless `Borrow` from a `Loan`
 operand. No body may record a loan that is at once `entry` and `Return`.
 
-`MirRangeIteration` is the bounded exception for an indexed mutable element.
-It names the exact owner/range/iterator/sentinel bindings, strategy, access
-mode, parent range loan, child element loan, condition/body/increment/cleanup
-blocks, and owned-temporary drop. A fixed-array plan ties its dynamic index
-place to that inventory rather than claiming general indexed-place
-disjointness. A structural mutable plan carries the exclusive parent through
-the compiler-generated iterator returned by `begin_mut()`; mutable dereference
+`MirRangeIteration` owns the bounded range exceptions. It names the exact
+owner/range/iterator/sentinel bindings, strategy, access mode, parent range
+loan, child element loan, condition/body/increment/cleanup blocks, and
+owned-temporary drop. A fixed-array plan ties its dynamic index place to that
+inventory rather than claiming general indexed-place disjointness. A
+structural mutable plan carries the exclusive parent through the
+compiler-generated iterator returned by `begin_mut()`; mutable dereference
 creates only the named child. Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows
 the final parent loan on every path.
 
+The M-OWN-04 read-only plan additionally names one
+`expectedPayloadExtraction`. Verification requires an exact `ExpectedValue`
+call with a read-borrowed receiver, one local wrong-state failure origin, an
+`Invoke` paired to that call, a non-escaping `CallResult` loan rooted in the
+complete named Expected place, one exact payload loan-root place, and dominance
+over range entry. A by-value Expected parameter remains native parameter
+storage; the backend may transfer it into its MIR binding and defer its final
+drop to native parameter scope only when that exact verified range relation is
+present. No other Expected call-result loan receives this representation
+permission.
+
 Verification requires semantic, HIR, and MIR access modes to agree; a mutable
 element loan must be a non-escaping child of the exact mutable range parent.
 It rejects a detached or widened child, overlapping active owner use, missing
 or premature `EndBorrow`, inconsistent loop edges, and a mismatched or missing
-temporary drop. The backend consumes this verified plan. It does not infer
-range lookup, invalidation, or cleanup from emitted C++.
+temporary drop. For an Expected payload range it also rejects a missing or
+forged extraction, failure edge, source root, loan result, or dominance proof.
+The backend consumes this verified plan. It does not infer range lookup,
+invalidation, extraction lifetime, or cleanup from emitted C++.
 
 `MirPrinter` must remain deterministic and address-free so tests and future
 tooling can compare snapshots.

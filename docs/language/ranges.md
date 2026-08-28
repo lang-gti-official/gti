@@ -1,7 +1,8 @@
 # Ranges and iterators
 
-Status: current through the bounded L-RANGE-03 single-owner view release and
-the iterator/sentinel algorithm cluster
+Status: current through the bounded L-RANGE-03 single-owner view release,
+M-OWN-04 named Expected-payload range loans, and the iterator/sentinel
+algorithm cluster
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -113,6 +114,38 @@ traversals may retain the same local, field, or owned range. Each traversal
 still owns a distinct range plan and loop-bounded element loan. A mutable
 traversal remains exclusive and therefore cannot overlap either another
 traversal or an ordinary read of the same owner.
+
+## Named Expected-payload ranges
+
+A read-only range expression may be the exact `value()` extraction from an
+available named local or by-value parameter of type `expected<T, E>`:
+
+```gti
+int count(expected<std::string, int32_t> result) {
+  mut int32_t total = 0;
+  for (auto& byte : result.value()) {
+    total += 1;
+  }
+  return total;
+}
+```
+
+`T` must independently satisfy the ordinary read-only structural range
+contract. This is not recognition of `expected`, `string`, or another public
+library spelling: the frontend admits only the exact compiler-trusted checked
+value extraction and records it in the existing range plan. The extraction's
+wrong-state failure occurs before the loop starts. On success, the range loan
+is rooted in and conservatively protects the complete named `expected`.
+Nested read-only traversals of the same payload are permitted; `continue`,
+`break`, `return`, normal exhaustion, and defined failure end element loans
+before their parent range loans.
+
+The receiver cannot be a field, global/static, returned reference, or opaque
+call result for this retained form. The loop cannot request mutable elements,
+iterate `error()`, move or replace the `expected`, or let an element reference
+escape. A fresh rvalue such as `make_result().value()` may still be transferred
+into the ordinary owned range-temporary path when its payload is itself a
+valid range; that case does not create a retained named-owner projection.
 
 ## Mutable structural protocol
 
