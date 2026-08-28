@@ -170,6 +170,20 @@ read/operate/commit schedule above. Symbol-rooted globals retain an immediately
 exclusive target loan until interprocedural root-effect summaries can prove
 hidden calls do not alias the reserved place.
 
+For a plain assignment to a field of an element reached through a checked
+borrow-forming access (for example `points[i].x` over a selected mutable
+`operator[]`), forming the place evaluates the receiver and index constituents
+in the same target-first order, but the selected checked access call itself
+belongs to the commit: it runs after the right operand has completed and the
+right operand's transient element loans have ended, and the exclusive
+receiver-tied element loan it begins spans only the commit: the field
+projection and the committed write. A right operand may therefore read the
+same element or container, matching the cross-statement form that reads first
+and stores in a following statement, and the checked access failure of the
+target (for example `index_out_of_bounds`) follows right-operand effects. A
+compound assignment still reads its stabilized prior value through the
+once-formed target before the right operand.
+
 ### 4.2.2 Initialization And Materialization
 
 Initialization reserves a destination without beginning the destination
@@ -533,10 +547,14 @@ share an arm. Arms do not fall through implicitly.
 
 A payload enum retains exactly one active alternative. Construction evaluates
 payload arguments in the ordinary call-input order and publishes the tagged
-value only after its admitted passive fields are available. A payload switch
-evaluates its subject once, selects by the active alternative, copies that
-alternative's fields into immutable arm bindings, and executes the selected
-arm. An exhaustive payload switch has no unmatched execution path.
+value only after its admitted fields are available; a class payload enters
+its alternative by copy from a named value, by transfer from an explicit
+`std::move`, or directly from a fresh prvalue construction, before any later
+sibling field expression evaluates. A payload switch evaluates its subject
+once, selects by the active alternative, copies that alternative's fields
+into immutable arm bindings, and executes the selected arm; a class-typed
+arm binding owns its copy and drops at the arm's end. An exhaustive payload
+switch has no unmatched execution path.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the

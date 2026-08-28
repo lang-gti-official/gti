@@ -30,6 +30,11 @@ Every member shown on these type pages links to an operation-specific page.
 Examples are compiled against the current toolchain; declaration-only members
 are identified explicitly instead of being shown as callable.
 
+The remaining linked headers below provide compiler-projected signatures for
+their complete implemented slice on one page. They distinguish callable
+operations from declarations that remain scaffolds, without requiring readers
+to inspect standard-library source.
+
 ## Shipped header catalogue
 
 “Partial” means that useful operations are implemented but the familiar C++
@@ -38,27 +43,26 @@ future implementation and must not be assumed to link.
 
 | Include | Current usable surface | State |
 | --- | --- | --- |
-| `<std/algorithm>` | Selection, predicates, find/count, `for_each`, and forward-range binary search. | Partial |
+| [`<std/algorithm>`](/std/algorithm/) | Selection, predicates, traversal, copying, transformation, ordering, and binary search. | Partial |
 | [`<std/array>`](/std/array/) | Fixed-size ownership, checked access, and fill. | Implemented except `swap` and iteration |
-| `<std/cmath>` | Binary32 `abs`, `isfinite`, `isinf`, and `isnan`. | Partial |
-| `<std/cstdio>` | Unbuffered input and read-only file ownership. | Bounded implementation |
-| `<std/filesystem>` | Pure `std::filesystem::path` manipulation; no filesystem access. | Bounded implementation |
-| `<std/format>` | Sequential integral `{}` replacement and checked format errors. | Bounded implementation |
-| `<std/forward_list>` | Unique-owner front insertion, removal, access, and clear. | Partial |
-| `<std/functional>` | Comparison function objects. | Partial; generic hash is a scaffold |
-| `<std/iterator>` | Input/forward concepts plus forward `advance`, `distance`, and `next`. | Partial |
+| [`<std/cmath>`](/std/cmath/) | Binary32 `abs`, `isfinite`, `isinf`, and `isnan`. | Partial |
+| [`<std/cstdio>`](/std/cstdio/) | Unbuffered input and read-only file ownership. | Bounded implementation |
+| [`<std/filesystem>`](/std/filesystem/) | Pure `std::filesystem::path` manipulation; no filesystem access. | Bounded implementation |
+| [`<std/format>`](/std/format/) | Sequential integral `{}` replacement and checked format errors. | Bounded implementation |
+| [`<std/forward_list>`](/std/forward-list/) | Unique-owner front insertion, removal, access, and clear. | Partial |
+| [`<std/functional>`](/std/functional/) | Comparison function objects. | Partial; generic hash is a scaffold |
+| [`<std/iterator>`](/std/iterator/) | Structural input through random-access concepts plus bounded movement utilities. | Partial |
 | `<std/list>` | API shape only. | Scaffold |
-| `<std/memory>` | Shared/weak ownership declarations; unique ownership is supplied by the prelude. | Scaffold |
-| `<std/numeric>` | Checked, wrapping and saturating arithmetic, integral utilities, and bounded reductions. | Partial |
+| [`<std/memory>`](/std/memory/) | Recoverable typed storage plus fixed-capacity arena and pool policies. | Partial; shared/weak ownership are scaffolds |
+| [`<std/numeric>`](/std/numeric/) | Checked, wrapping and saturating arithmetic, integral utilities, and bounded reductions. | Partial |
 | `<std/optional>` | API shape only. | Scaffold |
-| `<std/random>` | Deterministic seeded engine and fallible host entropy. | Bounded implementation |
-| `<std/span>` | API shape only. | Scaffold |
+| [`<std/random>`](/std/random/) | Deterministic seeded engine and fallible host entropy. | Bounded implementation |
+| [`<std/span>`](/std/span/) | Checked read-only contiguous views tied to source owners. | Bounded implementation |
 | [`<std/string>`](/std/string/) | Owning strings, output overloads, integer conversion, and hashing. | Implemented except `swap` |
-| `<std/tcp>` | POSIX IPv4 stream-socket creation and close. | Bounded implementation |
-| `<std/thread>` | Managed autojoining workers and typed results. | Bounded implementation |
-| `<std/utility>` | `pair` and `make_pair`. | Partial; `swap` and `exchange` are scaffolds |
+| [`<std/tcp>`](/std/tcp/) | POSIX IPv4 stream-socket creation and close. | Bounded implementation |
+| [`<std/thread>`](/std/thread/) | Managed autojoining workers and typed results. | Bounded implementation |
+| [`<std/utility>`](/std/utility/) | `pair` and `make_pair`. | Partial; `swap` and `exchange` are scaffolds |
 | [`<std/vector>`](/std/vector/) | Dynamic sequence ownership and safe iteration. | Implemented except `swap` |
 
-A catalogue entry without a dedicated link is still shipped, but its
-per-symbol reference has not yet completed the same authored and
-compiler-verified coverage as the detailed families above.
+A catalogue entry without a dedicated link contains declarations only and has
+no currently executable slice to present as a supported API.

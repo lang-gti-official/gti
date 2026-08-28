@@ -350,31 +350,31 @@ logical edge between them.
 
 ## Ready Queue
 
-This is the sole compiler implementation queue. Existing work already in
-flight when the structural plan was adopted may complete its original scope
-and be reconciled. The exact reconciled `main` commit then activates the
-**exclusive compiler structural gate** in
-[`compiler-structural-refactor.md`](compiler-structural-refactor.md). No new
-compiler feature row begins until `R-STRUCT-00` through `R-STRUCT-05` pass.
-This sequencing requirement is not an instruction to interrupt or repurpose
-the work that was already active at adoption.
+This is the sole compiler implementation queue. At adoption, already in-flight
+work completed its original scope before the reconciled `main` commit activated
+the exclusive structural gate. That gate has now passed; its preserved record
+is the
+[archived structural-refactor plan](archive/compiler-structural-refactor.md).
 
-The structural sequence is:
+The structural sequence completed on 2026-08-28. Its detailed measurements and
+exact equivalence evidence are retained in the
+[archived structural-refactor record](archive/compiler-structural-refactor.md).
 
 | Order | ID | State | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | `R-STRUCT-00` | **ready after in-flight reconciliation** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit, one broad validation result, artifact/MIR/diagnostic oracles, and controlled compile measurements are recorded. |
-| 2 | `R-STRUCT-01` | **blocked** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | Reuse regressions pass and every former aggregate assertion remains covered by focused plus aggregate gates. |
-| 3 | `R-STRUCT-02` | **blocked** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source-graph parity holds, HIR uses a narrow instance provider, and semantic/include/rebuild boundaries pass. |
-| 4 | `R-STRUCT-03` | **blocked** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, and hosted startup. | MIR printers, verifier mutations, census, optimizer replay, and endpoint behavior are unchanged. |
-| 5 | `R-STRUCT-04` | **blocked** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Preflight remains fail-closed and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
-| 6 | `R-STRUCT-05` | **blocked** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Broad and installed gates pass; focused rebuilds are bounded; controlled clean/runtime metrics satisfy the plan. |
+| 1 | `R-STRUCT-00` | **complete** | Freeze one exact behavioral, dependency, and build baseline. | Reconciled commit `4d4c8ae2`, the integration broad validation, controlled build measurements, and the complete artifact/MIR/diagnostic oracles are recorded in [`compiler-structural-baseline.json`](compiler-structural-baseline.json). |
+| 2 | `R-STRUCT-01` | **complete** | Consolidate semantic request reset and partition compiler/backend tests by ownership. | One request owner/reset passes reuse regressions; the manifest-backed 125-test compiler aggregate, 81-test emitter census, focused suites, and exact-census corpus sweeps pass. |
+| 3 | `R-STRUCT-02` | **complete** | Separate lexical-unit/directive ownership, semantic catalog and body/session state, callable authority, constexpr/flow services, and HIR instance access. | Source/cache/recovery and the 125-test semantic aggregate pass; the sealed catalog, explicit callable projection, narrow HIR instance provider, three semantic headers, static boundary test, self-contained compilation, and exact three-object analyzer-facade rebuild prove the ownership/include boundary. |
+| 4 | `R-STRUCT-03` | **complete** | Separate MIR model/query, canonical edit/replay, body/program verification, failure effects, body/program lowering, hosted startup, and lowered-program closure. | Separate service/header boundaries, fail-closed component mutation tests, optimizer suites, MIR/lowered census, hosted startup, and the 444-mode cutover oracle pass unchanged. |
+| 5 | `R-STRUCT-04` | **complete** | Make one immutable C++ body-emission plan authoritative and separate backend preflight, support text, and output writers. | Pointer-free body/program plans outlive input, preflight remains fail-closed, writer responsibilities are separate, and baseline C++20/C++23 O0/O1/O3 artifacts are byte-identical. |
+| 6 | `R-STRUCT-05` | **complete** | Close dependency, include, CMake/test, installed-target, and measured build boundaries. | Exact 444-configuration equivalence, 141/141 CTest, installed libraries/toolchain, formatter/Tree-sitter/LSP/docs, one-object focused rebuilds, -48.9% longest Release edge, and bounded shipped-binary/runtime latency pass; the measured clean-build and compiler-archive costs are explained in the archived report. |
 
 From 2026-08-26 through 2026-08-27, the runtime-performance campaign was the
 previous exclusive compiler gate. `O-PERF-00` through `O-PERF-05` and
 `O-GAME-01` closed in order. The completed rows and their exact evidence remain
-here as the baseline for later measured optimizer work, but they do not permit
-new optimizer work to bypass the structural gate.
+here as the baseline for later measured optimizer work. The later structural
+gate is also complete; future rows follow their declared prerequisites and the
+permanent executable-authority rule below.
 
 While an exclusive row is active, the only exceptions are correctness or
 security fixes, release/CI unblockers, and changes explicitly named as its
@@ -402,10 +402,9 @@ sequence into another plan.
 
 `P-MEASURE-01` benchmark breadth was consumed by `O-PERF-00`. The end of that
 campaign made `A-CACHE-01` and other unfinished rows logically eligible under
-their own prerequisites, but the later `R-STRUCT` gate now controls scheduling.
-Only work already in flight at adoption may finish before that gate; other
-unfinished rows wait for `R-STRUCT-05`. Completed performance rows remain
-historical prerequisites and do not occupy the queue.
+their own prerequisites. The later `R-STRUCT` gate then controlled scheduling
+until it completed on 2026-08-28. Completed performance and structural rows
+remain historical prerequisites and do not occupy the queue.
 
 `M-BACK-02` no longer blocks those outcome rows. After `R-STRUCT-05`, the
 permanent executable-authority gate remains: any new executable feature must
@@ -2457,23 +2456,34 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/role:** partially implemented; `L-RANGE-03` is complete. The
-  remaining range-first suite depends on the remaining `L-CALL-01` work. The
-  implemented iterator/sentinel slices include multi-parameter concepts,
-  validity-only
-  trailing `requires`, exact input-iterator/sentinel/dereference/accumulator
-  capabilities, distinct copy-construction capability,
-  `std::forward_iterator`, source-defined `std::binary_search`, default and
-  operation-based `std::accumulate`, homogeneous `std::inner_product`, unary
-  `std::transform_reduce`, and the predicate algorithms whose callable shapes
-  are already confined. Exact iterator/sentinel `std::find` and `std::count`
-  and repeatable exact-return `std::for_each` are now ordinary GTI source.
-- **Remaining scope:** Add the exact writable-output and
-  bidirectional/random-access concepts needed to implement `copy`, `transform`,
-  `reverse`, and `sort` honestly. Further iterator/sentinel overloads require a
-  demonstrated subrange client. The forward-iterator slice does not authorize
-  random access, iterator assignment, implicit conversions, overload ranking,
-  or a parallel C++ iterator-category hierarchy.
+- **State/role:** substantially implemented; `L-RANGE-03` is complete. The
+  implemented iterator/sentinel slices include
+  multi-parameter concepts, validity-only trailing `requires`, exact
+  input-iterator/sentinel/dereference/accumulator capabilities, distinct
+  copy-construction capability, `std::forward_iterator`, source-defined
+  `std::binary_search`, default and operation-based `std::accumulate`,
+  homogeneous `std::inner_product`, unary `std::transform_reduce`, the
+  confined predicate algorithms, exact iterator/sentinel `std::find` and
+  `std::count`, and repeatable exact-return `std::for_each`. The
+  writable/movement capability family is also implemented:
+  `std::output_iterator`/`writes_to` (mut dereference plus increment),
+  `subscripts_to_mut` (positioned mutable subscript),
+  `bidirectional_iterator` (`--`), `random_access_iterator` (`+=`/`-=`), and
+  `sized_sentinel_for` (iterator-to-sentinel distance) — with symbolic
+  generic-body forms for dereference/subscript/compound assignment, concrete
+  satisfaction checks, read-vector-cursor operator coverage, and the
+  source-defined `std::copy`, whole-container `std::fill`/`std::transform`/
+  `std::reverse`/`std::sort`, signed `std::advance`/`std::next`, and
+  `std::prev` clients.
+- **Remaining scope:** comparator `sort`; complete-range concepts extending
+  the whole-container generic algorithms beyond `std::vector`; indexed
+  element move-out; and further iterator/sentinel overloads behind a
+  demonstrated subrange client. Iterator-pair in-place spellings remain
+  excluded because `begin_mut()` and `end()` from one container overlap by
+  design; semantics now diagnoses that conflict before MIR, while read-only
+  methods on a parameter-held mutable cursor are supported. Iterator
+  assignment, implicit conversions, overload ranking, and a parallel C++
+  iterator-category hierarchy remain unauthorized.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -2519,15 +2529,25 @@ name recognition.
 - **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
-  formatter, Tree-sitter, and LSP tooling.
+  formatter, Tree-sitter, and LSP tooling. The cleanup-free class-payload
+  family is also implemented: ordinary class values without active cleanup or
+  borrowed state live inside alternatives, constructed from prvalues, named
+  copies, or explicit moves (each an exact fused emission vocabulary), with
+  copied class bindings armed and dropped like ordinary locals, payload-enum
+  struct definitions scheduled after every class definition, and enum
+  copy/move/ownership traits folded from payload components. Active-cleanup
+  or borrowed-state payload constructions are rejected at the construction
+  site with `GTI-S2067`.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add ownership-aware move/borrow matching, partial
-  initialization and drop, generic payloads, and deterministic layout in
-  separately proven families.
+- **Remaining scope:** Add variant-aware drop transport for owning
+  (active-cleanup) payloads, ownership-aware move/borrow matching, partial
+  initialization and drop, generic payloads, deterministic layout, and
+  interleaved enum/class definition scheduling (which would also lift the
+  construction-site-only rejection) in separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
@@ -2547,7 +2567,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v50`/`mir-body-v45` carry explicit mutually exclusive
+  transport plan; `mir-v51`/`mir-body-v45` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact
@@ -2564,14 +2584,35 @@ name recognition.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
-- **State/role:** systems-ready, bounded-first; select a demonstrated
-  renderer/math/domain-type client before implementation.
-- **Scope:** Decide which arithmetic operators improve domain types without
-  importing ADL, rewrite rules, or conversion ranking. Add one exact
-  member/capability family with all tooling layers before the next.
-- **Exit gate:** the selected operator family has one lookup/conversion rule,
-  exhaustive diagnostics and tooling coverage, and no native C++ overload
-  behavior is needed to explain accepted source.
+- **State/role:** first family implemented; the demonstrated client is
+  renderer/math domain values (`vec2`/`vec3`-shaped types and a second
+  integer-scalar domain type) driving one generic body.
+- **Implemented family:** four structural capabilities — `adds<T>`,
+  `subtracts<T>`, `negates<T>`, and `scales_by<T, Scalar>` — each proving one
+  exact public read-only member returning an *owned* value of the domain type.
+  They are spelled publicly as `std::addable`, `std::subtractable`,
+  `std::negatable`, and `std::scalable_by`, composing into
+  `std::vector_space<T, Scalar>` with `std::copyable<T>`. Generic bodies gain
+  the matching symbolic candidates for binary `+`/`-`, unary `-`, and scalar
+  `*` on a constrained type parameter; concrete instances re-select the real
+  member declarations. `std::lerp` and `std::negated` in `<std/numeric>` are
+  the source-defined clients, with exact `float`/`double` overloads of
+  `std::lerp` for built-ins.
+- **Deliberate boundary:** the family is member-only, matching the language's
+  member-only user-operator rule. A built-in numeric does not satisfy it —
+  admitting one would resolve its operators as symbolic member calls and drop
+  the canonical local failure outcomes checked integer arithmetic must retain
+  (observed directly while implementing this row). A borrowed operator result
+  is also excluded, since the produced value would be tied to a receiver whose
+  lifetime the requirement cannot name.
+- **Remaining scope:** compound domain operators (`+=` and friends), a
+  matrix/product family with distinct operand and result domains, and any
+  ordering or hashing capability for domain values are separate families under
+  the same one-family-at-a-time rule.
+- **Exit gate (met for this family):** one lookup rule (exact member-only
+  selection, no conversion), focused positive and negative diagnostics for each
+  capability, and O0/O3 × C++20/C++23 runtime evidence over two domain types.
+  No native C++ overload behavior is needed to explain accepted source.
 
 ### L-OWN-01: Shared And Weak Ownership
 
@@ -2938,7 +2979,7 @@ Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
   calls, raw memory, lifetime change, or unknown mutation; then add only the
   loop-header threshold widening and bounded narrowing required by that
   client. Reuse `O-MIR-06` loop identity, `O-MIR-07` alias facts, the shared
-  solver, the existing arithmetic discharge records, `MirProgramEditor`, and
+  solver, the existing arithmetic discharge records, `MirEditor`, and
   independent replay. Source-MIR cyclic scalar promotion is not an entry
   prerequisite unless a focused probe proves the place-based analysis cannot
   carry the required fact.
@@ -3230,20 +3271,18 @@ imply it.
 ## Parallel Engineering Tracks
 
 These rows improve maintainability, projects, and tooling without changing the
-language critical path. They were parked during the exclusive runtime-
-performance gate and are now parked behind the `R-STRUCT` gate, except for work
-already in flight when that gate was adopted and its explicit correctness,
-security, release/CI, or prerequisite exceptions. Their table states describe
-logical prerequisites, not permission to bypass the current exclusive queue.
+language critical path. They were parked during the completed runtime-
+performance and `R-STRUCT` exclusive gates. Their table states and the active
+ready queue now control scheduling by logical prerequisite.
 
 ### C-MIG: Compiled Compiler Library
 
 The accepted detailed plan remains
 [`compiler-library-migration.md`](archive/compiler-library-migration.md).
 That migration is complete and supplies the compiled target foundation for the
-new internal decomposition in
-[`compiler-structural-refactor.md`](compiler-structural-refactor.md); it is not
-a competing active queue.
+completed internal decomposition in the
+[archived structural-refactor plan](archive/compiler-structural-refactor.md);
+it is not a competing active queue.
 
 | ID | State | Next bounded result | Serialization rule |
 | --- | --- | --- | --- |
@@ -3362,12 +3401,12 @@ owned by the rows and domain plans above.
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **in progress:** passive exact construction, exhaustive copied matching, and the cleanup-free class-payload family complete; owning-payload drop transport, move/borrow patterns, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward-iterator, sentinel, and exact-dereference relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, distinct copy-construction, input/forward/bidirectional/random-access-iterator, sentinel, sized-sentinel, exact-dereference, writable-dereference, and mutable-subscript relations, confined exact-result operations, and exact qualified class specialization are implemented; broader public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
@@ -3380,7 +3419,7 @@ owned by the rows and domain plans above.
 | Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
-| Compiler structural ownership | **exclusive next phase after in-flight reconciliation** | `R-STRUCT-00` through `R-STRUCT-05`; [`compiler-structural-refactor.md`](compiler-structural-refactor.md) |
+| Compiler structural ownership | **exclusive campaign complete** | `R-STRUCT-00` through `R-STRUCT-05`; [archived closure report](archive/compiler-structural-refactor.md) |
 | Source/semantic/HIR/MIR compiled migration | **complete foundation** | `C-MIG-02` through `C-MIG-07`; internal decomposition is owned by `R-STRUCT` |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |

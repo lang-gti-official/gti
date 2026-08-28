@@ -1,0 +1,222 @@
+#include <std/string>
+#include <std/vector>
+
+mut int32_t drops_total = 0;
+mut int32_t dropped_tag_sum = 0;
+
+class tracked {
+ public:
+  tracked(int32_t tag) : tag_(tag) {}
+  ~tracked() {
+    drops_total = drops_total + 1;
+    dropped_tag_sum = dropped_tag_sum + this.tag_;
+  }
+  int32_t tag() { return this.tag_; }
+
+ private:
+  int32_t tag_;
+};
+
+class pair {
+ public:
+  pair(int32_t first, int32_t second) : first_(first), second_(second) {}
+  int32_t first() { return this.first_; }
+  int32_t second() { return this.second_; }
+
+ private:
+  int32_t first_;
+  int32_t second_;
+};
+
+// The freshly constructed prvalue replaces the binding's live value; the
+// binding keeps its own cleanup obligation and the temporary's moved-from
+// shell is retired immediately.
+int32_t check_string_prvalue() {
+  mut std::string target = std::string("first");
+  target = std::string("second");
+  if (target == "second" && target.size() == 6) {
+    return 0;
+  }
+  return 1;
+}
+
+int32_t check_tracked_prvalue() {
+  {
+    mut tracked target = tracked(1);
+    target = tracked(2);
+    if (target.tag() != 2) {
+      return 1;
+    }
+    // The replaced value (tag 1) dropped exactly once at the assignment, and
+    // the moved-from temporary shell never ran the destructor body.
+    if (drops_total != 1 || dropped_tag_sum != 1) {
+      return 2;
+    }
+  }
+  // Scope exit dropped only the surviving value (tag 2), exactly once.
+  if (drops_total != 2 || dropped_tag_sum != 3) {
+    return 3;
+  }
+  return 0;
+}
+
+int32_t check_conditional_prvalue() {
+  mut std::string target = std::string("first");
+  if (target.size() > 2) {
+    target = std::string("second");
+  }
+  if (target == "second") {
+    return 0;
+  }
+  return 1;
+}
+
+int32_t check_loop_prvalue() {
+  int32_t entry_drops = drops_total;
+  int32_t entry_tag_sum = dropped_tag_sum;
+  {
+    mut tracked target = tracked(0);
+    for (mut int32_t index = 1; index < 4; index = index + 1) {
+      target = tracked(index);
+      if (target.tag() != index) {
+        return 1;
+      }
+    }
+    // Three iterations each dropped exactly one replaced value: tags 0, 1
+    // and 2. The surviving value (tag 3) is still live.
+    if (drops_total - entry_drops != 3) {
+      return 2;
+    }
+    if (dropped_tag_sum - entry_tag_sum != 3) {
+      return 3;
+    }
+  }
+  if (drops_total - entry_drops != 4) {
+    return 4;
+  }
+  if (dropped_tag_sum - entry_tag_sum != 6) {
+    return 5;
+  }
+  return 0;
+}
+
+int32_t check_passive_prvalue() {
+  mut pair target = pair(1, 2);
+  target = pair(3, 4);
+  if (target.first() != 3 || target.second() != 4) {
+    return 1;
+  }
+  return 0;
+}
+
+// A checked fixed-array element is the second destination family: the array
+// binding's obligation already covers every element, so the publication
+// names no destination obligation of its own. The replaced element must
+// still drop exactly once at the assignment, and the moved-from temporary
+// shell must never run the destructor body.
+int32_t check_array_element_prvalue() {
+  drops_total = 0;
+  dropped_tag_sum = 0;
+  {
+    mut tracked slots[3] = {tracked(1), tracked(2), tracked(3)};
+    slots[0] = tracked(7);
+    if (slots[0].tag() != 7 || slots[1].tag() != 2) {
+      return 1;
+    }
+    // Only the replaced element (tag 1) dropped.
+    if (drops_total != 1 || dropped_tag_sum != 1) {
+      return 2;
+    }
+    slots[2] = tracked(9);
+    if (slots[2].tag() != 9 || drops_total != 2 || dropped_tag_sum != 4) {
+      return 3;
+    }
+  }
+  // Scope exit dropped the three surviving elements (7, 2, 9) exactly once.
+  if (drops_total != 5 || dropped_tag_sum != 22) {
+    return 4;
+  }
+  return 0;
+}
+
+// The same publication inside a loop repeats without leaking or retiring the
+// array binding's obligation early.
+int32_t check_array_element_loop_prvalue() {
+  drops_total = 0;
+  dropped_tag_sum = 0;
+  {
+    mut tracked slots[2] = {tracked(1), tracked(1)};
+    for (mut int32_t round = 0; round < 3; round++) {
+      slots[0] = tracked(2);
+    }
+    if (slots[0].tag() != 2 || drops_total != 3 || dropped_tag_sum != 5) {
+      return 1;
+    }
+  }
+  if (drops_total != 5 || dropped_tag_sum != 8) {
+    return 2;
+  }
+  return 0;
+}
+
+// A mutable borrow's referent is the third destination family: `operator[]`
+// on a vector yields `mut T&`, so a cleanup-free class prvalue publishes
+// through the loan rather than into a binding or an element place.
+int32_t check_loan_referent_prvalue() {
+  mut std::vector<pair> rows = std::vector<pair>();
+  rows.push_back(pair(1, 2));
+  rows.push_back(pair(3, 4));
+  rows[std::size_t(0)] = pair(7, 8);
+  // Each read takes its own receiver loan, so the reads stay sequential.
+  int32_t replaced_first = rows[std::size_t(0)].first();
+  int32_t replaced_second = rows[std::size_t(0)].second();
+  if (replaced_first != 7 || replaced_second != 8) {
+    return 1;
+  }
+  // The untouched neighbour keeps its own value.
+  int32_t neighbour_first = rows[std::size_t(1)].first();
+  int32_t neighbour_second = rows[std::size_t(1)].second();
+  if (neighbour_first != 3 || neighbour_second != 4) {
+    return 2;
+  }
+  if (rows.size() != std::size_t(2)) {
+    return 3;
+  }
+  return 0;
+}
+
+int main() {
+  int32_t string_prvalue = check_string_prvalue();
+  if (string_prvalue != 0) {
+    return string_prvalue;
+  }
+  int32_t tracked_prvalue = check_tracked_prvalue();
+  if (tracked_prvalue != 0) {
+    return 10 + tracked_prvalue;
+  }
+  int32_t conditional_prvalue = check_conditional_prvalue();
+  if (conditional_prvalue != 0) {
+    return 20 + conditional_prvalue;
+  }
+  int32_t loop_prvalue = check_loop_prvalue();
+  if (loop_prvalue != 0) {
+    return 30 + loop_prvalue;
+  }
+  int32_t passive_prvalue = check_passive_prvalue();
+  if (passive_prvalue != 0) {
+    return 40 + passive_prvalue;
+  }
+  int32_t array_element_prvalue = check_array_element_prvalue();
+  if (array_element_prvalue != 0) {
+    return 50 + array_element_prvalue;
+  }
+  int32_t array_element_loop = check_array_element_loop_prvalue();
+  if (array_element_loop != 0) {
+    return 60 + array_element_loop;
+  }
+  int32_t loan_referent = check_loan_referent_prvalue();
+  if (loan_referent != 0) {
+    return 70 + loan_referent;
+  }
+  return 0;
+}

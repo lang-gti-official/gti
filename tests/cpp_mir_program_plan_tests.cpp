@@ -1,6 +1,7 @@
 #include "../src/compiler/cpp_mir_program_plan.h"
 
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>

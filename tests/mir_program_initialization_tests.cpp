@@ -1,5 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
 #include <algorithm>
@@ -273,7 +276,7 @@ void testExactLoweringAndPrinting(const lang::FrontendResult &frontend) {
              frontend.failureMetadataValid && frontend.mirValid &&
              verification.valid() && exactSteps && sawImplicit && sawConstant &&
              sawDynamic && sawStatic && exactTags && checkedFailure &&
-             substitution && dump.starts_with("mir-v50 valid=") &&
+             substitution && dump.starts_with("mir-v51 valid=") &&
              dump.find("program-initialization units=1") != std::string::npos &&
              dump.find("data-kind=implicit-zero") != std::string::npos &&
              dump.find("program-initialization-step=") != std::string::npos,

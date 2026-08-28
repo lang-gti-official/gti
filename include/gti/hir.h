@@ -4,7 +4,7 @@
 #include "gti/concurrency.h"
 #include "gti/diagnostic.h"
 #include "gti/hir_instance_index.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 #include "gti/target.h"
 
 #include <algorithm>
@@ -18,6 +18,8 @@
 #include <vector>
 
 namespace lang {
+
+class SemanticInstanceProvider;
 
 using HirValueId = std::size_t;
 using HirBindingId = std::size_t;
@@ -749,10 +751,11 @@ public:
   HirLowerer(HirLowerer &&) noexcept;
   HirLowerer &operator=(HirLowerer &&) noexcept;
 
-  // Non-const: concrete instance reanalysis mutates the analyzer through its
-  // detach/restore bracket.
-  [[nodiscard]] HirLoweringResult lower(const Program &source,
-                                        SemanticVisitor &semantics);
+  // The base semantic snapshot is immutable. Concrete discovery receives only
+  // the narrow reanalysis capability, never the full analyzer facade.
+  [[nodiscard]] HirLoweringResult
+  lower(const Program &source, const SemanticModel &semantics,
+        SemanticInstanceProvider &instanceProvider);
 
 private:
   class Impl;

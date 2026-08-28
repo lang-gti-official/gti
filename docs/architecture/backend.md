@@ -64,6 +64,15 @@ Construction and consumption are intentionally separated. The consumer header
 builder declaration. `include/gti/lowered_program_builder.h` forward-declares
 the upstream representations needed only to construct the value.
 
+The implementation follows the same ownership boundary. `lowered_program.cpp`
+owns immutable lookup and enumeration, `lowered_program_builder.cpp` is the
+only frontend-aware conversion unit, `lowered_program_closure.cpp` derives the
+deterministic body/generated-item closure shared by construction and checking,
+and `lowered_program_verifier.cpp` consumes only the completed lowered value,
+MIR verification, and failure metadata. A repository boundary test rejects any
+AST, HIR, semantic-model, or builder dependency in the model, closure, or
+verifier units.
+
 `LoweredProgram` is value-owned and pointer-free. Its fields are private, its
 public views are const, and its identities are stable within the value. It
 contains:
@@ -150,24 +159,57 @@ declarations or HIR use sites.
 
 1. adapts the lowered tables into a C++-private representation snapshot;
 2. seals a complete body, declaration, data, and generated-item inventory;
-3. builds the complete `CppMirProgramPlan`;
-4. builds target-spelled MIR body rows; and
-5. emits only when the whole-program route is complete and `VerifiedMir`.
+3. admits every executable body into a pointer-free
+   `CppMirBodyEmissionPlan`;
+4. resolves all remaining declarations, support features, adapters, and
+   target spellings into an ordered pointer-free `CppProgramEmissionPlan`;
+   and
+5. passes that completed plan to formatting-only writers.
 
 The private snapshot and plan are target-specific derived forms, not compiler
 meaning and not backend API. Their builders accept only `LoweredProgram`.
 Frontend-backed snapshot overloads and comparison oracles were removed with
 the final cutover.
 
+`CppEmitter::Impl` stores only the completed program-emission plan. Lowered
+lookup, representation lookup, feature selection, body admission, and output
+ordering all finish in `CppProgramEmissionPlanner`; the final program writer
+has no `LoweredProgram` or MIR dependency. Its fragments have one explicit
+role: support preamble, failure/lifecycle support, native/thread adapters,
+declaration/type/member lifecycle text, initializer/module adapters, or hosted
+entry adapters. Tests construct plans in an inner scope, destroy every
+frontend and lowered input, and then require repeated output to remain
+identical.
+
+Generated support is likewise a compiled backend component rather than a
+mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
+selected C++ standard and exact Expected, storage, managed-thread,
+defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+failure-support writers receive those explicit values and an output sink;
+they do not query program meaning. Storage and defined-failure support remain
+universal only because that is the current artifact contract, not because the
+writers infer their use.
+
 ### Executable Bodies
 
-`CppMirBodyEmitter` is the text authority for source executable bodies. It
-receives verified optimized MIR plus copied target-representation rows.
+`CppMirBodyEmitter` is the admission and plan-building authority for source
+executable bodies. It receives verified optimized MIR plus copied
+target-representation rows and produces an immutable
+`CppMirBodyEmissionPlan`. `CppMirBodyTextWriter` formats only that admitted
+plan; it cannot inspect MIR or rerun a capability predicate.
 Functions, constructors, destructors, lambdas, field/static initializers,
 module initialization, hosted startup, and boundary shells all use this route.
 Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
+
+Each body plan owns its readiness and issues, canonical plain and failure text
+templates, the deduced-callable variants where target family spelling differs,
+boundary-declaration decision, initializer schedule and field spellings, and
+hosted-startup kind. The plan is pointer-free; it outlives both the MIR program
+and copied representation map used to build it. Placeholder replacement for
+family labels and indentation is therefore formatting, not a second
+admission path.
 
 Before spelling a body, the backend derives a pointer-free
 `CppMirControlFlowPlan` solely from that body's sealed optimized MIR. The plan
@@ -229,7 +271,22 @@ overload performs copy assignment without constructing a class temporary. Its
 by-value route still stages an explicit move or fresh prvalue before the bounds
 check, then move-assigns without a second materialization. Projected sources,
 unmatched failure metadata, cleanup-owning temporaries, and every other
-projected destination remain outside this fusion vocabulary.
+projected destination remain outside this fusion vocabulary. The fresh-value
+form serves one further unprojected destination — a bare mutable binding,
+described with the prvalue assignment routes below — where the assignment
+carries no bounds site at all.
+
+A fixed-array element place may carry several `Index` projections, and MIR
+describes that whole chained access with one instruction and one bounds site.
+The C++ text therefore owns a bound for every dimension rather than only the
+last. A nonterminal index that is a compile-time in-bounds constant spells an
+ordinary subscript. A dynamic one spells either the routed guard — one
+`mir_checked_array_bound_v1` status assignment opening the success branch the
+terminal checked read or write runs inside, so the first violation reaches the
+instruction's failure record — or, in the plain text form and every other
+element spelling, the contained `array_at` accessor that already carries the
+terminal index's bound there. The fully discharged spelling drops both, which
+is why the safety proof for such an access must cover every dimension.
 
 Optimizer tombstones are verified inert proof slots and emit no operation.
 An instruction safety discharge is likewise consumed only as sealed optimized
@@ -305,6 +362,17 @@ prepared slot, and unsupported, aliased, duplicated, projected, or mismatched
 shapes remain rejected rather than receiving backend-invented storage or
 cleanup.
 
+A cleanup-free class argument staged by one `Move` or one failure-free copy
+`Load` whose single record is one call operand in the same block declares as a
+sequenced `auto` local at its producing instruction, and the consuming
+argument moves that local. The sequenced local preserves MIR's
+move-or-copy-before-call order, which an inline place expression in the
+argument list would race under C++'s unspecified evaluation order. The copy
+form requires the type's copy-construction representation row and admits only
+class-typed values, so lambda closures and unique owners keep their fused and
+prepared spellings; nothing between the producer and the call may touch the
+source place.
+
 For a verified `MoveBorrowedTemporary` constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
 slot, moves that value into the selected constructor parameter, and ends the
@@ -339,6 +407,19 @@ effects come from the lowered MIR and generated-item contracts. Generic source
 surfaces may be represented as C++ templates and concrete specializations;
 specialization eligibility comes from concrete-instance items, and executable
 specialization text still comes from MIR.
+
+Closure-typed (unnameable) instances of one generic declaration emit through
+a single deduced-callable template whose body text is canonical per
+parameter-cleanup shape: the shape records which declared parameters carry a
+lexical drop obligation in that instance's verified MIR. Instances sharing a
+shape must prove byte-identical overlaid body text. When concrete callable
+environments produce different shapes — a scalar-capturing lambda beside a
+class-capturing one — the one emitted template reunites the canonical variant
+bodies behind an instantiation-time `std::is_trivially_destructible_v`
+dispatch over each varying parameter, which must be declared directly as a
+template type parameter (or be the exact thread-task parameter). Any variance
+the dispatch cannot express fails closed rather than merging inconsistent
+bodies.
 
 Lowered declarations retain an explicit default-constructor or destructor
 specifier for source/coherence and tooling inventory. Because that policy has
@@ -427,6 +508,27 @@ The scalar copy route continues to require its explicit `Load`/`Initialize`
 pair. Custom lifecycle, extra uses, forged ownership, ambiguous fields, and
 mixed initializer schedules fail closed.
 
+An explicit class-typed field initializer whose single argument is one ordinary
+`Construct` of the field's own type publishes through the same native
+member-initializer list. C++17 guaranteed elision makes `field(Type(parameter
+...))` the exact representation of MIR's construct-then-publish schedule: the
+field is constructed once, in place, with no intermediate object and no invented
+copy or move. Because C++ initializes members in declaration order, the proof is
+whole-constructor: every declared field must have its own explicit initializer in
+declaration order, each construction's arguments must be exact copy-loads of the
+constructor's scalar parameters, and the entry block must contain nothing but the
+named instructions and metadata boundaries. A sibling field may share the
+schedule only through the exact parameter-copy proof, which publishes natively as
+well. A cleanup-free field carries no drop obligation and publishes through
+initializer metadata alone; an active-cleanup field additionally requires the
+produced value's `Value` obligation, its `Reparent` into the field's
+`ConstructionRollback` obligation, and one unconditional transfer-out at normal
+completion. A failure-capable target constructor is admitted only when its
+verified MIR body can never report a failure status and that ordinary body is
+itself published by this route, so the plain C++ overload exists at the call
+site. Computed arguments, call results, borrowed sources, base initializers, and
+partially claimed schedules stay in the MIR body schedule.
+
 Obligation-free class values in a move capture or an owning `Expected` payload
 remain concrete MIR values rather than backend-recognized library types. The
 C++ backend may materialize the exact closure environment, direct payload
@@ -449,6 +551,54 @@ class representation and one resolved active-cleanup field row. The emitter
 does not recognize the owning wrapper or container name; projected
 destinations, conditional lifecycle events, incomplete borrow endings, or
 additional consumers fail closed.
+
+Move-assignment between two existing mutable class bindings has its own exact
+representation. MIR stages the moved value in a value-rooted obligation, so
+the backend constructs that staging slot from the source binding, move-assigns
+the destination binding from the slot, and then drops only the moved-from
+staging shell. The route requires an adjacent `Move`/`Assign`/`Drop` triple in
+one block, a `Move` lifecycle event transferring the source binding obligation
+into the staging drop, an unconditional `Replace` from that drop into the
+destination binding's own obligation, and a single unconditional `Drop` of the
+slot. Aliased source and destination bindings, projected or non-binding places,
+failure sites on either instruction, extra uses, and any additional lifecycle
+event on the staging obligation fail closed.
+
+Assigning a freshly constructed class prvalue into an existing mutable binding
+has its own exact representation, and MIR represents it in two shapes rather
+than one. A cleanup-owning prvalue is staged in a value-rooted obligation: the
+backend constructs that staging slot from the `Construct`, move-assigns the
+destination binding from the slot, and then drops only the moved-from staging
+shell. A non-raising constructor arms the staging obligation with its own
+unconditional `Initialize` and sits immediately before the publication; a
+raising one arms it on its invoke success edge instead, so the `Construct`
+ends the invoking block and the `Assign` opens that edge's successor. Either
+way the route requires an unconditional `Replace` from the staging drop, an
+adjacent single unconditional `Drop` of the slot, and exactly one activation.
+
+The publication has two destination families, distinguished by which
+obligation owns the storage being replaced. A bare mutable binding owns its
+own cleanup obligation, so the `Replace` transfers into that obligation and
+the write carries no failure site. A checked fixed-array element does not:
+the array binding's obligation already covers every element, so the `Replace`
+names no destination obligation and the write carries the element's bounds
+failure site — the same element shape the cleanup-free fusion route admits,
+validated by the same authority. Requiring a destination obligation for an
+element would retire the same storage twice, so an element publication that
+names one fails closed. Every other destination, a bare-binding publication
+with a failure site, extra uses, and any additional lifecycle event on the
+staging obligation also fail closed.
+
+A cleanup-free class prvalue has no staging obligation at all: no place or
+drop obligation owns the constructed value and the discarded assignment result
+is metadata only, so the construction spells directly in the value position of
+its one adjacent assignment — into a checked fixed-array element, a bare
+mutable binding, or the referent of a mutable borrow, which is what an
+overloaded subscript yields. A loan referent's storage belongs to whatever
+the loan points into, so like an element it carries no obligation of its own
+and, like a bare binding, its write carries no failure site. Materializing an
+intermediate C++ object there would invent construction and destruction that
+MIR does not contain.
 
 ### Declarations And ABI
 

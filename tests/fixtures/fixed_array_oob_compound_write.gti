@@ -1,0 +1,10 @@
+int main() {
+  mut int32_t cells[4] = {};
+  mut std::size_t index = std::size_t(0);
+  while (index < std::size_t(9)) {
+    index++;
+  }
+  cells[index] += 7;
+  std::println("unreachable");
+  return 1;
+}

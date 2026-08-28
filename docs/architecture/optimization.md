@@ -146,7 +146,11 @@ loop optimizer, or call transform.
 The admitted operations are deliberately narrow:
 
 - fixed-array scalar reads and writes whose complete index interval is within
-  the known extent;
+  the known extent. A multidimensional access folds every dimension into one
+  element place carrying one bounds site, so the proof must hold for the whole
+  chain: each nonterminal index is checked against its own sibling array
+  place's extent, and an unresolved or unproven dimension anywhere leaves the
+  site checked;
 - private prefix-storage reads whose storage origin and scalar index origin
   exactly match an earlier successful logical-size check derived from that
   same storage's length, with no intervening storage mutation, index write,
@@ -221,7 +225,7 @@ trusted-source spelling and is selected only from the verified discharge.
 Durable destructive-edit identity is
 `{MirBodyAddress, MirInstructionId}`; `MirBlockId` identifies a block.
 Vector indexes are implementation details and never appear in optimizer
-evidence. `MirProgramEditor` exposes only current client-backed local-fold and
+evidence. `MirEditor` exposes only current client-backed local-fold and
 sparse literal, terminator, place-promotion, safety-discharge,
 dead-instruction, and unreachable-block edits.
 Each edit batch validates every guarded target before mutation, rewrites a
@@ -326,7 +330,7 @@ authority.
 
 ## Per-Instance Effects
 
-`optimization/effects.h` supplies exhaustive conservative effects for every
+`mir_effects.h` supplies exhaustive conservative effects for every
 MIR instruction, scalar operation, intrinsic, synchronization operation, and
 directly callable concrete function, constructor, destructor, and lambda
 instance. Summaries cover place and unknown-memory reads/writes, allocation,

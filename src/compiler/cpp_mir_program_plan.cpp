@@ -1,4 +1,5 @@
 #include "cpp_mir_program_plan.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <functional>

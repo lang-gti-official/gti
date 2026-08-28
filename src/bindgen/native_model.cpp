@@ -1,5 +1,6 @@
 #include "gti/bindgen/native_model.h"
 
+#include <iomanip>
 #include <sstream>
 
 namespace lang::bindgen {
@@ -34,6 +35,10 @@ NativeModel::findDeclaration(NativeDeclarationId id) const {
 
 NativeDeclaration *NativeModel::findDeclaration(NativeDeclarationId id) {
   return id == 0 || id > declarations.size() ? nullptr : &declarations[id - 1];
+}
+
+const NativeSourceFile *NativeModel::findSource(NativeSourceId id) const {
+  return id == 0 || id > sources.size() ? nullptr : &sources[id - 1];
 }
 
 namespace {
@@ -113,11 +118,19 @@ std::string printNativeModel(const NativeModel &model) {
     if (declaration == nullptr) {
       continue;
     }
+    const char *external = declaration->inPolicy ? "" : " (external)";
     switch (declaration->kind) {
     case NativeDeclarationKind::Record: {
       out << (declaration->recordIsUnion ? "union " : "record ")
-          << declaration->name << (declaration->complete ? "" : " (incomplete)")
-          << '\n';
+          << declaration->name
+          << (declaration->complete ? "" : " (incomplete)");
+      if (declaration->layout.packed) {
+        out << " [packed]";
+      }
+      if (declaration->layout.alignment != 0) {
+        out << " [align " << declaration->layout.alignment << ']';
+      }
+      out << external << '\n';
       for (const NativeRecordField &field : declaration->fields) {
         out << "  field " << field.name << ": ";
         printType(model, field.type, out);
@@ -126,7 +139,7 @@ std::string printNativeModel(const NativeModel &model) {
       break;
     }
     case NativeDeclarationKind::Enum: {
-      out << "enum " << declaration->name << '\n';
+      out << "enum " << declaration->name << external << '\n';
       for (const NativeEnumerator &enumerator : declaration->enumerators) {
         out << "  " << enumerator.name << " = " << enumerator.value << '\n';
       }
@@ -135,7 +148,7 @@ std::string printNativeModel(const NativeModel &model) {
     case NativeDeclarationKind::Typedef: {
       out << "typedef " << declaration->name << " = ";
       printType(model, declaration->aliased, out);
-      out << '\n';
+      out << external << '\n';
       break;
     }
     case NativeDeclarationKind::Function: {
@@ -160,12 +173,31 @@ std::string printNativeModel(const NativeModel &model) {
       if (type != nullptr) {
         printType(model, type->result, out);
       }
-      out << '\n';
+      if (!declaration->asmLabel.empty()) {
+        out << " [asm \"" << declaration->asmLabel << "\"]";
+      }
+      if (!declaration->callingConvention.empty()) {
+        out << " [callconv " << declaration->callingConvention << ']';
+      }
+      out << external << '\n';
       break;
     }
     case NativeDeclarationKind::Constant:
-      out << "constant " << declaration->name << " = "
-          << declaration->constantValue << '\n';
+      out << "constant " << declaration->name << " = ";
+      switch (declaration->constantKind) {
+      case NativeConstantKind::Integer:
+        out << declaration->constantValue;
+        break;
+      case NativeConstantKind::Floating:
+        // A fixed precision keeps the golden rendering host-independent.
+        out << std::fixed << std::setprecision(6)
+            << declaration->constantFloating << std::defaultfloat;
+        break;
+      case NativeConstantKind::String:
+        out << '"' << declaration->constantText << '"';
+        break;
+      }
+      out << external << '\n';
       break;
     }
   }

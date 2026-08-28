@@ -2,7 +2,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
-#include "gti/optimization/effects.h"
+#include "gti/mir_effects.h"
 #include "gti/support.h"
 
 #include "cpp_backend_test_support.h"

@@ -8,7 +8,7 @@
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/semantic_model.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
 

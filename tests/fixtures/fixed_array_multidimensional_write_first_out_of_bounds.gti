@@ -1,0 +1,30 @@
+// An out-of-range FIRST dimension of a chained dynamic write. The write must
+// never reach memory outside the array: `intact` proves the array kept every
+// element it started with, and the process reports whatever the one-dimensional
+// dynamic write reports for the same violation.
+
+std::size_t counted(std::size_t limit) {
+  mut std::size_t value = std::size_t(0);
+  while (value < limit) {
+    value++;
+  }
+  return value;
+}
+
+int main() {
+  mut int32_t matrix[2][3] = {};
+  std::size_t row = counted(std::size_t(9));
+  std::size_t column = counted(std::size_t(1));
+  matrix[row][column] = 7;
+  if (matrix[std::size_t(0)][std::size_t(0)] != 0 ||
+      matrix[std::size_t(0)][std::size_t(1)] != 0 ||
+      matrix[std::size_t(0)][std::size_t(2)] != 0 ||
+      matrix[std::size_t(1)][std::size_t(0)] != 0 ||
+      matrix[std::size_t(1)][std::size_t(1)] != 0 ||
+      matrix[std::size_t(1)][std::size_t(2)] != 0) {
+    std::println("corrupt");
+    return 1;
+  }
+  std::println("intact");
+  return 0;
+}

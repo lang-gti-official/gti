@@ -2309,6 +2309,104 @@ def main():
         escaped = run([gti, "build"], expected=65, cwd=bindgen_project)
         assert "GTI-B1104" in escaped.stderr
 
+        # --- Opt-in import policy (C-07) ---
+        policy_project = root / "bindgen-policy"
+        (policy_project / "src").mkdir(parents=True)
+        (policy_project / "native").mkdir()
+        (policy_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "bindgen-policy"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'c-sources = ["native/points.c"]\n\n'
+            "[targets.bindgen-policy]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[bindgen.points]\n"
+            'header = "native/points.h"\n'
+            'deny = ["points_internal_*"]\n'
+            'rename = { points__store = "PointStore" }\n'
+            'array-returns = [{ function = "points_all", count = "count" }]\n',
+            encoding="utf-8",
+        )
+        (policy_project / "native/points.h").write_text(
+            "#ifndef POINTS_H\n"
+            "#define POINTS_H\n"
+            '#define POINTS_LABEL "demo"\n'
+            "#define POINTS_SCALE 1.5\n"
+            "typedef struct Point { int x; int y; } Point;\n"
+            "struct points__store { int used; };\n"
+            "struct points__store *points_open(void);\n"
+            "void points_close(struct points__store *store);\n"
+            "int points_add(struct points__store *store, int x, int y);\n"
+            "const Point *points_all(struct points__store *store,"
+            " unsigned int *count);\n"
+            "int points_internal_debug(int value);\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        (policy_project / "native/points.c").write_text(
+            '#include "points.h"\n'
+            "#include <stdlib.h>\n"
+            "static Point storage[8];\n"
+            "struct points__store *points_open(void) {\n"
+            "  struct points__store *store ="
+            " malloc(sizeof(struct points__store));\n"
+            "  store->used = 0;\n"
+            "  return store;\n"
+            "}\n"
+            "void points_close(struct points__store *store) { free(store); }\n"
+            "int points_add(struct points__store *store, int x, int y) {\n"
+            "  storage[store->used].x = x;\n"
+            "  storage[store->used].y = y;\n"
+            "  store->used += 1;\n"
+            "  return store->used;\n"
+            "}\n"
+            "const Point *points_all(struct points__store *store,"
+            " unsigned int *count) {\n"
+            "  *count = (unsigned int)store->used;\n"
+            "  return storage;\n"
+            "}\n"
+            "int points_internal_debug(int value) { return value; }\n",
+            encoding="utf-8",
+        )
+        (policy_project / "src/main.gti").write_text(
+            "#include <points/bindings>\n"
+            "\n"
+            "int main() {\n"
+            "  unsafe {\n"
+            "    mut PointStore* store = points_open();\n"
+            "    [[discard]] points_add(store, 3, 4);\n"
+            "    [[discard]] points_add(store, 5, 6);\n"
+            "    mut uint32_t count = 0;\n"
+            "    const Point* all = points_all(store, &count);\n"
+            "    int32_t total = count == 2 ? all[1].x + all[1].y : 0;\n"
+            "    points_close(store);\n"
+            "    if (total != 11) {\n"
+            "      return 1;\n"
+            "    }\n"
+            "  }\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        # The rename makes a reserved-spelling record usable, the declared
+        # array return emits [[c_array]], and the denied name stays out.
+        run([gti, "build"], cwd=policy_project)
+        policy_bindings = (
+            policy_project
+            / "build/gti/bindgen/bindgen-policy/points/bindings.gti"
+        ).read_text(encoding="utf-8")
+        assert "struct PointStore {" in policy_bindings
+        assert "[[c_array(count)]] const Point* points_all(" in policy_bindings
+        assert "points_internal_debug" not in policy_bindings
+        assert 'constexpr std::string_view POINTS_LABEL = "demo";' in (
+            policy_bindings
+        )
+        assert "constexpr double POINTS_SCALE = 1.5;" in policy_bindings
+        run([gti, "run"], cwd=policy_project)
+
 
 if __name__ == "__main__":
     main()

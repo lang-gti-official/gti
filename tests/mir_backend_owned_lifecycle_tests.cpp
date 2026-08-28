@@ -1,6 +1,9 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
@@ -300,7 +303,7 @@ void testFamily(const std::filesystem::path &fixture) {
          "proved constructors should use exact targets without failure edges");
 
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v50 ") &&
+  expect(dump.starts_with("mir-v51 ") &&
              dump.find("constructor-initializer=1") != std::string::npos,
          "MIR v24 should print the new initializer-stage authority");
 

@@ -28,10 +28,11 @@ struct CppMirRepresentationSnapshotIssue {
 
 struct CppMirRepresentationSnapshotBuild {
   std::optional<CppMirRepresentationSnapshot> snapshot;
+  std::optional<CppMirProgramEmissionPlan> emissionPlan;
   std::vector<CppMirRepresentationSnapshotIssue> issues;
 
   [[nodiscard]] bool valid() const {
-    return snapshot.has_value() && issues.empty();
+    return snapshot.has_value() && emissionPlan.has_value() && issues.empty();
   }
 };
 

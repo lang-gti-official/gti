@@ -15,6 +15,8 @@ api:
   - std/string|operator|std::string::operator[]
   - std/string|method|std::string::begin
   - std/string|method|std::string::end
+  - std/string|method|std::string::view
+  - std/string|method|std::string::as_span
   - std/string|method|std::string::reserve
   - std/string|method|std::string::resize
   - std/string|method|std::string::shrink_to_fit
@@ -39,10 +41,10 @@ text without becoming owners first. Mutable element access requires a mutable
 receiver and returns a receiver-tied `mut char&`. Indexing is checked against
 the logical string size.
 
-Read-only iteration retains a checked loan of the backing storage. The string
-cannot be moved or mutated while that iterator loan remains live. A dynamic
-conversion back to `std::string_view` is not yet available because such a view
-must retain the owner's lifetime.
+Read-only iteration retains a checked loan of the backing storage. `view()`
+returns a counted `std::string_view`, while `as_span()` returns a checked
+character view. Both preserve the owner's lifetime and prevent movement or
+mutation of the string while retained.
 
 `swap` remains declaration-only scaffolding. All other members listed in the
 synopsis are implemented.

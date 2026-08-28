@@ -1,0 +1,244 @@
+{
+  "schema": "gti-compiler-structural-baseline-v1",
+  "recorded_at_utc": "2026-08-27T11:51:27Z",
+  "baseline": {
+    "commit": "4d4c8ae242fe08511db8de41fcafe117dde06dba",
+    "tree": "59b0a93851d6f001f64e88d7154c19b08588d726",
+    "version": "0.321.0",
+    "published_refs": [
+      "GitHub main",
+      "internal mirror main"
+    ],
+    "integration_task": "019f1d9b-13df-7bf3-8e2b-cf36fce76a86",
+    "integration_validation": {
+      "command": "ctest --test-dir build --output-on-failure --parallel 1",
+      "initial_result": "130/133 passed; the three failures were one reviewed census delta for an unreachable read-only std::vector<int32_t>::operator[] instance",
+      "reviewed_rerun": "the three linked census gates passed after the exact instance diff and bounded baseline update",
+      "effective_result": "133/133 gates passed; runtime, optimizer, ABI, CLI, project, LSP, threading, formatter, and Tree-sitter validation were green"
+    }
+  },
+  "capture": {
+    "harness_commit": "469c2ad384b16457cdf8e7a0767609d301e02bb1",
+    "command": "python3 scripts/compiler_structural_snapshot.py capture --source-root /private/tmp/gti-compiler-structural-baseline --evidence-root /private/tmp/gti-compiler-structural-evidence/4d4c8ae2-baseline --jobs 2",
+    "source_root": "/private/tmp/gti-compiler-structural-baseline",
+    "raw_evidence_root": "/private/tmp/gti-compiler-structural-evidence/4d4c8ae2-baseline",
+    "snapshot": {
+      "path": "/private/tmp/gti-compiler-structural-evidence/4d4c8ae2-baseline/snapshot.json",
+      "bytes": 1077961,
+      "sha256": "87c92f2732b23782b4b9cbf963fcc560bdec3123401c138ec13f98af27e55b76"
+    },
+    "raw_evidence_kibibytes": 4098916,
+    "concurrency": {
+      "build_parallel": 2,
+      "ctest_parallel": 1,
+      "corpus_workers": 2,
+      "competing_worktrees": 0
+    }
+  },
+  "machine": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "processor": "arm",
+    "cmake": "4.2.3",
+    "ninja": "1.13.2",
+    "cxx": "Apple clang 21.0.0 (clang-2100.1.1.101), arm64-apple-darwin25.5.0",
+    "python": "3.14.6"
+  },
+  "inventory": {
+    "compiler_source_and_header_files": 127,
+    "lines": 160517,
+    "bytes": 6590174,
+    "direct_repository_include_edges": 263,
+    "largest_files": [
+      {
+        "path": "src/compiler/semantic_analyzer.cpp",
+        "lines": 35200,
+        "bytes": 1493381
+      },
+      {
+        "path": "src/compiler/cpp_mir_body_emitter.cpp",
+        "lines": 30997,
+        "bytes": 1371417
+      },
+      {
+        "path": "src/compiler/mir.cpp",
+        "lines": 18456,
+        "bytes": 837130
+      },
+      {
+        "path": "src/compiler/cpp_emitter.cpp",
+        "lines": 8900,
+        "bytes": 333833
+      },
+      {
+        "path": "src/compiler/mir_lowering.cpp",
+        "lines": 8444,
+        "bytes": 370059
+      },
+      {
+        "path": "src/compiler/lowered_program.cpp",
+        "lines": 2865,
+        "bytes": 127313
+      },
+      {
+        "path": "include/gti/semantic_analyzer.h",
+        "lines": 2349,
+        "bytes": 77388
+      }
+    ],
+    "direct_reverse_fanout": {
+      "include/gti/mir.h": 21,
+      "include/gti/diagnostic.h": 19,
+      "include/gti/semantic_analyzer.h": 11,
+      "include/gti/token.h": 10,
+      "include/gti/hir.h": 9,
+      "include/gti/lowered_program.h": 9,
+      "include/gti/optimization/effects.h": 9,
+      "include/gti/ast.h": 8,
+      "include/gti/source_graph.h": 8,
+      "include/gti/target.h": 8
+    }
+  },
+  "builds": {
+    "Debug": {
+      "configure_wall_seconds": 1.46975,
+      "clean_build_wall_seconds": 110.116557,
+      "clean_build_user_seconds": 210.371062,
+      "clean_build_system_seconds": 15.617808,
+      "no_op_wall_seconds": 0.111573,
+      "object_edges": {
+        "count": 128,
+        "p50_milliseconds": 1430,
+        "p95_milliseconds": 3114,
+        "maximum_milliseconds": 6668,
+        "longest": [
+          {
+            "path": "src/compiler/semantic_analyzer.cpp",
+            "milliseconds": 6668
+          },
+          {
+            "path": "tests/compiler_tests.cpp",
+            "milliseconds": 5195
+          },
+          {
+            "path": "src/compiler/mir.cpp",
+            "milliseconds": 3924
+          },
+          {
+            "path": "tests/optimizer_tests.cpp",
+            "milliseconds": 3894
+          },
+          {
+            "path": "tests/cpp_mir_body_emitter_tests.cpp",
+            "milliseconds": 3325
+          }
+        ]
+      },
+      "binary_sizes": {
+        "gti": 41069792,
+        "gti_lsp": 40893016,
+        "libgti_compiler.a": 237030176,
+        "libgti_cpp_backend.a": 33753944,
+        "libgti_runtime.a": 400568
+      }
+    },
+    "Release": {
+      "configure_wall_seconds": 1.272917,
+      "clean_build_wall_seconds": 153.7574,
+      "clean_build_user_seconds": 295.353657,
+      "clean_build_system_seconds": 14.143514,
+      "no_op_wall_seconds": 0.102819,
+      "object_edges": {
+        "count": 128,
+        "p50_milliseconds": 1818,
+        "p95_milliseconds": 6001,
+        "maximum_milliseconds": 17066,
+        "longest": [
+          {
+            "path": "tests/compiler_tests.cpp",
+            "milliseconds": 17066
+          },
+          {
+            "path": "src/compiler/semantic_analyzer.cpp",
+            "milliseconds": 16416
+          },
+          {
+            "path": "src/compiler/mir.cpp",
+            "milliseconds": 8684
+          },
+          {
+            "path": "tests/optimizer_tests.cpp",
+            "milliseconds": 7818
+          },
+          {
+            "path": "src/compiler/cpp_mir_body_emitter.cpp",
+            "milliseconds": 6918
+          },
+          {
+            "path": "src/compiler/mir_lowering.cpp",
+            "milliseconds": 6476
+          },
+          {
+            "path": "tests/cpp_mir_body_emitter_tests.cpp",
+            "milliseconds": 6001
+          }
+        ]
+      },
+      "binary_sizes": {
+        "gti": 10758768,
+        "gti_lsp": 10522344,
+        "libgti_compiler.a": 11535984,
+        "libgti_cpp_backend.a": 2087912,
+        "libgti_runtime.a": 48624
+      }
+    }
+  },
+  "frontend_trace": {
+    "source": "examples/01-basics.gti",
+    "command": "gti examples/01-basics.gti -O0 --std c++23 --emit-cpp --time-trace trace.json -o output.cpp",
+    "wall_seconds": 0.617634,
+    "trace_sha256": "0792cc1bc6ecdc332cc620d317fa5b0e546a0c972202f62acdaffb0feebe34e9",
+    "phase_microseconds": {
+      "gti-source-load": 1201,
+      "gti-parse": 475,
+      "gti-semantics": 2557,
+      "gti-hir-lowering": 312,
+      "gti-failure-metadata": 158,
+      "gti-mir-lowering": 3062
+    }
+  },
+  "oracles": {
+    "ctest_inventory_count": 133,
+    "diagnostics": {
+      "exact-call-diagnostic": "851de89d769e04f9e746ee9536030adac09bc12dec6eeacafcc987786e7c6eb4",
+      "loop-backedge-invalidation": "54a8b508f5ecbe242150d74ea8d910cf8b94c3d2c8040c1495fa69a73ef3fdca",
+      "missing-override-diagnostic": "a153ccc81f94ad8cac6f2b9ae7fe40a9dd228e72dd43fcbc55412cf877f07cc2",
+      "switch-fallthrough-diagnostic": "920419cf0aeb6414f413b69c3d158b369a5390d416ddd693e814190fab3e0bad",
+      "use-after-move-diagnostic": "4d7ccb6d1f642352ce4d1b09743f50c2c77571d5d73cfd163de2acf41f08b922"
+    },
+    "censuses": {
+      "mir_census_baseline_sha256": "ca7bfec59502be0e79fa102535925fad3c24b8ef6648d5d12b79a8aa2059235b",
+      "lowered_program_census_baseline_sha256": "8e2d0b206798e24fef309192f21391bf37c2892aba8d4b6aed46e5149b84286f",
+      "lowered_program_inventory_rows": 74,
+      "lowered_program_inventory_sha256": "aa0c212fc6e8f8efec96aa1e2852e3b22e82c4fdb76504c42c6fc5250c8c31b4"
+    },
+    "corpus": {
+      "examples": 74,
+      "configurations": [
+        "c++20/O0",
+        "c++20/O1",
+        "c++20/O3",
+        "c++23/O0",
+        "c++23/O1",
+        "c++23/O3"
+      ],
+      "variants": 444,
+      "cross_configuration_behavior": "identical for every example",
+      "generated_cpp_collective_sha256": "4d173623745698f0136feacb3c6778d742e9a3a8116ea293bc1ed85030f04ab9",
+      "mir_before_collective_sha256": "f5ff3aaf7fd28bf4eb1e8e441c71bafc77b0dcc6d712cce570d690d921cda7a0",
+      "mir_after_collective_sha256": "3728b69d5e9ae08688cd83328e6ed25fd50142a0a84dc246c0a2d28c981aba46",
+      "optimization_report_collective_sha256": "fc4ad62dd36f04058abef1434f6216a63703975b146a430eb6207e0e8482f3d1",
+      "native_observation_collective_sha256": "bd2b0733cd561f263128c6a46e7fd65f95cefe111ba89e55122b5ec8828d8fed"
+    }
+  }
+}
