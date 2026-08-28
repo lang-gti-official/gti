@@ -266,19 +266,20 @@ to render `std::copyable` and `std::copy_constructible` as distinct declared
 concepts. The protocol layer does not infer owner provenance from member names
 or lifecycle capability from spelling.
 
-Managed-thread and mutex diagnostics also remain shared frontend authority.
-An invalid task transfer, single-threaded profile, or target without thread
-support publishes `GTI-S2084`; an escaped protected loan or overlapping live
-guard publishes the ordinary ownership diagnostic `GTI-S2017`. Both retain
-their semantic related spans and hints. Typed-result diagnostics use the same
-compiler fact, including exact result matching and transfer denials. The LSP
-reads the default project profile as described below,
-exposes only the source-defined `std::thread`, `std::thread_result<Result>`,
-`std::mutex<T>`, and `std::mutex_guard<T>` declarations in
-hover/definition/completion, and filters the identity-bound `gti_internal`
-handles, mutex storage, lock tokens, and operations. It does not derive task
-transfer, callable entry selection, result ownership, protected-value
-provenance, lock lifetime, or concurrency from public spelling.
+Managed-thread, atomic, and mutex diagnostics also remain shared frontend
+authority. An invalid task transfer, single-threaded profile, or target without
+thread support publishes `GTI-S2084`; an escaped protected loan or overlapping
+live guard publishes the ordinary ownership diagnostic `GTI-S2017`. Both
+retain their semantic related spans and hints. Typed-result diagnostics use the
+same compiler fact, including exact result matching and transfer denials. The
+LSP reads the default project profile as described below and exposes only the
+source-defined `std::thread`, `std::thread_result<Result>`, `std::atomic<T>`
+(including integer fetch operations), `std::mutex<T>`, and
+`std::mutex_guard<T>` declarations in hover/definition/completion. It filters
+the identity-bound `gti_internal` thread handles, atomic/mutex storage,
+lock tokens, and operations. It does not derive task transfer, callable entry
+selection, result ownership, atomic order legality, protected-value provenance,
+lock lifetime, or concurrency from public spelling.
 
 ## Document State
 

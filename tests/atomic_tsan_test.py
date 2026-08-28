@@ -28,10 +28,10 @@ def execute(
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         raise SystemExit(
             "usage: atomic_tsan_test.py /path/to/gti concurrent.gti "
-            "orders.gti /path/to/c++"
+            "orders.gti fetch.gti /path/to/c++"
         )
     if sys.platform == "win32":
         print("atomic ThreadSanitizer check skipped: unsupported host platform")
@@ -41,8 +41,9 @@ def main() -> int:
     sources = [
         pathlib.Path(sys.argv[2]).resolve(),
         pathlib.Path(sys.argv[3]).resolve(),
+        pathlib.Path(sys.argv[4]).resolve(),
     ]
-    native_compiler = pathlib.Path(sys.argv[4]).resolve()
+    native_compiler = pathlib.Path(sys.argv[5]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-tsan-") as scratch:
         root = pathlib.Path(scratch)

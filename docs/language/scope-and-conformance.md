@@ -17,8 +17,9 @@ The single-threaded profile is the default executable profile. The reference
 toolchain also resolves an explicit concurrent-profile selection before
 semantic analysis and applies its global/static storage policy during semantic
 analysis. Together with an independently advertised target/runtime `threads`
-capability, that selection exposes the bounded source-defined `std::thread`,
-`std::thread_result<Result>`, ordered scalar `std::atomic<T>`, and scoped
+capability, that selection exposes the bounded production source-defined
+`std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`
+(including fixed-width integer fetch operations), and scoped
 `std::mutex<T>`/`std::mutex_guard<T>` surfaces. It does not expose detach,
 condition variables, scoped cross-thread borrows, or foreign-thread entry;
 those facilities retain separate runtime and conformance gates.

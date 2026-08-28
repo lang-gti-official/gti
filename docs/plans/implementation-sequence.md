@@ -238,7 +238,7 @@ infrastructure project.
 | --- | --- | --- |
 | Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02` -> `S-FFI-02` families F1/F2/F3; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, nominal pointer-only handles, and named same-thread callbacks share one generated C/C++ adapter header. A wrapper can hide C structs or C++ classes behind ordinary GTI RAII. The named acceptance client is GLFW 3.4: all 124 functions, all five records, callback typedefs, opaque handles, and Vulkan-facing declarations bind with no GTI-caused omission and cross a deterministic C harness. |
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
-| Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
+| Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, ordered scalar atomics with integer fetch operations, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
 | Compiler-style AST/protocol | `M-LIFE-01` + layout -> `L-SUM-01` | Generic payload cases support exhaustive move/borrow matching and deterministic cleanup. |
 | Fallible pipeline | `M-LIFE/M-EXEC` -> `L-ERR-01` plus `expected`/host APIs | Propagation is concise, exact-type, and cleanup-correct across a nontrivial call chain. |
@@ -272,7 +272,7 @@ start a later phase:
 | Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, integral scoped enums, passive unions, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
-| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, ordered scalar atomics, scoped mutex guards, global policy, and contained worker failure. Public managed threads, ordered scalar atomics, and mutex guards implement the bounded systems-ready surface. |
+| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, ordered scalar atomics, scoped mutex guards, global policy, and contained worker failure. Public managed threads, ordered scalar atomics including integer fetch operations, and mutex guards implement the bounded systems-ready surface. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later local-detector or static direct-call arguments after prepared owners. |
 
 MIR is the sole executable-body authority. It still has bounded verifier gaps
@@ -2332,11 +2332,29 @@ or MIR prerequisite.
   O0/O3 under C++20/C++23. `atomic_tsan`, LSP, stdlib surface, corpus, and
   installed nightly/release checks cover the remaining boundaries.
 
+### C-ATOM-02: Integer Fetch Read-Modify-Write Operations
+
+- **State/role:** done; `C-ATOM-01` and `C-ORDER-01` provide the sealed atomic
+  identity/order substrate, and production generic callable emission supports
+  the source-defined update loops.
+- **Scope:** Add `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
+  `fetch_xor` to every fixed-width integer atomic, with every accepted
+  read-modify-write order. Keep `bool` outside the integer-only family.
+- **Required invariant:** each operation returns the value before its successful
+  update. Add/subtract use defined checked-overflow failure before publication,
+  rather than inheriting C++ wrapping. Public policy remains an ordinary
+  source-defined strong-CAS loop with exact MIR synchronization metadata.
+- **Exit gate/evidence:** the complete operation/order matrix and bool negatives
+  pass semantic/HIR/MIR verification; O3 preserves every load/CAS barrier;
+  C++20/C++23 O0/O3 runs prove prior-value behavior and defined overflow;
+  concurrent increments, LSP discovery, installed stdlib surface, and TSAN
+  cover the integration boundary.
+
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/role:** complete for public `std::thread`, ordered scalar atomics,
-  and scoped mutex guards; active again when scoped threads or another public
-  concurrency family is added.
+- **State/role:** complete for public `std::thread`, ordered scalar atomics
+  including integer fetch operations, and scoped mutex guards; active again
+  when scoped threads or another public concurrency family is added.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -2348,9 +2366,9 @@ or MIR prerequisite.
   `managed_thread_runtime`, `managed_thread_end_to_end`, `atomic_semantic_ir`,
   `atomic_end_to_end`, `atomic_lsp`, `atomic_tsan`, `mutex_semantic_ir`,
   `mutex_end_to_end`, `mutex_tsan`, `lsp_protocol`, the stdlib surface/corpus
-  gates, installed workflows, and sanitizer runs cover the
-  shipped thread and ordered scalar-atomic surfaces. Timing is never a correctness
-  oracle.
+  gates, installed workflows, and sanitizer runs cover the shipped thread,
+  ordered scalar-atomic/fetch, and mutex surfaces. Timing is never a
+  correctness oracle.
 
 The following remain blocked beyond the initial concurrency profile: detached
 threads; scoped borrowed captures; recursive/read-write locks; condition

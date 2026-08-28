@@ -9,13 +9,7 @@ std::atomic<int32_t> second_observation{0};
 
 void increment_shared_count() {
   for (mut int32_t iteration = 0; iteration < 2000; iteration++) {
-    mut bool complete = false;
-    while (!complete) {
-      int32_t observed = shared_count.load();
-      auto result =
-          shared_count.compare_exchange_strong(observed, observed + 1);
-      complete = result.exchanged();
-    }
+    [[discard]] shared_count.fetch_add(1, std::memory_order_relaxed());
   }
 }
 

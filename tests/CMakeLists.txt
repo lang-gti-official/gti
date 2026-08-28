@@ -1257,8 +1257,10 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_scalar.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch_overflow.gti"
     )
-    set_tests_properties(atomic_end_to_end PROPERTIES TIMEOUT 300)
+    set_tests_properties(atomic_end_to_end PROPERTIES TIMEOUT 600)
     add_test(
       NAME atomic_tsan
       COMMAND "${Python3_EXECUTABLE}"
@@ -1266,9 +1268,10 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
               "${CMAKE_CXX_COMPILER}"
     )
-    set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 300)
+    set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 600)
     add_test(
       NAME mutex_end_to_end
       COMMAND "${Python3_EXECUTABLE}"

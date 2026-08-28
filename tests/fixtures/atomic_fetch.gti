@@ -1,0 +1,119 @@
+#include <std/atomic>
+
+void verify(mut int32_t& failures, std::atomic<int32_t>& value,
+            int32_t prior, int32_t expected_prior, int32_t expected_value) {
+  if (prior != expected_prior ||
+      value.load(std::memory_order_relaxed()) != expected_value) {
+    failures++;
+  }
+}
+
+int main() {
+  std::atomic<int32_t> value{0};
+  mut int32_t failures = 0;
+
+  value.store(10);
+  int32_t add_default = value.fetch_add(2);
+  verify(failures, value, add_default, 10, 12);
+  value.store(10);
+  int32_t add_relaxed = value.fetch_add(2, std::memory_order_relaxed());
+  verify(failures, value, add_relaxed, 10, 12);
+  value.store(10);
+  int32_t add_acquire = value.fetch_add(2, std::memory_order_acquire());
+  verify(failures, value, add_acquire, 10, 12);
+  value.store(10);
+  int32_t add_release = value.fetch_add(2, std::memory_order_release());
+  verify(failures, value, add_release, 10, 12);
+  value.store(10);
+  int32_t add_acq_rel = value.fetch_add(2, std::memory_order_acq_rel());
+  verify(failures, value, add_acq_rel, 10, 12);
+  value.store(10);
+  int32_t add_seq_cst = value.fetch_add(2, std::memory_order_seq_cst());
+  verify(failures, value, add_seq_cst, 10, 12);
+
+  value.store(10);
+  int32_t sub_default = value.fetch_sub(2);
+  verify(failures, value, sub_default, 10, 8);
+  value.store(10);
+  int32_t sub_relaxed = value.fetch_sub(2, std::memory_order_relaxed());
+  verify(failures, value, sub_relaxed, 10, 8);
+  value.store(10);
+  int32_t sub_acquire = value.fetch_sub(2, std::memory_order_acquire());
+  verify(failures, value, sub_acquire, 10, 8);
+  value.store(10);
+  int32_t sub_release = value.fetch_sub(2, std::memory_order_release());
+  verify(failures, value, sub_release, 10, 8);
+  value.store(10);
+  int32_t sub_acq_rel = value.fetch_sub(2, std::memory_order_acq_rel());
+  verify(failures, value, sub_acq_rel, 10, 8);
+  value.store(10);
+  int32_t sub_seq_cst = value.fetch_sub(2, std::memory_order_seq_cst());
+  verify(failures, value, sub_seq_cst, 10, 8);
+
+  value.store(14);
+  int32_t and_default = value.fetch_and(11);
+  verify(failures, value, and_default, 14, 10);
+  value.store(14);
+  int32_t and_relaxed = value.fetch_and(11, std::memory_order_relaxed());
+  verify(failures, value, and_relaxed, 14, 10);
+  value.store(14);
+  int32_t and_acquire = value.fetch_and(11, std::memory_order_acquire());
+  verify(failures, value, and_acquire, 14, 10);
+  value.store(14);
+  int32_t and_release = value.fetch_and(11, std::memory_order_release());
+  verify(failures, value, and_release, 14, 10);
+  value.store(14);
+  int32_t and_acq_rel = value.fetch_and(11, std::memory_order_acq_rel());
+  verify(failures, value, and_acq_rel, 14, 10);
+  value.store(14);
+  int32_t and_seq_cst = value.fetch_and(11, std::memory_order_seq_cst());
+  verify(failures, value, and_seq_cst, 14, 10);
+
+  value.store(10);
+  int32_t or_default = value.fetch_or(5);
+  verify(failures, value, or_default, 10, 15);
+  value.store(10);
+  int32_t or_relaxed = value.fetch_or(5, std::memory_order_relaxed());
+  verify(failures, value, or_relaxed, 10, 15);
+  value.store(10);
+  int32_t or_acquire = value.fetch_or(5, std::memory_order_acquire());
+  verify(failures, value, or_acquire, 10, 15);
+  value.store(10);
+  int32_t or_release = value.fetch_or(5, std::memory_order_release());
+  verify(failures, value, or_release, 10, 15);
+  value.store(10);
+  int32_t or_acq_rel = value.fetch_or(5, std::memory_order_acq_rel());
+  verify(failures, value, or_acq_rel, 10, 15);
+  value.store(10);
+  int32_t or_seq_cst = value.fetch_or(5, std::memory_order_seq_cst());
+  verify(failures, value, or_seq_cst, 10, 15);
+
+  value.store(12);
+  int32_t xor_default = value.fetch_xor(10);
+  verify(failures, value, xor_default, 12, 6);
+  value.store(12);
+  int32_t xor_relaxed = value.fetch_xor(10, std::memory_order_relaxed());
+  verify(failures, value, xor_relaxed, 12, 6);
+  value.store(12);
+  int32_t xor_acquire = value.fetch_xor(10, std::memory_order_acquire());
+  verify(failures, value, xor_acquire, 12, 6);
+  value.store(12);
+  int32_t xor_release = value.fetch_xor(10, std::memory_order_release());
+  verify(failures, value, xor_release, 12, 6);
+  value.store(12);
+  int32_t xor_acq_rel = value.fetch_xor(10, std::memory_order_acq_rel());
+  verify(failures, value, xor_acq_rel, 12, 6);
+  value.store(12);
+  int32_t xor_seq_cst = value.fetch_xor(10, std::memory_order_seq_cst());
+  verify(failures, value, xor_seq_cst, 12, 6);
+
+  std::atomic<uint8_t> byte{uint8_t(3)};
+  uint8_t prior_byte_add = byte.fetch_add(uint8_t(1));
+  uint8_t prior_byte_sub = byte.fetch_sub(uint8_t(2));
+  uint8_t prior_byte_xor = byte.fetch_xor(uint8_t(1));
+  if (prior_byte_add != uint8_t(3) || prior_byte_sub != uint8_t(4) ||
+      prior_byte_xor != uint8_t(2) || byte.load() != uint8_t(3)) {
+    failures++;
+  }
+  return failures;
+}

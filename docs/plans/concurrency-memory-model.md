@@ -8,7 +8,8 @@
 > in 0.309.0 and the public `std::thread` plus
 > `std::thread_result<Result>` surfaces are complete in 0.313.0. The public
 > scalar `std::atomic<T>` surface, including the accepted explicit order
-> matrix, is also complete.
+> matrix and fixed-width integer fetch operations, is also complete. The
+> owner-tied mutex/guard slice is complete as well.
 > Remaining concurrency families stay staged below.
 > ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
 > technical prerequisites remain evidence, while the bounded public
@@ -50,10 +51,10 @@ requiring them to become source keywords or public concept names.
    or cross-thread access. Concurrent mutation is exposed only through
    compiler-validated interior-mutable abstractions such as atomics and
    mutex guards.
-6. The first atomic surface accepts fixed-width integers and `bool`, is
-   sequentially consistent, and promises neither lock freedom nor C-compatible
-   layout. Later orderings are `relaxed`, `acquire`, `release`, `acq_rel`, and
-   `seq_cst`; there is no `consume` ordering.
+6. The atomic surface accepts fixed-width integers and `bool`, defaults to
+   sequential consistency, and promises neither lock freedom nor C-compatible
+   layout. Explicit orderings are `relaxed`, `acquire`, `release`, `acq_rel`,
+   and `seq_cst`; there is no `consume` ordering.
 7. The first public thread is an owned, move-only, join-structured handle. It
    accepts one consumed transfer-capable task and owned transfer-capable
    arguments. Destruction joins an outstanding thread. Detach and cross-thread
@@ -149,8 +150,8 @@ synchronizes-with. The first executable profile provides these edges:
 - a mutex unlock synchronizes-with a later successful lock acquisition of the
   same mutex.
 
-Later acquire/release atomics add the edges specified in
-[Future Atomic Orders](#future-atomic-orders). Native code creates a GTI edge
+The implemented acquire/release atomics add the edges specified in
+[Explicit Atomic Orders](#explicit-atomic-orders). Native code creates a GTI edge
 only through an ABI/runtime contract recognized by the compiler and runtime or
 through an unsafe wrapper whose correctness proof establishes the same edge.
 
@@ -409,9 +410,9 @@ not shared. Their final source spelling is outside D-MEM-01.
 
 ### Initial Atomic Surface
 
-The first standard atomic wrapper accepts only `bool` and fixed-width signed
-and unsigned integer types. It provides construction, load, store, exchange,
-and one strong compare-exchange operation. It does not initially provide:
+The first standard atomic wrapper accepted only `bool` and fixed-width signed
+and unsigned integer types. It provided construction, load, store, exchange,
+and one strong compare-exchange operation. That initial slice did not provide:
 
 - floating, enum, pointer, reference, owner, aggregate, or interface atomics;
 - weak compare-exchange or spurious failure;
@@ -446,9 +447,24 @@ The wrapper is an ordinary public GTI type over a trusted capability. Compiler
 semantics bind the capability by declaration identity and record the operation
 and order. The compiler does not recognize the public wrapper name.
 
+### Integer Fetch Operations
+
+C-ATOM-02 completes the fixed-width integer read-modify-write surface with
+`fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and `fetch_xor`. Each returns
+the value immediately before its successful update and accepts every public
+read-modify-write order. `bool` remains outside this integer-only family.
+
+These operations are ordinary source-defined policy implemented as strong
+compare/exchange loops. MIR therefore verifies their initial relaxed load,
+retry, and exact success/failure order pair without adding a public-name or
+backend-inferred atomic operation. Add/subtract retain GTI's checked integer
+failure: an overflowing attempted result raises defined failure before its CAS
+can publish the update. This intentionally differs from C++ integral fetch
+arithmetic, which wraps.
+
 ### Explicit Atomic Orders
 
-C-ORDER-01 adds this complete vocabulary after the sequentially consistent
+C-ORDER-01 added this complete vocabulary after the sequentially consistent
 implementation:
 
 | Operation | Permitted orderings |
@@ -747,10 +763,11 @@ column is part of every stage rather than a final test-only pass.
 | C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::thread`, typed `std::thread_result<Result>`, and recoverable creation/join | Spawn/join happens-before tests, move-only task and result transfer, explicit result take or automatic abandon, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
 | M-OWN-03 / C-SYNC-01 | **Done:** scoped `std::mutex<T>`/`std::mutex_guard<T>` over the bounded owner-dependent carrier | Exactly-once unlock on normal/failure edges, no protected-reference escape, move-only guard transfer, two-thread contention, defined lock failure, no-poisoning policy, and TSAN. |
 | C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
+| C-ATOM-02 | **Done:** fixed-width integer fetch add/subtract/bitwise operations are source-defined verified strong-CAS loops | Every operation/order overload, prior-value semantics, exact CAS order pairs, checked overflow before publication, bool rejection, optimizer preservation, LSP discovery, O0/O3 C++20/C++23 execution, contention stress, installed surface, and TSAN where supported. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
 | later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
-| C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
+| C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics including integer fetch operations, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
 must not infer transfer/share from spelling. Hover displays the adopted public

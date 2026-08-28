@@ -4,9 +4,10 @@ Status: Accepted
 
 > **Scheduling note:** ADR 012 supersedes this record's former pre/post-1.0
 > release-horizon split. The memory-model decision remains accepted. Its
-> bounded owned-thread/task, SC-atomic, mutex-guard, and conformance profile is
-> now systems-readiness work. Explicit accepted atomic orders have since
-> landed; detach and advanced reclamation remain later breadth.
+> bounded owned-thread/task, ordered-scalar-atomic, mutex-guard, and conformance
+> profile is now systems-readiness work. Explicit accepted atomic orders and
+> fixed-width integer fetch operations have since landed; detach and advanced
+> reclamation remain later breadth.
 
 ## Context
 
@@ -21,9 +22,9 @@ a native dependency may internally use host threads.
 
 That paragraph records the adoption-time context. The current implementation
 now exposes owned managed threads, scalar atomics with sequentially consistent
-defaults plus explicit accepted orders, and owner-tied scoped mutex guards
-under the opt-in concurrent profile; condition variables and foreign-thread
-entry remain outstanding. Current source semantics live in
+defaults plus explicit accepted orders and integer fetch operations, and
+owner-tied scoped mutex guards under the opt-in concurrent profile; condition
+variables and foreign-thread entry remain outstanding. Current source semantics live in
 [the concurrency language contract](../language/concurrency.md).
 
 That implementation accident cannot become the language memory model. Before
@@ -207,9 +208,13 @@ below:
 
 The atomic surface is limited to fixed-width integers and `bool`, defaults to
 sequential consistency, and promises neither lock freedom nor C-compatible
-layout. Static source tags select `relaxed`, `acquire`, `release`, `acq_rel`,
-and `seq_cst`; there is no `consume`. Operation-specific legality is checked
-by source overload resolution and again in MIR before lowering.
+layout. Fixed-width integers additionally provide fetch add/subtract and
+bitwise read-modify-write operations. Add/subtract retain GTI's defined checked
+overflow rather than native wrapping. Their source-defined strong-CAS loops
+make every retry and exact order pair visible to verified MIR. Static source
+tags select `relaxed`, `acquire`, `release`, `acq_rel`, and `seq_cst`; there is
+no `consume`. Operation-specific legality is checked by source overload
+resolution and again in MIR before lowering.
 
 HIR and MIR must represent recognized synchronization operations and their
 orders explicitly. An unknown call or `maySynchronize` effect is a conservative
@@ -280,7 +285,9 @@ The implementation sequence remains:
 6. expose sequentially consistent scalar atomics and the owned automatic-join
    task/thread model;
 7. add the accepted explicit atomic order matrix; and
-8. add conformance, stress, optimizer-ordering, installed-toolchain, and
+8. add fixed-width integer fetch add/subtract/bitwise read-modify-write
+   operations as verified strong-CAS loops; and
+9. add conformance, stress, optimizer-ordering, installed-toolchain, and
    sanitizer gates before advertising the profile.
 
 No implementation row may use public wrapper spelling, emitted C++ traits, or
@@ -304,6 +311,7 @@ and test these semantic cases:
 | immutable atomic/mutex global performing contracted mutation | accepted only after its compiler-private operation and runtime support exist |
 | two overlapping ordinary accesses that could race | rejected before backend entry |
 | recognized default or explicitly ordered atomic accesses | accepted only for the operation's legal order types and retained as exact synchronization operations |
+| integer fetch operation | returns the replaced value; overflow in add/subtract is a defined failure before publication; the exact CAS order pair remains verified |
 | unknown/native call claimed as synchronization without a contract | retained as an optimizer barrier but rejected as proof of happens-before |
 | task checked failure followed by explicit or automatic join | task state cleans; the exact original record is re-raised on the joining thread |
 | outstanding handle reaches ordinary destruction | automatic join; completion precedes continuation of cleanup |
