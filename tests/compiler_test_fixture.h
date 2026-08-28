@@ -101,6 +101,29 @@ int failures = 0;
   }
 }
 
+[[maybe_unused]] std::unordered_set<std::string>
+concreteBackendSymbols(std::string_view text, std::string_view marker,
+                       std::string_view sourceName) {
+  std::unordered_set<std::string> result;
+  std::size_t search = 0;
+  while ((search = text.find(marker, search)) != std::string_view::npos) {
+    const std::size_t digest = search + marker.size();
+    std::size_t tail = digest;
+    while (tail < text.size() && tail - digest < 64 &&
+           ((text[tail] >= '0' && text[tail] <= '9') ||
+            (text[tail] >= 'a' && text[tail] <= 'f'))) {
+      ++tail;
+    }
+    if (tail - digest == 64 && tail < text.size() && text[tail] == '_' &&
+        text.substr(tail + 1, sourceName.size()) == sourceName) {
+      const std::size_t end = tail + 1 + sourceName.size();
+      result.emplace(text.substr(search, end - search));
+    }
+    search = digest;
+  }
+  return result;
+}
+
 [[maybe_unused]] std::string
 emitAnalyzedSource(std::string_view source,
                    lang::TargetInfo target = lang::TargetInfo::host(),

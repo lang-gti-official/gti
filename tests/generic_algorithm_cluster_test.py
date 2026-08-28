@@ -146,11 +146,13 @@ def main() -> int:
             r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
             r"[^;]*move_only_iterator[^;]*move_only_sentinel",
             r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel",
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel",
             r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
             r"[^;]*move_only_iterator[^;]*move_only_sentinel",
             r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel",
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel",
         )
         for pattern in find_backend_patterns:
             if re.search(pattern, find_generated) is None:
@@ -201,7 +203,8 @@ def main() -> int:
             r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
             r"[^;]*iteration_iterator[^;]*iteration_sentinel[^;]*read_observer",
             r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
-            r"[^;]*vector_iterator<std::int32_t>[^;]*vector_sentinel"
+            r"[^;]*__gti_type_[0-9a-f]{64}_vector_iterator"
+            r"[^;]*vector_sentinel"
             r"[^;]*mutable_observer",
         )
         for pattern in for_each_backend_patterns:

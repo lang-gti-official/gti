@@ -2058,6 +2058,182 @@ int main() {
          "functions without native template selection");
 }
 
+void testConcreteGenericClassAndMemberIdentity() {
+  const std::string genericSource = R"(
+class Box<T, uint64_t N> {
+  T value;
+
+public:
+  Box(T input) : value(input) {}
+  T get() { return this.value; }
+  U echo<U>(U input) { return input; }
+  uint64_t extent() { return N; }
+  T inspect() { return this.value; }
+  T inspect() mut { return this.value; }
+};
+
+int main() {
+  Box<int, 3> box = Box<int, 3>(1);
+  mut Box<int, 3> writable = Box<int, 3>(4);
+  int first = box.get();
+  int second = box.echo(2);
+  int64_t third = box.echo(int64_t(3));
+  int fourth = box.inspect();
+  int fifth = writable.inspect();
+  return first + second + int(third) + int(box.extent()) + fourth + fifth - 14;
+}
+)";
+  const std::string shiftedSource = R"(
+int32_t unrelated(int32_t value) { return value; }
+
+class Box<T, uint64_t N> {
+  T value;
+
+public:
+  Box(T input) : value(input) {}
+  T get() { return this.value; }
+  U echo<U>(U input) { return input; }
+  uint64_t extent() { return N; }
+  T inspect() { return this.value; }
+  T inspect() mut { return this.value; }
+};
+
+int main() {
+  Box<int, 3> box = Box<int, 3>(1);
+  mut Box<int, 3> writable = Box<int, 3>(4);
+  int first = box.get();
+  int second = box.echo(2);
+  int64_t third = box.echo(int64_t(3));
+  int fourth = box.inspect();
+  int fifth = writable.inspect();
+  return first + second + int(third) + int(box.extent()) + fourth + fifth - 14;
+}
+)";
+  const lang::FrontendResult original = lang::Frontend().analyze(
+      "concrete-generic-class-identity.gti", genericSource);
+  const lang::FrontendResult shifted = lang::Frontend().analyze(
+      "concrete-generic-class-identity.gti", shiftedSource);
+  expect(original.canGenerateCode() && shifted.canGenerateCode(),
+         "the concrete generic class identity fixtures should pass the "
+         "frontend");
+  if (!original.canGenerateCode() || !shifted.canGenerateCode()) {
+    return;
+  }
+
+  const lang::LoweredProgram originalLowered =
+      gti_test::lowerProgram(original, original.mir, original.mir);
+  const lang::LoweredProgram shiftedLowered =
+      gti_test::lowerProgram(shifted, shifted.mir, shifted.mir);
+  struct Evidence {
+    std::vector<std::string> classes;
+    std::vector<std::string> members;
+  };
+  const auto collect = [](const lang::LoweredProgram &lowered) {
+    Evidence evidence;
+    for (const lang::MirClassInstance &instance :
+         lowered.mir().classInstances()) {
+      const auto found = std::find_if(
+          lowered.declarations().begin(), lowered.declarations().end(),
+          [&](const lang::LoweredDeclaration &candidate) {
+            const auto *declaration =
+                std::get_if<lang::LoweredClassDeclaration>(&candidate.payload);
+            return declaration != nullptr &&
+                   declaration->id == instance.declaration;
+          });
+      const lang::LoweredDeclaration *row =
+          found == lowered.declarations().end() ? nullptr : &*found;
+      if (row == nullptr || row->name != "Box") {
+        continue;
+      }
+      if (const std::optional<std::string> spelling =
+              lang::cppConcreteClassName(lowered, instance.type)) {
+        evidence.classes.push_back(*spelling);
+      }
+    }
+    for (const lang::LoweredDeclaration &row : lowered.declarations()) {
+      const auto *function =
+          std::get_if<lang::LoweredFunctionDeclaration>(&row.payload);
+      if (function == nullptr ||
+          (row.name != "get" && row.name != "echo" && row.name != "extent" &&
+           row.name != "inspect")) {
+        continue;
+      }
+      for (const lang::MirFunctionInstance &mirInstance :
+           lowered.mir().functionInstances()) {
+        if (mirInstance.declaration != function->id || !mirInstance.owner) {
+          continue;
+        }
+        const lang::LoweredFunctionInstance *instance =
+            lowered.findFunctionInstance(mirInstance.id);
+        const std::optional<std::string> spelling =
+            instance == nullptr
+                ? std::nullopt
+                : lang::cppConcreteMemberFunctionSpelling(
+                      lowered, row, *function, *instance, mirInstance);
+        if (spelling) {
+          evidence.members.push_back(*spelling);
+        }
+      }
+    }
+    std::sort(evidence.classes.begin(), evidence.classes.end());
+    std::sort(evidence.members.begin(), evidence.members.end());
+    return evidence;
+  };
+  const Evidence originalEvidence = collect(originalLowered);
+  const Evidence shiftedEvidence = collect(shiftedLowered);
+  const auto wellFormed = [](const std::string &spelling,
+                             std::string_view prefix) {
+    if (!spelling.starts_with(prefix) ||
+        spelling.size() <= prefix.size() + 64 ||
+        spelling[prefix.size() + 64] != '_') {
+      return false;
+    }
+    return std::all_of(
+        spelling.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+        spelling.begin() + static_cast<std::ptrdiff_t>(prefix.size() + 64),
+        [](char character) {
+          return (character >= '0' && character <= '9') ||
+                 (character >= 'a' && character <= 'f');
+        });
+  };
+  expect(originalEvidence.classes.size() == 1 &&
+             originalEvidence.members.size() == 6 &&
+             wellFormed(originalEvidence.classes.front(), "__gti_type_") &&
+             std::all_of(originalEvidence.members.begin(),
+                         originalEvidence.members.end(),
+                         [&](const std::string &spelling) {
+                           return wellFormed(spelling, "__gti_member_");
+                         }),
+         "one concrete type/value class application and its six selected "
+         "member identities should receive well-formed GTI-owned symbols");
+  expect(originalEvidence.classes == shiftedEvidence.classes &&
+             originalEvidence.members == shiftedEvidence.members,
+         "concrete class and member symbols should remain byte-identical when "
+         "an unrelated declaration changes discovery-order IDs");
+  if (originalEvidence.classes.size() != 1) {
+    return;
+  }
+
+  const std::string generated = gti_test::emitCppText(original);
+  const std::string &className = originalEvidence.classes.front();
+  bool everyMemberEmitted = true;
+  for (const std::string &member : originalEvidence.members) {
+    everyMemberEmitted =
+        everyMemberEmitted && generated.find(member + "(") != std::string::npos;
+  }
+  expect(
+      generated.find("class " + className) != std::string::npos &&
+          generated.find("explicit " + className +
+                         "(std::int32_t __gti_mir_arg_0);") !=
+              std::string::npos &&
+          everyMemberEmitted &&
+          generated.find("template <typename T, std::size_t N>\n  class Box") ==
+              std::string::npos &&
+          generated.find("template <> " + className) == std::string::npos,
+      "nameable generic classes, members, and constructors should emit as "
+      "ordinary concrete C++ declarations after GTI selects them");
+}
+
 int main() {
   testImmutableProgramPlanOwnsOrderedText();
   testExhaustiveSealedInventory();
@@ -2082,6 +2258,7 @@ int main() {
   testConcreteInstanceGeneratedItemRows();
   testReferenceReceiverCompoundAssignPlaceCoherence();
   testConcreteGenericFreeFunctionIdentity();
+  testConcreteGenericClassAndMemberIdentity();
 
   if (failures != 0) {
     std::cerr << failures

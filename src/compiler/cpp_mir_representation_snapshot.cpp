@@ -833,6 +833,11 @@ public:
     return cppSemanticTypeSpelling(lowered, standard, type);
   }
 
+  [[nodiscard]] bool
+  usesDirectClassRepresentation(const SemanticType &type) const {
+    return cppConcreteClassName(lowered, type).has_value();
+  }
+
   [[nodiscard]] std::string genericParameterName(GenericParameterId id) const {
     const LoweredGenericParameter *parameter = lowered.findGenericParameter(id);
     return parameter == nullptr ? std::string() : parameter->name;
@@ -900,13 +905,19 @@ public:
               ? std::nullopt
               : cppConcreteFreeFunctionSpelling(lowered, declaration, *info,
                                                 *loweredInstance, instance);
+      const std::optional<std::string> concreteMember =
+          loweredInstance == nullptr || concrete
+              ? std::nullopt
+              : cppConcreteMemberFunctionSpelling(lowered, declaration, *info,
+                                                  *loweredInstance, instance);
       RowFunctionFacts result{
           .name = declaration.name,
           .namespaceScope = declaration.namespaceScope,
           .genericParameters = info->genericParameters,
-          .spelling =
-              concrete.value_or(cppFunctionSpelling(*info, declaration.name)),
-          .concreteSpelling = concrete.has_value(),
+          .spelling = concrete.value_or(concreteMember.value_or(
+              cppFunctionSpelling(*info, declaration.name))),
+          .concreteSpelling =
+              concrete.has_value() || concreteMember.has_value(),
           .cLinkage = info->linkage == LanguageLinkage::C,
           .runtimeBinding =
               info->definitionKind == MirDefinitionKind::RuntimeBinding};
@@ -1554,7 +1565,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
         continue;
       }
       std::string declarationTypeSpelling;
-      if (record->type != field.type && containsDependentType(record->type)) {
+      if (!facts.usesDirectClassRepresentation(instance.type) &&
+          record->type != field.type && containsDependentType(record->type)) {
         declarationTypeSpelling = facts.typeSpelling(standard, record->type);
         if (declarationTypeSpelling == "void") {
           declarationTypeSpelling.clear();
