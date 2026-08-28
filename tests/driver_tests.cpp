@@ -1,6 +1,7 @@
 #include "../src/driver/build_source_identity.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/build.h"
+#include "gti/driver/build_report.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -1946,6 +1947,182 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
              ")");
 }
 
+// The sidecar is the interchange format `gti verify` reads back, so writing
+// and reading it must round-trip exactly and comparison must name the exact
+// fact that moved.
+void testBuildReportRecordRoundTrip() {
+  lang::driver::BuildProvenance recorded;
+  recorded.producerExecutable = {.canonicalPath = "/opt/gti/bin/gti",
+                                 .bytes = 128,
+                                 .sha256 = std::string(64, 'a')};
+  recorded.compilerBuild = {.state = lang::driver::CompilerSourceState::Dirty,
+                            .commit = std::string(40, 'b')};
+  recorded.project = lang::driver::BuildProjectProvenance{
+      .packageName = "sample",
+      .packageVersion = "0.1.0",
+      .targetName = "sample",
+      .targetKind = "executable",
+      .profileName = "dev",
+      // A multi-line identity exercises string escaping in both directions.
+      .modelIdentity = "gti-workspace-v1\npackage:sample@0.1.0"};
+  recorded.source.entryRoot = 1;
+  recorded.source.preludeRoots = {2};
+  recorded.source.compilationOrder = {2, 1};
+  recorded.source.materialsSha256 = std::string(64, 'c');
+  recorded.source.units.push_back(
+      {.id = 1,
+       .role = lang::SourceUnitRole::Application,
+       .material = {.canonicalPath = "/work/sample/src/main.gti",
+                    .bytes = 25,
+                    .sha256 = std::string(64, 'd')},
+       .logicalIdentity = "package:sample@0.1.0:src/main.gti",
+       .standardLibraryName = std::nullopt,
+       .packageIdentity = "sample@0.1.0",
+       .packageRelativePath = "src/main.gti",
+       .entry = true,
+       .prelude = false});
+  recorded.source.units.push_back(
+      {.id = 2,
+       .role = lang::SourceUnitRole::Prelude,
+       .material = {.canonicalPath = "/opt/gti/stdlib/prelude.gti",
+                    .bytes = 64,
+                    .sha256 = std::string(64, 'e')},
+       .logicalIdentity = "prelude",
+       .standardLibraryName = std::nullopt,
+       .packageIdentity = std::nullopt,
+       .packageRelativePath = std::nullopt,
+       .entry = false,
+       .prelude = true});
+  recorded.source.dependencies.push_back(
+      {.source = 1,
+       .target = 2,
+       .kind = lang::SourceDependencyKind::Prelude,
+       .includeSpelling = "prelude.gti",
+       .includeOccurrence = 0});
+  recorded.nativeCompilerExecutable = {.canonicalPath = "/usr/bin/c++",
+                                       .bytes = 512,
+                                       .sha256 = std::string(64, 'f')};
+  recorded.nativeCommand = {
+      "c++",
+      "-std=c++23",
+      "-O0",
+      "-MD",
+      "-MF",
+      "/tmp/gti-1-2-3-sample.build-report.d",
+      "/work/sample/build/gti/sample.gti.cpp",
+      "-o",
+      "/work/sample/build/gti/.sample.gti-stage-1-2-3/sample"};
+  recorded.runtime.materialsSha256 = std::string(64, '0');
+  recorded.runtime.headers.push_back(
+      {.kind = lang::driver::BuildRuntimeHeaderKind::Runtime,
+       .logicalIdentity = "gti/runtime.h",
+       .material = {.canonicalPath = "/opt/gti/include/gti/runtime.h",
+                    .bytes = 900,
+                    .sha256 = std::string(64, '1')}});
+  recorded.runtime.headers.push_back(
+      {.kind = lang::driver::BuildRuntimeHeaderKind::Compatibility,
+       .logicalIdentity = "nonstd/print.h",
+       .material = {.canonicalPath = "/opt/gti/include/nonstd/print.h",
+                    .bytes = 300,
+                    .sha256 = std::string(64, '2')}});
+  recorded.runtime.archive = {.canonicalPath = "/opt/gti/lib/libgti_runtime.a",
+                              .bytes = 4096,
+                              .sha256 = std::string(64, '3')};
+  recorded.artifact = {.canonicalPath = "/work/sample/build/gti/sample",
+                       .bytes = 58008,
+                       .sha256 = std::string(64, '4')};
+
+  const std::string serialized =
+      lang::driver::serializeBuildProvenanceJson(recorded);
+  expect(serialized.find("\"target_kind\":\"executable\"") != std::string::npos,
+         "a project record should serialize its resolved target kind");
+  expect(serialized.find("gti-workspace-v1\\npackage:sample@0.1.0") !=
+             std::string::npos,
+         "a multi-line model identity should be escaped, not truncated");
+  std::string parseError;
+  const std::optional<lang::driver::BuildProvenance> parsed =
+      lang::driver::parseBuildProvenanceJson(serialized, parseError);
+  expect(parsed.has_value(),
+         "a serialized build report should parse back: " + parseError);
+  if (!parsed) {
+    return;
+  }
+  expect(lang::driver::compareBuildProvenance(recorded, *parsed).empty(),
+         "a round-tripped record should compare equal to its source");
+  expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
+         "re-serializing a parsed record should reproduce the sidecar");
+
+  // The driver owns the staged link output and the dependency-file operand,
+  // and both carry a per-invocation identity. Comparing them literally would
+  // report a difference for every verification.
+  lang::driver::BuildProvenance restaged = *parsed;
+  restaged.nativeCommand[5] = "/tmp/gti-9-9-9-sample.build-report.d";
+  restaged.nativeCommand[8] =
+      "/work/sample/build/gti/.sample.gti-stage-9-9-9/sample";
+  expect(lang::driver::compareBuildProvenance(recorded, restaged).empty(),
+         "per-invocation staging paths should not read as a divergence");
+
+  lang::driver::BuildProvenance drifted = *parsed;
+  drifted.source.units[0].material.sha256 = std::string(64, '9');
+  drifted.source.units[0].material.bytes = 59;
+  drifted.source.materialsSha256 = std::string(64, '8');
+  drifted.runtime.headers.pop_back();
+  drifted.nativeCommand[2] = "-O2";
+  drifted.artifact.sha256 = std::string(64, '7');
+  drifted.project->profileName = "release";
+  const std::vector<lang::driver::BuildProvenanceDifference> differences =
+      lang::driver::compareBuildProvenance(recorded, drifted);
+  const auto named = [&](std::string_view subject, std::string_view field) {
+    return std::any_of(
+        differences.begin(), differences.end(),
+        [&](const lang::driver::BuildProvenanceDifference &difference) {
+          return difference.subject.find(subject) != std::string::npos &&
+                 difference.field == field;
+        });
+  };
+  expect(named("package:sample@0.1.0:src/main.gti", "content"),
+         "a changed source unit should be named with its content identity");
+  expect(named("source materials", "aggregate sha256"),
+         "the source aggregate should be compared");
+  expect(named("nonstd/print.h", "presence"),
+         "a runtime header the rebuild no longer consumes should be named");
+  expect(named("native argv[2]", "operand"),
+         "a changed native operand should be named by position");
+  expect(named("built artifact", "content"),
+         "the produced artifact's bytes should be compared");
+  expect(named("project", "profile name"),
+         "the recorded profile selection should be compared");
+  const bool preludeUntouched = std::none_of(
+      differences.begin(), differences.end(),
+      [](const lang::driver::BuildProvenanceDifference &difference) {
+        return difference.subject.find("prelude") != std::string::npos;
+      });
+  expect(preludeUntouched,
+         "an unchanged source unit should not be reported as a difference");
+
+  // A record whose content identity matches at another path is not a
+  // divergence; the tree may legitimately have moved.
+  lang::driver::BuildProvenance relocated = *parsed;
+  relocated.source.units[0].material.canonicalPath =
+      "/elsewhere/sample/src/main.gti";
+  relocated.artifact.canonicalPath = "/elsewhere/sample/build/gti/sample";
+  expect(lang::driver::compareBuildProvenance(recorded, relocated).empty(),
+         "identical content at a new canonical path should compare equal");
+
+  std::string rejectedError;
+  expect(
+      !lang::driver::parseBuildProvenanceJson("{\"schema\": 1}", rejectedError)
+              .has_value() &&
+          rejectedError.find("schema") != std::string::npos,
+      "an older schema should be refused rather than partially read");
+  expect(
+      !lang::driver::parseBuildProvenanceJson(serialized + "{", rejectedError)
+           .has_value(),
+      "trailing content should be refused");
+  expect(!lang::driver::parseBuildProvenanceJson("", rejectedError).has_value(),
+         "an empty report should be refused");
+}
+
 void testResourcesAndArtifactOwnership() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -2182,6 +2359,7 @@ int main(int argc, char *argv[]) {
   testNativeDependencyDiscoveryPrimitives();
   testBuildSourceMaterialIdentityProjection();
   testBuildProvenance(std::filesystem::absolute(argv[0]));
+  testBuildReportRecordRoundTrip();
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

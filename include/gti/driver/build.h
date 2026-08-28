@@ -79,7 +79,10 @@ struct BuildCacheResult {
   std::optional<std::string> warning;
 };
 
-inline constexpr int currentBuildProvenanceSchema = 1;
+// Schema 2 adds the produced artifact's content identity and the optional
+// project section that `gti build --build-report` records. Schema 1 records
+// carry neither, so verification does not interpret them.
+inline constexpr int currentBuildProvenanceSchema = 2;
 
 enum class CompilerSourceState {
   Clean,
@@ -155,19 +158,41 @@ struct BuildRuntimeProvenance {
   std::string materialsSha256;
 };
 
+// Project-mode selection facts. Direct mode has no concept of them, so the
+// section is absent from a direct record. `gti verify` re-resolves exactly
+// this package, target, and profile before rebuilding, and compares the
+// project model identity that produced the recorded request.
+struct BuildProjectProvenance {
+  std::string packageName;
+  std::string packageVersion;
+  std::string targetName;
+  // "executable" or "test"; spelled as a string so the record stays
+  // independent of the manifest model's enumeration.
+  std::string targetKind;
+  std::string profileName;
+  std::string modelIdentity;
+};
+
 struct BuildProvenance {
   int schema = currentBuildProvenanceSchema;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
+  std::optional<BuildProjectProvenance> project;
   BuildSourceProvenance source;
   BuildFileProvenance nativeCompilerExecutable;
   std::vector<std::string> nativeCommand;
   BuildRuntimeProvenance runtime;
+  // Content identity of the published executable. Captured after the native
+  // link and publication, so it describes the exact bytes this invocation
+  // produced.
+  BuildFileProvenance artifact;
 };
 
 struct BuildReportRequest {
   std::filesystem::path output;
   std::filesystem::path producerExecutable;
+  // Supplied by project commands; direct compilation leaves it empty.
+  std::optional<BuildProjectProvenance> project;
 };
 
 class ExecutableBuildRequest final {

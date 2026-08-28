@@ -1979,6 +1979,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
     buildProvenance = BuildProvenance{
         .compilerBuild = currentCompilerBuildIdentity(),
+        .project = request.buildReport()->project,
         .source = std::move(*source),
     };
   }
@@ -2438,6 +2439,22 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
         "': " + result.artifactPublishResult->error.message();
     result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
     return result;
+  }
+
+  // The produced artifact's identity is captured from the published
+  // executable, so the record describes the exact bytes a consumer holds
+  // rather than the staged copy's path.
+  if (result.provenance) {
+    std::string artifactError;
+    std::optional<BuildFileProvenance> artifact =
+        captureFileProvenance(request.output(), artifactError);
+    if (!artifact) {
+      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+      result.driverDiagnostic =
+          "gti: failed to capture built artifact provenance: " + artifactError;
+      return result;
+    }
+    result.provenance->artifact = std::move(*artifact);
   }
 
   if (cacheEntry && !result.cache.key.empty()) {
