@@ -1,0 +1,14 @@
+#include <std/vector>
+
+class holder {
+public:
+  holder() : items(std::vector<int32_t>()) {}
+
+  mut std::vector<int32_t> items;
+};
+
+int main() {
+  mut holder value = holder();
+  value.items.push_back(4);
+  return value.items[std::size_t(0)] == 4 ? 0 : 1;
+}

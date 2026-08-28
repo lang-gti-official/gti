@@ -470,6 +470,12 @@ passed to another constructor likewise remains in its verified value-rooted
 lifetime slot until the consuming construction finishes. Only fields named by
 the explicit constructor-initializer schedule are replaced with private empty
 state; unrelated in-class initializers retain their source-defined value.
+When an explicit class-field construction remains in an ordinary constructor
+body, the exact `ConstructorFieldResultSlot` schedule constructs the selected
+class prvalue directly into its value-rooted lifetime slot, moves it into the
+field, and destroys only the moved-from shell. The ordinary C++ route uses the
+slot's factory construction so it never names an undeclared SSA value; the
+failure route retains its existing placement construction and success edge.
 Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.
@@ -508,26 +514,29 @@ The scalar copy route continues to require its explicit `Load`/`Initialize`
 pair. Custom lifecycle, extra uses, forged ownership, ambiguous fields, and
 mixed initializer schedules fail closed.
 
-An explicit class-typed field initializer whose single argument is one ordinary
-`Construct` of the field's own type publishes through the same native
-member-initializer list. C++17 guaranteed elision makes `field(Type(parameter
-...))` the exact representation of MIR's construct-then-publish schedule: the
-field is constructed once, in place, with no intermediate object and no invented
-copy or move. Because C++ initializes members in declaration order, the proof is
-whole-constructor: every declared field must have its own explicit initializer in
-declaration order, each construction's arguments must be exact copy-loads of the
-constructor's scalar parameters, and the entry block must contain nothing but the
-named instructions and metadata boundaries. A sibling field may share the
-schedule only through the exact parameter-copy proof, which publishes natively as
-well. A cleanup-free field carries no drop obligation and publishes through
-initializer metadata alone; an active-cleanup field additionally requires the
-produced value's `Value` obligation, its `Reparent` into the field's
-`ConstructionRollback` obligation, and one unconditional transfer-out at normal
-completion. A failure-capable target constructor is admitted only when its
-verified MIR body can never report a failure status and that ordinary body is
-itself published by this route, so the plain C++ overload exists at the call
-site. Computed arguments, call results, borrowed sources, base initializers, and
-partially claimed schedules stay in the MIR body schedule.
+An explicit class-typed field initializer whose value is one ordinary
+`Construct` of the field's own type may publish through the same native
+member-initializer list. C++17 guaranteed elision makes
+`field(Type(arguments...))` the exact representation of MIR's
+construct-then-publish schedule: the field is constructed once, in place, with
+no intermediate object and no invented copy or move. Because C++ initializes
+members in declaration order, the proof is whole-constructor: every declared
+field must have its own explicit initializer in declaration order, each
+construction argument must be either an exact copy-load of one scalar
+constructor parameter or an exact source scalar literal, and the entry block
+must contain nothing but the named instructions and metadata boundaries.
+A sibling field may share the schedule only through the exact parameter-copy
+proof, which publishes natively as well. A cleanup-free field carries no drop
+obligation and publishes through initializer metadata alone; an active-cleanup
+field additionally requires the produced value's `Value` obligation, its
+`Reparent` into the field's `ConstructionRollback` obligation, and one
+unconditional transfer-out at normal completion. A failure-capable target
+constructor is admitted only when its verified MIR body can never report a
+failure status and that ordinary body is itself published by this route, so
+the plain C++ overload exists at the call site. Folded or synthesized literals,
+other computations, call results, borrowed sources, concrete generic targets,
+base initializers, and partially claimed schedules stay in the MIR body
+schedule.
 
 Obligation-free class values in a move capture or an owning `Expected` payload
 remain concrete MIR values rather than backend-recognized library types. The
@@ -576,18 +585,23 @@ ends the invoking block and the `Assign` opens that edge's successor. Either
 way the route requires an unconditional `Replace` from the staging drop, an
 adjacent single unconditional `Drop` of the slot, and exactly one activation.
 
-The publication has two destination families, distinguished by which
+The publication has three destination families, distinguished by which
 obligation owns the storage being replaced. A bare mutable binding owns its
 own cleanup obligation, so the `Replace` transfers into that obligation and
 the write carries no failure site. A checked fixed-array element does not:
 the array binding's obligation already covers every element, so the `Replace`
 names no destination obligation and the write carries the element's bounds
 failure site — the same element shape the cleanup-free fusion route admits,
-validated by the same authority. Requiring a destination obligation for an
-element would retire the same storage twice, so an element publication that
-names one fails closed. Every other destination, a bare-binding publication
-with a failure site, extra uses, and any additional lifecycle event on the
-staging obligation also fail closed.
+validated by the same authority. A mutable loan referent also has no separate
+destination obligation because its aggregate owner already covers the object,
+and writing through the produced loan has no new failure site. That route
+requires the exact reserved-loan activation immediately before `Assign`, the
+matching `EndBorrow` immediately after it, and only then the staging-slot
+`Drop`. Requiring a destination obligation for an element or loan referent
+would retire the same storage twice, so either publication fails closed when
+it names one. Every other destination, a bare-binding or loan publication with
+a failure site, an incomplete two-phase loan schedule, extra uses, and any
+additional lifecycle event on the staging obligation also fail closed.
 
 A cleanup-free class prvalue has no staging obligation at all: no place or
 drop obligation owns the constructed value and the discarded assignment result

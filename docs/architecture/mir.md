@@ -913,6 +913,15 @@ endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
 
+A transient call-result loan used only as the receiver of a non-borrowing
+member call ends immediately after that call. Lowering carries the source HIR
+receiver identity through call preparation and emits the same selected
+call-result chain retirement used for consumed arguments. Reference and
+borrowed-state results are excluded because they may retain the receiver's
+provenance. This makes two independent scalar reads from a mutable container
+within one larger expression sequential rather than leaving the first
+receiver loan active until the expression boundary.
+
 One MIR loan may name multiple carrier bindings for a shared read-only
 semantic loan. It still has exactly one producer and one path-sensitive loan
 state; a shared loan uses its active and inactive states. Ending it invalidates

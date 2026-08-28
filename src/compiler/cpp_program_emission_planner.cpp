@@ -4921,6 +4921,8 @@ public:
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
       std::vector<std::size_t> baseParameters;
+      std::vector<CppMirConstructedFieldInitializerArgument>
+          constructedArguments;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -4948,7 +4950,7 @@ public:
                               .initializer = binding.initializer,
                               .field = binding.field,
                               .fieldType = binding.fieldType,
-                              .baseParameters = binding.parameters});
+                              .constructedArguments = binding.arguments});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -5042,11 +5044,21 @@ public:
         emitSemanticType(initializer.fieldType);
         output << '(';
         for (std::size_t argument = 0;
-             argument < initializer.baseParameters.size(); ++argument) {
+             argument < initializer.constructedArguments.size(); ++argument) {
           if (argument != 0) {
             output << ", ";
           }
-          output << "__gti_mir_arg_" << initializer.baseParameters[argument];
+          const CppMirConstructedFieldInitializerArgument &source =
+              initializer.constructedArguments[argument];
+          if (source.literal.has_value() == source.parameter.has_value()) {
+            throw std::logic_error(
+                "constructed field initializer has an ambiguous argument");
+          }
+          if (source.literal) {
+            emitMirLiteral(*source.literal, source.type);
+          } else if (source.parameter) {
+            output << "__gti_mir_arg_" << *source.parameter;
+          }
         }
         output << "))";
         continue;
@@ -5703,6 +5715,41 @@ public:
     } else {
       output << "nullptr";
     }
+  }
+
+  void emitMirLiteral(const Literal &literal, const SemanticType &type) {
+    if (std::holds_alternative<std::nullptr_t>(literal)) {
+      output << "nullptr";
+      return;
+    }
+    if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
+      output << "static_cast<";
+      emitSemanticType(type);
+      output << ">(";
+      emitSwitchInteger(EnumConstant{.negative = false, .magnitude = *integer},
+                        type);
+      output << ')';
+      return;
+    }
+    if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
+      output << "std::uint8_t{" << static_cast<unsigned int>(character->value)
+             << '}';
+      return;
+    }
+    if (const auto *boolean = std::get_if<bool>(&literal)) {
+      output << (*boolean ? "true" : "false");
+      return;
+    }
+    if (const auto *text = std::get_if<std::string>(&literal)) {
+      output << cppMirStringViewLiteralSpelling(*text);
+      return;
+    }
+    if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
+      emitFloat(*value);
+      return;
+    }
+    throw std::logic_error(
+        "constructed field initializer lost its proven scalar literal");
   }
 
   void writeIndent() {

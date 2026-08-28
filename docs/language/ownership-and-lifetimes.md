@@ -376,7 +376,11 @@ private:
 Application::Get().Update();
 ```
 
-An unretained call-result loan ends at its enclosing full-expression. A result
+An unretained call-result loan ends at its enclosing full-expression. When its
+only use is as the receiver of a member call whose result does not borrow from
+that receiver, it ends immediately after that call instead. Independent scalar
+reads such as `rows[0].first() == rows[1].second()` therefore execute in source
+order without retaining the first subscript loan across the second. A result
 retained in a local reference remains live to its lexical scope boundary, so a
 second overlapping mutable borrow is rejected even when the first carrier is
 otherwise unused. A nested block is the explicit way to end such a retained
