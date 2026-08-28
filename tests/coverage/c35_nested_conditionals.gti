@@ -1,0 +1,42 @@
+// Nested conditional compilation over valueless configuration flags.
+#define TIER_HIGH
+#define ENABLE_EXTRA
+
+class Anchor { public: int32_t id() { return 0; } };
+
+constexpr int32_t high_tier_value = 100;
+constexpr int32_t low_tier_value = 2;
+
+int32_t tier_value() {
+#ifdef ENABLE_EXTRA
+#ifdef TIER_HIGH
+#ifndef DISABLED
+  return high_tier_value;
+#else
+  return 1;
+#endif
+#else
+  return low_tier_value;
+#endif
+#else
+  return 3;
+#endif
+}
+
+#undef ENABLE_EXTRA
+
+int32_t after_undef() {
+#ifdef ENABLE_EXTRA
+  return 10;
+#else
+  return 20;
+#endif
+}
+
+#if defined(TIER_HIGH) && !defined(DISABLED)
+int32_t composed() { return 7; }
+#else
+int32_t composed() { return 0; }
+#endif
+
+int main() { std::println(tier_value() + after_undef() + composed()); return 0; }

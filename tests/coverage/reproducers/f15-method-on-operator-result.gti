@@ -1,0 +1,13 @@
+class Counter {
+  mut int32_t n = 0;
+public:
+  Counter(int32_t n) : n(n) {}
+  int32_t value() { return this.n; }
+  Counter operator+(Counter& o) { return Counter(this.n + o.n); }
+};
+int main() {
+  Counter a = Counter(3);
+  Counter b = Counter(7);
+  std::println((a + b).value());
+  return 0;
+}

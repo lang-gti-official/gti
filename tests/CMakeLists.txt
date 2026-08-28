@@ -1276,13 +1276,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/random_engine.gti"
   )
   add_test(
-    NAME language_coverage_corpus
+    NAME language_coverage_fixed_corpus
     COMMAND "${PROJECT_SOURCE_DIR}/tests/coverage/run_coverage.sh"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_BINARY_DIR}/language-coverage-corpus"
+            "${PROJECT_BINARY_DIR}/language-coverage-fixed-corpus"
+            --fixed-baseline
   )
   set_tests_properties(
-    language_coverage_corpus
+    language_coverage_fixed_corpus
     PROPERTIES TIMEOUT 900
                PROCESSORS 2
                ENVIRONMENT

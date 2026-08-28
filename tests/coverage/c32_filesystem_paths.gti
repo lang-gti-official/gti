@@ -1,0 +1,29 @@
+// filesystem::path decomposition, mutation and rendering.
+#include <std/filesystem>
+#include <std/string>
+
+int main() {
+  mut std::filesystem::path p = std::filesystem::path("/usr/local/lib/thing.tar.gz");
+  std::print(p.has_root_directory() ? 1 : 0); std::print(" ");
+  std::print(p.is_absolute() ? 1 : 0); std::print(" ");
+
+  mut std::filesystem::path base = p.parent_path();
+  mut std::filesystem::path name = p.filename();
+  mut std::filesystem::path stem = p.stem();
+  mut std::filesystem::path ext = p.extension();
+  std::print(base.string().view()); std::print(" ");
+  std::print(name.string().view()); std::print(" ");
+  std::print(stem.string().view()); std::print(" ");
+  std::print(ext.string().view()); std::print(" ");
+
+  mut std::filesystem::path built = std::filesystem::path("data");
+  built.append("logs");
+  built.append("today.txt");
+  built.replace_extension(".log");
+  std::print(built.string().view()); std::print(" ");
+
+  built.remove_filename();
+  std::print(built.empty() ? 1 : 0); std::print(" ");
+  std::println(built.string().view());
+  return 0;
+}

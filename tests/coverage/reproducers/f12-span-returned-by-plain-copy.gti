@@ -1,0 +1,10 @@
+#include <std/vector>
+#include <std/span>
+std::span<int32_t> relay(std::span<int32_t> view) { return view; }
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(1);
+  std::span<int32_t> all = v.as_span();
+  std::println(int32_t(relay(all).size()));
+  return 0;
+}

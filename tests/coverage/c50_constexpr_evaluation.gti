@@ -1,0 +1,23 @@
+// constexpr functions, compile-time constants and their use in types.
+class Anchor { public: int32_t id() { return 0; } };
+
+constexpr int32_t square(int32_t v) { return v * v; }
+constexpr uint64_t pow2(uint64_t exponent) {
+  mut uint64_t result = uint64_t(1);
+  for (mut uint64_t i = uint64_t(0); i < exponent; i++) { result = result * uint64_t(2); }
+  return result;
+}
+
+constexpr int32_t base = 5;
+constexpr int32_t derived = square(base);
+constexpr uint64_t capacity = pow2(uint64_t(4));
+
+int main() {
+  mut int32_t runtime[derived] = {};
+  std::print(derived); std::print(" ");
+  std::print(int32_t(capacity)); std::print(" ");
+  std::print(square(3)); std::print(" ");
+  runtime[0] = 3;
+  std::println(runtime[0] + int32_t(sizeof(int32_t)));
+  return 0;
+}

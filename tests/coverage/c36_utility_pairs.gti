@@ -1,0 +1,24 @@
+// pair construction, access, nesting and generic propagation.
+#include <std/utility>
+#include <std/vector>
+
+std::pair<T, T> ordered_pair<std::totally_ordered T>(T a, T b) requires std::copyable<T> {
+  if (b < a) { return std::make_pair(std::move(b), std::move(a)); }
+  return std::make_pair(std::move(a), std::move(b));
+}
+
+int main() {
+  mut auto p = std::make_pair(3, 7);
+  std::print(p.first); std::print(" "); std::print(p.second); std::print(" ");
+
+  mut auto sorted = ordered_pair(9, 4);
+  std::print(sorted.first); std::print(" "); std::print(sorted.second); std::print(" ");
+
+  mut auto nested = std::make_pair(std::make_pair(1, 2), 3);
+  std::print(nested.first.second); std::print(" ");
+
+  mut std::vector<std::pair<int32_t, int32_t>> pairs = std::vector<std::pair<int32_t, int32_t>>();
+  pairs.push_back(std::make_pair(5, 6));
+  std::println(pairs[std::size_t(0)].second);
+  return 0;
+}

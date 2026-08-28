@@ -1,0 +1,21 @@
+// Exact qualified specialization of a foreign primary over a local type.
+#include <std/functional>
+
+class Widget {
+  mut int32_t code = 0;
+public:
+  Widget(int32_t code) : code(code) {}
+  int32_t id() { return this.code; }
+};
+
+class std::hash<Widget> {
+public:
+  std::size_t operator()(Widget& value) { return std::size_t(value.id() * 7); }
+};
+
+int main() {
+  Widget w = Widget(6);
+  std::hash<Widget> hasher = std::hash<Widget>();
+  std::println(int32_t(hasher(w)));
+  return 0;
+}

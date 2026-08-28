@@ -1,0 +1,29 @@
+// Iterator-range algorithms driven by lambdas.
+#include <std/vector>
+#include <std/algorithm>
+
+int main() {
+  mut std::vector<int32_t> v = std::vector<int32_t>();
+  v.push_back(2); v.push_back(4); v.push_back(6); v.push_back(7);
+
+  std::print(std::all_of(v.begin(), v.end(), [](int32_t x) -> bool { return x > 0; }) ? 1 : 0);
+  std::print(std::any_of(v.begin(), v.end(), [](int32_t x) -> bool { return x % 2 == 1; }) ? 1 : 0);
+  std::print(std::none_of(v.begin(), v.end(), [](int32_t x) -> bool { return x > 100; }) ? 1 : 0);
+  std::print(" ");
+
+  int32_t needle = 6;
+  mut auto found = std::find(v.begin(), v.end(), needle);
+  std::print(*found); std::print(" ");
+
+  mut auto odd = std::find_if(v.begin(), v.end(), [](int32_t x) -> bool { return x % 2 == 1; });
+  std::print(*odd); std::print(" ");
+
+  int32_t four = 4;
+  std::print(int32_t(std::count(v.begin(), v.end(), four))); std::print(" ");
+  std::print(int32_t(std::count_if(v.begin(), v.end(), [](int32_t x) -> bool { return x >= 4; })));
+  std::print(" ");
+
+  std::print(std::min(3, 8)); std::print(std::max(3, 8)); std::print(std::clamp(11, 0, 9));
+  std::println("");
+  return 0;
+}

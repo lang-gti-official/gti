@@ -1,0 +1,2 @@
+# Artifacts written by corpus programs that touch the filesystem.
+*.txt

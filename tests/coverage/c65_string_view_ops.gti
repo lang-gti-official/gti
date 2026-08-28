@@ -1,0 +1,33 @@
+// string_view construction from literals and owners, comparison and iteration.
+#include <std/string>
+
+std::size_t count_char(std::string_view text, char target) {
+  mut std::size_t seen = std::size_t(0);
+  for (mut std::size_t i = std::size_t(0); i < text.size(); i++) {
+    if (text[i] == target) { seen = seen + std::size_t(1); }
+  }
+  return seen;
+}
+
+bool starts_with(std::string_view text, std::string_view prefix) {
+  if (prefix.size() > text.size()) { return false; }
+  for (mut std::size_t i = std::size_t(0); i < prefix.size(); i++) {
+    if (text[i] != prefix[i]) { return false; }
+  }
+  return true;
+}
+
+int main() {
+  std::string_view literal = "coverage corpus";
+  mut std::string owned = std::string("coverage corpus");
+  std::string_view borrowed = owned.view();
+
+  std::print(int32_t(literal.size())); std::print(" ");
+  std::print(literal == borrowed ? 1 : 0); std::print(" ");
+  std::print(int32_t(count_char(literal, 'c'))); std::print(" ");
+  std::print(starts_with(literal, "cov") ? 1 : 0);
+  std::print(starts_with(literal, "xyz") ? 1 : 0); std::print(" ");
+  std::print(literal.empty() ? 1 : 0); std::print(" ");
+  std::println(int32_t(count_char(borrowed, 'o')));
+  return 0;
+}

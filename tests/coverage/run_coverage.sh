@@ -1,21 +1,33 @@
 #!/bin/bash
-# Compile and run every coverage program; classify the outcome.
+# Compile and run coverage programs; classify the outcome.
 #
 # Usage: tests/coverage/run_coverage.sh <path-to-gti> [output-dir]
+#        [--fixed-baseline]
 #
 # This corpus exists to exercise breadth of syntax and stdlib surface, not to
 # demonstrate features. Programs are expected to be valid GTI; anything that
 # does not compile and run is a compiler finding, recorded in FINDINGS.md.
 set -u
-GTI="${1:?usage: run_coverage.sh <path-to-gti> [output-dir]}"
+GTI="${1:?usage: run_coverage.sh <path-to-gti> [output-dir] [--fixed-baseline]}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT="${2:-${TMPDIR:-/tmp}/gti-coverage-out}"
+MODE="${3:-}"
+if [ -n "$MODE" ] && [ "$MODE" != "--fixed-baseline" ]; then
+  echo "unknown coverage mode: $MODE" >&2
+  exit 64
+fi
 mkdir -p "$OUT"
 
-pass=0; ice=0; rej=0; silent=0
-: > "$OUT/pass.txt"; : > "$OUT/ice.txt"; : > "$OUT/rejected.txt"; : > "$OUT/silent.txt"
+pass=0; ice=0; rej=0; silent=0; link=0
+: > "$OUT/pass.txt"; : > "$OUT/ice.txt"; : > "$OUT/rejected.txt"
+: > "$OUT/silent.txt"; : > "$OUT/link.txt"
 
-for src in "$DIR"/*.gti; do
+sources=("$DIR"/*.gti)
+if [ "$MODE" = "--fixed-baseline" ]; then
+  sources=("$DIR"/c0*.gti "$DIR"/c1*.gti "$DIR"/c2*.gti "$DIR"/c30*.gti)
+fi
+
+for src in "${sources[@]}"; do
   name="$(basename "$src" .gti)"
   profile=""
   grep -q '@coverage-profile: concurrent' "$src" && profile="--execution-profile concurrent"
@@ -28,6 +40,9 @@ for src in "$DIR"/*.gti; do
   elif grep -q 'GTI-B0001' "$OUT/$name.err"; then
     ice=$((ice + 1))
     echo "$name :: $(grep -o 'GTI-B0001.*' "$OUT/$name.err" | head -1 | cut -c1-160)" >> "$OUT/ice.txt"
+  elif grep -q 'Undefined symbols' "$OUT/$name.err"; then
+    link=$((link + 1))
+    echo "$name :: $(grep -oE '\"__gti_program::[^\"]*' "$OUT/$name.err" | head -1 | cut -c1-140)" >> "$OUT/link.txt"
   elif [ ! -s "$OUT/$name.err" ]; then
     silent=$((silent + 1)); echo "$name :: no diagnostic emitted" >> "$OUT/silent.txt"
   else
@@ -36,6 +51,6 @@ for src in "$DIR"/*.gti; do
   fi
 done
 
-echo "pass=$pass ice=$ice silent=$silent rejected=$rej"
+echo "pass=$pass ice=$ice link=$link silent=$silent rejected=$rej"
 echo "results in $OUT"
-[ "$ice" -eq 0 ] && [ "$silent" -eq 0 ] && [ "$rej" -eq 0 ]
+[ "$ice" -eq 0 ] && [ "$silent" -eq 0 ] && [ "$rej" -eq 0 ] && [ "$link" -eq 0 ]

@@ -1,0 +1,28 @@
+// Nested namespaces, qualified calls, overload resolution and default arguments.
+namespace app {
+  namespace math {
+    int32_t scale(int32_t v) { return v * 2; }
+    int32_t scale(int32_t v, int32_t by) { return v * by; }
+    float scale(float v) { return v * 2.0; }
+  }
+
+  namespace text {
+    int32_t width(int32_t chars, int32_t per = 3) { return chars * per; }
+  }
+
+  int32_t combined(int32_t v) {
+    return math::scale(v) + text::width(v);
+  }
+}
+
+class Anchor { public: int32_t id() { return 0; } };
+
+int main() {
+  std::print(app::math::scale(4)); std::print(" ");
+  std::print(app::math::scale(4, 5)); std::print(" ");
+  std::print(int32_t(app::math::scale(2.5))); std::print(" ");
+  std::print(app::text::width(3)); std::print(" ");
+  std::print(app::text::width(3, 10)); std::print(" ");
+  std::println(app::combined(2));
+  return 0;
+}
