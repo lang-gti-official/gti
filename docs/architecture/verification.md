@@ -68,6 +68,7 @@ assertions.
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
 | `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
+| `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | 82 manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
 | `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
@@ -754,26 +755,34 @@ when somebody happens to write a program that produces it. The census sweeps a
 generated shape space (and any `--corpus` directory), and for every program
 that declines with `GTI-B0001` it reads the body the diagnostic names,
 extracts a normalized feature set from the verified MIR, subtracts the
-features that some successfully emitted body already proves spellable, and
-aggregates what remains. The output is a ranked list of missing vocabularies
-with a representative program for each.
+features that a successfully emitted body of the same kind already proves
+spellable, and aggregates what remains. MIR place IDs are parsed within each
+body because those IDs restart at every body boundary. The output is a ranked
+list of missing vocabularies with a representative program for each.
 
 ```sh
 python3 scripts/debug/decline_census.py --compiler build/gti
 python3 scripts/debug/decline_census.py --compiler build/gti --corpus examples
 python3 scripts/debug/decline_census.py --compiler build/gti \
     --baseline tests/decline_census_baseline.json
+python3 scripts/debug/decline_census.py --compiler build/gti \
+    --baseline tests/decline_census_baseline.json --update
 ```
 
-It needs no instrumented compiler: a declining program still emits verified
-MIR, because only the backend declined. Gate-level attribution for one
+It needs no instrumented compiler or native C++ toolchain: `--emit-cpp` owns
+the backend admission result, and a declining program still emits verified
+MIR because only the backend declined. Gate-level attribution for one
 reproducer remains `explain_rejection.py`'s job. Outcomes are separated so the
 driver's own defects stay visible — an ordinary diagnostic on a generated
 program means the *generator* is wrong and is reported apart from the census,
-and an internal error raised before the backend is a different defect class
-again. `--baseline` compares against a recorded census so a new missing
-vocabulary is visible as a change; it is a debug sweep rather than a merge
-gate, like the rest of `scripts/debug/`.
+an internal error raised before the backend is a different defect class, and
+a timeout or missing artifact is an incomplete measurement. Those conditions
+refuse `--update`; corpus directories and update targets are also explicit and
+validated. `--baseline` compares against a recorded census so a new missing
+vocabulary is visible as a change. The full sweep remains an opt-in debug
+measurement rather than a merge gate, while its body parsing, subtraction,
+generation, classification, and validation logic run under
+`compiler_debug_tooling`.
 
 `fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, the whole
 analysis-to-backend pipeline, and a bounded two/three-unit source-loader

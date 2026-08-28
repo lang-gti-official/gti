@@ -21,7 +21,8 @@ representative program for each — a worklist rather than an anecdote.
 
     python3 scripts/debug/decline_census.py --compiler build/gti
     python3 scripts/debug/decline_census.py --compiler build/gti --corpus examples
-    python3 scripts/debug/decline_census.py --compiler build/gti --update
+    python3 scripts/debug/decline_census.py --compiler build/gti \
+        --baseline tests/decline_census_baseline.json --update
 
 Two facts make the census possible without instrumenting the compiler: a
 declining program still emits verified MIR (only the backend declined), and
@@ -34,7 +35,9 @@ a missing backend vocabulary. `rejected` means an ordinary diagnostic, which
 for a generated program means *this generator* emitted invalid GTI and must be
 fixed rather than counted. `invalid-mir` is an internal error before the
 backend, which is a different defect class and is reported apart from the
-vocabulary census.
+vocabulary census. `tool-error` means the compiler could not run or did not
+publish an artifact needed for the measurement; incomplete measurements never
+rewrite a baseline.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ import json
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 
 TIMEOUT_SECONDS = 240
@@ -91,6 +95,8 @@ DECLINE_PATTERN = re.compile(
     r"outside the complete C\+\+ text vocabulary for "
     r"'(?P<symbol>[^']*)' \(body-kind (?P<kind>\d+) owner (?P<owner>\d+)\)")
 
+BODY_HEADER_PATTERN = re.compile(r"^body kind=(\d+) owner=(\d+)\b")
+
 
 @dataclasses.dataclass
 class Program:
@@ -111,10 +117,12 @@ class Program:
 @dataclasses.dataclass
 class Outcome:
     program: str
-    kind: str                      # ok | decline | rejected | invalid-mir
+    kind: str  # ok | decline | rejected | invalid-mir | tool-error
     origin: str = "generated"
     detail: str = ""
     features: set[str] = dataclasses.field(default_factory=set)
+    spellable_by_kind: dict[str, set[str]] = dataclasses.field(
+        default_factory=dict)
     body_kind: str = ""
     # Derived after the sweep: the features no emitted body explains.
     signature: tuple[str, ...] = ()
@@ -236,21 +244,37 @@ def corpus_programs(roots: list[pathlib.Path]) -> list[Program]:
     return programs
 
 
+def body_segments(mir: list[str]) -> list[tuple[int, int, list[str]]]:
+    """Return every complete MIR body as an independent text segment.
+
+    Place and value IDs are body-local and restart at one, so parsing the full
+    dump as one segment would let a later body's `p1` reinterpret an earlier
+    body's instructions.
+    """
+    bodies: list[tuple[int, int, list[str]]] = []
+    index = 0
+    while index < len(mir):
+        header = BODY_HEADER_PATTERN.match(mir[index])
+        if header is None:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(mir) and mir[end] != "end-body":
+            end += 1
+        if end == len(mir):
+            break
+        bodies.append((int(header.group(1)), int(header.group(2)),
+                       mir[index:end + 1]))
+        index = end + 1
+    return bodies
+
+
 def body_segment(mir: list[str], kind: int, owner: int) -> list[str]:
     """The MIR lines of exactly the body the decline diagnostic named."""
-    header = re.compile(rf"^body kind={kind} owner={owner}\b")
-    boundary = re.compile(r"^(body|function|class|hosted|enum|global)")
-    start = None
-    for index, line in enumerate(mir):
-        if header.match(line):
-            start = index
-            break
-    if start is None:
-        return []
-    for index in range(start + 1, len(mir)):
-        if boundary.match(mir[index]):
-            return mir[start:index]
-    return mir[start:]
+    for body_kind, body_owner, segment in body_segments(mir):
+        if body_kind == kind and body_owner == owner:
+            return segment
+    return []
 
 
 def body_features(segment: list[str]) -> set[str]:
@@ -296,30 +320,64 @@ def body_features(segment: list[str]) -> set[str]:
     return features
 
 
-def classify(compiler: pathlib.Path, cxx: str, program: Program,
+def spellable_body_features(mir: list[str]) -> dict[str, set[str]]:
+    """Collect emitted features by body kind without crossing local IDs."""
+    features: dict[str, set[str]] = collections.defaultdict(set)
+    for kind, _owner, segment in body_segments(mir):
+        body_kind = BODY_KINDS.get(kind, str(kind))
+        features[body_kind] |= body_features(segment)
+    return dict(features)
+
+
+def run_compiler(arguments: list[str]
+                 ) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    try:
+        return subprocess.run(
+            arguments, capture_output=True, text=True,
+            timeout=TIMEOUT_SECONDS, check=False), ""
+    except subprocess.TimeoutExpired:
+        return None, f"compiler timed out after {TIMEOUT_SECONDS} seconds"
+    except OSError as error:
+        return None, f"could not run compiler: {error}"
+
+
+def classify(compiler: pathlib.Path, program: Program,
              workdir: pathlib.Path, index: int) -> Outcome:
     source = workdir / f"case{index}.gti"
     source.write_text(program.source, encoding="utf-8")
-    compiled = subprocess.run(
-        [str(compiler), str(source), "-o", str(workdir / f"case{index}"),
-         "--cxx", cxx],
-        capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
+    cpp_path = workdir / f"case{index}.cpp"
+    compiled, execution_error = run_compiler(
+        [str(compiler), str(source), "--emit-cpp", "-o", str(cpp_path)])
+    if compiled is None:
+        return Outcome(program=program.name, origin=program.origin,
+                       kind="tool-error", detail=execution_error)
     if compiled.returncode == 0:
+        if not cpp_path.is_file():
+            return Outcome(program=program.name, origin=program.origin,
+                           kind="tool-error",
+                           detail="C++ emission succeeded without an artifact")
         # Every body of a program that emitted is, by construction, spellable.
         # Those features are the evidence separating a declining body's
         # distinctive shape from its ordinary surroundings.
-        spellable: set[str] = set()
         emitted_path = workdir / f"case{index}.ok.mir"
-        emitted_ok = subprocess.run(
+        emitted_ok, execution_error = run_compiler(
             [str(compiler), str(source), "--emit-mir", "-o",
-             str(emitted_path)],
-            capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-            check=False)
-        if emitted_ok.returncode == 0 and emitted_path.is_file():
-            spellable = body_features(
-                emitted_path.read_text(encoding="utf-8").splitlines())
+             str(emitted_path)])
+        if emitted_ok is None:
+            return Outcome(program=program.name, origin=program.origin,
+                           kind="tool-error", detail=execution_error)
+        if emitted_ok.returncode != 0 or not emitted_path.is_file():
+            return Outcome(program=program.name, origin=program.origin,
+                           kind="tool-error",
+                           detail="MIR emission failed after C++ emission")
+        spellable = spellable_body_features(
+            emitted_path.read_text(encoding="utf-8").splitlines())
+        if not spellable:
+            return Outcome(program=program.name, origin=program.origin,
+                           kind="tool-error",
+                           detail="emitted MIR contained no complete bodies")
         return Outcome(program=program.name, origin=program.origin,
-                       kind="ok", features=spellable)
+                       kind="ok", spellable_by_kind=spellable)
     combined = compiled.stdout + compiled.stderr
     decline = DECLINE_PATTERN.search(combined)
     if decline is None:
@@ -329,26 +387,36 @@ def classify(compiler: pathlib.Path, cxx: str, program: Program,
             return Outcome(program=program.name, origin=program.origin,
                            kind="invalid-mir", detail=reason)
         code = re.search(r"error\[(GTI-[A-Z0-9]+)\]", combined)
+        if code:
+            return Outcome(program=program.name, origin=program.origin,
+                           kind="rejected", detail=code.group(1))
         return Outcome(program=program.name, origin=program.origin,
-                       kind="rejected",
-                       detail=code.group(1) if code else "no-code")
+                       kind="tool-error",
+                       detail=f"compiler exited {compiled.returncode} "
+                              "without a GTI diagnostic")
 
     mir_path = workdir / f"case{index}.mir"
-    emitted = subprocess.run(
+    emitted, execution_error = run_compiler(
         [str(compiler), str(source), "--emit-mir", "-o", str(mir_path)],
-        capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
+    )
     body_kind = BODY_KINDS.get(int(decline.group("kind")),
                                decline.group("kind"))
+    if emitted is None:
+        return Outcome(program=program.name, origin=program.origin,
+                       kind="tool-error", detail=execution_error,
+                       body_kind=body_kind)
     if emitted.returncode != 0 or not mir_path.is_file():
         return Outcome(program=program.name, origin=program.origin,
-                       kind="decline", detail="MIR unavailable",
+                       kind="tool-error",
+                       detail="declining body MIR was unavailable",
                        body_kind=body_kind)
     segment = body_segment(mir_path.read_text(encoding="utf-8").splitlines(),
                            int(decline.group("kind")),
                            int(decline.group("owner")))
     if not segment:
         return Outcome(program=program.name, origin=program.origin,
-                       kind="decline", detail="body not located",
+                       kind="tool-error",
+                       detail="diagnostic body was not located in MIR",
                        body_kind=body_kind)
     return Outcome(program=program.name, origin=program.origin,
                    kind="decline", features=body_features(segment),
@@ -359,31 +427,31 @@ def derive_signatures(outcomes: list[Outcome], learn_from_corpus: bool
                       ) -> None:
     """Reduce each decline to the features no emitted body explains.
 
-    A feature present in some body the backend *did* emit is spellable, so it
-    cannot be what was missing here. Subtracting them leaves the candidate
-    vocabulary. When nothing remains the shapes are individually spellable and
-    the gap is their combination, which the report says rather than inventing
-    a cause.
+    A feature present in some body of the same kind that the backend *did*
+    emit is spellable in that route family, so it cannot be what was missing
+    here. Subtracting those features leaves the candidate vocabulary. When
+    nothing remains the shapes are individually spellable and the gap is their
+    combination, which the report says rather than inventing a cause.
 
     The baseline deliberately defaults to the generated programs alone. They
     share one skeleton with exactly one axis varied, so subtracting them
     isolates that axis. Unrelated corpus programs use the same features in
-    contexts where they *are* spellable, which washes the distinguishing
-    feature out: measured against `examples/`, the same 21 declines went from
-    eight sharp vocabularies to fifteen mostly-unexplained ones. Corpus files
-    are therefore censused but do not widen the baseline unless asked.
+    contexts where they *are* spellable, which can wash the distinguishing
+    feature out. Corpus files are therefore censused but do not widen the
+    baseline unless asked.
     """
-    spellable: set[str] = set()
+    spellable: dict[str, set[str]] = collections.defaultdict(set)
     for outcome in outcomes:
         if outcome.kind != "ok":
             continue
         if outcome.origin == "corpus" and not learn_from_corpus:
             continue
-        spellable |= outcome.features
+        for body_kind, features in outcome.spellable_by_kind.items():
+            spellable[body_kind] |= features
     for outcome in outcomes:
         if outcome.kind != "decline":
             continue
-        distinctive = outcome.features - spellable
+        distinctive = outcome.features - spellable[outcome.body_kind]
         if distinctive:
             outcome.signature = tuple(sorted(distinctive))
             continue
@@ -407,7 +475,8 @@ def report(outcomes: list[Outcome], learn_from_corpus: bool = False) -> dict:
           f"{sum(1 for o in outcomes if o.kind == 'ok')} ok, "
           f"{len(declines)} declined, "
           f"{sum(1 for o in outcomes if o.kind == 'invalid-mir')} invalid-mir, "
-          f"{sum(1 for o in outcomes if o.kind == 'rejected')} rejected")
+          f"{sum(1 for o in outcomes if o.kind == 'rejected')} rejected, "
+          f"{sum(1 for o in outcomes if o.kind == 'tool-error')} tool-error")
 
     generated_rejects = [o for o in outcomes
                          if o.kind == "rejected" and o.origin == "generated"]
@@ -435,6 +504,13 @@ def report(outcomes: list[Outcome], learn_from_corpus: bool = False) -> dict:
         for outcome in invalid:
             print(f"  {outcome.program}: {outcome.detail}")
 
+    tool_errors = [o for o in outcomes if o.kind == "tool-error"]
+    if tool_errors:
+        print("\nincomplete measurements (compiler execution or artifact "
+              "collection failed):")
+        for outcome in tool_errors:
+            print(f"  {outcome.program}: {outcome.detail}")
+
     if grouped:
         print(f"\n{len(grouped)} missing backend vocabular"
               f"{'y' if len(grouped) == 1 else 'ies'}, most frequent first:")
@@ -451,7 +527,8 @@ def report(outcomes: list[Outcome], learn_from_corpus: bool = False) -> dict:
     return {
         "totals": {
             kind: sum(1 for o in outcomes if o.kind == kind)
-            for kind in ("ok", "decline", "invalid-mir", "rejected")
+            for kind in ("ok", "decline", "invalid-mir", "rejected",
+                         "tool-error")
         },
         "vocabularies": [
             {
@@ -470,7 +547,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Census the MIR shapes the backend cannot emit.")
     parser.add_argument("--compiler", default="build/gti")
-    parser.add_argument("--cxx", default="c++")
     parser.add_argument("--corpus", action="append", default=[],
                         help="also census every .gti below this directory")
     parser.add_argument("--baseline", type=pathlib.Path,
@@ -484,36 +560,75 @@ def main() -> int:
                              "washes out the distinguishing feature")
     arguments = parser.parse_args()
 
+    if arguments.update and arguments.baseline is None:
+        print("--update requires --baseline", file=sys.stderr)
+        return 2
+    if arguments.update:
+        baseline_parent = arguments.baseline.parent
+        if not baseline_parent.is_dir():
+            print(f"baseline directory not found: {baseline_parent}",
+                  file=sys.stderr)
+            return 2
+        if arguments.baseline.exists() and not arguments.baseline.is_file():
+            print(f"baseline is not a file: {arguments.baseline}",
+                  file=sys.stderr)
+            return 2
+
+    corpus_roots = [pathlib.Path(root) for root in arguments.corpus]
+    for root in corpus_roots:
+        if not root.is_dir():
+            print(f"corpus directory not found: {root}", file=sys.stderr)
+            return 2
+
     compiler = pathlib.Path(arguments.compiler).resolve()
     if not compiler.is_file():
         print(f"compiler not found: {compiler}")
         return 2
 
     programs = generated_programs()
-    programs += corpus_programs([pathlib.Path(root)
-                                 for root in arguments.corpus])
+    programs += corpus_programs(corpus_roots)
 
     outcomes: list[Outcome] = []
     with tempfile.TemporaryDirectory(prefix="gti-decline-census-") as raw:
         workdir = pathlib.Path(raw)
         for index, program in enumerate(programs):
-            outcomes.append(classify(compiler, arguments.cxx, program,
-                                     workdir, index))
+            outcomes.append(classify(compiler, program, workdir, index))
 
     census = report(outcomes, arguments.learn_from_corpus)
+
+    measurement_failed = any(
+        outcome.kind in {"invalid-mir", "tool-error"}
+        or (outcome.kind == "rejected" and outcome.origin == "generated")
+        for outcome in outcomes)
+
+    if measurement_failed:
+        if arguments.update:
+            print("\nrefusing to update a baseline from an incomplete "
+                  "measurement")
+        else:
+            print("\nincomplete measurement cannot be compared or accepted")
+        return 1
 
     if arguments.baseline is None:
         return 1 if census["totals"]["decline"] else 0
     if arguments.update:
-        arguments.baseline.write_text(
-            json.dumps(census, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8")
+        try:
+            arguments.baseline.write_text(
+                json.dumps(census, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8")
+        except OSError as error:
+            print(f"\ncould not write baseline {arguments.baseline}: {error}")
+            return 2
         print(f"\nwrote {arguments.baseline}")
         return 0
     if not arguments.baseline.is_file():
         print(f"\nbaseline not found: {arguments.baseline}")
         return 2
-    recorded = json.loads(arguments.baseline.read_text(encoding="utf-8"))
+    try:
+        recorded = json.loads(arguments.baseline.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"\ncould not read baseline {arguments.baseline}: {error}")
+        return 2
     if recorded == census:
         print("\ncensus matches the baseline")
         return 0
