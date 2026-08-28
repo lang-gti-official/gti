@@ -298,6 +298,8 @@ flowchart TD
   EO --> TD
   IP --> SD["M-OWN-03 stored and escaping mutable dependencies"]
   TD --> SD
+  IP --> EP["M-OWN-04 named expected-payload range loans"]
+  TD --> EP
   TD --> OE["M-EXEC-01 per-family ordered MIR lowering"]
   FC --> MF["M-FAIL-01 + Q-FAIL-01 failure IR/runtime substrate"]
   OE --> MF
@@ -333,6 +335,7 @@ flowchart TD
 
   IP --> RG["L-RANGE-01 dedicated element/range loans"]
   TD --> RG
+  RG --> EP
   RG --> MI["L-RANGE-02 mutable iteration and invalidation"]
   MI --> VW["L-RANGE-03 spans and dynamic views"]
   VW --> ALG["L-RANGE-04 foundational algorithms"]
@@ -760,6 +763,40 @@ analysis, HIR, MIR, and the backend.
   origin and exactly one path-sensitive end; MIR rejects forged ancestry,
   premature parent access, double end, and escaping unsupported shapes.
 - **Unlocks:** `C-SYNC-01`, scoped-thread guards, and richer mutable views.
+
+### M-OWN-04: Named Expected-Payload Range Loans
+
+- **State/role:** proposal ready; `M-OWN-02`, `M-LIFE-01`, and `L-RANGE-01`
+  are complete; bounded systems-readiness integration for portable byte-input
+  parsers and serializers.
+- **Named client:** iterate the owned string returned by
+  `std::fread(...).value()` without moving it out of the named
+  `expected<std::string, std::io_errc>` solely to satisfy the ownership model.
+- **Scope:** Add one exact active-value projection for a successful `value()`
+  extraction from an available named local or by-value `expected<T, E>` place.
+  Admit that projection only as the source of an existing read-only range
+  plan when `T` independently satisfies the range contract. Conservatively
+  protect the complete expected root through the loop. Preserve the checked
+  extraction, source projection, range/element loan ancestry, endpoints, and
+  cleanup from semantics through HIR and verified MIR; keep the LSP a
+  diagnostic adapter.
+- **Non-goals:** recognizing `std::string` or `std::fread`; general local,
+  stored, captured, or returned nested-owner references; mutable payload
+  iteration; `error()` ranges; multiple owners; conditional-origin merges;
+  lifetime inference in the parser, backend, or LSP.
+- **Focused tests:** positive string and non-string nominal payload ranges;
+  empty/nonempty traversal; nested reads; `continue`, `break`, `return`, and
+  failure cleanup; owner move/replacement/mutation/drop conflicts; element
+  escape; unsupported receiver shapes; exact semantic/HIR/MIR identities;
+  forged projection/root/order/endpoint/drop verifier cases; O0/O3 and
+  C++20/C++23 `<std/cstdio>` execution; LSP publication and clearing.
+- **Exit gate:** `for (auto& element : result.value())` is accepted for the
+  bounded named read-only case, every owner-changing operation remains blocked
+  until all loop exits end the loans, and no accepted source relies on native
+  expected/reference lifetime behavior to repair a missing frontend or MIR
+  proof.
+- **Design owner:** the exact contract and phase map live in
+  [`place-and-ownership-state.md`](place-and-ownership-state.md#9-proposed-m-own-04-named-expected-payload-range-slice).
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
@@ -3399,6 +3436,7 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
+| Named expected-payload range loans | **proposal ready; bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
