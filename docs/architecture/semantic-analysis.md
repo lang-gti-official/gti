@@ -545,12 +545,15 @@ A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
 non-pack parameters or closed concrete types; unresolved dependent compound
-types fail before candidate selection. During symbolic body
-analysis, a requirement scope contributes unary facts to ordinary constrained
-operations and supplies synthetic exact operator candidates for the bounded
-iterator relationships. This is semantic proof, not text-based operator
-guessing. The AST application is retained for source-facing diagnostics and
-tooling occurrences.
+types fail before candidate selection. During symbolic body analysis, a
+requirement scope contributes unary facts to ordinary constrained operations
+and supplies synthetic exact operator or callable candidates for the bounded
+structural relationships. Callable requirements carry unary/binary argument
+and owned-result types plus read, repeatable mutable, or consuming-use
+capability; iterator-aware predicate and operation relations derive the exact
+checked-dereference referent privately. This is semantic proof, not text-based
+operator guessing. The AST application is retained for source-facing
+diagnostics and tooling occurrences.
 
 Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
@@ -560,12 +563,15 @@ operator. Requirement failure filters a candidate but does not rank viable
 candidates or change the exact-overload identity rule.
 
 The current structural checks are deliberately identity- and shape-based:
-public read-only checked dereference and mutable prefix increment for an input
-iterator, exact read-only iterator/sentinel inequality, and a read-only
-dereference referent exactly equal to the accumulator type. Adding a
-relationship requires one new irreducible semantic question and a
-source-defined public client; it must not be implemented as a public-name case
-or backend expression probe.
+iterator movement/read/write relationships, exact domain-value operators, and
+exact public callable signatures. A callable result must be the requested
+owned non-borrowed type. Each readable argument is accepted either by exact
+value or exact read-only reference, and receiver implication follows the
+existing `Read` -> repeatable `Mutable` -> `Once` use-site lattice. Concrete
+reanalysis still selects one exact lambda or `operator()` target and retains
+its identity and capability in HIR/MIR. Adding a relationship requires one new
+irreducible semantic question and a source-defined public client; it must not
+be implemented as a public-name case or backend expression probe.
 
 ## Transfer And Share Facts
 

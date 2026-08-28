@@ -993,6 +993,15 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(explicit_function_value_generics_runtime
                        PROPERTIES TIMEOUT 240)
+  add_test(
+    NAME generic_callable_concepts_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_callable_concepts_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/generic_callable_concepts.gti"
+  )
+  set_tests_properties(generic_callable_concepts_runtime
+                       PROPERTIES TIMEOUT 300)
     add_test(
       NAME owner_tied_by_value_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -1299,6 +1308,7 @@ if(Python3_Interpreter_FOUND)
         owner_tied_reference_argument_runtime
         generic_symbolic_auto_local_runtime
         explicit_function_value_generics_runtime
+        generic_callable_concepts_runtime
         owner_tied_by_value_argument_runtime
         moved_loop_local_runtime
         mixed_capture_callable_template_runtime

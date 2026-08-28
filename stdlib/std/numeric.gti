@@ -276,9 +276,9 @@ namespace std {
   }
 
   T accumulate<Iterator, Sentinel, std::numeric T, BinaryOperation>(mut Iterator first, Sentinel last, mut T init, mut BinaryOperation operation)
-    requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> {
+    requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> && std::binary_operation<BinaryOperation, T, T, T> {
     for (; first != last; ++first) {
-      init = operation(std::move(init), *first);
+      init = operation(init, *first);
     }
 
     return init;
@@ -297,10 +297,10 @@ namespace std {
   }
 
   T inner_product<InputIterator1, InputIterator2, std::numeric T, BinaryOperation1, BinaryOperation2>(mut InputIterator1 first1, InputIterator1 last1, mut InputIterator2 first2, mut T initial, mut BinaryOperation1 accumulate_operation, mut BinaryOperation2 product_operation)
-    requires std::input_iterator<InputIterator1> && std::sentinel_for<InputIterator1, InputIterator1> && std::input_iterator<InputIterator2> && std::accumulates_into<InputIterator1, T> && std::accumulates_into<InputIterator2, T> {
+    requires std::input_iterator<InputIterator1> && std::sentinel_for<InputIterator1, InputIterator1> && std::input_iterator<InputIterator2> && std::accumulates_into<InputIterator1, T> && std::accumulates_into<InputIterator2, T> && std::binary_operation<BinaryOperation1, T, T, T> && std::binary_operation<BinaryOperation2, T, T, T> {
     while (first1 != last1) {
       T product = product_operation(*first1, *first2);
-      initial = accumulate_operation(std::move(initial), product);
+      initial = accumulate_operation(initial, product);
       ++first1;
       ++first2;
     }
@@ -309,10 +309,10 @@ namespace std {
   }
 
   T transform_reduce<Iterator, Sentinel, std::numeric T, BinaryOperation, UnaryOperation>(mut Iterator first, Sentinel last, mut T initial, mut BinaryOperation reduce, mut UnaryOperation transform)
-    requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> {
+    requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> && std::binary_operation<BinaryOperation, T, T, T> && std::operation<UnaryOperation, T, T> {
     for (; first != last; ++first) {
       T transformed = transform(*first);
-      initial = reduce(std::move(initial), transformed);
+      initial = reduce(initial, transformed);
     }
 
     return initial;

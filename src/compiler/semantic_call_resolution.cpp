@@ -853,13 +853,53 @@ auto SemanticVisitor::Impl::structuralRequirementAvailable(
     std::span<const SemanticType> arguments) const -> bool {
   const std::vector<ExpandedStructuralRequirement> active =
       activeStructuralRequirements();
-  return std::any_of(active.begin(), active.end(),
-                     [&](const auto &requirement) {
-                       return requirement.kind == kind &&
-                              std::equal(requirement.arguments.begin(),
-                                         requirement.arguments.end(),
-                                         arguments.begin(), arguments.end());
-                     });
+  const auto callableCapability = [](StructuralConstraintKind candidate)
+      -> std::optional<CallableInvocationCapability> {
+    switch (candidate) {
+    case StructuralConstraintKind::ReadCallable:
+    case StructuralConstraintKind::ReadBinaryCallable:
+      return CallableInvocationCapability::Read;
+    case StructuralConstraintKind::MutCallable:
+    case StructuralConstraintKind::MutBinaryCallable:
+      return CallableInvocationCapability::Mutable;
+    case StructuralConstraintKind::OnceCallable:
+    case StructuralConstraintKind::OnceBinaryCallable:
+      return CallableInvocationCapability::Once;
+    default:
+      return std::nullopt;
+    }
+  };
+  const auto callableArity = [](StructuralConstraintKind candidate) {
+    switch (candidate) {
+    case StructuralConstraintKind::ReadCallable:
+    case StructuralConstraintKind::MutCallable:
+    case StructuralConstraintKind::OnceCallable:
+      return 1;
+    case StructuralConstraintKind::ReadBinaryCallable:
+    case StructuralConstraintKind::MutBinaryCallable:
+    case StructuralConstraintKind::OnceBinaryCallable:
+      return 2;
+    default:
+      return 0;
+    }
+  };
+  return std::any_of(
+      active.begin(), active.end(), [&](const auto &requirement) {
+        if (requirement.arguments.size() != arguments.size() ||
+            !std::equal(requirement.arguments.begin(),
+                        requirement.arguments.end(), arguments.begin(),
+                        arguments.end())) {
+          return false;
+        }
+        if (requirement.kind == kind) {
+          return true;
+        }
+        const auto provided = callableCapability(requirement.kind);
+        const auto required = callableCapability(kind);
+        return provided && required &&
+               callableArity(requirement.kind) == callableArity(kind) &&
+               callableCapabilitySatisfies(*provided, *required);
+      });
 }
 
 auto SemanticVisitor::Impl::firstRequirementFailure(
@@ -3063,6 +3103,94 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return byValue && ownedDomainResult(*byValue, domain);
   };
 
+  const auto readableCallableParameter = [](const SemanticType &parameter,
+                                            const SemanticType &argument) {
+    return parameter == argument ||
+           (parameter.kind == SemanticType::Reference &&
+            parameter.referenceAccess == AccessMode::ReadOnly &&
+            parameter.arguments.size() == 1 &&
+            parameter.arguments.front() == argument);
+  };
+  const auto callableCandidates = [&](const SemanticType &callable) {
+    if (callable.kind == SemanticType::Class) {
+      return structuralOperatorCandidates(callable, OverloadedOperator::Call);
+    }
+    std::vector<CallableCandidate> result;
+    if (callable.kind != SemanticType::Lambda) {
+      return result;
+    }
+    const LambdaInfo *lambda = semanticModel.findLambda(callable.lambdaId);
+    if (lambda == nullptr && instanceBaseModel != nullptr) {
+      lambda = instanceBaseModel->findLambda(callable.lambdaId);
+    }
+    if (lambda != nullptr) {
+      result.push_back({.returnType = lambda->returnType,
+                        .parameterTypes = lambda->parameterTypes,
+                        .receiverMutability = ReceiverMutability::ReadOnly,
+                        .access = AccessModifier::Public});
+    }
+    return result;
+  };
+  const auto callableSatisfies = [&](const SemanticType &callable,
+                                     std::span<const SemanticType> parameters,
+                                     const SemanticType &result,
+                                     CallableInvocationCapability required) {
+    if (result.kind == SemanticType::Reference ||
+        typeTraits(result).containsBorrowedState ||
+        containsLambdaType(result)) {
+      return false;
+    }
+    std::vector<CallableCandidate> candidates = callableCandidates(callable);
+    std::erase_if(candidates, [&](const CallableCandidate &candidate) {
+      if (candidate.returnType != result ||
+          candidate.returnBorrowOrigin != BorrowOriginKind::None ||
+          candidate.parameterTypes.size() != parameters.size() ||
+          !callableCapabilitySatisfies(
+              callableInvocationCapability(candidate.receiverMutability),
+              required)) {
+        return true;
+      }
+      for (std::size_t index = 0; index < parameters.size(); ++index) {
+        if (!readableCallableParameter(candidate.parameterTypes[index],
+                                       parameters[index])) {
+          return true;
+        }
+      }
+      return false;
+    });
+    if (required == CallableInvocationCapability::Once &&
+        std::any_of(candidates.begin(), candidates.end(),
+                    [](const CallableCandidate &candidate) {
+                      return candidate.receiverMutability ==
+                             ReceiverMutability::Consuming;
+                    })) {
+      std::erase_if(candidates, [](const CallableCandidate &candidate) {
+        return candidate.receiverMutability != ReceiverMutability::Consuming;
+      });
+    } else if (required != CallableInvocationCapability::Read &&
+               std::any_of(candidates.begin(), candidates.end(),
+                           [](const CallableCandidate &candidate) {
+                             return candidate.receiverMutability ==
+                                    ReceiverMutability::Mutable;
+                           })) {
+      std::erase_if(candidates, [](const CallableCandidate &candidate) {
+        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
+      });
+    }
+    return candidates.size() == 1;
+  };
+  const auto unaryCallable = [&](CallableInvocationCapability capability) {
+    return arguments.size() == 3 &&
+           callableSatisfies(arguments[0],
+                             std::span<const SemanticType>(&arguments[1], 1),
+                             arguments[2], capability);
+  };
+  const auto binaryCallable = [&](CallableInvocationCapability capability) {
+    return arguments.size() == 4 &&
+           callableSatisfies(arguments[0], arguments.subspan(1, 2),
+                             arguments[3], capability);
+  };
+
   switch (kind) {
   case StructuralConstraintKind::InputIterator: {
     if (arguments.size() != 1) {
@@ -3170,6 +3298,43 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return arguments.size() == 2 &&
            hasBinaryDomainOperator(arguments[0], OverloadedOperator::Multiply,
                                    arguments[1]);
+  case StructuralConstraintKind::ReadCallable:
+    return unaryCallable(CallableInvocationCapability::Read);
+  case StructuralConstraintKind::MutCallable:
+    return unaryCallable(CallableInvocationCapability::Mutable);
+  case StructuralConstraintKind::OnceCallable:
+    return unaryCallable(CallableInvocationCapability::Once);
+  case StructuralConstraintKind::ReadBinaryCallable:
+    return binaryCallable(CallableInvocationCapability::Read);
+  case StructuralConstraintKind::MutBinaryCallable:
+    return binaryCallable(CallableInvocationCapability::Mutable);
+  case StructuralConstraintKind::OnceBinaryCallable:
+    return binaryCallable(CallableInvocationCapability::Once);
+  case StructuralConstraintKind::OnceAction:
+    return arguments.size() == 1 &&
+           callableSatisfies(arguments[0], {}, SemanticType::Void,
+                             CallableInvocationCapability::Once);
+  case StructuralConstraintKind::IndirectPredicate:
+  case StructuralConstraintKind::IndirectOperation: {
+    if (arguments.size() !=
+        (kind == StructuralConstraintKind::IndirectPredicate ? 2 : 3)) {
+      return false;
+    }
+    const std::optional<CallableCandidate> dereference =
+        selectedDereference(arguments[1]);
+    if (!dereference ||
+        dereference->returnType.kind != SemanticType::Reference ||
+        dereference->returnType.arguments.size() != 1) {
+      return false;
+    }
+    const SemanticType &element = dereference->returnType.arguments.front();
+    const SemanticType &result =
+        kind == StructuralConstraintKind::IndirectPredicate ? SemanticType::Bool
+                                                            : arguments[2];
+    return callableSatisfies(arguments[0],
+                             std::span<const SemanticType>(&element, 1), result,
+                             CallableInvocationCapability::Mutable);
+  }
   case StructuralConstraintKind::None:
     return true;
   }
@@ -3348,6 +3513,18 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         candidate.receiverMutability = ReceiverMutability::ReadOnly;
         matches = true;
       }
+      break;
+    case StructuralConstraintKind::ReadCallable:
+    case StructuralConstraintKind::MutCallable:
+    case StructuralConstraintKind::OnceCallable:
+    case StructuralConstraintKind::ReadBinaryCallable:
+    case StructuralConstraintKind::MutBinaryCallable:
+    case StructuralConstraintKind::OnceBinaryCallable:
+    case StructuralConstraintKind::OnceAction:
+    case StructuralConstraintKind::IndirectPredicate:
+    case StructuralConstraintKind::IndirectOperation:
+      // Callable requirements constrain ordinary invocation rather than a
+      // member operator expression synthesized by this table.
       break;
     case StructuralConstraintKind::None:
       break;

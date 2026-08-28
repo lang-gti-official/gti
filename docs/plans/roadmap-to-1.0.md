@@ -585,7 +585,10 @@ first exact frontend capabilities:
 - `std::copy_constructible`, `std::copyable`, `std::movable`, and
   `std::default_initializable`;
 - `std::equality_comparable` and `std::totally_ordered` based on exact operator
-  contracts, with `std::ordered` retained as a compatibility spelling;
+  contracts, with `std::ordered` retained as a compatibility spelling; and
+- public unary/binary read, repeatable mutable, and once-callable relations,
+  composed into predicates, operations, comparators, indirect iterator
+  operations, and a consuming `once_action` utility.
 
 Lifecycle checks use GTI traits and public construction availability. Nominal
 comparison checks require exact public read-only member operators, and
@@ -601,8 +604,7 @@ forward-iterator concepts; ordinary `<std/numeric>` uses them for
 overloads.
 The remaining capability work is:
 
-- callable and predicate capabilities with exact parameter and return types;
-- complete-range, readable, writable, sized, and later bidirectional or
+- structural complete-range, readable, writable, sized, and later bidirectional or
   random-access capabilities after the range protocol is stable;
 - heterogeneous accumulation through a separately specified exact operation
   relationship, rather than implicit conversion;

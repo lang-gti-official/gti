@@ -188,6 +188,41 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "'T operator*(Scalar)' returning an owned value of its own type "
           "for the exact scalar type.");
       break;
+    case StructuralConstraintKind::ReadCallable:
+    case StructuralConstraintKind::MutCallable:
+    case StructuralConstraintKind::OnceCallable:
+      diagnostic.hints.emplace_back(
+          "The callable must provide one exact public unary operator() with "
+          "the declared owned result and argument taken by value or "
+          "read-only reference; its receiver capability must satisfy the "
+          "declared read, mut, or once use site.");
+      break;
+    case StructuralConstraintKind::ReadBinaryCallable:
+    case StructuralConstraintKind::MutBinaryCallable:
+    case StructuralConstraintKind::OnceBinaryCallable:
+      diagnostic.hints.emplace_back(
+          "The callable must provide one exact public binary operator() with "
+          "the declared owned result and arguments taken by value or "
+          "read-only reference; its receiver capability must satisfy the "
+          "declared read, mut, or once use site.");
+      break;
+    case StructuralConstraintKind::OnceAction:
+      diagnostic.hints.emplace_back(
+          "The action must provide one exact public void operator()() usable "
+          "through a consuming receiver; read-only and mutable reusable "
+          "targets also satisfy this once-only use site.");
+      break;
+    case StructuralConstraintKind::IndirectPredicate:
+      diagnostic.hints.emplace_back(
+          "The iterator's read-only dereference result must be accepted by "
+          "one exact repeatable public callable returning bool.");
+      break;
+    case StructuralConstraintKind::IndirectOperation:
+      diagnostic.hints.emplace_back(
+          "The iterator's read-only dereference result must be accepted by "
+          "one exact repeatable public callable returning the required owned "
+          "result type.");
+      break;
     case StructuralConstraintKind::None:
       break;
     }
