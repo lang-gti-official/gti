@@ -133,6 +133,7 @@ struct HirLoan {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   SymbolId designatedField = 0;
+  bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
 };
@@ -410,6 +411,9 @@ struct HirClassInstance {
   std::optional<SourceSpan> instantiationSite;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  CompilerCapabilityTypeKind compilerCapability =
+      CompilerCapabilityTypeKind::None;
+  bool lifecycleBoundBorrowCarrier = false;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =

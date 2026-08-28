@@ -965,6 +965,10 @@ struct RowsBuilder {
                  CompilerCapabilityTypeKind::ThreadHandle ||
              classInfo->compilerCapability ==
                  CompilerCapabilityTypeKind::AtomicStorage ||
+             classInfo->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexStorage ||
+             classInfo->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexLockToken ||
              classInfo->passiveCAbiRecord ||
              (classInfo->defaultConstructor != SpecialMemberStatus::Deleted &&
               classInfo->moveAssignment != SpecialMemberStatus::Deleted));

@@ -97,6 +97,7 @@ public:
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
         .atomics = loweredProgramContainsAtomics(),
+        .mutexes = loweredProgramContainsMutexes(),
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
@@ -236,6 +237,17 @@ public:
   }
 
   [[nodiscard]] bool loweredProgramContainsManagedThreads() const {
+    if (std::any_of(loweredProgram.declarations().begin(),
+                    loweredProgram.declarations().end(),
+                    [](const LoweredDeclaration &row) {
+                      const auto *type =
+                          std::get_if<LoweredClassDeclaration>(&row.payload);
+                      return type != nullptr &&
+                             type->compilerCapability ==
+                                 CompilerCapabilityTypeKind::ThreadHandle;
+                    })) {
+      return true;
+    }
     for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
       const MirBody *body = findMirBody(mir, address);
       if (body == nullptr) {
@@ -260,6 +272,16 @@ public:
   }
 
   [[nodiscard]] bool loweredProgramContainsAtomics() const {
+    // Generic library declarations survive a dormant import. Native atomic
+    // support is needed only once semantic instantiation creates a concrete
+    // sealed storage capability (including construct-without-operation).
+    if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
+                    [](const MirClassInstance &instance) {
+                      return instance.compilerCapability ==
+                             CompilerCapabilityTypeKind::AtomicStorage;
+                    })) {
+      return true;
+    }
     for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
       const MirBody *body = findMirBody(mir, address);
       if (body == nullptr) {
@@ -272,6 +294,44 @@ public:
           case IntrinsicKind::AtomicStore:
           case IntrinsicKind::AtomicExchange:
           case IntrinsicKind::AtomicCompareExchange:
+            return true;
+          default:
+            break;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool loweredProgramContainsMutexes() const {
+    // Generic standard-library declarations are present after a dormant
+    // import but do not require native support. Concrete MIR capability
+    // instances are created only once a mutex owner/guard is instantiated,
+    // including the construct-without-lock case.
+    if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
+                    [](const MirClassInstance &instance) {
+                      return instance.compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexStorage ||
+                             instance.compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexLockToken;
+                    })) {
+      return true;
+    }
+    for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+      const MirBody *body = findMirBody(mir, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          switch (instruction.intrinsic) {
+          case IntrinsicKind::MutexLock:
+          case IntrinsicKind::MutexUnlock:
+          case IntrinsicKind::MutexGuardActive:
+          case IntrinsicKind::MutexGuardRead:
+          case IntrinsicKind::MutexGuardReadMut:
+          case IntrinsicKind::MutexLockFailure:
             return true;
           default:
             break;
@@ -4945,6 +5005,7 @@ public:
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
       std::vector<std::size_t> baseParameters;
+      std::vector<bool> movedParameters;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -4972,7 +5033,8 @@ public:
                               .initializer = binding.initializer,
                               .field = binding.field,
                               .fieldType = binding.fieldType,
-                              .baseParameters = binding.parameters});
+                              .baseParameters = binding.parameters,
+                              .movedParameters = binding.movedParameters});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -4990,8 +5052,7 @@ public:
                                 .moved = true});
       }
     }
-    if (failureForm && owner != nullptr &&
-        cppMirFailureConstructorEmptyStateEligible(mir, owner->id)) {
+    if (failureForm && owner != nullptr) {
       for (std::size_t index = 0; index < constructor.initializers.size();
            ++index) {
         const MirConstructorInitializer &initializer =
@@ -5014,6 +5075,16 @@ public:
                           return candidate.kind != BindingKind::Base &&
                                  candidate.field == field->symbol;
                         })) {
+          continue;
+        }
+        // Passive fields may retain their ordinary C++ default state until
+        // verified MIR publishes them. A class field without a native default
+        // constructor needs the exact private empty state proved for that
+        // concrete type. This is deliberately per-field: a mutex owner is
+        // move-constructible while its public move assignment stays deleted.
+        if (field->type.kind != SemanticType::Array &&
+            !cppMirFailureConstructorEmptyStateTypeEligible(mir,
+                                                            field->type)) {
           continue;
         }
         initializers.push_back({.kind = BindingKind::EmptyField,
@@ -5044,7 +5115,15 @@ public:
           if (argument != 0) {
             output << ", ";
           }
+          const bool moved = argument < initializer.movedParameters.size() &&
+                             initializer.movedParameters[argument];
+          if (moved) {
+            output << "std::move(";
+          }
           output << "__gti_mir_arg_" << initializer.baseParameters[argument];
+          if (moved) {
+            output << ')';
+          }
         }
         output << ')';
         continue;
@@ -5070,7 +5149,15 @@ public:
           if (argument != 0) {
             output << ", ";
           }
+          const bool moved = argument < initializer.movedParameters.size() &&
+                             initializer.movedParameters[argument];
+          if (moved) {
+            output << "std::move(";
+          }
           output << "__gti_mir_arg_" << initializer.baseParameters[argument];
+          if (moved) {
+            output << ')';
+          }
         }
         output << "))";
         continue;

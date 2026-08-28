@@ -1687,6 +1687,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedAtomicCapabilityScope =
           isAtomicLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedMutexCapabilityScope =
+          isMutexLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
       if (trustedPreludeCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
           !classDecl->genericParameters().front().valueType &&
@@ -1722,6 +1725,18 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  !classDecl->genericParameters().front().pack &&
                  classDecl->name().lexeme == "atomic_storage") {
         compilerCapability = CompilerCapabilityTypeKind::AtomicStorage;
+      } else if (trustedMutexCapabilityScope &&
+                 classDecl->genericParameters().size() == 1 &&
+                 !classDecl->genericParameters().front().valueType &&
+                 !classDecl->genericParameters().front().pack &&
+                 classDecl->name().lexeme == "mutex_storage") {
+        compilerCapability = CompilerCapabilityTypeKind::MutexStorage;
+      } else if (trustedMutexCapabilityScope &&
+                 classDecl->genericParameters().size() == 1 &&
+                 !classDecl->genericParameters().front().valueType &&
+                 !classDecl->genericParameters().front().pack &&
+                 classDecl->name().lexeme == "mutex_lock_token") {
+        compilerCapability = CompilerCapabilityTypeKind::MutexLockToken;
       }
       CapabilityPolicyRegistration capabilityPolicies;
       if (classDecl->kind() == ClassKind::Union) {
@@ -4076,7 +4091,8 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       continue;
     }
     const StoredReferenceInfo &stored = *owner.storedReference;
-    if (hasSourceDestructorBody(owner)) {
+    if (hasSourceDestructorBody(owner) &&
+        !isDefaultLibraryMutexGuardCarrier(owner)) {
       report(owner.destructor->declaration->tilde(),
              "A class carrying a stored reference cannot declare a "
              "destructor in the current lifetime model.",
@@ -4148,7 +4164,9 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         continue;
       }
       constructor.borrowParameter = parameterIndex;
-      constructor.borrowAccess = stored.access;
+      constructor.borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
+                                     ? AccessMode::Mutable
+                                     : stored.access;
     }
   }
 }

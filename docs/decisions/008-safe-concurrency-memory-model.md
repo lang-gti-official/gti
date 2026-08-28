@@ -20,9 +20,10 @@ executable language is therefore single-threaded even though generated C++ or
 a native dependency may internally use host threads.
 
 That paragraph records the adoption-time context. The current implementation
-now exposes owned managed threads and scalar atomics with sequentially
-consistent defaults plus explicit accepted orders under the opt-in concurrent
-profile; mutexes and foreign-thread entry remain outstanding. Current source semantics live in
+now exposes owned managed threads, scalar atomics with sequentially consistent
+defaults plus explicit accepted orders, and owner-tied scoped mutex guards
+under the opt-in concurrent profile; condition variables and foreign-thread
+entry remain outstanding. Current source semantics live in
 [the concurrency language contract](../language/concurrency.md).
 
 That implementation accident cannot become the language memory model. Before
@@ -157,13 +158,13 @@ on every exit, and verified reactivation after join.
 `mut` remains permission to mutate through one local access path. It is not
 atomic, volatile, synchronized, transfer-capable, or share-capable. Concurrent
 mutation is possible only through an abstraction whose language contract
-provides interior synchronization, such as a compiler-validated atomic or a
-future mutex guard.
+provides interior synchronization, such as a compiler-validated atomic or
+mutex guard.
 
 In the concurrent profile, process-wide globals and static fields must be
 immutable and share-capable. Ordinary mutable namespace globals and mutable
 static fields are ill-formed. Synchronized mutation uses an immutable global
-whose value is an approved atomic or future mutex wrapper. Borrowed-state and
+whose value is an approved atomic or mutex wrapper. Borrowed-state and
 raw-pointer globals do not become eligible merely because their binding is
 immutable. Cleanup-owning process-wide values remain unavailable until global
 shutdown and foreign-thread participation have one represented contract.
@@ -191,8 +192,8 @@ full-expression contract. **Synchronizes-with** is created only by a GTI
 operation whose language contract says so. **Happens-before** is the transitive
 closure of those relations.
 
-The implemented profile provides the spawn, join, atomic, and sequentially
-consistent edges below; mutex ordering remains future:
+The implemented profile provides the spawn, join, atomic, and mutex edges
+below:
 
 - evaluations sequenced before successful spawn happen-before task entry;
 - task completion happens-before a successful explicit or automatic join
@@ -201,8 +202,8 @@ consistent edges below; mutex ordering remains future:
   edge, every atomic operation participates in its object's modification
   order, and every sequentially consistent atomic operation additionally
   participates in one program-wide sequentially consistent order; and
-- future mutex unlock synchronizes-with the corresponding later successful
-  acquisition.
+- mutex unlock synchronizes-with the corresponding later successful
+  acquisition of the same mutex.
 
 The atomic surface is limited to fixed-width integers and `bool`, defaults to
 sequential consistency, and promises neither lock freedom nor C-compatible
@@ -326,7 +327,7 @@ supported. No timing-only test is a correctness oracle.
   interfaces, globals, and later library constraints.
 - Automatic join preserves structured lifetime at the cost of potentially
   blocking cleanup and participating in deadlock.
-- Stored and scoped cross-thread borrows, detach, mutex guards, pointer
+- Stored and scoped cross-thread borrows, detach, condition variables, pointer
   atomics, shared ownership across threads, and native callbacks retain their
   explicit prerequisite rows.
 

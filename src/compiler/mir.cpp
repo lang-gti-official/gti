@@ -3942,6 +3942,16 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
         if (event.kind != MirLifecycleEventKind::TransferOut) {
           continue;
         }
+        // An ordered owned call argument retires its local staging obligation
+        // because the callee owns that parameter before the invocation can
+        // fail. It is not a transfer into `this`; the surrounding Construct
+        // still has to arm the completed field subobject below. The ordinary
+        // call-input/value-use verifiers prove the corresponding unique call.
+        if (instruction.kind == MirInstructionKind::CallInput &&
+            instruction.callInputRole == MirCallInputRole::Argument &&
+            instruction.callInputKind == HirCallInputKind::MoveValue) {
+          continue;
+        }
         const MirDropObligation *source = body.findDropObligation(event.source);
         if (source != nullptr &&
             source->kind != MirDropObligationKind::ConstructionRollback) {
@@ -7839,6 +7849,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       while (cursorIndex != 0 && reversed.size() < dropCount) {
         const MirInstruction &candidate = cursor->instructions[cursorIndex - 1];
+        if (candidate.kind == MirInstructionKind::EndBorrow) {
+          const MirLoan *loan = body.findLoan(candidate.loan.value_or(0));
+          if (loan != nullptr && loan->lifecycleBound) {
+            --cursorIndex;
+            continue;
+          }
+        }
         if (candidate.kind != MirInstructionKind::Drop) {
           break;
         }

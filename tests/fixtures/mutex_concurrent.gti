@@ -1,0 +1,34 @@
+#include <std/mutex>
+#include <std/thread>
+
+std::mutex<int32_t> shared_count{0};
+
+void increment_many() {
+  for (mut int32_t index = 0; index < 2000; index++) {
+    mut std::mutex_guard<int32_t> guard = shared_count.lock();
+    mut int32_t& current = guard.get();
+    current = current + 1;
+  }
+}
+
+int main() {
+  auto first_started = std::thread::start([]() -> void {
+    increment_many();
+  });
+  if (!first_started.has_value()) { return 1; }
+  mut std::thread first = std::move(first_started).value();
+
+  auto second_started = std::thread::start([]() -> void {
+    increment_many();
+  });
+  if (!second_started.has_value()) { return 2; }
+  mut std::thread second = std::move(second_started).value();
+
+  auto first_joined = first.join();
+  if (!first_joined.has_value()) { return 3; }
+  auto second_joined = second.join();
+  if (!second_joined.has_value()) { return 4; }
+
+  std::mutex_guard<int32_t> guard = shared_count.lock();
+  return guard.get() == 4000 ? 0 : 5;
+}

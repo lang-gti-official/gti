@@ -136,6 +136,20 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
       return "::gti_internal::backend::atomic_value<" +
              spell(type.arguments.front()) + ">";
     }
+    if (classInfo->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage ||
+        classInfo->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexLockToken) {
+      if (type.arguments.size() != 1) {
+        return "void";
+      }
+      return std::string{"::gti_internal::backend::"} +
+             (classInfo->compilerCapability ==
+                      CompilerCapabilityTypeKind::MutexStorage
+                  ? "mutex_value<"
+                  : "mutex_lock_token<") +
+             spell(type.arguments.front()) + ">";
+    }
     std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
                                                  classInfo->cOpaqueHandle);
     const std::vector<SemanticType> &typeArguments =

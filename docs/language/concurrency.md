@@ -1,11 +1,11 @@
 # Concurrency And Atomic Values
 
 Status: Current language contract for the implemented concurrent profile,
-managed threads, and ordered scalar atomics.
+managed threads, ordered scalar atomics, and scoped mutex guards.
 
 Rationale is recorded in
-[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining mutex,
-scoped-thread, and foreign-entry work is tracked in the
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining
+condition-variable, scoped-thread, and foreign-entry work is tracked in the
 [concurrency plan](../plans/concurrency-memory-model.md).
 
 ## Profiles And Availability
@@ -21,12 +21,13 @@ A project profile uses `execution-profile = "concurrent"`. Selection occurs
 before semantic analysis and is preserved through HIR and MIR. Source imports,
 native flags, incidental host threads, and emitted C++ never infer it.
 
-`std::thread`, `std::thread_result<Result>`, and `std::atomic<T>` require the
-concurrent profile and a target advertising thread-capable concurrency
-support. Merely importing `<std/thread>` or `<std/atomic>` without constructing
-or calling their public values remains valid in the default profile. An
-executable use fails in semantics with `GTI-S2084` when either requirement is
-absent.
+`std::thread`, `std::thread_result<Result>`, `std::atomic<T>`, and
+`std::mutex<T>` require the concurrent profile and a target advertising
+thread-capable concurrency support. Merely importing `<std/thread>`,
+`<std/atomic>`, or `<std/mutex>` without constructing or calling their public
+values remains valid in the default profile and does not select native
+synchronization support. An executable use fails in semantics with
+`GTI-S2084` when either requirement is absent.
 
 ## Data-Race Freedom
 
@@ -189,12 +190,63 @@ and the sealed backend maps that verified record to the corresponding native
 order spelling. Native overload resolution never supplies or strengthens GTI
 semantics.
 
+## Mutexes And Scoped Guards
+
+`<std/mutex>` provides `std::mutex<T>` for an owned movable `T`. The mutex is
+noncopyable and may be moved locally only while no guard derived from it is
+live. It exposes no direct reference to its payload. Shared mutation is
+available only through `lock()`:
+
+```gti
+std::mutex<int32_t> count{0};
+{
+  mut std::mutex_guard<int32_t> guard = count.lock();
+  mut int32_t& value = guard.get();
+  value = value + 1;
+}
+```
+
+`lock()` accepts a shared mutex receiver and returns one move-only,
+non-transferable, non-shareable `std::mutex_guard<T>`. A guard represents both
+the native lock obligation and an exclusive owner dependency on that mutex.
+While it is live, safe source cannot lock or move the owner again. Moving the
+guard transfers the obligation and leaves the source guard inert.
+
+`get()` returns `T&` from a read-only guard or `mut T&` from a mutable guard.
+The returned loan is bounded by both the guard and its mutex owner: it cannot
+outlive a temporary/local guard, be returned from that scope, or cross a
+thread-transfer boundary. Guard destruction ends any child loan and unlocks
+exactly once. This same reverse cleanup occurs before a defined failure is
+propagated, so a waiter may acquire the mutex after the failing guarded scope
+has been cleaned.
+
+Unlock synchronizes-with a later successful lock of the same mutex. Everything
+sequenced before unlock therefore happens-before everything sequenced after
+that acquisition. The compiler records lock/unlock as non-removable,
+non-reorderable synchronization operations in HIR and verified MIR; guard
+access retains a separate owner-tied loan identity rather than treating a
+native reference as lifetime proof.
+
+GTI mutexes do not use poisoning. A defined failure inside a guarded region
+performs deterministic cleanup and then preserves the original failure record;
+the next lock is permitted. Applications that need transactional invariants
+must encode rollback or validity state in the protected value. A native
+lock-acquisition exception is contained and reported as the defined
+`infallible_host_operation_failed`/`mutex_lock` outcome; no partially active
+guard is published.
+
+The representation promises neither recursive locking, fairness, stable
+layout, C/C++ ABI compatibility, nor that moving a mutex preserves waiter
+identity. A move constructs a fresh unlocked native mutex around the moved
+payload and is legal only when ordinary ownership proves no guard is live.
+
 ## Current Omissions
 
 The current surface deliberately excludes weak compare/exchange, spurious
-failure, fetch arithmetic, wait/notify, atomic references, and fences. Mutex
-guards, condition variables, scoped borrows, detach, thread locals, and
-foreign-created-thread entry are also not implemented.
+failure, fetch arithmetic, wait/notify, atomic references, and fences.
+Condition variables, public manual unlock, recursive/read-write mutexes,
+scoped cross-thread borrows, detach, thread locals, and foreign-created-thread
+entry are also not implemented.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.

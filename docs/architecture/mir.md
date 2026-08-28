@@ -94,7 +94,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v51`/`mir-body-v45`.
+The deterministic serialization is currently `mir-v52`/`mir-body-v46`.
 Program v51 extends the version-28 benign-event rule to the trivial-commit
 assignment: a `Reinitialize` that leaves an always-available, trivially
 destroyed destination available on a reachable edge is equally
@@ -722,15 +722,17 @@ roots and index projections. Current MIR has no block-parameter values: every
 bindings, and entry loans use their own representations.
 
 The program verifier additionally rejects synchronization operations when
-`MirProgram` selects the default single-threaded profile, except for an exact
-compiler-trusted private thread intrinsic in a body carrying the lowering-owned
-dormant-wrapper marker. Such a body exists because MIR retains the complete
-source-defined standard-library declaration inventory; it has no task adapter
-and public use remains rejected by semantics. A thread-spawn operation still
-requires the concurrent profile and one exact task adapter. Target `threads`
-capability and public wrapper availability remain semantic/source-library
-authority. Atomic and mutex records remain internal foundation until their own
-public/runtime/backend slices ship.
+`MirProgram` selects the default single-threaded profile, except for exact
+compiler-trusted private thread, atomic, or mutex synchronization intrinsics in
+a body carrying the lowering-owned dormant-wrapper marker. Such a body exists
+because MIR retains the complete source-defined standard-library declaration
+inventory; it has no task adapter or executable use and public use remains
+rejected by semantics. A thread-spawn operation still requires the concurrent
+profile and one exact task adapter. Target `threads` capability and public
+wrapper availability remain semantic/source-library authority. Atomic and
+mutex records are now consumed by the shipped `<std/atomic>` and `<std/mutex>`
+slices; unrecognized or forged records still fail verification rather than
+selecting native behavior.
 
 The owned-entry append target is a module-root call edge for reachability and
 dead-code decisions even though it is not represented by an instruction in the

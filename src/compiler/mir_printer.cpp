@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v51 valid=" << program.valid() << '\n';
+    output << "mir-v52 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -306,11 +306,15 @@ public:
 
     for (const MirClassInstance &instance : program.classInstances()) {
       output << "class @" << instance.id
+             << " source-unit=" << instance.sourceUnit
              << " declaration=" << instance.declaration << " type=";
       type(instance.type);
       output << ' ';
       traits(instance.traits);
       output << " kind=" << number(instance.kind)
+             << " compiler-capability=" << number(instance.compilerCapability)
+             << " lifecycle-bound-borrow-carrier="
+             << instance.lifecycleBoundBorrowCarrier
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
              << " c-abi=" << instance.cAbiRecord << " special-members={default="
@@ -606,7 +610,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v45\n";
+    output << "mir-body-v46\n";
     body(value, 0);
     return output.str();
   }
@@ -1102,6 +1106,7 @@ private:
     }
     output << "] field=" << value.storedField
            << " designated-field=" << value.designatedField
+           << " lifecycle-bound=" << value.lifecycleBound
            << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
   }

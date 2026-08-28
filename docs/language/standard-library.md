@@ -393,9 +393,8 @@ The following component families remain planned or incomplete:
   customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, random distributions and engine
   breadth, connected networking, traffic buffers, atomic fetch/wait/fence
-  breadth, mutexes, condition
-  variables, stop tokens, detached/scoped tasks, typed argument packs, and
-  broader threading;
+  breadth, condition variables, recursive/read-write mutexes, stop tokens,
+  detached/scoped tasks, typed argument packs, and broader threading;
 - stateful allocator policy, allocator-aware growing containers,
   generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque

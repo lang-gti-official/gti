@@ -2628,6 +2628,11 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
   if (owner->compilerCapability == CompilerCapabilityTypeKind::AtomicStorage) {
     return true;
   }
+  if (owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
+      owner->compilerCapability ==
+          CompilerCapabilityTypeKind::MutexLockToken) {
+    return true;
+  }
   if (!visiting.insert(owner->id).second) {
     return false;
   }

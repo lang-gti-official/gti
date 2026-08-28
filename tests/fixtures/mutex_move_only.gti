@@ -1,0 +1,24 @@
+#include <std/mutex>
+
+class payload {
+  mut int32_t value;
+
+public:
+  payload(int32_t initial) : value(initial) {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+
+  void increment() mut { this.value = this.value + 1; }
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  std::mutex<payload> value{payload(4)};
+  {
+    mut std::mutex_guard<payload> guard = value.lock();
+    mut payload& current = guard.get();
+    current.increment();
+  }
+  std::mutex_guard<payload> guard = value.lock();
+  return guard.get().read() == 5 ? 0 : 1;
+}

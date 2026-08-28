@@ -1554,6 +1554,14 @@ void SemanticModel::recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
   }
 }
 
+void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
+  if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
+      retainedLoans[id - 1].id != id) {
+    return;
+  }
+  std::erase(retainedLoans[id - 1].carriers, carrier);
+}
+
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
   loanEnds.clear();

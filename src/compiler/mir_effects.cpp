@@ -303,6 +303,22 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.initializesValue = true},
     // AtomicCompareExchange: synchronization metadata supplies both barriers.
     MirEffectTraits{.initializesValue = true},
+    // MutexLock: synchronization metadata supplies the acquire barrier.
+    MirEffectTraits{.initializesValue = true},
+    // MutexUnlock: synchronization metadata supplies the release barrier.
+    MirEffectTraits{},
+    // MutexGuardActive: observes the private token state.
+    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
+    // MutexGuardRead: publishes a tracked read-only loan.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .startsLoan = true},
+    // MutexGuardReadMut: publishes a tracked exclusive loan.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .startsLoan = true},
+    // MutexLockFailure: enters the defined-failure runtime path.
+    MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -479,6 +495,12 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "atomic-store",
     "atomic-exchange",
     "atomic-compare-exchange",
+    "mutex-lock",
+    "mutex-unlock",
+    "mutex-guard-active",
+    "mutex-guard-read",
+    "mutex-guard-read-mut",
+    "mutex-lock-failure",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

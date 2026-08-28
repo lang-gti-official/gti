@@ -58,6 +58,19 @@ exactAtomicSynchronization(IntrinsicKind intrinsic,
   return operation.kind == expected && validSynchronizationOperation(operation);
 }
 
+[[nodiscard]] bool
+exactMutexSynchronization(IntrinsicKind intrinsic,
+                          const SynchronizationOperation &operation) {
+  const SynchronizationOperationKind expected =
+      intrinsic == IntrinsicKind::MutexLock
+          ? SynchronizationOperationKind::MutexLock
+      : intrinsic == IntrinsicKind::MutexUnlock
+          ? SynchronizationOperationKind::MutexUnlock
+          : SynchronizationOperationKind::None;
+  return expected != SynchronizationOperationKind::None &&
+         operation.kind == expected && validSynchronizationOperation(operation);
+}
+
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   MirValueId valueId) {
   return mir_detail::definitionFor(body, valueId);
@@ -1693,7 +1706,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           "receiver return dependency requires a non-static class method");
     }
     break;
-  case BorrowOriginKind::Argument:
+  case BorrowOriginKind::Argument: {
     if (instance.returnBorrowParameter >= instance.parameterTypes.size() ||
         instance.returnBorrowParameter >= instance.parameterBindings.size() ||
         instance.parameterBindings[instance.returnBorrowParameter] == 0) {
@@ -1792,6 +1805,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       }
     }
     break;
+  }
   case BorrowOriginKind::Global:
     if ((instance.owner && !instance.staticMember) ||
         instance.returnBorrowParameter != 0 || !instance.returnBorrowPlace ||
@@ -1972,7 +1986,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
 }
 
 [[nodiscard]] MirVerificationResult
-verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
+verifyMirConstructorBorrowSummary(const MirProgram &program,
+                                  const MirConstructorInstance &instance) {
   const MirBody &body = instance.body;
   const auto invalidSummary = [&](std::string message) {
     return verificationFailure(body, instance.id, std::move(message));
@@ -1992,21 +2007,43 @@ verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
   case BorrowOriginKind::Receiver:
     return invalidSummary(
         "constructor result cannot depend on a receiver lifetime");
-  case BorrowOriginKind::Argument:
+  case BorrowOriginKind::Argument: {
     if (instance.borrowParameter >= instance.parameterTypes.size()) {
       return invalidSummary(
           "constructor borrow dependency is outside the formal parameters");
     }
+    const SemanticType &borrowParameter =
+        instance.parameterTypes[instance.borrowParameter];
+    const MirClassInstance *constructedOwner =
+        program.findClassInstance(instance.owner);
+    const bool mutexGuardInteriorBorrow = [&] {
+      if (constructedOwner == nullptr ||
+          !constructedOwner->lifecycleBoundBorrowCarrier ||
+          instance.borrowAccess != AccessMode::Mutable ||
+          borrowParameter.kind != SemanticType::Reference ||
+          borrowParameter.referenceAccess != AccessMode::ReadOnly ||
+          borrowParameter.arguments.size() != 1) {
+        return false;
+      }
+      const auto storage = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const MirClassInstance &candidate) {
+            return candidate.type == borrowParameter.arguments.front();
+          });
+      return storage != program.classInstances().end() &&
+             storage->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexStorage;
+    }();
     if (instance.parameterBindings[instance.borrowParameter] == 0 ||
-        instance.parameterTypes[instance.borrowParameter].kind !=
-            SemanticType::Reference ||
-        instance.parameterTypes[instance.borrowParameter].referenceAccess !=
-            instance.borrowAccess) {
+        borrowParameter.kind != SemanticType::Reference ||
+        (borrowParameter.referenceAccess != instance.borrowAccess &&
+         !mutexGuardInteriorBorrow)) {
       return invalidSummary(
           "constructor borrow dependency does not identify an exact "
           "reference formal parameter");
     }
     break;
+  }
   case BorrowOriginKind::Global:
     return invalidSummary("constructor result cannot depend on global storage");
   }
@@ -2106,7 +2143,8 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
     appendVerification(
         result, verifyMirBorrowProducers(program, instance.body, instance.id));
-    appendVerification(result, verifyMirConstructorBorrowSummary(instance));
+    appendVerification(result,
+                       verifyMirConstructorBorrowSummary(program, instance));
   }
   for (const MirDestructorInstance &instance : program.destructorInstances()) {
     appendVerification(
@@ -4599,6 +4637,445 @@ uniqueMirClassInstanceForType(const MirProgram &program,
   return result;
 }
 
+[[nodiscard]] const MirClassInstance *
+exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
+                        CompilerCapabilityTypeKind capability) {
+  const MirClassInstance *instance =
+      uniqueMirClassInstanceForType(program, type);
+  return instance != nullptr && instance->sourceUnit != 0 &&
+                 instance->declaration != 0 &&
+                 instance->type.kind == SemanticType::Class &&
+                 instance->type.classId == instance->declaration &&
+                 instance->type.arguments.size() == 1 &&
+                 instance->compilerCapability == capability
+             ? instance
+             : nullptr;
+}
+
+[[nodiscard]] const SemanticType *
+exactCapabilityReferenceValue(const MirProgram &program,
+                              const SemanticType &reference, AccessMode access,
+                              CompilerCapabilityTypeKind capability,
+                              const MirClassInstance **instance = nullptr) {
+  if (reference.kind != SemanticType::Reference ||
+      reference.referenceAccess != access || reference.arguments.size() != 1) {
+    return nullptr;
+  }
+  const MirClassInstance *selected =
+      exactMirCapabilityClass(program, reference.arguments.front(), capability);
+  if (selected == nullptr) {
+    return nullptr;
+  }
+  if (instance != nullptr) {
+    *instance = selected;
+  }
+  return &selected->type.arguments.front();
+}
+
+[[nodiscard]] bool
+exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
+                            const MirInstruction &instruction) {
+  const bool mutexIntrinsic =
+      instruction.intrinsic == IntrinsicKind::MutexLock ||
+      instruction.intrinsic == IntrinsicKind::MutexUnlock ||
+      instruction.intrinsic == IntrinsicKind::MutexGuardActive ||
+      instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+      instruction.intrinsic == IntrinsicKind::MutexGuardReadMut ||
+      instruction.intrinsic == IntrinsicKind::MutexLockFailure;
+  if (!mutexIntrinsic) {
+    return true;
+  }
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.parameterTypes.size() != instruction.operands.size() ||
+      !std::equal(instruction.parameterTypes.begin(),
+                  instruction.parameterTypes.end(),
+                  instruction.operands.begin(),
+                  [](const SemanticType &parameter, const MirOperand &operand) {
+                    return parameter == operand.type;
+                  })) {
+    return false;
+  }
+  const auto exactBorrow = [](const MirOperand &operand, MirOperandKind kind) {
+    return operand.kind == kind && operand.place != 0 && operand.value == 0 &&
+           operand.loan == 0 && !operand.literal;
+  };
+  const auto exactResult = [&](const SemanticType &type, ValueCategory category,
+                               AccessMode access) {
+    return instruction.info.type == type &&
+           instruction.info.category == category &&
+           instruction.info.access == access &&
+           (type == SemanticType::Void ? !instruction.result
+                                       : instruction.result.has_value());
+  };
+  const auto noLoanResult = [&] {
+    return !instruction.loan &&
+           instruction.borrowOrigin == BorrowOriginKind::None &&
+           instruction.borrowArgument == 0 &&
+           instruction.borrowAccess == AccessMode::ReadOnly;
+  };
+  const auto emptyFailure = [&] {
+    return instruction.definedFailure.empty() &&
+           instruction.localFailureSites.empty();
+  };
+
+  if (instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
+    const std::vector<DefinedFailureOutcome> expected = {
+        {.code = DefinedFailureCode::InfallibleHostOperationFailed,
+         .detail = DefinedFailureDetail::MutexLock}};
+    return instruction.operands.empty() &&
+           exactResult(SemanticType::Void, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() &&
+           instruction.synchronization.kind ==
+               SynchronizationOperationKind::None &&
+           instruction.definedFailure.propagation ==
+               FailurePropagationKind::None &&
+           instruction.definedFailure.localOrigins.size() == 1 &&
+           instruction.definedFailure.localOrigins.front().outcomes ==
+               expected &&
+           instruction.localFailureSites.size() == 1 &&
+           instruction.localFailureSites.front() != 0;
+  }
+
+  const bool twoOperand = instruction.operands.size() == 2;
+  const bool oneOperand = instruction.operands.size() == 1;
+  const MirOperand *storageOperand =
+      twoOperand ? &instruction.operands[0] : nullptr;
+  const MirOperand *tokenOperand = twoOperand   ? &instruction.operands[1]
+                                   : oneOperand ? &instruction.operands[0]
+                                                : nullptr;
+  const MirClassInstance *storageClass = nullptr;
+  const MirClassInstance *tokenClass = nullptr;
+  const SemanticType *storageValue =
+      storageOperand == nullptr
+          ? nullptr
+          : exactCapabilityReferenceValue(
+                program, storageOperand->type, AccessMode::ReadOnly,
+                CompilerCapabilityTypeKind::MutexStorage, &storageClass);
+  const AccessMode tokenAccess =
+      instruction.intrinsic == IntrinsicKind::MutexLock ||
+              instruction.intrinsic == IntrinsicKind::MutexUnlock
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
+  const SemanticType *tokenValue =
+      tokenOperand == nullptr
+          ? nullptr
+          : exactCapabilityReferenceValue(
+                program, tokenOperand->type, tokenAccess,
+                CompilerCapabilityTypeKind::MutexLockToken, &tokenClass);
+  const bool exactPair = tokenValue != nullptr &&
+                         (storageValue == nullptr ||
+                          (*storageValue == *tokenValue &&
+                           storageClass->sourceUnit == tokenClass->sourceUnit));
+  if (!exactPair || !emptyFailure()) {
+    return false;
+  }
+
+  switch (instruction.intrinsic) {
+  case IntrinsicKind::MutexLock:
+    return twoOperand &&
+           exactBorrow(*storageOperand, MirOperandKind::BorrowRead) &&
+           exactBorrow(*tokenOperand, MirOperandKind::BorrowWrite) &&
+           exactResult(SemanticType::Int32, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() &&
+           exactMutexSynchronization(instruction.intrinsic,
+                                     instruction.synchronization);
+  case IntrinsicKind::MutexUnlock:
+    return twoOperand &&
+           exactBorrow(*storageOperand, MirOperandKind::BorrowRead) &&
+           exactBorrow(*tokenOperand, MirOperandKind::BorrowWrite) &&
+           exactResult(SemanticType::Void, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() &&
+           exactMutexSynchronization(instruction.intrinsic,
+                                     instruction.synchronization);
+  case IntrinsicKind::MutexGuardActive:
+    return oneOperand &&
+           exactBorrow(*tokenOperand, MirOperandKind::BorrowRead) &&
+           exactResult(SemanticType::Bool, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() &&
+           instruction.synchronization.kind ==
+               SynchronizationOperationKind::None;
+  case IntrinsicKind::MutexGuardRead:
+  case IntrinsicKind::MutexGuardReadMut: {
+    const AccessMode resultAccess =
+        instruction.intrinsic == IntrinsicKind::MutexGuardReadMut
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly;
+    const MirLoan *loan =
+        instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+    return twoOperand &&
+           exactBorrow(*storageOperand, MirOperandKind::BorrowRead) &&
+           exactBorrow(*tokenOperand, MirOperandKind::BorrowRead) &&
+           exactResult(*storageValue, ValueCategory::Place, resultAccess) &&
+           instruction.borrowOrigin == BorrowOriginKind::Argument &&
+           instruction.borrowArgument == 0 &&
+           instruction.borrowAccess == resultAccess && loan != nullptr &&
+           loan->kind == MirLoanKind::CallResult && !loan->lifecycleBound &&
+           !loan->entry && !loan->escapes && loan->parent == 0 &&
+           loan->source == storageOperand->place &&
+           loan->access == resultAccess &&
+           loan->producedBy == instruction.hirValue &&
+           instruction.synchronization.kind ==
+               SynchronizationOperationKind::None;
+  }
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] MirVerificationResult
+verifyLifecycleBoundLoanContracts(const MirProgram &program,
+                                  const MirBody &body, std::size_t owner) {
+  struct InstructionLocation {
+    const MirBlock *block = nullptr;
+    const MirInstruction *instruction = nullptr;
+    std::size_t order = 0;
+  };
+  std::unordered_map<MirInstructionId, InstructionLocation> locations;
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t order = 0; order < block.instructions.size(); ++order) {
+      locations.emplace(
+          block.instructions[order].id,
+          InstructionLocation{.block = &block,
+                              .instruction = &block.instructions[order],
+                              .order = order});
+    }
+  }
+  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  if (!dominance) {
+    return verificationFailure(
+        body, owner,
+        "lifecycle-bound loan verification requires a valid MIR CFG");
+  }
+  const auto precedes = [&](const InstructionLocation &before,
+                            const InstructionLocation &after) {
+    return before.block->id == after.block->id
+               ? before.order < after.order
+               : dominance->dominates(before.block->id, after.block->id);
+  };
+  const auto carrierClass = [&](const SemanticType &type) {
+    const MirClassInstance *instance =
+        uniqueMirClassInstanceForType(program, type);
+    return instance != nullptr && instance->lifecycleBoundBorrowCarrier
+               ? instance
+               : nullptr;
+  };
+  const auto producerFor = [&](MirLoanId loan) {
+    std::optional<InstructionLocation> result;
+    for (const auto &[_, location] : locations) {
+      if (location.instruction->loan != loan ||
+          (location.instruction->kind != MirInstructionKind::Call &&
+           location.instruction->kind != MirInstructionKind::Construct &&
+           location.instruction->kind != MirInstructionKind::Borrow)) {
+        continue;
+      }
+      if (result) {
+        return std::optional<InstructionLocation>{};
+      }
+      result = location;
+    }
+    return result;
+  };
+
+  for (const MirLoan &loan : body.loans) {
+    if (!loan.lifecycleBound) {
+      continue;
+    }
+    const std::optional<InstructionLocation> producer = producerFor(loan.id);
+    const MirPlace *source = body.findPlace(loan.source);
+    if (!producer || source == nullptr || loan.access != AccessMode::Mutable ||
+        loan.parent != 0 || loan.twoPhase || loan.producedBy == 0 ||
+        producer->instruction->hirValue != loan.producedBy ||
+        producer->instruction->info.access != AccessMode::ReadOnly ||
+        carrierClass(producer->instruction->info.type) == nullptr) {
+      return verificationFailure(
+          body, owner,
+          "lifecycle-bound loan is not produced by one exact movable mutex "
+          "guard carrier",
+          producer ? producer->block->id : 0,
+          producer ? producer->instruction->id : 0);
+    }
+
+    if (loan.kind == MirLoanKind::Return) {
+      const bool exactReturnProducer =
+          loan.escapes && !loan.entry && loan.carriers.empty() &&
+          loan.storedField == 0 && loan.designatedField == 0 &&
+          producer->instruction->kind == MirInstructionKind::Borrow &&
+          !producer->instruction->result &&
+          producer->instruction->operands.size() == 1 &&
+          producer->instruction->operands.front().kind == MirOperandKind::Loan;
+      const MirLoan *sourceLoan =
+          exactReturnProducer
+              ? body.findLoan(producer->instruction->operands.front().loan)
+              : nullptr;
+      std::size_t returns = 0;
+      for (const MirBlock &block : body.blocks) {
+        if (block.terminator.kind == MirTerminatorKind::Return &&
+            block.terminator.returnLoan == loan.id && block.terminator.value &&
+            block.terminator.value->type == producer->instruction->info.type) {
+          ++returns;
+        }
+      }
+      if (!exactReturnProducer || sourceLoan == nullptr ||
+          sourceLoan->kind != MirLoanKind::Stored ||
+          !sourceLoan->lifecycleBound || sourceLoan->source != loan.source ||
+          sourceLoan->access != loan.access || returns != 1) {
+        return verificationFailure(
+            body, owner,
+            "lifecycle-bound return loan is not the exact escaping transfer "
+            "of one stored mutex-guard dependency",
+            producer->block->id, producer->instruction->id);
+      }
+      continue;
+    }
+
+    const bool exactStored =
+        loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
+        loan.storedField == 0 && loan.designatedField == 0 &&
+        (producer->instruction->kind == MirInstructionKind::Call ||
+         producer->instruction->kind == MirInstructionKind::Construct) &&
+        producer->instruction->result &&
+        producer->instruction->borrowAccess == AccessMode::Mutable &&
+        (producer->instruction->borrowOrigin == BorrowOriginKind::Receiver ||
+         producer->instruction->borrowOrigin == BorrowOriginKind::Argument);
+    if (!exactStored) {
+      return verificationFailure(
+          body, owner,
+          "lifecycle-bound stored loan does not retain the exact local "
+          "mutex-guard result shape",
+          producer->block->id, producer->instruction->id);
+    }
+
+    std::unordered_set<MirDropObligationId> carrierObligations;
+    const auto seed = [&](MirDropObligationId obligation) {
+      const MirDropObligation *drop = body.findDropObligation(obligation);
+      if (drop != nullptr &&
+          drop->dropType.type == producer->instruction->info.type) {
+        carrierObligations.insert(obligation);
+      }
+    };
+    if (producer->instruction->successResultDrop) {
+      seed(*producer->instruction->successResultDrop);
+    }
+    for (const MirLifecycleEvent &event : producer->instruction->lifecycle) {
+      if (event.kind == MirLifecycleEventKind::Initialize) {
+        seed(event.target);
+      }
+    }
+    for (const MirBlock &block : body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Invoke ||
+          block.terminator.invokeInstruction != producer->instruction->id) {
+        continue;
+      }
+      for (const MirLifecycleEvent &event : block.terminator.successLifecycle) {
+        if (event.kind == MirLifecycleEventKind::Initialize) {
+          seed(event.target);
+        }
+      }
+    }
+    for (bool changed = true; changed;) {
+      changed = false;
+      const auto follow = [&](const std::vector<MirLifecycleEvent> &events) {
+        for (const MirLifecycleEvent &event : events) {
+          if ((event.kind == MirLifecycleEventKind::Move ||
+               event.kind == MirLifecycleEventKind::Reparent ||
+               event.kind == MirLifecycleEventKind::Replace) &&
+              carrierObligations.contains(event.source)) {
+            const std::size_t before = carrierObligations.size();
+            seed(event.target);
+            changed = changed || carrierObligations.size() != before;
+          }
+        }
+      };
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          follow(instruction.lifecycle);
+        }
+        follow(block.terminator.successLifecycle);
+      }
+    }
+    if (carrierObligations.empty()) {
+      return verificationFailure(
+          body, owner,
+          "lifecycle-bound mutex guard has no exact drop obligation",
+          producer->block->id, producer->instruction->id);
+    }
+
+    std::vector<InstructionLocation> carrierDrops;
+    for (const auto &[_, location] : locations) {
+      if (location.instruction->kind != MirInstructionKind::Drop ||
+          location.instruction->info.type != producer->instruction->info.type) {
+        continue;
+      }
+      if (std::any_of(location.instruction->lifecycle.begin(),
+                      location.instruction->lifecycle.end(),
+                      [&](const MirLifecycleEvent &event) {
+                        return event.kind == MirLifecycleEventKind::Drop &&
+                               carrierObligations.contains(event.source);
+                      })) {
+        carrierDrops.push_back(location);
+      }
+    }
+
+    std::vector<InstructionLocation> ends;
+    for (const auto &[_, location] : locations) {
+      if (location.instruction->kind == MirInstructionKind::EndBorrow &&
+          location.instruction->loan == loan.id) {
+        ends.push_back(location);
+      }
+    }
+    if (ends.empty()) {
+      return verificationFailure(
+          body, owner,
+          "local lifecycle-bound mutex guard loan has no explicit end",
+          producer->block->id, producer->instruction->id);
+    }
+    for (const InstructionLocation &end : ends) {
+      const bool producerFailure = std::any_of(
+          body.failureRecords.begin(), body.failureRecords.end(),
+          [&](const MirFailureRecord &record) {
+            return record.producerBlock == producer->block->id &&
+                   record.producerInstruction == producer->instruction->id &&
+                   record.parameterBlock == end.block->id;
+          });
+      const bool afterCarrierDrop = std::any_of(
+          carrierDrops.begin(), carrierDrops.end(),
+          [&](const InstructionLocation &drop) { return precedes(drop, end); });
+      const bool returned = std::any_of(
+          end.block->instructions.begin(),
+          end.block->instructions.begin() +
+              static_cast<std::ptrdiff_t>(end.order),
+          [&](const MirInstruction &candidate) {
+            if (candidate.kind != MirInstructionKind::Borrow ||
+                !candidate.loan || candidate.operands.size() != 1 ||
+                candidate.operands.front().kind != MirOperandKind::Loan ||
+                candidate.operands.front().loan != loan.id) {
+              return false;
+            }
+            const MirLoan *transferred = body.findLoan(*candidate.loan);
+            return transferred != nullptr && transferred->lifecycleBound &&
+                   transferred->kind == MirLoanKind::Return &&
+                   end.block->terminator.kind == MirTerminatorKind::Return &&
+                   end.block->terminator.returnLoan == transferred->id;
+          });
+      if (!producerFailure && !afterCarrierDrop && !returned) {
+        return verificationFailure(
+            body, owner,
+            "lifecycle-bound mutex guard loan ends before guard drop or its "
+            "exact return transfer",
+            end.block->id, end.instruction->id);
+      }
+    }
+  }
+  return {};
+}
+
 [[nodiscard]] std::optional<SemanticType>
 mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
                        SymbolId symbol) {
@@ -4723,6 +5200,8 @@ verifyMirProgramContracts(const MirProgram &program) {
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     appendVerification(
         result, verifyMirCheckedIntegerFailureContracts(program, body, owner));
+    appendVerification(result,
+                       verifyLifecycleBoundLoanContracts(program, body, owner));
     for (const MirPlace &place : body.places) {
       const bool classPackElement =
           place.type.kind == SemanticType::Class &&
@@ -4762,6 +5241,24 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "atomic intrinsic does not retain its exact "
                           "operation-specific synchronization contract"});
+        }
+        const bool mutexIntrinsic =
+            instruction.intrinsic == IntrinsicKind::MutexLock ||
+            instruction.intrinsic == IntrinsicKind::MutexUnlock ||
+            instruction.intrinsic == IntrinsicKind::MutexGuardActive ||
+            instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+            instruction.intrinsic == IntrinsicKind::MutexGuardReadMut ||
+            instruction.intrinsic == IntrinsicKind::MutexLockFailure;
+        if (mutexIntrinsic &&
+            !exactMutexIntrinsicContract(program, body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "mutex intrinsic does not retain its exact "
+                          "capability, operand, result, loan, failure, and "
+                          "synchronization contract"});
         }
         if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
             !instruction.threadTaskAdapter) {
@@ -4846,6 +5343,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                  SynchronizationOperationKind::ThreadJoin &&
              (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
               instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)) ||
+            exactMutexSynchronization(instruction.intrinsic,
+                                      instruction.synchronization) ||
             exactAtomicSynchronization(instruction.intrinsic,
                                        instruction.synchronization);
         exactTrustedSynchronization =
@@ -5062,11 +5561,15 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
-    if (instance.id != index + 1 || instance.declaration == 0) {
+    if (instance.id != index + 1 || instance.sourceUnit == 0 ||
+        instance.declaration == 0 ||
+        instance.type.kind != SemanticType::Class ||
+        instance.type.classId != instance.declaration) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::FieldInitializers,
            .owner = instance.id,
-           .message = "class instance identity or declaration is invalid"});
+           .message = "class instance source, identity, declaration, or "
+                      "nominal type is invalid"});
     }
     const auto validSpecialMemberStatus = [](SpecialMemberStatus status) {
       return status == SpecialMemberStatus::Declared ||
@@ -5099,6 +5602,105 @@ verifyMirProgramContracts(const MirProgram &program) {
            .owner = instance.id,
            .message =
                "class active-drop state is missing active-cleanup metadata"});
+    }
+    if (instance.compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage ||
+        instance.compilerCapability ==
+            CompilerCapabilityTypeKind::MutexLockToken) {
+      const bool storageCapability = instance.compilerCapability ==
+                                     CompilerCapabilityTypeKind::MutexStorage;
+      const std::optional<bool> payloadRequiresActiveCleanup =
+          instance.type.arguments.size() == 1
+              ? typeRequiresActiveCleanup(instance.type.arguments.front(),
+                                          typeRequiresActiveCleanup)
+              : std::nullopt;
+      const bool exactMutexCapability =
+          instance.type.arguments.size() == 1 &&
+          instance.type.arguments.front() != SemanticType::Void &&
+          instance.type.arguments.front().kind != SemanticType::Reference &&
+          instance.type.arguments.front().kind != SemanticType::RawPointer &&
+          !instance.lifecycleBoundBorrowCarrier && instance.bases.empty() &&
+          instance.structuralBases.empty() && instance.declaredFields.empty() &&
+          instance.fields.empty() && instance.fieldDropOrder.empty() &&
+          !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
+          !instance.cAbiLayout && !instance.unionLayout &&
+          !instance.destructor && !instance.requiresActiveDropState &&
+          payloadRequiresActiveCleanup &&
+          instance.requiresActiveCleanup ==
+              (storageCapability && *payloadRequiresActiveCleanup);
+      if (!exactMutexCapability) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "compiler-owned mutex capability class does not "
+                        "retain its exact passive native-storage shape"});
+      }
+    }
+    if (instance.lifecycleBoundBorrowCarrier) {
+      const MirClassFieldInfo *storageField = nullptr;
+      const MirClassFieldInfo *tokenField = nullptr;
+      const MirClassInstance *storageClass = nullptr;
+      const MirClassInstance *tokenClass = nullptr;
+      for (const MirClassFieldInfo &field : instance.declaredFields) {
+        if (exactCapabilityReferenceValue(
+                program, field.type, AccessMode::ReadOnly,
+                CompilerCapabilityTypeKind::MutexStorage, &storageClass)) {
+          storageField = storageField == nullptr ? &field : nullptr;
+          continue;
+        }
+        const MirClassInstance *candidate = exactMirCapabilityClass(
+            program, field.type, CompilerCapabilityTypeKind::MutexLockToken);
+        if (candidate != nullptr) {
+          tokenField = tokenField == nullptr ? &field : nullptr;
+          tokenClass = candidate;
+        }
+      }
+      const bool exactFields =
+          storageField != nullptr && tokenField != nullptr &&
+          storageClass != nullptr && tokenClass != nullptr &&
+          instance.declaredFields.size() == 2 &&
+          instance.type.arguments.size() == 1 &&
+          storageClass->sourceUnit == instance.sourceUnit &&
+          tokenClass->sourceUnit == instance.sourceUnit &&
+          storageClass->type.arguments.front() ==
+              instance.type.arguments.front() &&
+          tokenClass->type.arguments.front() ==
+              instance.type.arguments.front() &&
+          storageField->dropKind == DropKind::Trivial &&
+          tokenField->dropKind == DropKind::Lexical &&
+          instance.fields.size() == 1 &&
+          instance.fields.front().field == tokenField->field &&
+          instance.fields.front().symbol == tokenField->symbol &&
+          instance.fields.front().type == tokenField->type &&
+          instance.fieldDropOrder.size() == 1 &&
+          instance.fieldDropOrder.front().field == tokenField->field &&
+          instance.fieldDropOrder.front().symbol == tokenField->symbol &&
+          instance.fieldDropOrder.front().type == tokenField->type;
+      const bool exactCarrier =
+          instance.compilerCapability == CompilerCapabilityTypeKind::None &&
+          instance.kind == ClassKind::Class && exactFields &&
+          instance.bases.empty() && instance.structuralBases.empty() &&
+          !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
+          !instance.cAbiLayout && !instance.unionLayout &&
+          instance.copyConstructor == SpecialMemberStatus::Deleted &&
+          instance.moveConstructor != SpecialMemberStatus::Deleted &&
+          instance.copyAssignment == SpecialMemberStatus::Deleted &&
+          instance.moveAssignment == SpecialMemberStatus::Deleted &&
+          instance.destructorStatus == SpecialMemberStatus::Declared &&
+          instance.destructor && instance.requiresActiveDropState &&
+          instance.requiresActiveCleanup &&
+          instance.traits.drop == DropKind::Lexical &&
+          !instance.traits.copyable && instance.traits.movable &&
+          !instance.traits.copyAssignable && !instance.traits.moveAssignable &&
+          instance.traits.containsBorrowedState &&
+          !instance.traits.transferCapable && !instance.traits.shareCapable;
+      if (!exactCarrier) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "lifecycle-bound borrow carrier is not the exact "
+                        "same-unit mutex guard storage/token owner"});
+      }
     }
     const bool exactBaseProjection =
         instance.bases.size() == instance.structuralBases.size() &&
@@ -5221,6 +5823,12 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     const bool structurallyRequiresActiveCleanup =
         instance.destructor.has_value() ||
+        (instance.compilerCapability ==
+             CompilerCapabilityTypeKind::MutexStorage &&
+         instance.type.arguments.size() == 1 &&
+         typeRequiresActiveCleanup(instance.type.arguments.front(),
+                                   typeRequiresActiveCleanup)
+             .value_or(false)) ||
         std::any_of(instance.structuralBases.begin(),
                     instance.structuralBases.end(),
                     [&](const HirBaseInstance &base) {

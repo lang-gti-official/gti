@@ -14,6 +14,7 @@
     "stdlib/std/iterator.gti": "26f28bebc19ddd9fd58a2fcc6af778bcd90094e9d45fe57d88f939ea82736066",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "8994829d83715c6d855a758d9ce701231ec68a16f45bd9e5d2aeb42710fab86e",
+    "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2c18e9978aa15a9140e7a2bdf682122ee99d27dd98863283984d676ca2cb4ebf",
     "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
@@ -146,6 +147,30 @@
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "mutex",
+      "mode": "run",
+      "source": "tests/fixtures/mutex_basic.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "mutex-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/mutex_concurrent.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "mutex-move-only",
+      "mode": "run",
+      "source": "tests/fixtures/mutex_move_only.gti",
+      "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -602,6 +627,33 @@
       "operations": ["std::make_shared", "std::shared_ptr public surface", "std::weak_ptr public surface"],
       "reason": "shared_ptr, weak_ptr, and make_shared are declaration-only.",
       "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "mutex.executable",
+      "source": "stdlib/std/mutex.gti",
+      "status": "executable",
+      "operations": [
+        "std::mutex::lock",
+        "std::mutex::mutex",
+        "std::mutex_guard::get"
+      ],
+      "case_ids": ["mutex", "mutex-concurrent", "mutex-move-only"],
+      "required_instantiations": [
+        "concurrent shared global owner",
+        "move-only protected payload",
+        "moved scoped guard",
+        "std::mutex<int32_t>"
+      ],
+      "evidence": [
+        "docs/language/concurrency.md",
+        "stdlib/std/mutex.gti",
+        "tests/fixtures/mutex_basic.gti",
+        "tests/fixtures/mutex_concurrent.gti",
+        "tests/fixtures/mutex_move_only.gti",
+        "tests/mutex_runtime_test.py",
+        "tests/mutex_tests.cpp",
+        "tests/mutex_tsan_test.py"
+      ]
     },
     {
       "id": "numeric.executable",

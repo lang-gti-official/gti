@@ -146,8 +146,8 @@ synchronizes-with. The first executable profile provides these edges:
 - completion of a task happens-before a successful join returns;
 - every sequentially consistent atomic operation participates in the one
   program-wide sequentially consistent order; and
-- a future mutex unlock synchronizes-with a later successful lock acquisition
-  that observes that release of the same mutex.
+- a mutex unlock synchronizes-with a later successful lock acquisition of the
+  same mutex.
 
 Later acquire/release atomics add the edges specified in
 [Future Atomic Orders](#future-atomic-orders). Native code creates a GTI edge
@@ -227,7 +227,7 @@ The recommended structural baseline is:
 | `T*`, `const T*`, and `void*` | no | no | A nominal unsafe wrapper may assert a stronger contract. |
 | lambda or callable object | when every owned capture and its callable lifecycle are | when every capture is share-capable and concurrent invocation uses only a read-only callable contract | A mutable/exclusive callable may still be transferred for one invocation. |
 | atomic scalar wrapper | yes | yes | It is not necessarily copyable, movable, or lock-free. |
-| future `mutex<T>` | when `T` is transfer-capable | when `T` is transfer-capable | Shared mutation is mediated exclusively by its guard. |
+| `mutex<T>` | no cross-thread move in the bounded surface | yes | Shared mutation is mediated exclusively by its non-transferable guard. |
 | future single-thread cell of `T` | when `T` is transfer-capable | no | Interior mutation without synchronization prevents sharing. |
 
 Recursive nominal types use a cycle-aware structural fixed point. A node that
@@ -484,17 +484,18 @@ native template overload or runtime branch.
 
 ### Mutexes And Guards
 
-A future mutex owns `T` and exposes no direct `T&` or `mut T&`. A successful
-lock returns one noncopyable, non-transferable owner-tied guard. The guard
-provides exclusive access, unlocks exactly once on every exit, and prevents the
-protected access from escaping. Unlock synchronizes-with a later successful
-lock of the same mutex.
+The implemented mutex owns `T` and exposes no direct `T&` or `mut T&`. A
+successful lock returns one noncopyable, non-transferable owner-tied guard.
+The guard provides exclusive access, unlocks exactly once on every exit, and
+prevents the protected access from escaping. Unlock synchronizes-with a later
+successful lock of the same mutex.
 
-This requires M-OWN-03 stored/escaping mutable dependency support. The current
-bounded reborrow and read-only iterator carrier do not satisfy the guard
-contract. Execution §4.10 now requires unlock/guard cleanup on a primary failure;
-poisoning, recoverable lock failure, and the exact guard behavior remain owned
-by C-SYNC-01.
+The bounded M-OWN-03 stored dependency is now implemented specifically for the
+guard carrier: moving transfers the owner dependency, the source becomes
+inert, and guard-derived child loans end before unlock. Execution cleanup
+unlocks before propagating a primary failure. The surface deliberately has no
+poisoning; lock acquisition failure is a defined host-operation outcome, while
+an application needing transactional invariants records them in `T`.
 
 Condition variables require an atomic guard release/wait/reacquire operation
 and are deferred beyond that first mutex slice. Volatile/MMIO operations and
@@ -718,7 +719,7 @@ validation behind a narrow C ABI. It does not expose pthread, Windows, C++
 thread, or native atomic types to GTI source.
 
 Public policy remains ordinary GTI source: atomic, thread, join result, and
-future mutex/guard classes constrain compiler-private capabilities through
+mutex/guard classes constrain compiler-private capabilities through
 trusted declaration identity. The compiler recognizes irreducible operations,
 not public wrapper names. I-CAP-01 has closed the `gti_internal` visibility
 gap: only trusted prelude and physical standard-library units can access the
@@ -744,12 +745,12 @@ column is part of every stage rather than a final test-only pass.
 | C-ATOM-01 | **Done:** source-defined SC scalar `std::atomic<T>`, compiler-private storage, and exact verified-MIR lowering | Closed-domain and private-identity diagnostics; exact SC HIR/MIR metadata; strong-CAS observed-value semantics; O0/O3 and C++20/C++23 modification-order/store-buffer stress; optimizer mutation tests; installed-toolchain workflows; and `atomic_tsan` where supported. |
 | D-CALL-01 / C-CALL-01 | **Done:** one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
 | C-THREAD-01 | **Done:** source-defined move-only automatic-join `std::thread`, typed `std::thread_result<Result>`, and recoverable creation/join | Spawn/join happens-before tests, move-only task and result transfer, explicit result take or automatic abandon, join on every cleanup edge, creation failure injection, exact worker re-raise, stress, O0/O3, and sanitizers. |
-| M-OWN-03 / C-SYNC-01 | Add guard-tied mutex access after stored mutable dependencies exist | Exactly-once unlock on every edge, no protected-reference escape, contention stress, poisoning/failure behavior, and TSAN. |
+| M-OWN-03 / C-SYNC-01 | **Done:** scoped `std::mutex<T>`/`std::mutex_guard<T>` over the bounded owner-dependent carrier | Exactly-once unlock on normal/failure edges, no protected-reference escape, move-only guard transfer, two-thread contention, defined lock failure, no-poisoning policy, and TSAN. |
 | C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
 | later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
-| C-CONFORM-01 | **Done for `std::thread` and ordered scalar atomics; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
+| C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
 must not infer transfer/share from spelling. Hover displays the adopted public
@@ -763,8 +764,9 @@ This proposal does not add or promise:
 
 - source syntax for thread creation, atomics, thread-local storage, memory
   orders, or native callbacks beyond the implemented capability attributes;
-- mutexes, condition variables, scoped borrows, stop tokens, typed argument
-  packs, or detach in the shipped concurrency profile;
+- condition variables, recursive/read-write mutexes, public manual unlock,
+  scoped cross-thread borrows, stop tokens, typed argument packs, or detach in
+  the shipped concurrency profile;
 - cross-thread references in the first executable profile;
 - pointer atomics before a public provenance/cast contract;
 - volatile/MMIO, signals, coroutines, async tasks, work stealing, parallel

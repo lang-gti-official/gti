@@ -1,0 +1,12 @@
+#include <std/mutex>
+
+int main() {
+  std::mutex<int32_t> value{1};
+  {
+    mut std::mutex_guard<int32_t> guard = value.lock();
+    mut int32_t& current = guard.get();
+    current = current + 1;
+  }
+  std::mutex_guard<int32_t> guard = value.lock();
+  return guard.get() == 2 ? 0 : 1;
+}

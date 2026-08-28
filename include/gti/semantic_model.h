@@ -49,6 +49,11 @@ struct SemanticLoanInfo {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
+  // A lifecycle-bound owner dependency remains active until its one carrier
+  // is destroyed. It cannot use ordinary last-use loan shortening because
+  // the carrier's destructor performs the operation that releases the
+  // protected resource.
+  bool lifecycleBound = false;
   // For a StoredValue loan carried by a direct stored-reference parameter,
   // this is the exact semantic field that designates the external referent.
   // Zero for ordinary reference loans and non-entry retained loans.
@@ -277,6 +282,12 @@ enum class IntrinsicKind {
   AtomicStore,
   AtomicExchange,
   AtomicCompareExchange,
+  MutexLock,
+  MutexUnlock,
+  MutexGuardActive,
+  MutexGuardRead,
+  MutexGuardReadMut,
+  MutexLockFailure,
   Count,
 };
 
@@ -299,6 +310,8 @@ enum class CompilerCapabilityTypeKind {
   PrefixStorage,
   ThreadHandle,
   AtomicStorage,
+  MutexStorage,
+  MutexLockToken,
 };
 
 enum class ProgramEntryKind {
@@ -1541,6 +1554,8 @@ private:
                                      std::size_t armIndex);
 
   void recordLoanCarrier(SemanticLoanId id, SymbolId carrier);
+
+  void removeLoanCarrier(SemanticLoanId id, SymbolId carrier);
 
   void clearLoans();
 

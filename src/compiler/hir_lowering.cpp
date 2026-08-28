@@ -182,6 +182,25 @@ private:
     }
     const ClassLifecycleInfo *lifecycle =
         baseModel->findClassLifecycle(*declaration->declaration);
+    const bool lifecycleBoundBorrowCarrier = [&] {
+      if (declaration->namespaceScope != std::vector<std::string>{"std"} ||
+          declaration->declaration->name().lexeme != "mutex_guard" ||
+          !declaration->storedReference ||
+          declaration->storedReference->type.kind != SemanticType::Reference ||
+          declaration->storedReference->type.arguments.size() != 1) {
+        return false;
+      }
+      const SemanticType &storageType =
+          declaration->storedReference->type.arguments.front();
+      const ClassTypeInfo *storage =
+          storageType.kind == SemanticType::Class
+              ? baseModel->findClassType(storageType.classId)
+              : nullptr;
+      return storage != nullptr &&
+             storage->sourceUnit == declaration->sourceUnit &&
+             storage->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexStorage;
+    }();
     const HirClassInstanceId id = output.program.classes.size() + 1;
     output.program.classes.push_back(
         {.id = id,
@@ -193,6 +212,8 @@ private:
          .instantiationSite = std::move(site),
          .type = resolvedType,
          .traits = instanceProvider->traitsFor(resolvedType),
+         .compilerCapability = declaration->compilerCapability,
+         .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,
@@ -1571,6 +1592,7 @@ private:
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedField = loan.designatedField,
+                      .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
@@ -3660,6 +3682,17 @@ private:
         } else if (resolved->intrinsic == IntrinsicKind::ThreadJoin ||
                    resolved->intrinsic == IntrinsicKind::ThreadAutoJoin) {
           value.synchronization.kind = SynchronizationOperationKind::ThreadJoin;
+        } else if (resolved->intrinsic == IntrinsicKind::MutexLock ||
+                   resolved->intrinsic == IntrinsicKind::MutexUnlock) {
+          value.synchronization = resolved->synchronization;
+          const SynchronizationOperationKind expected =
+              resolved->intrinsic == IntrinsicKind::MutexLock
+                  ? SynchronizationOperationKind::MutexLock
+                  : SynchronizationOperationKind::MutexUnlock;
+          if (value.synchronization.kind != expected ||
+              !validSynchronizationOperation(value.synchronization)) {
+            lifecycleValid = false;
+          }
         } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad ||
                    resolved->intrinsic == IntrinsicKind::AtomicStore ||
                    resolved->intrinsic == IntrinsicKind::AtomicExchange ||

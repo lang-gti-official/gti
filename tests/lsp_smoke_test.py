@@ -3809,6 +3809,255 @@ def test_atomic_tooling(executable, root):
         session.close()
 
 
+def test_mutex_tooling(executable, root):
+    project = root / "mutex-lsp"
+    path = project / "src/main.gti"
+    path.parent.mkdir(parents=True)
+    source = (
+        "#include <std/mutex>\n"
+        "std::mutex<int32_t> counter{0};\n"
+        "int main() {\n"
+        "  {\n"
+        "    mut std::mutex_guard<int32_t> guard = counter.lock();\n"
+        "    mut int32_t& current = guard.get();\n"
+        "    current = current + 1;\n"
+        "  }\n"
+        "  std::mutex_guard<int32_t> final_guard = counter.lock();\n"
+        "  return final_guard.get() == 1 ? 0 : 1;\n"
+        "}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    project.joinpath("gti.toml").write_text(
+        "manifest-version = 1\n\n"
+        "[package]\n"
+        'name = "mutex_lsp"\n'
+        'version = "0.1.0"\n\n'
+        "[targets.mutex_lsp]\n"
+        'kind = "executable"\n'
+        'root = "src/main.gti"\n\n'
+        "[profiles.dev]\n"
+        'execution-profile = "concurrent"\n',
+        encoding="utf-8",
+    )
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "rootUri": project.resolve().as_uri(),
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            },
+                        }
+                    },
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def position_request(request_id, method, offset, text=source):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(text, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        mutex_use = source.index("mutex<int32_t>")
+        mutex_hover = position_request(2, "textDocument/hover", mutex_use + 1)
+        assert "move-only synchronization owner" in mutex_hover["contents"][
+            "value"
+        ]
+        mutex_definition = position_request(
+            3, "textDocument/definition", mutex_use + 1
+        )
+        assert mutex_definition is not None
+        assert mutex_definition["uri"].endswith("/stdlib/std/mutex.gti")
+
+        guard_use = source.index("mutex_guard<int32_t>")
+        guard_hover = position_request(4, "textDocument/hover", guard_use + 1)
+        assert "move-only scoped exclusive loan" in guard_hover["contents"][
+            "value"
+        ]
+        lock_use = source.index("lock()")
+        lock_hover = position_request(5, "textDocument/hover", lock_use + 1)
+        assert "Acquires the mutex" in lock_hover["contents"]["value"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 6)[
+                "result"
+            ]["data"]
+        )
+        for offset, expected_type in (
+            (mutex_use, 4),
+            (guard_use, 4),
+            (lock_use, 6),
+            (source.index("get()"), 6),
+        ):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])][
+                "type"
+            ] == expected_type
+
+        completion_source = source.replace("guard.get()", "guard.ge")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": completion_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        prefix = completion_source.index("guard.ge") + len("guard.ge")
+        completion = position_request(
+            7, "textDocument/completion", prefix, completion_source
+        )
+        get_item = next(
+            item for item in completion["items"] if item["label"] == "get"
+        )
+        assert "get" in get_item["detail"]
+
+        private_source = (
+            "#include <std/mutex>\n"
+            "int main() {\n"
+            "  gti_internal::mutex_storage<int32_t> storage{1};\n"
+            "  int32_t probe = gti_internal::mutex_;\n"
+            "  return probe;\n"
+            "}\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": private_source}],
+                },
+            }
+        )
+        private_diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2058"
+            for diagnostic in private_diagnostics
+        )
+        private_storage = private_source.index("mutex_storage")
+        assert (
+            position_request(
+                8, "textDocument/hover", private_storage + 1, private_source
+            )
+            is None
+        )
+        private_prefix = private_source.index("mutex_;") + len("mutex_")
+        private_completion = position_request(
+            9, "textDocument/completion", private_prefix, private_source
+        )
+        assert private_completion["items"] == []
+    finally:
+        session.close()
+
+    session = LspSession(executable, ["--execution-profile", "single-threaded"])
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "rootUri": project.resolve().as_uri(),
+                    "capabilities": {},
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2084"
+            and "concurrent execution profile" in diagnostic["message"]
+            for diagnostic in diagnostics
+        )
+    finally:
+        session.close()
+
+
 def test_managed_thread_tooling(executable, root):
     project = root / "managed-thread-lsp"
     path = project / "src/main.gti"
@@ -8271,7 +8520,8 @@ def main():
     if len(sys.argv) not in (2, 3):
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
-            "[allocator-policy|atomic|constexpr-aggregate|owner-dependent-views]"
+            "[allocator-policy|atomic|mutex|constexpr-aggregate|"
+            "owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -8285,6 +8535,10 @@ def main():
             with tempfile.TemporaryDirectory(prefix="gti-lsp-atomic-") as root:
                 test_atomic_tooling(sys.argv[1], pathlib.Path(root))
             print("GTI atomic LSP test passed")
+        elif sys.argv[2] == "mutex":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-mutex-") as root:
+                test_mutex_tooling(sys.argv[1], pathlib.Path(root))
+            print("GTI mutex LSP test passed")
         elif sys.argv[2] == "constexpr-aggregate":
             with tempfile.TemporaryDirectory(
                 prefix="gti-lsp-constexpr-"
@@ -8347,6 +8601,7 @@ def main():
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_atomic_tooling(sys.argv[1], root)
+    test_mutex_tooling(sys.argv[1], root)
     test_standalone_managed_thread_profile(sys.argv[1], root)
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)

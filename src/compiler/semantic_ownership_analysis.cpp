@@ -67,6 +67,20 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
 
 auto SemanticVisitor::Impl::requiresActiveCleanup(
     const SemanticType &type, ActiveCleanupQuery &query) const -> bool {
+  if (type.kind == SemanticType::Class) {
+    const ClassInfo *owner = classInfo(type);
+    if (owner != nullptr &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage) {
+      return type.arguments.size() == 1 &&
+             requiresActiveCleanup(type.arguments.front(), query);
+    }
+    if (owner != nullptr &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexLockToken) {
+      return false;
+    }
+  }
   switch (type.kind) {
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
@@ -356,6 +370,16 @@ auto SemanticVisitor::Impl::typeCapabilities(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::MutexStorage) {
+    visiting.pop_back();
+    return {.transferCapable = false, .shareCapable = true};
+  }
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::MutexLockToken) {
+    visiting.pop_back();
+    return {};
+  }
   if (owner.kind == ClassKind::Interface) {
     ConcurrencyCapabilities result{
         .transferCapable =
@@ -538,6 +562,35 @@ auto SemanticVisitor::Impl::typeTraits(
                               .containsBorrowedState = false,
                               .transferCapable = true,
                               .shareCapable = true};
+  }
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+    const SemanticTypeTraits element =
+        type.arguments.size() == 1
+            ? typeTraits(type.arguments.front(), visiting)
+            : SemanticTypeTraits{};
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = element.drop,
+                              .copyable = false,
+                              .movable = true,
+                              .copyAssignable = false,
+                              .moveAssignable = false,
+                              .containsBorrowedState = false,
+                              .transferCapable = false,
+                              .shareCapable = true};
+  }
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::MutexLockToken) {
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Unique,
+                              .drop = DropKind::Lexical,
+                              .copyable = false,
+                              .movable = true,
+                              .copyAssignable = false,
+                              .moveAssignable = false,
+                              .containsBorrowedState = false,
+                              .transferCapable = false,
+                              .shareCapable = false};
   }
   if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
     traits.drop = DropKind::Trivial;
@@ -1015,6 +1068,9 @@ auto SemanticVisitor::Impl::borrowAccess(const SemanticType &type) const
     return type.referenceAccess;
   }
   const ClassInfo *owner = classInfo(type);
+  if (owner != nullptr && isDefaultLibraryMutexGuardCarrier(*owner)) {
+    return AccessMode::Mutable;
+  }
   return owner != nullptr && owner->storedReference
              ? owner->storedReference->access
              : AccessMode::ReadOnly;
@@ -1051,8 +1107,19 @@ auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
 auto SemanticVisitor::Impl::trustedSynchronizationOperation(
     SourceUnitId sourceUnit, const std::vector<std::string> &scope,
     std::string_view name) const -> SynchronizationOperation {
-  if (!isAtomicLibraryUnit(sourceUnit) || scope.size() != 1 ||
-      scope.front() != "gti_internal") {
+  if (scope.size() != 1 || scope.front() != "gti_internal") {
+    return {};
+  }
+  if (isMutexLibraryUnit(sourceUnit)) {
+    if (name == "mutex_lock") {
+      return {.kind = SynchronizationOperationKind::MutexLock};
+    }
+    if (name == "mutex_unlock") {
+      return {.kind = SynchronizationOperationKind::MutexUnlock};
+    }
+    return {};
+  }
+  if (!isAtomicLibraryUnit(sourceUnit)) {
     return {};
   }
   const auto operation =
@@ -1182,6 +1249,30 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     default:
       return IntrinsicKind::None;
     }
+  }
+  if (isMutexLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "mutex_lock") {
+      return IntrinsicKind::MutexLock;
+    }
+    if (name == "mutex_unlock") {
+      return IntrinsicKind::MutexUnlock;
+    }
+    if (name == "mutex_guard_active") {
+      return IntrinsicKind::MutexGuardActive;
+    }
+    if (name == "mutex_guard_read") {
+      return IntrinsicKind::MutexGuardRead;
+    }
+    if (name == "mutex_guard_read_mut") {
+      return IntrinsicKind::MutexGuardReadMut;
+    }
+    if (name == "mutex_lock_failure") {
+      return IntrinsicKind::MutexLockFailure;
+    }
+    return IntrinsicKind::None;
   }
   if (!isPreludeUnit(sourceUnit)) {
     return IntrinsicKind::None;
@@ -2710,6 +2801,10 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     SemanticLoanId parent, bool entry, SymbolId designatedField)
     -> SemanticLoanId {
   const SemanticLoanId id = nextSemanticLoanId++;
+  const ClassInfo *carrierOwner = classInfo(carrier.type);
+  const bool lifecycleBound =
+      carrierOwner != nullptr &&
+      isDefaultLibraryMutexGuardCarrier(*carrierOwner);
   semanticModel.recordLoan({.id = id,
                             .kind = kind,
                             .origin = origin,
@@ -2720,6 +2815,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                             .place = std::move(place),
                             .access = access,
                             .protectsStorage = protectsStorage,
+                            .lifecycleBound = lifecycleBound,
                             .designatedField = designatedField,
                             .carriers = {carrierSymbol}});
   loanFlow.records.emplace(
@@ -2728,7 +2824,8 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                          .lastUseOrder = loanFlow.currentOrder,
                          .lastUse = loanFlow.currentStatement,
                          .carriers = {carrierSymbol},
-                         .confinedToRegion = carrierSymbol != 0});
+                         .confinedToRegion = carrierSymbol != 0,
+                         .lifecycleBound = lifecycleBound});
   loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
   carrier.retainedLoan = id;
   if (protectsStorage) {
@@ -2844,6 +2941,17 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           if (auto flow = loanFlow.records.find(source->loan);
               flow != loanFlow.records.end()) {
             flow->second.carriers.erase(sourceSymbol);
+          }
+          if (sourceLoan->lifecycleBound) {
+            semanticModel.removeLoanCarrier(source->loan, sourceSymbol);
+            if (sourceCarrier->variableDeclaration != nullptr) {
+              semanticModel.recordBindingLoan(
+                  *sourceCarrier->variableDeclaration, 0);
+            }
+            if (sourceCarrier->parameterDeclaration != nullptr) {
+              semanticModel.recordBindingLoan(
+                  *sourceCarrier->parameterDeclaration, 0);
+            }
           }
           sourceCarrier->retainedLoan = 0;
         }
@@ -3072,7 +3180,8 @@ auto SemanticVisitor::Impl::canEndLoanEarly(const LoanFlowRecord &loan) const
   const bool supportedMultiplicity =
       !loan.hasAliases ||
       (semanticLoan != nullptr && semanticLoan->access == AccessMode::ReadOnly);
-  return supportedMultiplicity && loan.confinedToRegion && loan.region != 0 &&
+  return !loan.lifecycleBound && supportedMultiplicity &&
+         loan.confinedToRegion && loan.region != 0 &&
          loan.lastUse != nullptr && supportsProvenLoanEnd(loan);
 }
 
@@ -4201,6 +4310,165 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
                              .synchronization = synchronization});
 }
 
+auto SemanticVisitor::Impl::analyzeMutexIntrinsicCall(
+    const Call &expr, const CallableCandidate &declaration) -> void {
+  const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  std::vector<SemanticType> explicitTypeArguments;
+  explicitTypeArguments.reserve(expr.typeArguments().size());
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+    explicitTypeArguments.push_back(typeOf(argument));
+  }
+  if (!explicitTypeArguments.empty()) {
+    report(expr.paren(),
+           "Private mutex operations infer their element type from their "
+           "capability arguments.",
+           "GTI-S2087");
+  }
+
+  std::vector<SemanticType> argumentTypes;
+  argumentTypes.reserve(expr.arguments().size());
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.emplace_back(analyze(argument));
+  }
+
+  const auto capabilityElement = [&](const SemanticType &type,
+                                     CompilerCapabilityTypeKind kind)
+      -> std::optional<SemanticType> {
+    const SemanticType *candidate = &type;
+    if (candidate->kind == SemanticType::Reference &&
+        candidate->arguments.size() == 1) {
+      candidate = &candidate->arguments.front();
+    }
+    const ClassInfo *owner = classInfo(*candidate);
+    if (owner == nullptr || owner->compilerCapability != kind ||
+        candidate->arguments.size() != 1) {
+      return std::nullopt;
+    }
+    return candidate->arguments.front();
+  };
+
+  if (intrinsic == IntrinsicKind::MutexLockFailure) {
+    if (!argumentTypes.empty()) {
+      report(expr.paren(), "mutex_lock_failure expects no arguments.",
+             "GTI-S2087");
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .intrinsic = IntrinsicKind::MutexLockFailure});
+    return;
+  }
+
+  const bool storageAndToken =
+      intrinsic == IntrinsicKind::MutexLock ||
+      intrinsic == IntrinsicKind::MutexUnlock ||
+      intrinsic == IntrinsicKind::MutexGuardRead ||
+      intrinsic == IntrinsicKind::MutexGuardReadMut;
+  const std::size_t expectedArguments = storageAndToken ? 2 : 1;
+  if (argumentTypes.size() != expectedArguments) {
+    report(expr.paren(),
+           storageAndToken
+               ? "This private mutex operation expects one storage and one "
+                 "lock token."
+               : "mutex_guard_active expects one lock token.",
+           "GTI-S2087");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  std::optional<SemanticType> elementType;
+  std::size_t tokenIndex = 0;
+  if (storageAndToken) {
+    elementType = capabilityElement(argumentTypes.front(),
+                                    CompilerCapabilityTypeKind::MutexStorage);
+    tokenIndex = 1;
+  }
+  const std::optional<SemanticType> tokenElement =
+      capabilityElement(argumentTypes[tokenIndex],
+                        CompilerCapabilityTypeKind::MutexLockToken);
+  if ((storageAndToken && !elementType) || !tokenElement ||
+      (elementType && *elementType != *tokenElement)) {
+    report(expressionToken(expr.arguments().front()),
+           "Mutex operations require the exact compiler-owned storage and "
+           "lock-token capabilities with one matching element type.",
+           "GTI-S2087");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (!elementType) {
+    elementType = tokenElement;
+  }
+
+  for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+    const ExpressionInfo *argument =
+        semanticModel.findExpression(*expr.arguments()[index]);
+    if (argument == nullptr || argument->category != ValueCategory::Place) {
+      report(expressionToken(expr.arguments()[index]),
+             "Mutex operations require stable capability storage.",
+             "GTI-S2087");
+    }
+  }
+  const bool mutatesToken = intrinsic == IntrinsicKind::MutexLock ||
+                            intrinsic == IntrinsicKind::MutexUnlock;
+  if (mutatesToken) {
+    const ExpressionInfo *token =
+        semanticModel.findExpression(*expr.arguments()[tokenIndex]);
+    if (token == nullptr || token->access != AccessMode::Mutable) {
+      report(expressionToken(expr.arguments()[tokenIndex]),
+             "Lock and unlock require mutable stable token storage.",
+             "GTI-S2087");
+    }
+  }
+
+  const bool read = intrinsic == IntrinsicKind::MutexGuardRead ||
+                    intrinsic == IntrinsicKind::MutexGuardReadMut;
+  const AccessMode readAccess =
+      intrinsic == IntrinsicKind::MutexGuardReadMut ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly;
+  currentType = intrinsic == IntrinsicKind::MutexLock      ? SemanticType::Int32
+                : intrinsic == IntrinsicKind::MutexGuardActive
+                    ? SemanticType::Bool
+                : read ? *elementType
+                       : SemanticType::Void;
+
+  std::vector<SemanticType> parameterTypes;
+  if (storageAndToken) {
+    parameterTypes.push_back(SemanticType::referenceTo(
+        argumentTypes.front(), AccessMode::ReadOnly));
+  }
+  parameterTypes.push_back(SemanticType::referenceTo(
+      argumentTypes[tokenIndex], mutatesToken ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly));
+  const SynchronizationOperation synchronization =
+      trustedSynchronizationOperation(declaration.record().sourceUnit,
+                                      declaration.record().namespaceScope,
+                                      declaration.record().syntax->name()
+                                          .lexeme);
+  if ((intrinsic == IntrinsicKind::MutexLock ||
+       intrinsic == IntrinsicKind::MutexUnlock) &&
+      !validSynchronizationOperation(synchronization)) {
+    report(expr.paren(),
+           "This private mutex operation has no exact synchronization "
+           "contract.",
+           "GTI-S2087");
+  }
+  semanticModel.record(
+      expr,
+      ResolvedCallInfo{
+          .returnType = read ? SemanticType::referenceTo(*elementType,
+                                                         readAccess)
+                             : currentType,
+          .parameterTypes = std::move(parameterTypes),
+          .typeArguments = {*elementType},
+          .intrinsic = intrinsic,
+          .synchronization = synchronization,
+          .borrowOrigin = read ? BorrowOriginKind::Argument
+                               : BorrowOriginKind::None,
+          .borrowArgument = 0,
+          .borrowAccess = readAccess});
+}
+
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
@@ -4237,6 +4505,16 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::AtomicExchange ||
       intrinsic == IntrinsicKind::AtomicCompareExchange) {
     analyzeAtomicIntrinsicCall(expr, declaration);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::MutexLock ||
+      intrinsic == IntrinsicKind::MutexUnlock ||
+      intrinsic == IntrinsicKind::MutexGuardActive ||
+      intrinsic == IntrinsicKind::MutexGuardRead ||
+      intrinsic == IntrinsicKind::MutexGuardReadMut ||
+      intrinsic == IntrinsicKind::MutexLockFailure) {
+    analyzeMutexIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

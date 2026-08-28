@@ -282,12 +282,17 @@ auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(
     const SemanticType &type) const -> bool {
   if (type.kind == SemanticType::Class && type.classId != 0 &&
       type.classId <= classes.size() &&
-      classInfo(type.classId).compilerCapability ==
-          CompilerCapabilityTypeKind::AtomicStorage) {
-    // The exact compiler-owned atomic representation has trivial cleanup and
-    // a storage-independent constructor for every admitted scalar T. Its
-    // generic element therefore does not make program-initialization effects
-    // open-ended.
+      (classInfo(type.classId).compilerCapability ==
+           CompilerCapabilityTypeKind::AtomicStorage ||
+       classInfo(type.classId).compilerCapability ==
+           CompilerCapabilityTypeKind::MutexStorage)) {
+    // Exact compiler-owned synchronization representations have
+    // storage-independent construction. Atomic storage is trivially cleaned;
+    // mutex storage relocates its payload and leaves every intermediate shell
+    // inactive, so no payload destructor body can run from the generic wrapper
+    // expression. The final payload cleanup occurs only with the completed
+    // program object, after program initialization. Their generic element
+    // therefore does not make initializer effects open-ended.
     return false;
   }
   if (type.kind == SemanticType::TypeParameter ||
@@ -1756,6 +1761,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::AtomicStore:
         case IntrinsicKind::AtomicExchange:
         case IntrinsicKind::AtomicCompareExchange:
+        case IntrinsicKind::MutexLock:
+        case IntrinsicKind::MutexUnlock:
+        case IntrinsicKind::MutexGuardActive:
+        case IntrinsicKind::MutexGuardRead:
+        case IntrinsicKind::MutexGuardReadMut:
+          break;
+        case IntrinsicKind::MutexLockFailure:
+          anchor(token);
+          addFailureOutcome(operation,
+                            DefinedFailureCode::InfallibleHostOperationFailed,
+                            DefinedFailureDetail::MutexLock);
           break;
         case IntrinsicKind::ThreadJoin:
           operation.propagation = FailurePropagationKind::TaskJoin;
@@ -2222,15 +2238,42 @@ auto SemanticVisitor::Impl::isAtomicLibraryUnit(SourceUnitId sourceUnit) const
          unit->standardLibraryName == "std/atomic";
 }
 
+auto SemanticVisitor::Impl::isMutexLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/mutex";
+}
+
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
     const ClassInfo &owner) const -> bool {
-  return isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
+  return isDefaultLibraryMutexGuardCarrier(owner) ||
+         (isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
          owner.storedReference->type.kind == SemanticType::Reference &&
          !owner.storedReference->type.arguments.empty() &&
          (owner.storedReference->type.arguments.front().kind ==
               SemanticType::Storage ||
           owner.storedReference->type.arguments.front().kind ==
-              SemanticType::PrefixStorage);
+              SemanticType::PrefixStorage));
+}
+
+auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
+    const ClassInfo &owner) const -> bool {
+  if (!isMutexLibraryUnit(owner.sourceUnit) || !owner.storedReference ||
+      owner.namespaceScope != std::vector<std::string>{"std"} ||
+      owner.name.lexeme != "mutex_guard" ||
+      owner.storedReference->type.kind != SemanticType::Reference ||
+      owner.storedReference->type.arguments.size() != 1) {
+    return false;
+  }
+  const ClassInfo *storage =
+      classInfo(owner.storedReference->type.arguments.front());
+  return storage != nullptr &&
+         storage->compilerCapability ==
+             CompilerCapabilityTypeKind::MutexStorage;
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowParameter(
