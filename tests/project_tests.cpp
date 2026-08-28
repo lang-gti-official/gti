@@ -2639,6 +2639,24 @@ void testCrossToolchainFailClosed() {
                findDiagnostic(withoutCc.diagnostics, "GTI-B1905") != nullptr,
            "a declared toolchain with no 'cc' must reject a build that "
            "compiles native C sources");
+
+    const lang::driver::ProjectResolutionResult checkedWithoutCc =
+        lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+            cPackage.root(), std::nullopt, "dev", target, {}, std::nullopt, {},
+            lang::driver::RuntimeProfile::Hosted,
+            lang::driver::ToolchainSelectionPolicy::HostTools));
+    expect(checkedWithoutCc.succeeded(),
+           "analysis must not require a native C compiler it never invokes");
+
+    const lang::driver::ProjectResolutionResult overriddenCc =
+        lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+            cPackage.root(), std::nullopt, "dev", target, {}, std::nullopt, {},
+            lang::driver::RuntimeProfile::Hosted,
+            lang::driver::ToolchainSelectionPolicy::DeclaredForNonHostTarget,
+            {.cCompiler = true}));
+    expect(overriddenCc.succeeded(),
+           "an explicit C compiler override should satisfy a cc-less cross "
+           "toolchain");
   }
 }
 

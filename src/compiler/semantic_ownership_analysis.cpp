@@ -1175,7 +1175,7 @@ auto SemanticVisitor::Impl::trustedSynchronizationOperation(
                            success, failure)
                : SynchronizationOperation{};
   };
-  for (const auto [candidate, success, failure] :
+  for (const auto &[candidate, success, failure] :
        {std::tuple<std::string_view, AtomicMemoryOrder, AtomicMemoryOrder>{
             "atomic_compare_exchange_relaxed_relaxed",
             AtomicMemoryOrder::Relaxed, AtomicMemoryOrder::Relaxed},

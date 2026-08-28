@@ -45,10 +45,10 @@ struct BuildProvenanceDifference {
 
 // Compares every content identity, identity aggregate, project selection
 // fact, normalized native argv operand, and the produced artifact. Source
-// units and runtime headers are matched by logical identity, so a relocated
-// tree with identical content compares equal while a changed unit is named
-// exactly. Canonical paths are context, not identity: a file whose content
-// matches at a different path is not a difference.
+// units and runtime headers are matched by logical identity, so changing only
+// a material's canonical context path is not a difference. Native argv paths
+// remain exact except for the two driver-generated operands documented above,
+// so relocating a complete project can still report command-path differences.
 [[nodiscard]] std::vector<BuildProvenanceDifference>
 compareBuildProvenance(const BuildProvenance &recorded,
                        const BuildProvenance &observed);

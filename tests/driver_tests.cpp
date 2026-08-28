@@ -2297,8 +2297,8 @@ void testBuildReportRecordRoundTrip() {
   expect(preludeUntouched,
          "an unchanged source unit should not be reported as a difference");
 
-  // A record whose content identity matches at another path is not a
-  // divergence; the tree may legitimately have moved.
+  // Canonical material paths are context rather than identity. This does not
+  // relax path operands in the separately compared native command.
   lang::driver::BuildProvenance relocated = *parsed;
   relocated.source.units[0].material.canonicalPath =
       "/elsewhere/sample/src/main.gti";
@@ -2307,6 +2307,15 @@ void testBuildReportRecordRoundTrip() {
          "identical content at a new canonical path should compare equal");
 
   std::string rejectedError;
+  std::string duplicateSchema = serialized;
+  duplicateSchema.insert(duplicateSchema.find('\n') + 1, "  \"schema\": 2,\n");
+  expect(!lang::driver::parseBuildProvenanceJson(duplicateSchema, rejectedError)
+                 .has_value() &&
+             rejectedError.find("duplicate object member 'schema'") !=
+                 std::string::npos,
+         "an ambiguous report with duplicate object members should be "
+         "rejected");
+
   expect(
       !lang::driver::parseBuildProvenanceJson("{\"schema\": 1}", rejectedError)
               .has_value() &&

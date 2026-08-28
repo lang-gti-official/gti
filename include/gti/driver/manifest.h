@@ -125,8 +125,8 @@ struct ProjectToolchain {
   // declared toolchain that named no compiler would silently fall back to
   // host discovery and link host objects into a cross build.
   std::string cxx;
-  // Native C compiler. Optional here and required only when the resolved
-  // build actually compiles C sources.
+  // Native C compiler. Optional here; a build that compiles C requires this
+  // value or an explicit caller override.
   std::string cc;
   // Resolved platform sysroot, or empty when the entry declares none. A
   // package-contained relative spelling resolves against the package root;
