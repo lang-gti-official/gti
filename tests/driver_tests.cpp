@@ -1310,19 +1310,45 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "cache identity so header shadowing can never restore a stale "
          "executable");
 
-  lang::driver::NativeInputs nativeLibraryDirectory;
-  nativeLibraryDirectory.libraryDirectories.push_back(nativeSearchDirectory);
+  const std::filesystem::path nativeLibrarySearchDirectory =
+      project / "native-library-search";
+  std::filesystem::create_directories(nativeLibrarySearchDirectory);
+  const auto buildWithLibraryDirectory = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.libraryDirectories.push_back(nativeLibrarySearchDirectory);
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
   const lang::driver::ExecutableBuildResult nativeLibraryDirectoryBuild =
-      build(lang::OptimizationLevel::O0, std::move(nativeLibraryDirectory));
+      buildWithLibraryDirectory();
   expect(nativeLibraryDirectoryBuild.succeeded() &&
              nativeLibraryDirectoryBuild.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
-             nativeLibraryDirectoryBuild.cache.detail &&
-             nativeLibraryDirectoryBuild.cache.detail->find(
-                 "library search directories") != std::string::npos &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeLibraryDirectoryBuild.cache.key != firstKey &&
              nativeLibraryDirectoryBuild.nativeProcess,
-         "native library search directories should bypass the whole-program "
-         "cache until linker search is resolved to exact inputs");
+         "declared native library search directories should join cache "
+         "identity through full-tree content instead of bypassing");
+  const lang::driver::ExecutableBuildResult nativeLibraryDirectoryHit =
+      buildWithLibraryDirectory();
+  expect(nativeLibraryDirectoryHit.succeeded() &&
+             nativeLibraryDirectoryHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeLibraryDirectoryHit.cache.key ==
+                 nativeLibraryDirectoryBuild.cache.key,
+         "an unchanged declared library search tree should verify and restore "
+         "the cached executable");
+  expect(writeFile(nativeLibrarySearchDirectory / "added.txt", "added\n"),
+         "the library-tree invalidation fixture should be writable");
+  const lang::driver::ExecutableBuildResult nativeLibraryDirectoryChange =
+      buildWithLibraryDirectory();
+  expect(nativeLibraryDirectoryChange.succeeded() &&
+             nativeLibraryDirectoryChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeLibraryDirectoryChange.cache.key !=
+                 nativeLibraryDirectoryBuild.cache.key,
+         "adding any file below a declared library search directory should "
+         "change cache identity, so a file dropped there can never shadow an "
+         "implicitly resolved library behind a stale entry");
+  std::filesystem::remove(nativeLibrarySearchDirectory / "added.txt");
 
   lang::driver::NativeInputs namedLibraryInput;
   namedLibraryInput.libraries.emplace_back("m");
@@ -1331,10 +1357,96 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   expect(namedLibraryBuild.cache.status ==
                  lang::driver::BuildCacheStatus::Bypassed &&
              namedLibraryBuild.cache.detail &&
-             namedLibraryBuild.cache.detail->find("name-resolved") !=
+             namedLibraryBuild.cache.detail->find(
+                 "does not resolve inside the declared native library search "
+                 "directories") != std::string::npos,
+         "a named library with no declared search directory holding it would "
+         "resolve through the linker's implicit directories and must bypass");
+
+  // A `-l` name that resolves to exactly one content-complete archive inside
+  // a declared search directory participates with that file's content.
+  const std::filesystem::path resolvedArchive =
+      nativeLibrarySearchDirectory / "libgtiruntimealias.a";
+  copyError.clear();
+  std::filesystem::copy_file(localRuntimeLibrary, resolvedArchive, copyError);
+  expect(!copyError, "the resolvable library fixture should be copyable");
+  const auto buildWithResolvedLibrary = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.libraryDirectories.push_back(nativeLibrarySearchDirectory);
+    inputs.libraries.emplace_back("gtiruntimealias");
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+  const lang::driver::ExecutableBuildResult resolvedLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(resolvedLibraryBuild.succeeded() &&
+             resolvedLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             resolvedLibraryBuild.nativeProcess,
+         "a named library resolving to one content-complete archive in a "
+         "declared search directory should join cache identity");
+  const lang::driver::ExecutableBuildResult resolvedLibraryHit =
+      buildWithResolvedLibrary();
+  expect(resolvedLibraryHit.succeeded() &&
+             resolvedLibraryHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             resolvedLibraryHit.cache.key == resolvedLibraryBuild.cache.key &&
+             !resolvedLibraryHit.nativeProcess,
+         "an unchanged resolved library should verify and restore the cached "
+         "executable");
+
+  // Two modeled candidates in the same directory: which one the linker would
+  // prefer is a guess, so resolution must refuse.
+  const std::filesystem::path ambiguousCandidate =
+      nativeLibrarySearchDirectory /
+#if defined(_WIN32)
+      "libgtiruntimealias.dll.a";
+#elif defined(__APPLE__)
+      "libgtiruntimealias.dylib";
+#else
+      "libgtiruntimealias.so";
+#endif
+  expect(writeFile(ambiguousCandidate, "not a real dynamic library\n"),
+         "the ambiguous library fixture should be writable");
+  const lang::driver::ExecutableBuildResult ambiguousLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(ambiguousLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             ambiguousLibraryBuild.cache.detail &&
+             ambiguousLibraryBuild.cache.detail->find("resolves ambiguously") !=
                  std::string::npos,
-         "name-resolved libraries should bypass the whole-program cache "
-         "until linker search resolution is modeled");
+         "two modeled candidates in one search directory should bypass rather "
+         "than guess the linker's preference");
+  std::filesystem::remove(ambiguousCandidate);
+
+  // An unambiguous resolution whose bytes do not determine its contribution
+  // to the link still bypasses.
+  std::filesystem::remove(resolvedArchive);
+  expect(writeFile(resolvedArchive, "INPUT(missing.o)\n"),
+         "the content-incomplete resolved library fixture should be writable");
+  const lang::driver::ExecutableBuildResult incompleteLibraryBuild =
+      buildWithResolvedLibrary();
+  expect(incompleteLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             incompleteLibraryBuild.cache.detail &&
+             incompleteLibraryBuild.cache.detail->find(
+                 "not a content-complete archive or object") !=
+                 std::string::npos,
+         "a resolved library that is not content-complete should bypass with "
+         "the link-input reason");
+  std::filesystem::remove(resolvedArchive);
+
+  lang::driver::NativeInputs frameworkInput;
+  frameworkInput.frameworks.emplace_back("CoreFoundation");
+  const lang::driver::ExecutableBuildResult frameworkBuild =
+      build(lang::OptimizationLevel::O0, std::move(frameworkInput));
+  expect(frameworkBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             frameworkBuild.cache.detail &&
+             frameworkBuild.cache.detail->find(
+                 "name-resolved frameworks require framework search "
+                 "resolution") != std::string::npos,
+         "frameworks resolve through undeclared search roots to a bundle and "
+         "must keep bypassing");
 
   {
     ScopedEnvironment injectedIncludePath("CPATH",
@@ -1590,6 +1702,85 @@ void testNativeDependencyDiscoveryPrimitives() {
                  "int date = 0; // date and time words alone\n"),
          "the deterministic preprocessing policy should detect exactly the "
          "time-and-date macro spellings");
+}
+
+void testNativeLibraryNameResolution() {
+  using lang::driver::NativeLibraryResolutionStatus;
+  TemporaryDirectory temporary;
+  const std::filesystem::path first = temporary.root() / "first";
+  const std::filesystem::path second = temporary.root() / "second";
+  std::filesystem::create_directories(first);
+  std::filesystem::create_directories(second);
+  const std::vector<std::filesystem::path> directories{first, second};
+
+#if defined(_WIN32)
+  const std::string dynamicName = "libsupport.dll.a";
+#elif defined(__APPLE__)
+  const std::string dynamicName = "libsupport.dylib";
+#else
+  const std::string dynamicName = "libsupport.so";
+#endif
+
+  const auto resolve = [&](std::string_view name) {
+    return lang::driver::resolveNativeLibraryName(name, directories);
+  };
+
+  expect(resolve("support").status == NativeLibraryResolutionStatus::Unresolved,
+         "a name with no candidate in any declared directory should resolve "
+         "outside them and refuse to participate");
+
+  writeFile(second / "libsupport.a", "!<arch>\ncontents");
+  const lang::driver::NativeLibraryResolution resolved = resolve("support");
+  expect(resolved.status == NativeLibraryResolutionStatus::Resolved &&
+             resolved.file == second / "libsupport.a",
+         "a single modeled candidate should resolve to that exact file, "
+         "skipping earlier directories that hold none");
+
+  writeFile(first / dynamicName, "dynamic");
+  const lang::driver::NativeLibraryResolution shadowed = resolve("support");
+  expect(shadowed.status == NativeLibraryResolutionStatus::Resolved &&
+             shadowed.file == first / dynamicName,
+         "the first declared directory holding a candidate should win, as it "
+         "does on the link command line");
+
+  writeFile(first / "libsupport.a", "!<arch>\ncontents");
+  const lang::driver::NativeLibraryResolution ambiguous = resolve("support");
+  expect(ambiguous.status == NativeLibraryResolutionStatus::Ambiguous &&
+             ambiguous.directory == first,
+         "two modeled candidates in one directory should refuse rather than "
+         "guess the linker's preference");
+
+  std::filesystem::remove(first / dynamicName);
+  writeFile(first / "libsupport.la", "# libtool archive\n");
+  expect(resolve("support").status == NativeLibraryResolutionStatus::Ambiguous,
+         "a candidate spelling the driver does not model should make "
+         "resolution ambiguous, never invisible");
+  std::filesystem::remove(first / "libsupport.la");
+
+  // A neighbouring name must not be mistaken for a candidate.
+  writeFile(second / "libsupport_extra.a", "!<arch>\ncontents");
+  expect(resolve("support_extra").status ==
+                 NativeLibraryResolutionStatus::Resolved &&
+             resolve("support").status ==
+                 NativeLibraryResolutionStatus::Resolved,
+         "a longer library name sharing a prefix should not disturb either "
+         "resolution");
+
+  expect(resolve(":libsupport.a").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling &&
+             resolve("sub/support").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling &&
+             resolve("").status ==
+                 NativeLibraryResolutionStatus::UnsupportedSpelling,
+         "exact-name selections and path-bearing spellings mean different "
+         "things to different linkers and must not be resolved");
+
+  const std::vector<std::filesystem::path> missingDirectory{temporary.root() /
+                                                            "absent"};
+  expect(lang::driver::resolveNativeLibraryName("support", missingDirectory)
+                 .status == NativeLibraryResolutionStatus::DirectoryUnreadable,
+         "a search directory that cannot be enumerated must not be reported "
+         "as holding no candidate");
 }
 
 void testBuildSourceMaterialIdentityProjection() {
@@ -2180,6 +2371,7 @@ int main(int argc, char *argv[]) {
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testNativeDependencyDiscoveryPrimitives();
+  testNativeLibraryNameResolution();
   testBuildSourceMaterialIdentityProjection();
   testBuildProvenance(std::filesystem::absolute(argv[0]));
   testResourcesAndArtifactOwnership();
