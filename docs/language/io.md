@@ -138,10 +138,28 @@ if (!closed) {
 }
 ```
 
-These projections are consumed within their enclosing full expressions.
-Returning or retaining a borrow reached through
-`expected<owner, E>.value()` is a nested owner dependency and remains deferred;
-unwrap an ordinary owner reference before crossing a helper boundary instead.
+Ordinary projections in this example are consumed within their enclosing full
+expressions. One bounded retained form is also available: a read-only range may
+iterate `value()` from a named local or by-value
+`expected<std::string, E>` while the complete `expected` remains unchanged:
+
+```gti
+mut auto chunk = std::fread(stream, std::size_t(4096));
+if (!chunk) {
+  return 4;
+}
+for (auto& byte : chunk.value()) {
+  consume(byte);
+}
+```
+
+The checked extraction happens before `begin()`. Its failure follows the
+ordinary defined-failure path, and the successful loop holds a shared loan on
+the complete `expected` until every loop exit has cleaned up. Moving,
+replacing, mutating, or dropping `chunk` during the loop is rejected. Mutable
+payload traversal, field or global receivers, retaining a standalone payload
+reference, and returning an element remain unsupported; see
+[`ranges.md`](ranges.md#named-expected-payload-ranges).
 
 ## Runtime boundary
 

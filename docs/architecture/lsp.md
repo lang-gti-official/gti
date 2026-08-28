@@ -260,6 +260,11 @@ next document version. Incomplete range syntax publishes recovered parser
 diagnostics without retaining stale semantic range errors. The protocol layer
 does not infer a range protocol, access mode, parent/child loan lifetime,
 array strategy, invalidation rule, or temporary ownership from punctuation.
+The bounded Expected-payload range follows the same snapshot rule: an owner
+mutation publishes the compiler-owned `GTI-S2017`, and replacing the document
+with an exact named read-only `value()` range clears it. The LSP does not
+recognize `value()`, infer an active alternative, or extend the receiver
+lifetime independently.
 
 Stored-carrier return diagnostics remain compiler authority as well. A
 by-value carrier return that selects a shell projection, a non-exact referent,

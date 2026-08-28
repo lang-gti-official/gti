@@ -1747,6 +1747,19 @@ auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
   if (const auto *call = exprAs<Call>(expression.get())) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved != nullptr &&
+        (resolved->intrinsic == IntrinsicKind::ExpectedValue ||
+         resolved->intrinsic == IntrinsicKind::ExpectedError)) {
+      const auto *member = exprAs<Get>(call->callee().get());
+      if (member != nullptr) {
+        // Expected alternatives share one active state and storage root.
+        // Conflict checking therefore conservatively treats access through
+        // either projection as access to the complete expected object. The
+        // range-only retention permission remains gated separately by the
+        // exact ResolvedCallInfo borrow origin above.
+        return loanPlace(member->object());
+      }
+    }
+    if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Global &&
         resolved->borrowPlace) {
       return loanPlace(*resolved->borrowPlace);

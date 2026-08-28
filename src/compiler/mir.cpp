@@ -4004,11 +4004,12 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.lifecycle.empty() &&
       instruction.info.traits.drop == DropKind::Trivial &&
       !instruction.info.traits.containsBorrowedState;
-  const bool locallyFailingStorageRead =
+  const bool locallyFailingBorrowIntrinsic =
       (instruction.intrinsic == IntrinsicKind::StorageRead ||
        instruction.intrinsic == IntrinsicKind::StorageReadMut ||
        instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-       instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
+       instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+       instruction.intrinsic == IntrinsicKind::ExpectedValue) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();
   // A checked element write reinitializing an always-available trivially
@@ -4030,7 +4031,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.borrowOrigin != BorrowOriginKind::None &&
       !instruction.successResultDrop &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
-       locallyFailingStorageRead);
+       locallyFailingBorrowIntrinsic);
   const bool transferredBorrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
@@ -4900,6 +4901,11 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
 
 [[nodiscard]] MirVerificationResult
 verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
+  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  if (!dominance) {
+    return failure(body, owner,
+                   "range iteration inventory has an invalid body CFG");
+  }
   for (std::size_t index = 0; index < body.rangeIterations.size(); ++index) {
     const MirRangeIteration &range = body.rangeIterations[index];
     const MirPlace *ownerPlace = body.findPlace(range.owner);
@@ -4915,6 +4921,38 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     const MirBlock *increment = body.findBlock(range.incrementBlock);
     const MirBlock *cleanup = body.findBlock(range.cleanupBlock);
     const MirBlock *exit = body.findBlock(range.exitBlock);
+    const MirValue *payloadExtraction =
+        body.findValue(range.expectedPayloadExtraction);
+    const MirInstruction *payloadProducer = nullptr;
+    const MirBlock *payloadDefinitionBlock = nullptr;
+    if (payloadExtraction != nullptr && payloadExtraction->definition != 0) {
+      payloadDefinitionBlock =
+          body.findBlock(payloadExtraction->definitionBlock);
+      for (const MirBlock &candidateBlock : body.blocks) {
+        const auto found = std::find_if(candidateBlock.instructions.begin(),
+                                        candidateBlock.instructions.end(),
+                                        [&](const MirInstruction &instruction) {
+                                          return instruction.id ==
+                                                 payloadExtraction->definition;
+                                        });
+        if (found != candidateBlock.instructions.end()) {
+          payloadProducer = &*found;
+          break;
+        }
+      }
+    }
+    const std::size_t payloadRoots =
+        payloadExtraction == nullptr
+            ? 0
+            : std::count_if(body.places.begin(), body.places.end(),
+                            [&](const MirPlace &place) {
+                              return place.root == MirPlaceRootKind::Loan &&
+                                     place.loan == range.rangeLoan &&
+                                     place.projections.empty() &&
+                                     place.type == range.rangeType &&
+                                     place.sourceValue ==
+                                         payloadExtraction->sourceValue;
+                            });
     if (range.id != index + 1 || range.hirStatement == 0 ||
         range.coreLoop == 0 || ownerPlace == nullptr || rangePlace == nullptr ||
         iteratorPlace == nullptr || sentinelPlace == nullptr ||
@@ -4999,6 +5037,47 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "range owner cleanup targets a different place");
       }
+    }
+    const MirPlace *rangeLoanSource = body.findPlace(rangeLoan->source);
+    const bool exactExpectedPayloadProjection =
+        !range.expectedPayloadProjection
+            ? range.expectedPayloadExtraction == 0
+            : payloadExtraction != nullptr && payloadProducer != nullptr &&
+                  payloadProducer->kind == MirInstructionKind::Call &&
+                  payloadProducer->intrinsic == IntrinsicKind::ExpectedValue &&
+                  payloadProducer->borrowOrigin == BorrowOriginKind::Receiver &&
+                  payloadProducer->borrowAccess == AccessMode::ReadOnly &&
+                  payloadProducer->receiver &&
+                  payloadProducer->receiver->kind ==
+                      MirOperandKind::BorrowRead &&
+                  payloadProducer->receiver->place == rangeLoan->source &&
+                  payloadProducer->operands.empty() &&
+                  payloadProducer->result == range.expectedPayloadExtraction &&
+                  payloadProducer->loan == range.rangeLoan &&
+                  payloadProducer->localFailureSites.size() == 1 &&
+                  payloadProducer->definedFailure.localOrigins.size() == 1 &&
+                  payloadProducer->definedFailure.propagation ==
+                      FailurePropagationKind::None &&
+                  payloadDefinitionBlock != nullptr &&
+                  payloadDefinitionBlock->terminator.kind ==
+                      MirTerminatorKind::Invoke &&
+                  payloadDefinitionBlock->terminator.invokeInstruction ==
+                      payloadProducer->id &&
+                  rangeLoan->kind == MirLoanKind::CallResult &&
+                  rangeLoan->producedBy == payloadExtraction->sourceValue &&
+                  rangeLoanSource != nullptr &&
+                  rangeLoanSource->type.kind == SemanticType::Expected &&
+                  rangeLoanSource->type.arguments.size() == 2 &&
+                  rangeLoanSource->type.arguments.front() == range.rangeType &&
+                  payloadExtraction->info.type == range.rangeType &&
+                  payloadExtraction->info.category == ValueCategory::Place &&
+                  payloadRoots == 1 &&
+                  dominance->dominates(payloadExtraction->definitionBlock,
+                                       range.conditionEntryBlock);
+    if (!exactExpectedPayloadProjection) {
+      return failure(body, owner,
+                     "expected-payload range lost its checked extraction, "
+                     "rooted loan, or dominance proof");
     }
   }
   return {};
@@ -8899,8 +8978,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
        expressionIndex < fullExpressionMarkerRows.size(); ++expressionIndex) {
     const std::vector<const MirInstruction *> &markers =
         fullExpressionMarkerRows[expressionIndex];
-    const MirFullExpression &expression =
-        body.fullExpressions[expressionIndex];
+    const MirFullExpression &expression = body.fullExpressions[expressionIndex];
     for (std::size_t left = 0; left < markers.size(); ++left) {
       for (std::size_t right = left + 1; right < markers.size(); ++right) {
         if (markerCanReach(*markers[left], *markers[right], expression) ||

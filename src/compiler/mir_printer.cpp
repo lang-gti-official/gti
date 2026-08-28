@@ -1519,12 +1519,15 @@ private:
              << " iterator-place=p" << item.iterator << " sentinel-place=p"
              << item.sentinel << " element-place=p" << item.element
              << " range-loan=loan" << item.rangeLoan << " element-loan=loan"
-             << item.elementLoan << " owner-drop=drop" << item.ownerDrop
-             << " blocks=bb" << item.conditionEntryBlock << ",bb"
-             << item.conditionBlock << ",bb" << item.bodyBlock << ",bb"
+             << item.elementLoan << " expected-payload-extraction=%"
+             << item.expectedPayloadExtraction << " owner-drop=drop"
+             << item.ownerDrop << " blocks=bb" << item.conditionEntryBlock
+             << ",bb" << item.conditionBlock << ",bb" << item.bodyBlock << ",bb"
              << item.incrementBlock << ",bb" << item.cleanupBlock << ",bb"
              << item.exitBlock << " extent=" << item.arrayLength
-             << " owns-temporary=" << item.ownsRangeTemporary << '\n';
+             << " owns-temporary=" << item.ownsRangeTemporary
+             << " expected-payload-projection="
+             << item.expectedPayloadProjection << '\n';
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {

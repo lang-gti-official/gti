@@ -6976,6 +6976,9 @@ private:
          .rangeLoan = loanFor(sourceRange.rangeLoan, true),
          .elementLoan =
              loanFor(sourceRange.elementLoan, sourceRange.elementLoan != 0),
+         .expectedPayloadExtraction = sourceRange.expectedPayloadProjection
+                                          ? mirValueFor(sourceRange.source)
+                                          : MirValueId{0},
          .ownerDrop = ownerDrop,
          .conditionEntryBlock = loop->second.conditionEntry,
          .conditionBlock = loop->second.condition,
@@ -6984,7 +6987,8 @@ private:
          .cleanupBlock = loop->second.cleanup,
          .exitBlock = loop->second.exit,
          .arrayLength = sourceRange.arrayLength,
-         .ownsRangeTemporary = sourceRange.ownsRangeTemporary});
+         .ownsRangeTemporary = sourceRange.ownsRangeTemporary,
+         .expectedPayloadProjection = sourceRange.expectedPayloadProjection});
   }
 
   void lowerSwitch(const HirStatement &statement) {

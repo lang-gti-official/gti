@@ -766,9 +766,9 @@ analysis, HIR, MIR, and the backend.
 
 ### M-OWN-04: Named Expected-Payload Range Loans
 
-- **State/role:** proposal ready; `M-OWN-02`, `M-LIFE-01`, and `L-RANGE-01`
-  are complete; bounded systems-readiness integration for portable byte-input
-  parsers and serializers.
+- **State/role:** complete bounded systems-readiness integration for portable
+  byte-input parsers and serializers; `M-OWN-02`, `M-LIFE-01`, and
+  `L-RANGE-01` remain its foundation.
 - **Named client:** iterate the owned string returned by
   `std::fread(...).value()` without moving it out of the named
   `expected<std::string, std::io_errc>` solely to satisfy the ownership model.
@@ -795,6 +795,11 @@ analysis, HIR, MIR, and the backend.
   until all loop exits end the loans, and no accepted source relies on native
   expected/reference lifetime behavior to repair a missing frontend or MIR
   proof.
+- **Landed evidence:** semantic, HIR, and MIR identity assertions plus verifier
+  mutation tests; nested local/parameter traversal with `continue`, `break`,
+  and `return`; wrong-state failure; owner-conflict and escape rejection;
+  O0/O3 × C++20/C++23 native execution; `<std/cstdio>` chunk traversal; and
+  versioned LSP diagnostic publication/clearing.
 - **Design owner:** the exact contract and phase map live in
   [`place-and-ownership-state.md`](place-and-ownership-state.md#9-proposed-m-own-04-named-expected-payload-range-slice).
 
@@ -3586,7 +3591,7 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
-| Named expected-payload range loans | **proposal ready; bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
+| Named expected-payload range loans | **complete bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |

@@ -303,6 +303,7 @@ struct HirRangeIteration {
   FunctionId incrementFunction = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
+  bool expectedPayloadProjection = false;
 
   friend bool operator==(const HirRangeIteration &,
                          const HirRangeIteration &) = default;

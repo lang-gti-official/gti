@@ -12223,6 +12223,328 @@ int main() {
          "reuse of the original owner");
 }
 
+void testExpectedPayloadRangeLoans() {
+  const std::string source = R"(
+#include <std/string>
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+interface CounterIteratorContract {
+  int32_t& operator*();
+  void operator++() mut;
+};
+
+class CounterIterator : public CounterIteratorContract {
+  mut int32_t current;
+public:
+  CounterIterator(int32_t value) : current(value) {}
+  int32_t& operator*() override { return this.current; }
+  void operator++() mut override { this.current += 1; }
+  bool operator!=(CounterIterator& other) {
+    return this.current != other.current;
+  }
+};
+
+class CounterRange {
+  int32_t first;
+  int32_t last;
+public:
+  CounterRange(int32_t first, int32_t last) : first(first), last(last) {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterIterator end() { return CounterIterator(this.last); }
+};
+
+expected<CounterRange, int32_t> make_range(int32_t first, int32_t last) {
+  return CounterRange(first, last);
+}
+
+int count_parameter(expected<std::string, int32_t> text) {
+  mut int count = 0;
+  for (auto& outer : text.value()) {
+    for (auto& inner : text.value()) {
+      count += 1;
+      if (count == 1) { continue; }
+    }
+    if (count == 4) { break; }
+  }
+  return count;
+}
+
+int return_from_loop(expected<std::string, int32_t> text) {
+  for (auto& byte : text.value()) { return 2; }
+  return 1;
+}
+
+int nominal_ranges() {
+  mut auto values = make_range(1, 4);
+  mut int32_t total = 0;
+  for (auto& value : values.value()) { total += value; }
+  mut auto empty = make_range(0, 0);
+  for (auto& value : empty.value()) { return 1; }
+  return total - 6;
+}
+
+int main() {
+  mut auto first = make_text();
+  mut int count = 0;
+  for (auto& byte : first.value()) { count += 1; }
+  mut auto second = make_text();
+  mut auto third = make_text();
+  return count + count_parameter(std::move(second)) +
+         return_from_loop(std::move(third)) + nominal_ranges() - 8;
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "expected-payload-range-loans.gti", source, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected Expected payload range diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "named Expected payloads should form verified read-only range loans");
+
+  std::size_t hirRanges = 0;
+  bool exactHirPlans = true;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (!statement.rangeIteration ||
+          !statement.rangeIteration->expectedPayloadProjection) {
+        continue;
+      }
+      ++hirRanges;
+      const lang::HirRangeIteration &range = *statement.rangeIteration;
+      const lang::HirValue *payload = function.body.findValue(range.source);
+      const lang::HirLoan *loan = function.body.findLoan(range.rangeLoan);
+      const auto owner = std::find_if(function.body.bindings.begin(),
+                                      function.body.bindings.end(),
+                                      [&](const lang::HirBinding &binding) {
+                                        return binding.id == range.owner;
+                                      });
+      exactHirPlans =
+          exactHirPlans && payload != nullptr &&
+          payload->kind == lang::HirValueKind::Call &&
+          payload->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+          payload->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+          payload->borrowAccess == lang::AccessMode::ReadOnly &&
+          loan != nullptr && loan->access == lang::AccessMode::ReadOnly &&
+          owner != function.body.bindings.end() &&
+          owner->info.type.kind == lang::SemanticType::Reference;
+    }
+  }
+  expect(hirRanges == 6 && exactHirPlans,
+         "HIR should retain six exact Expected.value read-only range plans");
+
+  std::size_t mirRanges = 0;
+  bool exactMirPlans = true;
+  const lang::MirBody *firstExpectedBody = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirRangeIteration &range : function.body.rangeIterations) {
+      if (!range.expectedPayloadProjection) {
+        continue;
+      }
+      ++mirRanges;
+      if (firstExpectedBody == nullptr) {
+        firstExpectedBody = &function.body;
+      }
+      const lang::MirValue *payload =
+          function.body.findValue(range.expectedPayloadExtraction);
+      const lang::MirLoan *loan = function.body.findLoan(range.rangeLoan);
+      const lang::MirPlace *sourcePlace =
+          loan == nullptr ? nullptr : function.body.findPlace(loan->source);
+      const lang::MirInstruction *producer = nullptr;
+      if (payload != nullptr) {
+        for (const lang::MirBlock &block : function.body.blocks) {
+          const auto found =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const lang::MirInstruction &instruction) {
+                             return instruction.id == payload->definition;
+                           });
+          if (found != block.instructions.end()) {
+            producer = &*found;
+            break;
+          }
+        }
+      }
+      const std::size_t payloadRoots =
+          payload == nullptr || loan == nullptr
+              ? 0
+              : std::count_if(
+                    function.body.places.begin(), function.body.places.end(),
+                    [&](const lang::MirPlace &place) {
+                      return place.root == lang::MirPlaceRootKind::Loan &&
+                             place.loan == loan->id &&
+                             place.projections.empty() &&
+                             place.type == range.rangeType &&
+                             place.sourceValue == payload->sourceValue;
+                    });
+      const lang::MirBlock *definitionBlock =
+          payload == nullptr
+              ? nullptr
+              : function.body.findBlock(payload->definitionBlock);
+      exactMirPlans =
+          exactMirPlans && payload != nullptr && loan != nullptr &&
+          producer != nullptr && sourcePlace != nullptr &&
+          producer->kind == lang::MirInstructionKind::Call &&
+          producer->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+          producer->result == range.expectedPayloadExtraction &&
+          producer->loan == range.rangeLoan && producer->receiver &&
+          producer->receiver->kind == lang::MirOperandKind::BorrowRead &&
+          producer->receiver->place == loan->source &&
+          producer->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+          producer->borrowAccess == lang::AccessMode::ReadOnly &&
+          producer->localFailureSites.size() == 1 &&
+          producer->definedFailure.propagation ==
+              lang::FailurePropagationKind::None &&
+          definitionBlock != nullptr &&
+          definitionBlock->terminator.kind == lang::MirTerminatorKind::Invoke &&
+          definitionBlock->terminator.invokeInstruction == producer->id &&
+          loan->kind == lang::MirLoanKind::CallResult && !loan->escapes &&
+          sourcePlace->type.kind == lang::SemanticType::Expected &&
+          sourcePlace->type.arguments.size() == 2 &&
+          sourcePlace->type.arguments.front() == range.rangeType &&
+          payloadRoots == 1;
+    }
+  }
+  expect(mirRanges == 6 && exactMirPlans,
+         "MIR should retain checked Expected extraction, Invoke failure, and "
+         "one exact payload loan root for every range");
+
+  lang::HirProgram invalidHir = frontend.hir;
+  bool removedHirAuthorization = false;
+  auto &invalidHirFunctions =
+      const_cast<std::vector<lang::HirFunctionInstance> &>(
+          invalidHir.functionInstances());
+  for (lang::HirFunctionInstance &function : invalidHirFunctions) {
+    for (lang::HirStatement &statement : function.body.statements) {
+      if (statement.rangeIteration &&
+          statement.rangeIteration->expectedPayloadProjection) {
+        statement.rangeIteration->expectedPayloadProjection = false;
+        removedHirAuthorization = true;
+        break;
+      }
+    }
+    if (removedHirAuthorization) {
+      break;
+    }
+  }
+  expect(
+      removedHirAuthorization &&
+          !lang::verifyHirProgramPlans(frontend.semantics, invalidHir).valid(),
+      "HIR verification should reject removal of semantic Expected payload "
+      "range authorization");
+
+  lang::MirBody missingExtraction =
+      firstExpectedBody == nullptr ? lang::MirBody{} : *firstExpectedBody;
+  if (!missingExtraction.rangeIterations.empty()) {
+    const auto expected =
+        std::find_if(missingExtraction.rangeIterations.begin(),
+                     missingExtraction.rangeIterations.end(),
+                     [](const lang::MirRangeIteration &range) {
+                       return range.expectedPayloadProjection;
+                     });
+    if (expected != missingExtraction.rangeIterations.end()) {
+      expected->expectedPayloadExtraction = 0;
+    }
+  }
+  expect(firstExpectedBody != nullptr &&
+             !lang::verifyMirBody(missingExtraction).valid(),
+         "MIR verification should reject an Expected range without its "
+         "checked payload extraction");
+
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should consume only verifier-certified Expected "
+         "payload range plans");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-expected-payload-range-loans.gti", R"(
+#include <std/string>
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+void field_receiver(mut box& owner) {
+  for (auto& byte : owner.value.value()) {}
+}
+
+void mutable_payload() {
+  mut auto text = make_text();
+  for (mut auto& byte : text.value()) {}
+}
+
+void replace_owner() {
+  mut auto text = make_text();
+  for (auto& byte : text.value()) { text = make_text(); }
+}
+
+void move_owner() {
+  mut auto text = make_text();
+  for (auto& byte : text.value()) { auto moved = std::move(text); }
+}
+
+char& escape_element(expected<std::string, int32_t> text) {
+  for (auto& byte : text.value()) { return byte; }
+  return text.value()[0];
+}
+
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2083"),
+         "Expected payload ranges should reject projected owners, mutable "
+         "elements, owner replacement or movement, and escaping elements");
+
+  const lang::FrontendResult owningTemporary = lang::Frontend().analyze(
+      "owning-temporary-expected-payload-range.gti", R"(
+#include <std/string>
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+int main() {
+  mut int count = 0;
+  for (auto& byte : make_text().value()) { count += 1; }
+  return count - 2;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  bool exactOwningTemporary = false;
+  for (const lang::HirFunctionInstance &function :
+       owningTemporary.hir.functionInstances()) {
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (statement.rangeIteration) {
+        exactOwningTemporary =
+            exactOwningTemporary ||
+            (statement.rangeIteration->ownsRangeTemporary &&
+             !statement.rangeIteration->expectedPayloadProjection);
+      }
+    }
+  }
+  expect(owningTemporary.canGenerateCode() && exactOwningTemporary,
+         "an rvalue Expected payload should remain an owning range temporary, "
+         "not masquerade as a retained named-owner projection");
+}
+
 void testMutableRangeLoans() {
   const lang::FrontendResult fixedArrays =
       lang::Frontend().analyze("mutable-fixed-array-ranges.gti", R"(
@@ -17225,6 +17547,7 @@ constexpr NamedTest kTests[] = {
     {"testRangeBasedForAndIteratorProtocol",
      testRangeBasedForAndIteratorProtocol},
     {"testReadOnlyRangeLoans", testReadOnlyRangeLoans},
+    {"testExpectedPayloadRangeLoans", testExpectedPayloadRangeLoans},
     {"testMutableRangeLoans", testMutableRangeLoans},
     {"testLambdas", testLambdas},
     {"testConfinedCallableParameters", testConfinedCallableParameters},

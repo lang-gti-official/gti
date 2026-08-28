@@ -168,10 +168,9 @@ void testSourceUnitDependencyGraph() {
          "plain include should not remain reserved by source loading");
 
   const lang::FrontendResult sameUnitStaticAssert = lang::Frontend().analyze(
-      entry,
-      "constexpr int32_t limit = 8;\n"
-      "static_assert(limit == 8, \"limit must be 8\");\n"
-      "int main() { return limit - 8; }\n");
+      entry, "constexpr int32_t limit = 8;\n"
+             "static_assert(limit == 8, \"limit must be 8\");\n"
+             "int main() { return limit - 8; }\n");
   expect(sameUnitStaticAssert.canGenerateCode() &&
              sameUnitStaticAssert.diagnostics.empty(),
          "a file-scope static assertion should resolve constants declared in "
@@ -272,8 +271,9 @@ void testSourceUnitDependencyGraph() {
       "#include \"branch.gti\"\n"
       "static_assert(leaf_limit == 8, \"limit must be 8\");\n"
       "int main() { return 0; }\n",
-      {}, {{branchKey, "#include \"leaf.gti\"\n"},
-           {leafKey, "constexpr int32_t leaf_limit = 8;\n"}});
+      {},
+      {{branchKey, "#include \"leaf.gti\"\n"},
+       {leafKey, "constexpr int32_t leaf_limit = 8;\n"}});
   expect(!hiddenStaticAssert.semanticValid &&
              hasDiagnosticCode(hiddenStaticAssert.diagnostics, "GTI-S2024") &&
              hasDiagnosticHint(hiddenStaticAssert.diagnostics,

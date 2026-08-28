@@ -806,6 +806,7 @@ struct MirRangeIteration {
   MirPlaceId element = 0;
   MirLoanId rangeLoan = 0;
   MirLoanId elementLoan = 0;
+  MirValueId expectedPayloadExtraction = 0;
   MirDropObligationId ownerDrop = 0;
   MirBlockId conditionEntryBlock = 0;
   MirBlockId conditionBlock = 0;
@@ -815,6 +816,7 @@ struct MirRangeIteration {
   MirBlockId exitBlock = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
+  bool expectedPayloadProjection = false;
 
   friend bool operator==(const MirRangeIteration &,
                          const MirRangeIteration &) = default;

@@ -709,6 +709,18 @@ explicit nested scope ends the first. The concurrent profile rejects the
 underlying mutable global/static binding before this single-threaded loan rule
 can authorize unsynchronized process-wide mutation.
 
+M-OWN-04 adds one range-only checked-call exception without creating a general
+retained call-result rule. When the compiler-generated immutable range owner
+is initialized by exact `ExpectedValue` on an available named local or
+by-value parameter, semantic analysis records a receiver-origin read borrow and
+marks the range plan as an Expected payload projection. The loan place remains
+the complete Expected root, so movement, replacement, mutation, and drop
+conflict for the loop lifetime. Field/global receivers, `ExpectedError`,
+mutable element bindings, standalone retained payload references, and escaping
+elements receive no permission from this marker. The checked extraction keeps
+its ordinary local failure origin; HIR and MIR preserve the accepted fact
+rather than reconstructing it from call spelling.
+
 ## Defined Integer Arithmetic
 
 The public `<std/numeric>` wrapping, saturating, and checked-result functions

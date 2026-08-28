@@ -7998,8 +7998,9 @@ struct InlineClassCallableArgument {
 // parameter has no independent lifetime in MIR. Keep that evaluation inline
 // at the call only for the adjacent Construct -> Call shape; this preserves
 // MIR ordering and does not generalize class SSA materialization.
-[[nodiscard]] InlineClassCallableArgument inlineClassCallableArgument(
-    const MirProgram &program, const MirBody &body, MirValueId valueId) {
+[[nodiscard]] InlineClassCallableArgument
+inlineClassCallableArgument(const MirProgram &program, const MirBody &body,
+                            MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -8053,13 +8054,15 @@ struct InlineClassCallableArgument {
       std::none_of(consumer->callableArguments.begin(),
                    consumer->callableArguments.end(),
                    [&](const CallableArgumentBoundary &argument) {
-                     return argument.parameterIndex == uses.front().operandIndex &&
+                     return argument.parameterIndex ==
+                                uses.front().operandIndex &&
                             argument.boundary == CallableBoundary::Confined;
                    })) {
     return {};
   }
   for (const MirBlock &block : body.blocks) {
-    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index) {
+    for (std::size_t index = 0; index + 1 < block.instructions.size();
+         ++index) {
       if (block.instructions[index].id == producer->id &&
           block.instructions[index + 1].id == consumer->id) {
         return {.producer = producer,
@@ -8124,8 +8127,7 @@ inlineFailureConstructorArgument(const MirProgram &program, const MirBody &body,
          innerCannotFail)) ||
       inner == nullptr || innerOwner == nullptr ||
       innerOwner->type != source->info.type ||
-      inner->definitionKind != MirDefinitionKind::Source ||
-      !innerCannotFail ||
+      inner->definitionKind != MirDefinitionKind::Source || !innerCannotFail ||
       !std::all_of(producer->operands.begin(), producer->operands.end(),
                    [](const MirOperand &operand) {
                      const auto kind = expectedTypeRepresentation(operand.type);
@@ -11615,6 +11617,18 @@ loanReferentType(const MirProgram &program, const MirBody &body,
         producer->info.type != SemanticType::Unknown) {
       return producer->info.type;
     }
+    if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
+        (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+         producer->intrinsic == IntrinsicKind::ExpectedError) &&
+        producer->loan && *producer->loan == loan.id &&
+        source->type.kind == SemanticType::Expected &&
+        source->type.arguments.size() == 2) {
+      const std::size_t payload =
+          producer->intrinsic == IntrinsicKind::ExpectedValue ? 0u : 1u;
+      if (producer->info.type == source->type.arguments[payload]) {
+        return producer->info.type;
+      }
+    }
     if ((source->type.kind == SemanticType::Storage ||
          source->type.kind == SemanticType::PrefixStorage ||
          source->type.kind == SemanticType::UniqueOwner ||
@@ -14727,6 +14741,115 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
   return found;
 }
 
+// A range over `expected<T, E>.value()` retains one read-only pointer into the
+// named Expected for the loop lifetime. MIR records the authorization on the
+// range inventory itself, so the backend admits no general Expected payload
+// reference here: it accepts only the checked extraction, exact CallResult
+// loan, and exact range record already proven by the MIR verifier.
+[[nodiscard]] const MirInstruction *
+expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.producedBy == 0 || loan.access != AccessMode::ReadOnly) {
+    return nullptr;
+  }
+  const MirRangeIteration *range = nullptr;
+  for (const MirRangeIteration &candidate : body.rangeIterations) {
+    if (!candidate.expectedPayloadProjection ||
+        candidate.rangeLoan != loan.id) {
+      continue;
+    }
+    if (range != nullptr) {
+      return nullptr;
+    }
+    range = &candidate;
+  }
+  const MirValue *payload =
+      range == nullptr ? nullptr
+                       : body.findValue(range->expectedPayloadExtraction);
+  const MirInstruction *producer =
+      payload == nullptr ? nullptr : findInstruction(body, payload->definition);
+  const MirPlace *source = body.findPlace(loan.source);
+  const std::size_t payloadRoots =
+      range == nullptr || payload == nullptr
+          ? 0
+          : std::count_if(body.places.begin(), body.places.end(),
+                          [&](const MirPlace &place) {
+                            return place.root == MirPlaceRootKind::Loan &&
+                                   place.loan == loan.id &&
+                                   place.projections.empty() &&
+                                   place.type == range->rangeType &&
+                                   place.sourceValue == payload->sourceValue;
+                          });
+  if (range == nullptr || payload == nullptr || producer == nullptr ||
+      producer->kind != MirInstructionKind::Call ||
+      producer->intrinsic != IntrinsicKind::ExpectedValue ||
+      !producer->result || *producer->result != payload->id ||
+      !producer->loan || *producer->loan != loan.id ||
+      producer->hirValue != loan.producedBy ||
+      producedCallResultLoan(body, *producer) != &loan ||
+      producer->borrowOrigin != BorrowOriginKind::Receiver ||
+      producer->borrowAccess != AccessMode::ReadOnly || !producer->receiver ||
+      producer->receiver->kind != MirOperandKind::BorrowRead ||
+      producer->receiver->place != loan.source || !producer->operands.empty() ||
+      producer->localFailureSites.size() != 1 ||
+      producer->definedFailure.localOrigins.empty() ||
+      producer->definedFailure.propagation != FailurePropagationKind::None ||
+      !invokePairedInstruction(body, producer->id) || source == nullptr ||
+      source->type.kind != SemanticType::Expected ||
+      source->type.arguments.size() != 2 ||
+      source->type.arguments.front() != range->rangeType ||
+      producer->info.type != range->rangeType ||
+      payload->info.type != range->rangeType || payloadRoots != 1) {
+    return nullptr;
+  }
+  return producer;
+}
+
+[[nodiscard]] bool expectedPayloadRangeParameterPlace(
+    const MirBody &body, const std::vector<HirBindingId> &parameterBindings,
+    const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || !place.projections.empty() ||
+      place.binding == 0 || place.type.kind != SemanticType::Expected ||
+      std::find(parameterBindings.begin(), parameterBindings.end(),
+                place.binding) == parameterBindings.end()) {
+    return false;
+  }
+  return std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
+                     [&](const MirRangeIteration &range) {
+                       const MirLoan *loan = body.findLoan(range.rangeLoan);
+                       return range.expectedPayloadProjection &&
+                              loan != nullptr && loan->source == place.id &&
+                              expectedPayloadRangeLoanProducer(body, *loan) !=
+                                  nullptr;
+                     });
+}
+
+// A by-value Expected parameter is native C++ parameter storage. Its lexical
+// destructor runs when either emitted body form returns, so the corresponding
+// MIR drop is representation-only; emitting an explicit destroy would double
+// destroy it. Keep this erasure tied to the exact Expected payload range loan
+// that introduced the checked early-exit path.
+[[nodiscard]] bool expectedPayloadRangeParameterDrop(
+    const MirBody &body, const std::vector<HirBindingId> &parameterBindings,
+    const MirInstruction &instruction) {
+  const MirPlace *place =
+      instruction.kind == MirInstructionKind::Drop && instruction.destination
+          ? body.findPlace(*instruction.destination)
+          : nullptr;
+  if (place == nullptr ||
+      !expectedPayloadRangeParameterPlace(body, parameterBindings, *place) ||
+      instruction.info.type != place->type || instruction.result ||
+      instruction.receiver || !instruction.operands.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.definedFailure.empty() ||
+      instruction.lifecycle.size() != 1 ||
+      instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+      instruction.lifecycle.front().target != 0) {
+    return false;
+  }
+  return true;
+}
+
 // Moving a field out through one mutable call-result loan may stage the
 // move-only class in a Value-rooted obligation before replacing a direct
 // receiver field. Preserve that exact three-step lifetime schedule:
@@ -17062,8 +17185,16 @@ public:
       output << typeSpelling(place.type) << " __gti_mir_p_" << place.id;
       if (const std::optional<std::size_t> parameter =
               parameterIndex(place, facts)) {
-        // A move-only owner parameter cannot copy-initialize its local.
-        if (place.type.kind == SemanticType::UniqueOwner) {
+        // The verifier-certified Expected payload range keeps a by-value,
+        // move-only Expected parameter alive as its root. Transfer that exact
+        // native argument into the MIR binding just as the established unique
+        // owner path does; all other parameter representations are unchanged.
+        const bool expectedRangeTransfer =
+            !place.traits.copyable && place.traits.movable &&
+            expectedPayloadRangeParameterPlace(facts.body,
+                                               facts.parameterBindings, place);
+        if (place.type.kind == SemanticType::UniqueOwner ||
+            expectedRangeTransfer) {
           output << " = std::move(__gti_mir_arg_" << *parameter << ')';
         } else {
           output << " = __gti_mir_arg_" << *parameter;
@@ -17295,6 +17426,18 @@ public:
         }
         if (expectedClassExtractionPlace(facts.body, value.id) != nullptr ||
             expectedClassCopyExtraction(facts.body, value.id)) {
+          const MirLoan *payloadLoan =
+              valueDefinition != nullptr && valueDefinition->loan
+                  ? facts.body.findLoan(*valueDefinition->loan)
+                  : nullptr;
+          if (payloadLoan != nullptr &&
+              expectedPayloadRangeLoanProducer(facts.body, *payloadLoan) ==
+                  valueDefinition) {
+            // The verifier-certified range projection publishes through its
+            // CallResult pointer. A parallel extraction pointer would be a
+            // second carrier with no MIR assignment.
+            continue;
+          }
           writeIndent();
           if (value.info.access == AccessMode::ReadOnly) {
             output << "const ";
@@ -19693,6 +19836,15 @@ private:
              << *instruction.destination << "\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Drop &&
+        expectedPayloadRangeParameterDrop(facts.body, facts.parameterBindings,
+                                          instruction)) {
+      writeIndent();
+      output << "// GTI MIR expected range parameter drop of place "
+             << *instruction.destination
+             << " is owned by native parameter scope\n";
+      return;
+    }
     if (failureForm && facts.kind == MirBodyKind::Constructor &&
         aggregateConstructorRollbackDrop(facts.body, instruction)) {
       // The caller destroys the complete unpublished C++ object after this
@@ -21473,8 +21625,7 @@ private:
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.result) {
       const InlineClassCallableArgument callable =
-          inlineClassCallableArgument(program, facts.body,
-                                      *instruction.result);
+          inlineClassCallableArgument(program, facts.body, *instruction.result);
       if (callable.producer == &instruction) {
         writeIndent();
         output << "// construct " << *instruction.result
@@ -23022,7 +23173,14 @@ private:
         output << ");\n";
         return;
       }
+      const MirLoan *payloadLoan =
+          instruction.loan ? facts.body.findLoan(*instruction.loan) : nullptr;
+      const bool payloadRangeExtraction =
+          payloadLoan != nullptr &&
+          expectedPayloadRangeLoanProducer(facts.body, *payloadLoan) ==
+              &instruction;
       const bool classExtraction =
+          payloadRangeExtraction ||
           expectedClassExtractionPlace(facts.body, *instruction.result) !=
               nullptr ||
           expectedClassCopyExtraction(facts.body, *instruction.result);
@@ -23038,8 +23196,13 @@ private:
                             : "::gti_internal::backend::mir_expected_error_v1"))
              << '(';
       emitStoragePlaceValue(facts, *expectedPlace);
-      output << ", &__gti_mir_" << (classExtraction ? "ref_v_" : "v_")
-             << *instruction.result << ");\n";
+      output << ", &__gti_mir_";
+      if (payloadRangeExtraction) {
+        output << "loan_" << payloadLoan->id;
+      } else {
+        output << (classExtraction ? "ref_v_" : "v_") << *instruction.result;
+      }
+      output << ");\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -23126,12 +23289,24 @@ private:
                        : ".value();\n");
         return;
       }
+      const MirLoan *payloadLoan =
+          instruction.loan ? facts.body.findLoan(*instruction.loan) : nullptr;
+      const bool payloadRangeExtraction =
+          payloadLoan != nullptr &&
+          expectedPayloadRangeLoanProducer(facts.body, *payloadLoan) ==
+              &instruction;
       const bool classExtraction =
+          payloadRangeExtraction ||
           expectedClassExtractionPlace(facts.body, *instruction.result) !=
               nullptr ||
           expectedClassCopyExtraction(facts.body, *instruction.result);
-      output << "__gti_mir_" << (classExtraction ? "ref_v_" : "v_")
-             << *instruction.result << " = ";
+      output << "__gti_mir_";
+      if (payloadRangeExtraction) {
+        output << "loan_" << payloadLoan->id;
+      } else {
+        output << (classExtraction ? "ref_v_" : "v_") << *instruction.result;
+      }
+      output << " = ";
       if (instruction.intrinsic == IntrinsicKind::ArrayRangeBegin) {
         output << "std::uint64_t{0};\n";
         return;
@@ -28408,13 +28583,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirInstruction *checkedStorageRead =
         discharged == nullptr ? checkedStorageReadLoanProducer(body, loan)
                               : nullptr;
-    const MirInstruction *mutexGuardRead =
+    const MirInstruction *expectedPayloadRead =
         discharged == nullptr && checkedStorageRead == nullptr
+            ? expectedPayloadRangeLoanProducer(body, loan)
+            : nullptr;
+    const MirInstruction *mutexGuardRead =
+        discharged == nullptr && checkedStorageRead == nullptr &&
+                expectedPayloadRead == nullptr
             ? mutexGuardReadLoanProducer(body, loan)
             : nullptr;
     const MirInstruction *referenceCall =
         discharged == nullptr && checkedStorageRead == nullptr &&
-                mutexGuardRead == nullptr
+                expectedPayloadRead == nullptr && mutexGuardRead == nullptr
             ? loanProducingReferenceCall(program_, body, loan)
             : nullptr;
     if (discharged != nullptr) {
@@ -28432,6 +28612,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           loanSource->type.arguments.empty() ||
           checkedStorageRead->operands.size() != 2 ||
           checkedStorageRead->info.type != loanSource->type.arguments.front()) {
+        return false;
+      }
+    } else if (expectedPayloadRead != nullptr) {
+      const bool payloadRow = std::any_of(
+          representations_.types().begin(), representations_.types().end(),
+          [&](const CppMirTypeRepresentation &row) {
+            return row.type == expectedPayloadRead->info.type &&
+                   !row.spelling.empty();
+          });
+      if (loanSource->type.kind != SemanticType::Expected ||
+          loanSource->type.arguments.size() != 2 ||
+          expectedPayloadRead->info.type !=
+              loanSource->type.arguments.front() ||
+          !payloadRow) {
         return false;
       }
     } else if (mutexGuardRead != nullptr) {
@@ -29616,8 +29810,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (instruction.result) {
           const InlineClassCallableArgument callable =
-              inlineClassCallableArgument(program_, body,
-                                          *instruction.result);
+              inlineClassCallableArgument(program_, body, *instruction.result);
           if (callable.producer == &instruction) {
             continue;
           }
@@ -29963,7 +30156,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                slotPlace(*droppedPlace)) ||
             movedOutOwnerDrop(body, instruction) ||
             storeConsumedStorageValueDrop(body, instruction) ||
-            ownedParameterFieldSourceDrop(program_, body, instruction)) {
+            ownedParameterFieldSourceDrop(program_, body, instruction) ||
+            (parameterBindings != nullptr &&
+             expectedPayloadRangeParameterDrop(body, *parameterBindings,
+                                               instruction))) {
           continue;
         }
         if (instruction.destination) {

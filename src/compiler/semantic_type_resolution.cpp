@@ -1346,6 +1346,21 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     ResolvedCallInfo resolved{.returnType = currentType,
                               .intrinsic = intrinsic,
                               .dispatchOwner = expected};
+    if (intrinsic == IntrinsicKind::ExpectedValue &&
+        expectedPayloadRangeCandidate == &call) {
+      const auto *receiver = exprAs<Variable>(member.object().get());
+      const Symbol *symbol =
+          receiver == nullptr ? nullptr : resolve(receiver->name());
+      const bool namedLocalOrValueParameter =
+          symbol != nullptr && symbol->type.kind == SemanticType::Expected &&
+          (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
+           symbol->bindingKind == SemanticBindingKind::Parameter);
+      if (namedLocalOrValueParameter) {
+        resolved.borrowOrigin = BorrowOriginKind::Receiver;
+        resolved.borrowAccess = AccessMode::ReadOnly;
+        resolved.receiverMode = CallReceiverMode::ReadOnlyPlace;
+      }
+    }
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
   };
@@ -3251,6 +3266,13 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   }
   if (const auto *call = exprAs<Call>(expression.get())) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::ExpectedValue &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+      const auto *member = exprAs<Get>(call->callee().get());
+      return member != nullptr &&
+             hasStableBorrowStorage(member->object(), visiting);
+    }
     if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Global &&
         resolved->borrowPlace && resolved->borrowPlace->valid()) {

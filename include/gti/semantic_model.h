@@ -92,6 +92,11 @@ struct ResolvedRangeIterationInfo {
   FunctionId incrementFunction = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
+  // The range source is the checked active-value projection of one named
+  // local or by-value expected<T, E>. The range loan still protects the
+  // complete expected root; this flag preserves the bounded projection
+  // identity without admitting a general retained nested reference.
+  bool expectedPayloadProjection = false;
 };
 
 struct SemanticConditionalLoanEnds {

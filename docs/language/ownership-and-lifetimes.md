@@ -536,10 +536,16 @@ and behaves like its cross-statement read-then-store form. A retained
 overlapping borrow still rejects the write through the ordinary loan rules
 above.
 
-Nested owner projections remain outside this checkpoint. In particular, a
-borrow reached through `expected<owner, E>.value()` may be consumed immediately
-within the same full expression, but it cannot be retained or returned through
-another helper yet.
+General nested owner projections remain outside this checkpoint. In
+particular, a borrow reached through `expected<owner, E>.value()` may be
+consumed immediately within the same full expression, but it cannot be stored
+or returned through another helper. The one bounded exception is a read-only
+range sourced by exact `value()` on a named local or by-value parameter. That
+loop retains a shared loan rooted in the complete `expected`, allows nested
+read-only traversal, and blocks owner movement, replacement, mutation, and
+drop until every loop exit ends the range loan. It does not authorize a
+standalone payload reference, field/global receiver, mutable payload range, or
+escaping element.
 
 Reference globals, nested references, and references over fixed arrays or
 compiler-private owner handles remain unavailable to ordinary source. A
@@ -633,6 +639,9 @@ Fixed arrays use an indexed place rather than a pointer; an owned nominal
 temporary is transferred into loop storage and destroyed once after all range
 and element loans end, including failure cleanup. The compiler does not expose
 a raw pointer or public intrinsic for iteration; see [`ranges.md`](ranges.md).
+For exact `named_expected.value()` read-only sources, the shared range loan is
+instead rooted in the complete named `expected` and begins only after the
+checked extraction succeeds.
 
 ## Raw Pointers And Ownership
 
