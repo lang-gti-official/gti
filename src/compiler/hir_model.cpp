@@ -36,6 +36,47 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
          !std::holds_alternative<ConstantAggregateValue>(*constant);
 }
 
+[[nodiscard]] bool containsUnresolvedGeneric(const CompileTimeValue &value) {
+  return value.kind == CompileTimeValue::Parameter;
+}
+
+[[nodiscard]] bool containsUnresolvedGeneric(const SemanticType &type) {
+  if (type.kind == SemanticType::TypeParameter ||
+      (type.kind == SemanticType::TypePack && !type.concretePack) ||
+      type.arrayLengthParameterId != 0 ||
+      std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                  [](const CompileTimeValue &value) {
+                    return containsUnresolvedGeneric(value);
+                  }) ||
+      std::any_of(type.lambdaEnclosingClassValues.begin(),
+                  type.lambdaEnclosingClassValues.end(),
+                  [](const CompileTimeValue &value) {
+                    return containsUnresolvedGeneric(value);
+                  }) ||
+      std::any_of(type.lambdaEnclosingFunctionValues.begin(),
+                  type.lambdaEnclosingFunctionValues.end(),
+                  [](const CompileTimeValue &value) {
+                    return containsUnresolvedGeneric(value);
+                  })) {
+    return true;
+  }
+  const auto containsType = [](const SemanticType &argument) {
+    return containsUnresolvedGeneric(argument);
+  };
+  return std::any_of(type.arguments.begin(), type.arguments.end(),
+                     containsType) ||
+         std::any_of(type.lambdaEnclosingClassTypes.begin(),
+                     type.lambdaEnclosingClassTypes.end(), containsType) ||
+         std::any_of(type.lambdaEnclosingFunctionTypes.begin(),
+                     type.lambdaEnclosingFunctionTypes.end(), containsType);
+}
+
+[[nodiscard]] SemanticType referentOrSelf(const SemanticType &type) {
+  return type.kind == SemanticType::Reference && type.arguments.size() == 1
+             ? type.arguments.front()
+             : type;
+}
+
 } // namespace
 
 const HirValue *HirBody::findValue(HirValueId id) const {
@@ -345,22 +386,60 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool referenceElement =
           source != nullptr && source->elementBinding() != nullptr &&
           source->elementBinding()->type().reference.has_value();
-      const bool exactSemantic =
+      const HirBinding *rangeCarrier =
+          range == nullptr ? nullptr : bindingFor(range->rangeCarrier);
+      const HirBinding *iterator =
+          range == nullptr ? nullptr : bindingFor(range->iterator);
+      const HirBinding *sentinel =
+          range == nullptr ? nullptr : bindingFor(range->sentinel);
+      const HirBinding *element =
+          range == nullptr ? nullptr : bindingFor(range->element);
+      const bool exactConcreteTypes =
+          range != nullptr && rangeCarrier != nullptr && iterator != nullptr &&
+          sentinel != nullptr && element != nullptr &&
+          range->rangeType == referentOrSelf(rangeCarrier->info.type) &&
+          range->iteratorType == iterator->info.type &&
+          range->sentinelType == sentinel->info.type &&
+          range->elementType == referentOrSelf(element->info.type) &&
+          range->elementAccess ==
+              (element->info.type.kind == SemanticType::Reference
+                   ? element->info.type.referenceAccess
+                   : AccessMode::ReadOnly) &&
+          !containsUnresolvedGeneric(range->rangeType) &&
+          !containsUnresolvedGeneric(range->iteratorType) &&
+          !containsUnresolvedGeneric(range->sentinelType) &&
+          !containsUnresolvedGeneric(range->elementType);
+      const bool genericSemantic =
+          semantic != nullptr &&
+          (containsUnresolvedGeneric(semantic->rangeType) ||
+           containsUnresolvedGeneric(semantic->iteratorType) ||
+           containsUnresolvedGeneric(semantic->sentinelType) ||
+           containsUnresolvedGeneric(semantic->elementType));
+      const bool exactLoanProvenance =
           semantic != nullptr && range != nullptr &&
+          ((genericSemantic &&
+            (range->rangeLoan != 0) == (semantic->rangeLoan != 0) &&
+            (range->elementLoan != 0) == (semantic->elementLoan != 0) &&
+            (range->rangeLoan == range->elementLoan) ==
+                (semantic->rangeLoan == semantic->elementLoan)) ||
+           (!genericSemantic && range->rangeLoan == semantic->rangeLoan &&
+            range->elementLoan == semantic->elementLoan));
+      const bool exactSemantic =
+          semantic != nullptr && range != nullptr && exactConcreteTypes &&
           range->strategy == semantic->strategy &&
-          range->rangeType == semantic->rangeType &&
-          range->iteratorType == semantic->iteratorType &&
-          range->sentinelType == semantic->sentinelType &&
-          range->elementType == semantic->elementType &&
+          (genericSemantic ||
+           (range->rangeType == semantic->rangeType &&
+            range->iteratorType == semantic->iteratorType &&
+            range->sentinelType == semantic->sentinelType &&
+            range->elementType == semantic->elementType &&
+            range->arrayLength == semantic->arrayLength)) &&
           range->elementAccess == semantic->elementAccess &&
-          range->rangeLoan == semantic->rangeLoan &&
-          range->elementLoan == semantic->elementLoan &&
+          exactLoanProvenance &&
           range->beginFunction == semantic->beginFunction &&
           range->endFunction == semantic->endFunction &&
           range->compareFunction == semantic->compareFunction &&
           range->dereferenceFunction == semantic->dereferenceFunction &&
           range->incrementFunction == semantic->incrementFunction &&
-          range->arrayLength == semantic->arrayLength &&
           range->ownsRangeTemporary == semantic->ownsRangeTemporary;
       const bool exactStructure =
           source != nullptr && range != nullptr && statement.body &&

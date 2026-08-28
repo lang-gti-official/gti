@@ -7984,6 +7984,93 @@ struct InlineFailureConstructorArgument {
   }
 };
 
+struct InlineClassCallableArgument {
+  const MirInstruction *producer = nullptr;
+  const MirInstruction *consumer = nullptr;
+  std::size_t operandIndex = 0;
+
+  [[nodiscard]] explicit operator bool() const {
+    return producer != nullptr && consumer != nullptr;
+  }
+};
+
+// A failure-free class prvalue passed directly to an exact confined callable
+// parameter has no independent lifetime in MIR. Keep that evaluation inline
+// at the call only for the adjacent Construct -> Call shape; this preserves
+// MIR ordering and does not generalize class SSA materialization.
+[[nodiscard]] InlineClassCallableArgument inlineClassCallableArgument(
+    const MirProgram &program, const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const MirConstructorInstance *constructor =
+      producer != nullptr && producer->constructorTarget
+          ? program.findConstructorInstance(*producer->constructorTarget)
+          : nullptr;
+  const MirClassInstance *owner =
+      constructor == nullptr ? nullptr
+                             : program.findClassInstance(constructor->owner);
+  const bool constructorCannotFail =
+      constructor != nullptr &&
+      cppMirConstructorStatusCannotFail(program, constructor->id);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      producer == nullptr || producer->kind != MirInstructionKind::Construct ||
+      !producer->result || *producer->result != valueId ||
+      producer->destination || producer->receiver ||
+      producer->constructorKind != ConstructorKind::Ordinary ||
+      !producer->constructorTarget || !producer->localFailureSites.empty() ||
+      (producer->definedFailure.propagation != FailurePropagationKind::None &&
+       !(producer->definedFailure.propagation ==
+             FailurePropagationKind::Constructor &&
+         constructorCannotFail)) ||
+      constructor == nullptr || owner == nullptr ||
+      owner->type != value->info.type ||
+      constructor->definitionKind != MirDefinitionKind::Source ||
+      !constructorCannotFail ||
+      !std::all_of(producer->operands.begin(), producer->operands.end(),
+                   [](const MirOperand &operand) {
+                     const auto kind = expectedTypeRepresentation(operand.type);
+                     return (operand.kind == MirOperandKind::Value ||
+                             operand.kind == MirOperandKind::Constant) &&
+                            kind &&
+                            (*kind == CppMirTypeRepresentationKind::Scalar ||
+                             *kind == CppMirTypeRepresentationKind::Enum);
+                   })) {
+    return {};
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand) {
+    return {};
+  }
+  const MirInstruction *consumer =
+      findInstruction(body, uses.front().instruction);
+  if (consumer == nullptr || consumer->kind != MirInstructionKind::Call ||
+      uses.front().operandIndex >= consumer->operands.size() ||
+      consumer->operands[uses.front().operandIndex].kind !=
+          MirOperandKind::Value ||
+      consumer->operands[uses.front().operandIndex].value != valueId ||
+      std::none_of(consumer->callableArguments.begin(),
+                   consumer->callableArguments.end(),
+                   [&](const CallableArgumentBoundary &argument) {
+                     return argument.parameterIndex == uses.front().operandIndex &&
+                            argument.boundary == CallableBoundary::Confined;
+                   })) {
+    return {};
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index) {
+      if (block.instructions[index].id == producer->id &&
+          block.instructions[index + 1].id == consumer->id) {
+        return {.producer = producer,
+                .consumer = consumer,
+                .operandIndex = uses.front().operandIndex};
+      }
+    }
+  }
+  return {};
+}
+
 // A failure-free class construction immediately moved into one
 // failure-capable outer constructor can remain a C++ prvalue. MIR records the
 // source construction and its MoveValue CallInput separately, but neither has
@@ -8023,17 +8110,22 @@ inlineFailureConstructorArgument(const MirProgram &program, const MirBody &body,
           : nullptr;
   const MirClassInstance *innerOwner =
       inner == nullptr ? nullptr : program.findClassInstance(inner->owner);
+  const bool innerCannotFail =
+      inner != nullptr && cppMirConstructorStatusCannotFail(program, inner->id);
   if (source == nullptr || source->info.type.kind != SemanticType::Class ||
       producer == nullptr || producer->kind != MirInstructionKind::Construct ||
       !producer->result || *producer->result != sourceId ||
       producer->destination || producer->receiver ||
       producer->constructorKind != ConstructorKind::Ordinary ||
       !producer->constructorTarget || !producer->localFailureSites.empty() ||
-      producer->definedFailure.propagation != FailurePropagationKind::None ||
+      (producer->definedFailure.propagation != FailurePropagationKind::None &&
+       !(producer->definedFailure.propagation ==
+             FailurePropagationKind::Constructor &&
+         innerCannotFail)) ||
       inner == nullptr || innerOwner == nullptr ||
       innerOwner->type != source->info.type ||
       inner->definitionKind != MirDefinitionKind::Source ||
-      inner->mayRaiseDefinedFailure ||
+      !innerCannotFail ||
       !std::all_of(producer->operands.begin(), producer->operands.end(),
                    [](const MirOperand &operand) {
                      const auto kind = expectedTypeRepresentation(operand.type);
@@ -17259,6 +17351,11 @@ public:
           // together as the outer failure constructor's prvalue argument.
           continue;
         }
+        if (inlineClassCallableArgument(program, facts.body, value.id)) {
+          // The adjacent callable call spells the failure-free class prvalue
+          // directly in its argument list.
+          continue;
+        }
         if (inlineUnexpectedClassConstruction(facts.body, value.id)) {
           // The class prvalue spells inside its sole Unexpected return; it has
           // no independent MIR lifetime or C++ local.
@@ -21375,6 +21472,15 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.result) {
+      const InlineClassCallableArgument callable =
+          inlineClassCallableArgument(program, facts.body,
+                                      *instruction.result);
+      if (callable.producer == &instruction) {
+        writeIndent();
+        output << "// construct " << *instruction.result
+               << " spells at its consuming callable call\n";
+        return;
+      }
       const InlineFailureConstructorArgument nested =
           inlineFailureConstructorArgument(program, facts.body,
                                            *instruction.result);
@@ -21948,6 +22054,14 @@ private:
     const auto emitCallArgument = [&](const MirOperand &operand,
                                       bool marshalled,
                                       bool transformedCallable) {
+      if (operand.kind == MirOperandKind::Value) {
+        const InlineClassCallableArgument callable =
+            inlineClassCallableArgument(program, facts.body, operand.value);
+        if (callable.consumer == &instruction) {
+          emitClassConstructionExpression(facts, *callable.producer);
+          return;
+        }
+      }
       if (operand.kind == MirOperandKind::Value &&
           sequencedMovedArgument(facts.body, operand.value) != nullptr) {
         output << "std::move(__gti_mir_v_" << operand.value << ')';
@@ -29213,6 +29327,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // consuming argument and never declares a local.
           inlineNestedCallResult(program_, representations_, body, value.id) !=
               nullptr ||
+          inlineClassCallableArgument(program_, body, value.id) ||
           inlineFailureConstructorArgument(program_, body, value.id) ||
           [&]() {
             const MovedChainTerminal terminal =
@@ -29496,6 +29611,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // The exact prepared-parameter schedule owns this construction.
             // A Constructor propagation with no paired Invoke is terminally
             // contained by the compatibility constructor it spells.
+            continue;
+          }
+        }
+        if (instruction.result) {
+          const InlineClassCallableArgument callable =
+              inlineClassCallableArgument(program_, body,
+                                          *instruction.result);
+          if (callable.producer == &instruction) {
             continue;
           }
         }
