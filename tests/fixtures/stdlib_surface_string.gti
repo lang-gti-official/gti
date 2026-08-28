@@ -56,7 +56,9 @@ int main() {
       std::to_string(uint8_t(8)) != "8" ||
       std::to_string(uint16_t(16)) != "16" ||
       std::to_string(uint32_t(32)) != "32" ||
-      std::to_string(uint64_t(64)) != "64") {
+      std::to_string(uint64_t(64)) != "64" ||
+      std::to_string(1.5) != "1.500000" ||
+      std::to_string(-0.0) != "-0.000000") {
     return 5;
   }
   return 0;

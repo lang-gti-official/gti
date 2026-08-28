@@ -318,6 +318,18 @@ namespace std {
     print("\n");
   }
 
+  /// Writes a binary32 value in decimal without adding a newline.
+  void print(float value) {
+    mut string text = detail::float_to_decimal_string(value);
+    print(text);
+  }
+
+  /// Writes a binary32 value in decimal followed by a newline.
+  void println(float value) {
+    print(value);
+    print("\n");
+  }
+
   namespace detail {
     char decimal_digit_character(uint8_t digit) {
       switch (digit) {
@@ -378,6 +390,190 @@ namespace std {
     }
     return std::move(result);
   }
+  namespace detail {
+    /// Fixed fractional digit count for binary32 decimal text. Six matches
+    /// the familiar `%f` default and is well inside binary32's precision.
+    constexpr size_t float_fraction_digits = 6;
+
+    /// The largest binary32 magnitude below which every value still carries
+    /// fractional bits (2^24). At or above it a binary32 is an exact integer.
+    constexpr float float_integral_threshold = 16777216.0;
+
+    bool float_is_nan(float value) {
+      return value != value;
+    }
+
+    bool float_is_infinite(float value) {
+      if (float_is_nan(value)) {
+        return false;
+      }
+      return value - value != 0.0;
+    }
+
+    /// Appends the exact decimal digits of a binary32 whose magnitude is at
+    /// least 2^24, so the value is an exact integer. The value is normalised
+    /// to `mantissa * 2^exponent` by exact halving, then the mantissa's
+    /// decimal digits are doubled `exponent` times. Every step is exact, so
+    /// the result is the value's true decimal expansion rather than an
+    /// approximation routed through a wider float.
+    void append_large_integral_float(mut string& result, float magnitude) {
+      mut float remaining = magnitude;
+      mut int32_t exponent = 0;
+      while (remaining >= float_integral_threshold) {
+        remaining = remaining / 2.0;
+        exponent++;
+      }
+
+      // `remaining` is now an exact integer below 2^24.
+      mut int64_t mantissa = int64_t(remaining);
+
+      // Little-endian decimal digits of the mantissa.
+      mut uint8_t[48] digits = {};
+      mut size_t count = 0;
+      while (mantissa > 0) {
+        digits[count] = uint8_t(mantissa % 10);
+        count++;
+        mantissa = mantissa / 10;
+      }
+      if (count == 0) {
+        digits[0] = uint8_t(0);
+        count = 1;
+      }
+
+      mut int32_t doubling = 0;
+      while (doubling < exponent) {
+        mut int32_t carry = 0;
+        for (mut size_t index = 0; index < count; index++) {
+          int32_t doubled = int32_t(digits[index]) * 2 + carry;
+          digits[index] = uint8_t(doubled % 10);
+          carry = doubled / 10;
+        }
+        while (carry > 0) {
+          digits[count] = uint8_t(carry % 10);
+          count++;
+          carry = carry / 10;
+        }
+        doubling++;
+      }
+
+      result.reserve(result.size() + count);
+      while (count > 0) {
+        count--;
+        result.push_back(decimal_digit_character(digits[count]));
+      }
+    }
+
+    /// Appends `float_fraction_digits` fractional digits for a binary32
+    /// magnitude below 2^24, rounding to nearest with ties to even on the
+    /// exact expansion, and
+    /// returns the carry into the integer part.
+    ///
+    /// The fractional part of a binary32 carries at most 24 significant bits,
+    /// so multiplying it by ten in binary64 needs at most 28 and is therefore
+    /// exact; subtracting the extracted digit is exact as well. Each digit is
+    /// consequently the true decimal digit of the stored value, not a
+    /// re-rounded approximation.
+    int64_t append_fraction_digits(mut string& result, double fraction) {
+      mut uint8_t[8] digits = {};
+      mut double remaining = fraction;
+      mut size_t index = 0;
+      while (index < float_fraction_digits + 1) {
+        remaining = remaining * 10.0d;
+        int64_t digit = int64_t(remaining);
+        remaining = remaining - double(digit);
+        digits[index] = uint8_t(digit);
+        index++;
+      }
+
+      // Round to nearest with ties to even on the exact expansion. The
+      // seventh digit and remaining exact fraction distinguish values above
+      // half from an exact tie; an exact tie raises only an odd retained
+      // sixth digit. Propagate any carry through the retained digits.
+      mut int64_t carry = 0;
+      uint8_t guard = digits[float_fraction_digits];
+      uint8_t retained = digits[float_fraction_digits - 1];
+      bool above_half = guard > uint8_t(5) ||
+                        (guard == uint8_t(5) && remaining > 0.0d);
+      bool exact_odd_tie = guard == uint8_t(5) && remaining == 0.0d &&
+                           retained % uint8_t(2) == uint8_t(1);
+      if (above_half || exact_odd_tie) {
+        carry = 1;
+        mut size_t position = float_fraction_digits;
+        while (position > 0 && carry == 1) {
+          position--;
+          int32_t raised = int32_t(digits[position]) + 1;
+          if (raised == 10) {
+            digits[position] = uint8_t(0);
+          } else {
+            digits[position] = uint8_t(raised);
+            carry = 0;
+          }
+        }
+      }
+
+      result.reserve(result.size() + float_fraction_digits);
+      for (mut size_t emit = 0; emit < float_fraction_digits; emit++) {
+        result.push_back(decimal_digit_character(digits[emit]));
+      }
+      return carry;
+    }
+
+    /// The shared binary32 decimal text contract used by `std::to_string`,
+    /// `std::print`, and `std::println`.
+    string float_to_decimal_string(float value) {
+      mut string result = string();
+      if (float_is_nan(value)) {
+        result.append("nan");
+        return std::move(result);
+      }
+
+      mut float magnitude = value;
+      bool negative = value < 0.0 ||
+                      (value == 0.0 && 1.0 / value < 0.0);
+      if (negative) {
+        result.push_back('-');
+        magnitude = -value;
+      }
+
+      if (float_is_infinite(magnitude)) {
+        result.append("inf");
+        return std::move(result);
+      }
+
+      if (magnitude >= float_integral_threshold) {
+        append_large_integral_float(result, magnitude);
+        result.push_back('.');
+        for (mut size_t zero = 0; zero < float_fraction_digits; zero++) {
+          result.push_back('0');
+        }
+        return std::move(result);
+      }
+
+      // Below 2^24 the integer part fits an int64 exactly.
+      mut int64_t whole = int64_t(magnitude);
+      double fraction = double(magnitude) - double(whole);
+
+      mut string fraction_text = string();
+      int64_t carry = append_fraction_digits(fraction_text, fraction);
+      whole = whole + carry;
+
+      mut string whole_text = to_string(whole);
+      result.append(whole_text.view());
+      result.push_back('.');
+      result.append(fraction_text.view());
+      return std::move(result);
+    }
+  }
+
+  /// Decimal text for a binary32 value: an optional sign, the integer part,
+  /// a point, and exactly six fractional digits taken from the stored
+  /// value's exact decimal expansion and rounded to nearest with ties to even.
+  /// Signed zero is preserved. Non-finite values render as `nan`, `inf`, and
+  /// `-inf`.
+  string to_string(float value) {
+    return detail::float_to_decimal_string(value);
+  }
+
   namespace detail {
     static std::size_t fnv_64_1a_hasher(std::string& value) {
       mut uint64_t result = uint64_t(14695981039346656037);
