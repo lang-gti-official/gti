@@ -3898,19 +3898,53 @@ int32_t main() {
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::size_t primary = artifact.contents.find("class unique_ptr");
   const std::size_t nextMember = artifact.contents.find("const T &", primary);
-  std::size_t declarations = 0;
+  std::vector<std::string> declarations;
   if (primary != std::string::npos && nextMember != std::string::npos) {
     std::size_t cursor = primary;
     while ((cursor = artifact.contents.find("upcast__gti_mir_failure(",
                                             cursor)) != std::string::npos &&
            cursor < nextMember) {
-      ++declarations;
+      const std::size_t nameStart =
+          artifact.contents.rfind("__gti_member_", cursor);
+      if (nameStart == std::string::npos || nameStart < primary) {
+        break;
+      }
+      declarations.push_back(artifact.contents.substr(
+          nameStart, cursor - nameStart +
+                         std::string_view("upcast__gti_mir_failure").size()));
       ++cursor;
     }
   }
-  expect(declarations == 1,
-         "concrete owner specializations sharing one substituted upcast "
-         "signature should publish one primary-template declaration");
+  const auto occurrenceCount = [&](const std::string &name) {
+    std::size_t count = 0;
+    std::size_t cursor = 0;
+    while ((cursor = artifact.contents.find(name + '(', cursor)) !=
+           std::string::npos) {
+      ++count;
+      ++cursor;
+    }
+    return count;
+  };
+  const auto ownerCount = [&](const std::string &name) {
+    std::size_t count = 0;
+    for (std::string_view owner : {"Derived", "Other"}) {
+      count += artifact.contents.find(
+                   "unique_ptr<::__gti_program::" + std::string(owner) +
+                   ">::" + name + '(') != std::string::npos
+                   ? 1
+                   : 0;
+    }
+    return count;
+  };
+  expect(declarations.size() == 2 && declarations[0] != declarations[1] &&
+             std::all_of(declarations.begin(), declarations.end(),
+                         [&](const std::string &name) {
+                           return occurrenceCount(name) == 4 &&
+                                  ownerCount(name) == 1;
+                         }),
+         "each selected generic upcast on a retained owner carrier should "
+         "publish one distinct owner-qualified declaration, specialization, "
+         "call, and definition");
 }
 
 void testExpectedLifetimeSlotObserverFusion() {
