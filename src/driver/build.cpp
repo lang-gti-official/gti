@@ -914,6 +914,12 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     return std::nullopt;
   }
 
+  // Cross-compilation policy. The sysroot contributes path identity, not
+  // content: it is a platform SDK tree, and the same non-hermetic toolchain
+  // boundary that covers implicit system headers covers it.
+  identity.add("native.target-policy.triple", native.targetPolicy.triple);
+  identity.add("native.target-policy.sysroot",
+               native.targetPolicy.sysroot.string());
   addScalarSequence(identity, "native.compiler-argument",
                     native.compilerArguments);
   addScalarSequence(identity, "native.c-compiler-argument",
@@ -974,14 +980,16 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                             *request.cCompiler(), source, preprocessed,
                             native.cStandard.value_or(CStandard::C17),
                             request.compilation().optimization(),
-                            cIncludeDirectories, native.cCompilerArguments),
+                            cIncludeDirectories, native.cCompilerArguments,
+                            native.targetPolicy),
                         depfile)
                   : nativeToolchain.preprocessCommand(
                         NativeCppCompileRequest(
                             request.nativeCompiler(), source, preprocessed,
                             request.compilation().cppStandard(),
                             request.compilation().optimization(),
-                            cppIncludeDirectories, native.compilerArguments),
+                            cppIncludeDirectories, native.compilerArguments,
+                            native.targetPolicy),
                         depfile);
       return addNativeSourceDiscovery(identity, label, probeCommand, source,
                                       preprocessed, depfile, errorMessage,
@@ -1395,6 +1403,10 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
                       const NativeInputs &additional,
                       const std::vector<std::filesystem::path> &nativeObjects) {
   NativeInputs inputs;
+  // The resolved cross-compilation policy is driver-owned and must survive
+  // link-input assembly: without it the final link would silently run the
+  // declared cross compiler in its host configuration.
+  inputs.targetPolicy = additional.targetPolicy;
   inputs.includeDirectories =
       nativeCppIncludeDirectories(toolchain, standard, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
@@ -2182,8 +2194,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCCompileRequest cRequest(
             *request.cCompiler(), source, stagedObject, cStandard,
-            request.compilation().optimization(), includeDirectories,
-            arguments);
+            request.compilation().optimization(), includeDirectories, arguments,
+            request.nativeInputs().targetPolicy);
         NativeCCompilationResult cCompilation{
             .source = source,
             .object = object,
@@ -2226,8 +2238,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
         const NativeCppCompileRequest cppRequest(
             request.nativeCompiler(), source, stagedObject,
             request.compilation().cppStandard(),
-            request.compilation().optimization(), includeDirectories,
-            arguments);
+            request.compilation().optimization(), includeDirectories, arguments,
+            request.nativeInputs().targetPolicy);
         NativeCppCompilationResult cppCompilation{
             .source = source,
             .object = object,
