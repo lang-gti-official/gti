@@ -17,7 +17,7 @@ rejection.
 
 ## Result at time of writing
 
-57 programs: **42 pass, 10 ICE, 1 link failure, 2 silent failures, 2
+65 programs: **50 pass, 10 ICE, 1 link failure, 2 silent failures, 2
 rejections of valid code**.
 
 A second script, `scaffold_probe.sh`, probes stdlib operations the surface
@@ -553,10 +553,11 @@ worth capturing for whoever writes the language reference.
 
 ## Coverage gaps still open
 
-Not yet exercised by this corpus, in rough order of expected yield: `tcp`,
-concurrency beyond a single spawn/join, `<std/random>` distribution surface,
-and receiving a `[[c_abi]]` record from a linked native factory (which needs a
-companion C translation unit the single-file runner does not build).
+Not yet exercised by this corpus, in rough order of expected yield:
+concurrency beyond a single spawn/join, connected `tcp` traffic (the socket
+surface currently stops at open/close), and receiving a `[[c_abi]]` record
+from a linked native factory, which needs a companion C translation unit the
+single-file runner does not build.
 
 Two headers cannot be exercised at all until F7's underlying work lands:
 `<std/optional>` and `<std/list>` have no executable operations.

@@ -1,0 +1,37 @@
+// Generic classes with constrained methods, chained instantiation and statics.
+#include <std/vector>
+
+class Stack<std::movable T> {
+  mut std::vector<T> items;
+public:
+  Stack() : items(std::vector<T>()) {}
+  void push(T value) mut { this.items.push_back(std::move(value)); }
+  std::size_t size() { return this.items.size(); }
+  bool empty() { return this.items.size() == std::size_t(0); }
+  T top() requires std::copyable<T> { return this.items[this.items.size() - std::size_t(1)]; }
+};
+
+class Pairing<std::movable A, std::movable B> {
+  mut A left;
+  mut B right;
+public:
+  Pairing(A left, B right) : left(std::move(left)), right(std::move(right)) {}
+  A& first() { return this.left; }
+  B& second() { return this.right; }
+};
+
+int32_t depth<std::movable T>(Stack<T>& s) { return int32_t(s.size()); }
+
+int main() {
+  mut Stack<int32_t> numbers = Stack<int32_t>();
+  numbers.push(1); numbers.push(2); numbers.push(3);
+  std::print(int32_t(numbers.size())); std::print(" ");
+  std::print(numbers.top()); std::print(" ");
+  std::print(numbers.empty() ? 1 : 0); std::print(" ");
+  std::print(depth(numbers)); std::print(" ");
+
+  mut Pairing<int32_t, bool> mixed = Pairing<int32_t, bool>(5, true);
+  std::print(mixed.first()); std::print(" ");
+  std::println(mixed.second() ? 1 : 0);
+  return 0;
+}
