@@ -279,8 +279,30 @@ environment search paths conservatively bypass. Use
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
 artifacts whether built serially or in parallel.
 
+`gti build`, `check`, `run`, and `test` accept `--target <triple>`. Omitting it
+selects the build host, so existing manifests and commands are unaffected. A
+non-host target resolves a declared toolchain rather than silently reusing host
+compilers:
+
+```toml
+[toolchains.aarch64-unknown-linux-gnu]
+cxx = "aarch64-linux-gnu-g++"        # required
+cc  = "aarch64-linux-gnu-gcc"        # required only when C sources build
+sysroot = "/opt/sysroots/aarch64"    # optional
+native-target = "aarch64-linux-gnu"  # optional; emitted as --target=
+```
+
+Building for a target with no declared table fails closed. `gti check`
+analyzes any supported target without one, since it invokes no native tool,
+and `gti run`/`gti test` refuse a non-host target rather than modelling a
+runner. Host and cross plans of one package never share a cache entry or an
+output path. The installed GTI runtime archive and headers are still
+discovered for the host, so a cross *link* needs a target-built runtime
+supplied through `GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE`.
+
 `gti build --build-report <path>` records a versioned provenance sidecar: the
-resolved package, target, and profile, the SHA-256 content identity of every
+resolved package, target, profile, and selected target triple, the SHA-256
+content identity of every
 consumed GTI source unit and toolchain material, the native compiler identity
 and exact command, and the produced executable's own bytes.
 `gti verify --build-report <path>` rebuilds what that record describes and
