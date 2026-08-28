@@ -2935,6 +2935,46 @@ def main():
             )
             assert len(cross_directories) == 2, cross_directories
 
+            # A manifest `cc` remains optional when the user supplies the
+            # higher-precedence command-line override. Without either source,
+            # the cross build must still fail closed instead of discovering a
+            # host C compiler.
+            (cross_project / "native").mkdir()
+            (cross_project / "native/support.c").write_text(
+                "int support(void) { return 0; }\n", encoding="utf-8"
+            )
+            (cross_project / "gti.toml").write_text(
+                host_only_manifest
+                + '\n[package.native]\nc-sources = ["native/support.c"]\n'
+                + f"\n[toolchains.{cross_triple}]\n"
+                + f'cxx = "{stub}"\n'
+                + 'sysroot = "sysroot"\n'
+                + f'native-target = "{cross_triple}"\n',
+                encoding="utf-8",
+            )
+            missing_cc = run(
+                [gti, "build", "--target", cross_triple],
+                expected=65,
+                cwd=cross_project,
+            )
+            assert "GTI-B1905" in missing_cc.stderr, missing_cc.stderr
+            record.write_text("", encoding="utf-8")
+            run(
+                [
+                    gti,
+                    "build",
+                    "--target",
+                    cross_triple,
+                    "--cc",
+                    str(stub),
+                ],
+                cwd=cross_project,
+            )
+            overridden_commands = record.read_text(encoding="utf-8").splitlines()
+            assert str((cross_project / "native/support.c").resolve()) in (
+                overridden_commands
+            ), overridden_commands
+
             # An unknown toolchain field is rejected by the shared manifest
             # field validator.
             (cross_project / "gti.toml").write_text(

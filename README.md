@@ -287,7 +287,7 @@ compilers:
 ```toml
 [toolchains.aarch64-unknown-linux-gnu]
 cxx = "aarch64-linux-gnu-g++"        # required
-cc  = "aarch64-linux-gnu-gcc"        # required only when C sources build
+cc  = "aarch64-linux-gnu-gcc"        # needed for C unless --cc supplies it
 sysroot = "/opt/sysroots/aarch64"    # optional
 native-target = "aarch64-linux-gnu"  # optional; emitted as --target=
 ```

@@ -173,16 +173,20 @@ public:
   // Numbers keep their literal spelling; sizes are converted exactly rather
   // than through a floating-point round trip.
   std::string text;
+  // Object members store their name on the child value. Keeping object and
+  // array children in the same recursive vector avoids instantiating
+  // pair<string, JsonValue> while JsonValue is incomplete, which is rejected
+  // by some standard-library implementations.
+  std::string memberName;
   std::vector<JsonValue> elements;
-  std::vector<std::pair<std::string, JsonValue>> members;
 
   [[nodiscard]] const JsonValue *member(std::string_view name) const {
     if (kind != Kind::Object) {
       return nullptr;
     }
-    for (const auto &entry : members) {
-      if (entry.first == name) {
-        return &entry.second;
+    for (const JsonValue &entry : elements) {
+      if (entry.memberName == name) {
+        return &entry;
       }
     }
     return nullptr;
@@ -290,6 +294,13 @@ private:
       if (!parseString(name, error)) {
         return std::nullopt;
       }
+      if (std::any_of(result.elements.begin(), result.elements.end(),
+                      [&name](const JsonValue &member) {
+                        return member.memberName == name;
+                      })) {
+        error = "duplicate object member '" + name + "'";
+        return std::nullopt;
+      }
       if (!consume(':')) {
         error = "expected ':' at offset " + std::to_string(cursor);
         return std::nullopt;
@@ -298,7 +309,8 @@ private:
       if (!value) {
         return std::nullopt;
       }
-      result.members.emplace_back(std::move(name), std::move(*value));
+      value->memberName = std::move(name);
+      result.elements.push_back(std::move(*value));
       if (consume(',')) {
         continue;
       }
@@ -350,6 +362,10 @@ private:
         return true;
       }
       if (character != '\\') {
+        if (static_cast<unsigned char>(character) < 0x20U) {
+          error = "unescaped control character in string";
+          return false;
+        }
         value.push_back(character);
         continue;
       }

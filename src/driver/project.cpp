@@ -514,8 +514,11 @@ resolveBuildToolchain(const ProjectWorkspace &workspace,
 // cross build needs no `cc`.
 bool checkToolchainCCoverage(const ResolvedProjectToolchain &toolchain,
                              const NativeInputs &inputs,
+                             ToolchainSelectionPolicy policy,
+                             bool hasCCompilerOverride,
                              std::vector<Diagnostic> &diagnostics) {
-  if (!toolchain.declared() || !toolchain.cc.empty()) {
+  if (policy == ToolchainSelectionPolicy::HostTools || hasCCompilerOverride ||
+      !toolchain.declared() || !toolchain.cc.empty()) {
     return true;
   }
   const bool compilesC = !inputs.cSources.empty() ||
@@ -764,7 +767,8 @@ ProjectBuildRequest::ProjectBuildRequest(
     std::string profileName, TargetInfo target, ProjectBuildOverrides overrides,
     std::optional<std::string> packageName,
     WorkspaceDependencyPolicy dependencyPolicy, RuntimeProfile runtimeProfile,
-    ToolchainSelectionPolicy toolchainPolicy)
+    ToolchainSelectionPolicy toolchainPolicy,
+    ProjectToolchainOverrides toolchainOverrides)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
@@ -772,7 +776,8 @@ ProjectBuildRequest::ProjectBuildRequest(
       selectedPackage(std::move(packageName)),
       workspaceDependencyPolicy(dependencyPolicy),
       selectedRuntimeProfile(runtimeProfile),
-      selectedToolchainPolicy(toolchainPolicy) {}
+      selectedToolchainPolicy(toolchainPolicy),
+      nativeToolchainOverrides(toolchainOverrides) {}
 
 const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
   return workspaceDependencyPolicy;
@@ -784,6 +789,11 @@ RuntimeProfile ProjectBuildRequest::runtimeProfile() const {
 
 ToolchainSelectionPolicy ProjectBuildRequest::toolchainPolicy() const {
   return selectedToolchainPolicy;
+}
+
+const ProjectToolchainOverrides &
+ProjectBuildRequest::toolchainOverrides() const {
+  return nativeToolchainOverrides;
 }
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
@@ -1082,7 +1092,9 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     }
   }
   if (!nativeInputs ||
-      !checkToolchainCCoverage(*toolchain, *nativeInputs, result.diagnostics)) {
+      !checkToolchainCCoverage(
+          *toolchain, *nativeInputs, request.toolchainPolicy(),
+          request.toolchainOverrides().cCompiler, result.diagnostics)) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
@@ -1209,8 +1221,9 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       return result;
     }
     nativeInputs->dependencyGroups = *composed;
-    if (!checkToolchainCCoverage(*toolchain, *nativeInputs,
-                                 result.diagnostics)) {
+    if (!checkToolchainCCoverage(
+            *toolchain, *nativeInputs, request.toolchainPolicy(),
+            request.toolchainOverrides().cCompiler, result.diagnostics)) {
       result.status = ProjectResolutionStatus::ManifestFailure;
       result.plans.clear();
       return result;
@@ -1294,8 +1307,10 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     std::optional<NativeInputs> nativeInputs =
         resolveNativeInputs(manifest, target, *selectedProfile,
                             request.target(), result.diagnostics);
-    if (!nativeInputs || !checkToolchainCCoverage(*toolchain, *nativeInputs,
-                                                  result.diagnostics)) {
+    if (!nativeInputs ||
+        !checkToolchainCCoverage(
+            *toolchain, *nativeInputs, request.toolchainPolicy(),
+            request.toolchainOverrides().cCompiler, result.diagnostics)) {
       result.status = ProjectResolutionStatus::ManifestFailure;
       result.plans.clear();
       return result;

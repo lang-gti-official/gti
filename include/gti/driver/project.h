@@ -20,6 +20,13 @@ struct ProjectBuildOverrides {
   ConfigurationFlags configurationFlags;
 };
 
+// Native compiler selections supplied by the caller rather than the
+// manifest. The compiler strings stay with the invocation layer; resolution
+// needs only their availability to enforce fail-closed cross-toolchain rules.
+struct ProjectToolchainOverrides {
+  bool cCompiler = false;
+};
+
 // How project resolution treats a selected target that is not the build
 // host.
 enum class ToolchainSelectionPolicy {
@@ -65,7 +72,8 @@ public:
                       WorkspaceDependencyPolicy dependencyPolicy = {},
                       RuntimeProfile runtimeProfile = RuntimeProfile::None,
                       ToolchainSelectionPolicy toolchainPolicy =
-                          ToolchainSelectionPolicy::HostTools);
+                          ToolchainSelectionPolicy::HostTools,
+                      ProjectToolchainOverrides toolchainOverrides = {});
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -76,6 +84,7 @@ public:
   [[nodiscard]] const WorkspaceDependencyPolicy &dependencyPolicy() const;
   [[nodiscard]] RuntimeProfile runtimeProfile() const;
   [[nodiscard]] ToolchainSelectionPolicy toolchainPolicy() const;
+  [[nodiscard]] const ProjectToolchainOverrides &toolchainOverrides() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -87,6 +96,7 @@ private:
   WorkspaceDependencyPolicy workspaceDependencyPolicy;
   RuntimeProfile selectedRuntimeProfile;
   ToolchainSelectionPolicy selectedToolchainPolicy;
+  ProjectToolchainOverrides nativeToolchainOverrides;
 };
 
 // One resolved bindgen import carried by a build plan: every value the

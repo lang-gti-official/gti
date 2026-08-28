@@ -317,7 +317,7 @@ A target that is not the build host must be declared:
 ```toml
 [toolchains.aarch64-unknown-linux-gnu]
 cxx = "aarch64-linux-gnu-g++"          # required
-cc = "aarch64-linux-gnu-gcc"           # required only when C sources build
+cc = "aarch64-linux-gnu-gcc"           # needed for C unless --cc supplies it
 sysroot = "/opt/sysroots/aarch64"      # optional
 native-target = "aarch64-linux-gnu"    # optional; emitted as --target=
 ```
@@ -338,9 +338,10 @@ rather than an option (`GTI-B1902`). `sysroot` is either an absolute path,
 taken as an explicit machine-specific declaration, or a package-contained
 relative path resolved against the package root; either way it must name an
 existing directory (`GTI-B1903`). `cc` is optional, and a build that actually
-compiles declared or composed native C sources without one is rejected with
-`GTI-B1905` rather than reaching for host `cc`. Unknown fields are rejected
-by the shared manifest field validator (`GTI-B1001`).
+compiles declared or composed native C sources without either a declared `cc`
+or an explicit `--cc` override is rejected with `GTI-B1905` rather than
+reaching for host `cc`. Unknown fields are rejected by the shared manifest
+field validator (`GTI-B1001`).
 
 The rule is fail-closed: `gti build`, `run`, and `test` for a target that is
 not the build host, with no matching `[toolchains.<triple>]` entry, fail with
@@ -450,7 +451,12 @@ standard-library and platform SDK headers are treated as stable for an
 unchanged native compiler identity, and they are not hashed. It does not
 attest that the recorded build ever happened on another machine, that the
 recorded compiler binary is trustworthy, or that a byte-identical executable
-behaves identically under a different kernel or loader. A divergence in
+behaves identically under a different kernel or loader. Declared native C/C++
+sources, their headers, and their per-object compile commands are not yet
+enumerated as separate report facts; their effects are checked through the
+project model and the final executable bytes, so verification does not prove
+identical native-input traversal when different native inputs happen to
+produce the same artifact. A divergence in
 artifact bytes with no divergence in any recorded input is exactly the signal
 that something outside the recorded boundary moved. Verification also proves
 nothing about a build it cannot reproduce: an unresolvable package, target, or

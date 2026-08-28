@@ -1792,8 +1792,8 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
           *currentDirectory, std::nullopt, options.profile, *selection.target,
           std::move(overrides), options.package, {},
-          lang::driver::RuntimeProfile::Hosted,
-          projectToolchainPolicy(options)));
+          lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
+          {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1969,8 +1969,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
           std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted,
-          projectToolchainPolicy(options)));
+          lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
+          {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2158,7 +2158,8 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
           lang::driver::RuntimeProfile::Hosted,
           recordedHostTarget ? lang::driver::ToolchainSelectionPolicy::HostTools
                              : lang::driver::ToolchainSelectionPolicy::
-                                   DeclaredForNonHostTarget));
+                                   DeclaredForNonHostTarget,
+          {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     std::cerr << "gti: cannot resolve the recorded package '"
@@ -2244,8 +2245,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
           std::move(overrides), options.package,
           {.requireLock = true,
            .allowAcquisition = !(options.offline || options.locked)},
-          lang::driver::RuntimeProfile::Hosted,
-          projectToolchainPolicy(options)));
+          lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
+          {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
