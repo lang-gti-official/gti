@@ -1,0 +1,9 @@
+class Anchor { public: int32_t id() { return 0; } };
+int main() {
+  mut int32_t exact = 16777217;      // 2^24 + 1, not representable in binary32
+  mut float widened = exact;         // implicit, accepted
+  mut int32_t back = int32_t(widened);
+  std::print(exact); std::print(" ");
+  std::println(back);
+  return 0;
+}
