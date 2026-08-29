@@ -4165,22 +4165,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
           StoredReferenceInfo{.field = field.declaration,
                               .type = fieldType,
                               .access = fieldType.referenceAccess};
-      if (field.declaration->isMutable() &&
-          !isDefaultLibraryStorageBorrowCarrier(owner)) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2045", DiagnosticPhase::Semantics, field.declaration->name(),
-            "Stored reference fields must be read-only; mutable stored "
-            "dependency graphs are not supported.");
-        if (const auto grouped =
-                mutableFieldGroupOrigins.find(field.declaration);
-            grouped != mutableFieldGroupOrigins.end() &&
-            grouped->second != nullptr) {
-          diagnostic.related.push_back(
-              {tokenSpan(*grouped->second),
-               "This field inherits mutability from this field group."});
-        }
-        diagnostics.emplace_back(std::move(diagnostic));
-      }
       if (field.declaration->initializer()) {
         report(field.declaration->name(),
                "A stored reference field must be bound explicitly by every "
@@ -4293,9 +4277,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         continue;
       }
       constructor.borrowParameter = parameterIndex;
-      constructor.borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
-                                     ? AccessMode::Mutable
-                                     : stored.access;
+      constructor.borrowAccess = stored.access;
     }
   }
 }

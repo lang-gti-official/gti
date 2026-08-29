@@ -956,11 +956,16 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
            (isDirectStoredReferenceType(parameter) &&
             borrowAccess(parameter) == AccessMode::Mutable);
   };
+  const auto eligibleDependency = [&](const SemanticType &parameter) {
+    return summary.access == AccessMode::Mutable
+               ? mutableDependency(parameter)
+               : readOnlyDependency(parameter);
+  };
 
   if (exactReturnParameter && *exactReturnParameter < parameterTypes.size() &&
       returnType == parameterTypes[*exactReturnParameter]) {
     const SemanticType &parameter = parameterTypes[*exactReturnParameter];
-    if (readOnlyDependency(parameter)) {
+    if (eligibleDependency(parameter)) {
       summary.origin = BorrowOriginKind::Argument;
       summary.parameter = *exactReturnParameter;
       return summary;
@@ -973,12 +978,13 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
 
   for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
     const SemanticType &parameter = parameterTypes[index];
-    if (readOnlyDependency(parameter)) {
+    if (eligibleDependency(parameter)) {
       if (summary.eligibleParameters == 0) {
         summary.parameter = index;
       }
       ++summary.eligibleParameters;
-    } else if (mutableDependency(parameter)) {
+    } else if (summary.access == AccessMode::ReadOnly &&
+               mutableDependency(parameter)) {
       summary.hasMutableCandidate = true;
     }
   }
@@ -1012,7 +1018,7 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
   if (summary.eligibleParameters > 1) {
     diagnostic = makeDiagnostic(
         code, DiagnosticPhase::Semantics, function.name(),
-        "Borrowed return dependency is ambiguous; exactly one read-only "
+        "Borrowed return dependency is ambiguous; exactly one compatible "
         "reference or direct borrowed-value parameter may provide its "
         "owner.");
     for (std::size_t index = 0; index < info.parameterTypes.size() &&
@@ -1020,12 +1026,18 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
          ++index) {
       const SemanticType &parameter = info.parameterTypes[index];
       const bool eligible =
-          (parameter.kind == SemanticType::Reference &&
-           parameter.referenceAccess == AccessMode::ReadOnly &&
-           (parameter.arguments.empty() ||
-            !typeTraits(parameter.arguments.front()).containsBorrowedState)) ||
-          (isDirectStoredReferenceType(parameter) &&
-           borrowAccess(parameter) == AccessMode::ReadOnly);
+          summary.access == AccessMode::Mutable
+              ? ((parameter.kind == SemanticType::Reference &&
+                  parameter.referenceAccess == AccessMode::Mutable) ||
+                 (isDirectStoredReferenceType(parameter) &&
+                  borrowAccess(parameter) == AccessMode::Mutable))
+              : ((parameter.kind == SemanticType::Reference &&
+                  parameter.referenceAccess == AccessMode::ReadOnly &&
+                  (parameter.arguments.empty() ||
+                   !typeTraits(parameter.arguments.front())
+                        .containsBorrowedState)) ||
+                 (isDirectStoredReferenceType(parameter) &&
+                  borrowAccess(parameter) == AccessMode::ReadOnly));
       if (eligible) {
         diagnostic.related.push_back(
             {tokenSpan(function.parameters()[index].name),
@@ -1043,6 +1055,16 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     diagnostic.hints.emplace_back(
         "Use one read-only reference or immutable borrowed-value parameter "
         "for this return dependency.");
+  } else if (summary.access == AccessMode::Mutable) {
+    diagnostic = makeDiagnostic(
+        code, DiagnosticPhase::Semantics, function.name(),
+        "A mutable borrowed return requires either one exact global/static "
+        "storage origin or exactly one mutable reference or direct mutable "
+        "borrowed-value parameter that outlives the result.");
+    diagnostic.hints.emplace_back(
+        "Return one exact mutable global place, the exact mutable parameter, "
+        "its proven referent, or a direct mutable carrier constructed from "
+        "it.");
   } else {
     diagnostic = makeDiagnostic(
         code, DiagnosticPhase::Semantics, function.name(),
@@ -2961,7 +2983,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
               flow != loanFlow.records.end()) {
             flow->second.carriers.erase(sourceSymbol);
           }
-          if (sourceLoan->lifecycleBound) {
+          if (sourceLoan->lifecycleBound ||
+              sourceLoan->access == AccessMode::Mutable) {
             semanticModel.removeLoanCarrier(source->loan, sourceSymbol);
             if (sourceCarrier->variableDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
@@ -2986,8 +3009,13 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordBindingLoan(binding, source->loan);
       return;
     }
-    if (retainedStoredBorrow && (sourceLoan->access == AccessMode::Mutable ||
-                                 sourceLoan->parent != 0)) {
+    const bool exactMutableStoredReborrow =
+        retainedStoredBorrow && isDirectStoredReferenceType(carrier->type) &&
+        carrierAccess == AccessMode::Mutable &&
+        sourceLoan->access == AccessMode::Mutable;
+    if (retainedStoredBorrow && !exactMutableStoredReborrow &&
+        (sourceLoan->access == AccessMode::Mutable ||
+         sourceLoan->parent != 0)) {
       report(expressionToken(expression),
              "A local borrowed-state value cannot retain a mutable parent "
              "or child reborrow.",

@@ -8783,7 +8783,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "expected-payload-range|io|owner-dependent-views]"
+            "expected-payload-range|io|mutable-stored|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -8821,6 +8821,12 @@ def main():
             with tempfile.TemporaryDirectory(prefix="gti-lsp-owner-view-") as root:
                 test_owner_dependent_span_tooling(sys.argv[1], pathlib.Path(root))
             print("GTI owner-dependent view LSP test passed")
+        elif sys.argv[2] == "mutable-stored":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-mut-stored-") as root:
+                test_mutable_stored_dependency_tooling(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            print("GTI mutable stored dependency LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
                 test_io_tooling_boundary(sys.argv[1], pathlib.Path(root))
@@ -8907,6 +8913,7 @@ def main():
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
     test_range_loan_tooling(sys.argv[1], root)
     test_expected_payload_range_tooling(sys.argv[1], root)
+    test_mutable_stored_dependency_tooling(sys.argv[1], root)
     test_owner_dependent_span_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
@@ -10091,6 +10098,109 @@ def test_expected_payload_range_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
+    finally:
+        session.close()
+
+
+def test_mutable_stored_dependency_tooling(executable, root):
+    valid_source = (
+        "class MutView {\n"
+        "  mut int32_t& referent;\n"
+        "public:\n"
+        "  MutView(mut int32_t& source) : referent(source) {}\n"
+        "  mut int32_t& get() mut { return this.referent; }\n"
+        "};\n"
+        "MutView relay(MutView view) { return std::move(view); }\n"
+        "int main() {\n"
+        "  mut int32_t owner = 1;\n"
+        "  {\n"
+        "    mut MutView first = MutView(owner);\n"
+        "    mut MutView moved = relay(std::move(first));\n"
+        "    mut int32_t& slot = moved.get();\n"
+        "    slot = 2;\n"
+        "  }\n"
+        "  owner += 1;\n"
+        "  return owner - 3;\n"
+        "}\n"
+    )
+    invalid_source = valid_source.replace(
+        "MutView relay(MutView view) { return std::move(view); }\n",
+        "class Nested {\n"
+        "  MutView view;\n"
+        "public:\n"
+        "  Nested(MutView source) : view(std::move(source)) {}\n"
+        "};\n"
+        "MutView relay(MutView view) { return std::move(view); }\n",
+    )
+    path = root / "mutable-stored-dependency.gti"
+    path.write_text(valid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, valid_source)
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and any(
+                item.get("code") == "GTI-S2045"
+                for item in message["params"]["diagnostics"]
+            )
+        )["params"]
+        nested = next(
+            item
+            for item in invalid["diagnostics"]
+            if item.get("code") == "GTI-S2045"
+            and "cannot be nested" in item.get("message", "")
+        )
+        assert nested["data"]["phase"] == "semantics", nested
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
             and not message["params"]["diagnostics"]
         )
     finally:

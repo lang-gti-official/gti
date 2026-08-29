@@ -5438,12 +5438,6 @@ public:
   void replace(T next) mut { this.value = next; }
 };
 
-class MutableStored {
-  mut int& value;
-public:
-  MutableStored(mut int& source) : value(source) {}
-};
-
 class TwoReferences {
   int& left;
   int& right;
@@ -5500,8 +5494,6 @@ int main() {
                                {standardLibraryPrelude()});
   expect(
       !invalid.canGenerateCode() &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Stored reference fields must be read-only") &&
           hasDiagnostic(invalid.diagnostics, "may store only one reference") &&
           hasDiagnostic(invalid.diagnostics,
                         "Every constructor of a stored-reference class") &&
@@ -5516,6 +5508,272 @@ int main() {
                         "storage"),
       "stored-reference diagnostics should reject unsupported reference "
       "graphs, assignment, and temporary owners");
+}
+
+void testMutableStoredDependencies() {
+  const std::string validSource = R"(
+class MutView {
+  mut int& referent;
+public:
+  MutView(mut int& source) : referent(source) {}
+  mut int& get() mut { return this.referent; }
+};
+
+MutView make_view(mut int& source) {
+  return MutView(source);
+}
+
+MutView relay_view(MutView view) {
+  return std::move(view);
+}
+
+MutView choose_view(mut int& source, bool first) {
+  if (first) {
+    return MutView(source);
+  }
+  return MutView(source);
+}
+
+mut int& relay_reference(mut int& source) {
+  return source;
+}
+
+int write_then_exit(mut int& source, bool early) {
+  mut MutView view = MutView(source);
+  mut int& slot = view.get();
+  slot = 10;
+  if (early) {
+    return 4;
+  }
+  slot = 11;
+  return 5;
+}
+
+int main() {
+  mut int owner = 1;
+  bool update = true;
+  {
+    mut MutView first = choose_view(owner, true);
+    mut MutView moved = relay_view(std::move(first));
+    if (update) {
+      mut int& slot = moved.get();
+      slot = 7;
+    }
+  }
+  owner += 1;
+  int branch = write_then_exit(owner, true);
+  mut int& relayed = relay_reference(owner);
+  relayed += 1;
+  return owner + branch - 15;
+}
+)";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "mutable-stored-dependency.gti", validSource, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected mutable stored-dependency diagnostic: "
+                << diagnostic.code << ' ' << diagnostic.primary.start << ' '
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "one direct mutable stored dependency should construct, return, "
+         "move, reborrow, and reactivate its exact owner");
+  expect(valid.canGenerateCode() && !gti_test::emitCppText(valid).empty(),
+         "the C++ backend should emit a verified mutable borrow carrier");
+
+  const lang::ClassDecl *carrier = findTopLevelClass(valid.program, "MutView");
+  const lang::ClassLifecycleInfo *lifecycle =
+      carrier == nullptr ? nullptr
+                         : valid.semantics.findClassLifecycle(*carrier);
+  expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
+             !lifecycle->traits.copyable && lifecycle->traits.movable &&
+             !lifecycle->traits.copyAssignable &&
+             !lifecycle->traits.moveAssignable &&
+             lifecycle->constructors.size() == 1 &&
+             lifecycle->constructors.front().borrowParameter == 0 &&
+             lifecycle->constructors.front().borrowAccess ==
+                 lang::AccessMode::Mutable,
+         "a mutable stored-reference carrier should be move-only and retain "
+         "one exact mutable constructor dependency");
+
+  bool hasMutableParameterLoan = false;
+  bool hasMutableStoredTransfer = false;
+  bool hasMutableReturnLoan = false;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(valid.mir)) {
+    const lang::MirBody *body = lang::findMirBody(valid.mir, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const lang::MirLoan &loan : body->loans) {
+      hasMutableParameterLoan =
+          hasMutableParameterLoan ||
+          (loan.kind == lang::MirLoanKind::Parameter && loan.entry &&
+           loan.access == lang::AccessMode::Mutable);
+      hasMutableReturnLoan =
+          hasMutableReturnLoan ||
+          (loan.kind == lang::MirLoanKind::Return && loan.escapes &&
+           loan.access == lang::AccessMode::Mutable);
+      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
+          loan.access != lang::AccessMode::Mutable) {
+        continue;
+      }
+      const lang::MirLoan *parent = body->findLoan(loan.parent);
+      hasMutableStoredTransfer =
+          hasMutableStoredTransfer ||
+          (parent != nullptr && parent->kind == lang::MirLoanKind::Stored &&
+           parent->access == lang::AccessMode::Mutable && !loan.entry &&
+           !loan.escapes);
+    }
+  }
+  expect(hasMutableParameterLoan && hasMutableStoredTransfer &&
+             hasMutableReturnLoan,
+         "verified MIR should preserve the mutable parameter origin, the "
+         "exclusive stored-carrier transfer, and the escaping mutable "
+         "return dependency");
+
+  lang::MirProgram forgedParent = valid.mir;
+  bool changedParent = false;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(forgedParent)) {
+    lang::MirBody *body = lang::findMirBody(forgedParent, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (lang::MirLoan &loan : body->loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && loan.parent != 0 &&
+          loan.access == lang::AccessMode::Mutable) {
+        loan.parent = loan.id;
+        changedParent = true;
+        break;
+      }
+    }
+    if (changedParent) {
+      break;
+    }
+  }
+  expect(changedParent && !lang::verifyMirProgram(forgedParent).valid(),
+         "MIR verification should reject a forged mutable carrier ancestry");
+
+  lang::MirProgram forgedDoubleEnd = valid.mir;
+  bool duplicatedEnd = false;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(forgedDoubleEnd)) {
+    lang::MirBody *body = lang::findMirBody(forgedDoubleEnd, address);
+    if (body == nullptr) {
+      continue;
+    }
+    lang::MirLoanId transferred = 0;
+    for (const lang::MirLoan &loan : body->loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && loan.parent != 0 &&
+          loan.access == lang::AccessMode::Mutable) {
+        transferred = loan.id;
+        break;
+      }
+    }
+    if (transferred == 0) {
+      continue;
+    }
+    lang::MirInstructionId nextInstruction = 1;
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+      }
+    }
+    for (lang::MirBlock &block : body->blocks) {
+      const auto ended = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == transferred;
+          });
+      if (ended == block.instructions.end()) {
+        continue;
+      }
+      lang::MirInstruction duplicate = *ended;
+      duplicate.id = nextInstruction;
+      block.instructions.insert(std::next(ended), std::move(duplicate));
+      duplicatedEnd = true;
+      break;
+    }
+    if (duplicatedEnd) {
+      break;
+    }
+  }
+  const lang::MirVerificationResult doubleEndResult =
+      lang::verifyMirProgram(forgedDoubleEnd);
+  expect(duplicatedEnd && !doubleEndResult.valid() &&
+             hasMirVerificationError(doubleEndResult,
+                                     "is ended while it is inactive"),
+         "MIR verification should reject ending a transferred mutable "
+         "carrier dependency twice");
+
+  const lang::FrontendResult overlapping =
+      lang::Frontend().analyze("mutable-stored-overlap.gti", R"(
+class MutView {
+  mut int& referent;
+public:
+  MutView(mut int& source) : referent(source) {}
+  mut int& get() mut { return this.referent; }
+};
+int main() {
+  mut int owner = 1;
+  mut MutView first = MutView(owner);
+  owner = 2;
+  mut MutView second = MutView(owner);
+  mut int& first_value = first.get();
+  mut int& second_value = second.get();
+  return first_value + second_value;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!overlapping.canGenerateCode() &&
+             hasDiagnosticCode(overlapping.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(overlapping.diagnostics,
+                           "overlapping borrow may still be live"),
+         "a live mutable carrier should exclude owner mutation and a second "
+         "overlapping carrier");
+
+  const lang::FrontendResult unsupported =
+      lang::Frontend().analyze("mutable-stored-unsupported-shapes.gti", R"(
+class MutView {
+  mut int& referent;
+public:
+  MutView(mut int& source) : referent(source) {}
+};
+class Nested {
+  MutView view;
+public:
+  Nested(MutView source) : view(std::move(source)) {}
+};
+MutView choose(mut int& left, mut int& right) {
+  return MutView(left);
+}
+mut int global_owner = 1;
+MutView global_view = MutView(global_owner);
+int main() {
+  mut int owner = 1;
+  mut MutView first = MutView(owner);
+  MutView copied = first;
+  mut MutView other = std::move(first);
+  other = std::move(copied);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!unsupported.canGenerateCode() &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "Borrowed state cannot be nested") &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "Borrowed return dependency is ambiguous") &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "cannot have global or static storage") &&
+             hasDiagnosticCode(unsupported.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "Cannot assign a value of type"),
+         "multi-origin, nested, global, copied, and reseated mutable "
+         "dependency graphs should remain rejected");
 }
 
 void testStoredCarrierReturnProvenance() {
@@ -17518,6 +17776,7 @@ constexpr NamedTest kTests[] = {
     {"testReceiverTiedReferenceReturns", testReceiverTiedReferenceReturns},
     {"testArgumentTiedReferenceReturns", testArgumentTiedReferenceReturns},
     {"testStoredReferenceGroundwork", testStoredReferenceGroundwork},
+    {"testMutableStoredDependencies", testMutableStoredDependencies},
     {"testStoredCarrierReturnProvenance", testStoredCarrierReturnProvenance},
     {"testNestedMemberReferenceReturnForwarding",
      testNestedMemberReferenceReturnForwarding},

@@ -45,7 +45,7 @@ assertions.
 | `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
-| `compiler_pipeline` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; move/drop alias liveness; assignment and mutable-carrier copy rejection; exact carrier/stored-referent relay; `GTI-S2085` shell/projection/type rejection and publication; and direct MIR mutations of return provenance, entry dependency, payload type, and runtime referent place |
+| `compiler_pipeline` / `mutable_stored_dependency_runtime` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; assignment, mutable-copy, nesting, global storage, and ambiguous-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
@@ -478,6 +478,17 @@ return source, wrong entry dependency, wrong payload type, and shell runtime
 place. `lsp_protocol` preserves the existing `std::copyable` tooling fixture,
 checks `std::copy_constructible` independently, and publishes `GTI-S2085`
 unchanged. Backend text is not a provenance oracle.
+
+Mutable stored-carrier coverage follows the same cross-phase split.
+`compiler_pipeline` accepts one exact mutable field/constructor origin,
+conditional construction and return, by-value move relay, child reborrow, and
+owner reactivation after the final carrier endpoint. It rejects copy,
+assignment/reseating, nested or global storage, ambiguous origins, and direct
+owner access while the exclusive dependency remains live. Ownership tests
+inspect the mutable Parameter/Stored/Return MIR inventory and forge both
+ancestry and double retirement; the dedicated runtime test compiles and runs
+the move/return/reactivation program at O0/O3 under the C++20 and C++23 backend
+modes.
 
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.

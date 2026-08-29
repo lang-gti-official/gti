@@ -540,16 +540,15 @@ int main() {
          "untrusted declarations must not acquire ownership effects by using "
          "a standard-library spelling");
 
-  const lang::FrontendResult untrustedMutableReturn =
-      lang::Frontend().analyze("untrusted-mutable-return.gti", R"(
+  const lang::FrontendResult ordinaryMutableReturn =
+      lang::Frontend().analyze("ordinary-mutable-return.gti", R"(
 mut int& expose(mut int& value) { return value; }
 int main() { return 0; }
 )");
-  expect(!untrustedMutableReturn.semanticValid &&
-             hasDiagnostic(untrustedMutableReturn.diagnostics,
-                           "cannot derive from a mutable parameter"),
-         "parsing trusted intrinsic signatures must not permit mutable "
-         "reference returns from ordinary free functions");
+  expect(ordinaryMutableReturn.canGenerateCode() &&
+             lang::verifyMirProgram(ordinaryMutableReturn.mir).valid(),
+         "an ordinary mutable reference relay should use the same exact "
+         "argument dependency proof without acquiring an intrinsic");
 }
 
 void testThisReceiverKeyword() {
@@ -1009,16 +1008,13 @@ class Borrowed {
   }
 
 public:
-  Borrowed(int& input) : value(input) {}
+  Borrowed(mut int& input) : value(input) {}
 };
 )");
-  expect(!storedReference.canGenerateCode() &&
-             hasDiagnostic(storedReference.diagnostics,
-                           "Stored reference fields must be read-only") &&
-             hasRelatedDiagnostic(storedReference.diagnostics,
-                                  "inherits mutability from this field group"),
-         "a grouped stored-reference error should identify the inherited "
-         "mutability source");
+  expect(storedReference.canGenerateCode() &&
+             lang::verifyMirProgram(storedReference.mir).valid(),
+         "a mutable field group should form the same exact mutable stored "
+         "dependency as an individually mutable reference field");
 }
 
 void testConstructorsAndReceiverMutability() {

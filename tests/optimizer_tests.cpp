@@ -4958,15 +4958,25 @@ int switch_reactivation(mut int& parent) {
   lang::MirBody escapingChild = branchState;
   escapingChild.loans[1].escapes = true;
   expect(hasError(lang::verifyMirBody(escapingChild),
-                  "non-escaping Local or CallResult"),
+                  "non-escaping Local, CallResult, or Stored"),
          "a parent-linked child loan must not escape its parent topology");
 
   lang::MirBody storedChild = branchState;
   storedChild.loans[1].kind = lang::MirLoanKind::Stored;
   expect(hasError(lang::verifyMirBody(storedChild),
-                  "non-escaping Local or CallResult"),
-         "Stored, Return, and Parameter loans must not be parent-linked "
-         "children");
+                  "must be produced by a call or construct"),
+         "a parent-linked Stored loan must come from a verified carrier "
+         "call or construction rather than an ordinary reference borrow");
+
+  lang::MirBody returnChild = branchState;
+  returnChild.loans[1].kind = lang::MirLoanKind::Return;
+  lang::MirBody parameterChild = branchState;
+  parameterChild.loans[1].kind = lang::MirLoanKind::Parameter;
+  expect(hasError(lang::verifyMirBody(returnChild),
+                  "non-escaping Local, CallResult, or Stored") &&
+             hasError(lang::verifyMirBody(parameterChild),
+                      "non-escaping Local, CallResult, or Stored"),
+         "Return and Parameter loans must not be parent-linked children");
 
   lang::MirBody sharedLocalChild = branchState;
   sharedLocalChild.loans[0].access = lang::AccessMode::ReadOnly;

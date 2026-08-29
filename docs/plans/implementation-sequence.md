@@ -740,15 +740,17 @@ analysis, HIR, MIR, and the backend.
   compatibility CLI traces cover the supported normal-exit slice without
   treating native call argument order as authoritative.
 - **Unlocks:** `M-EXEC-01`, allocators, payload enums, owned callables, and
-  temporary ranges. It supplies one lifecycle prerequisite for scoped threads;
-  `M-OWN-03` and a scope-join loan proof are still required.
+  temporary ranges. It supplies the lifecycle prerequisite consumed by the
+  completed bounded `M-OWN-03`; broader generalized scope-join graphs remain
+  separately client-gated.
 
 ### M-OWN-03: Stored And Escaping Mutable Dependencies
 
-- **State/role:** ready; prerequisites `M-OWN-02` and `M-LIFE-01` are done;
-  bounded-first systems-readiness work for mutex guards and mutable views.
-- **Scope:** Extend the existing local parent/child loan graph to one stored or
-  escaping mutable dependency with an exact stable origin. Define creation,
+- **State/role:** complete bounded-first systems-readiness proof;
+  prerequisites `M-OWN-02` and `M-LIFE-01` are done.
+- **Delivered scope:** Extends the existing local parent/child loan graph to
+  one stored or escaping mutable dependency with an exact stable origin. It
+  defines creation,
   parent suspension, movement, assignment, call/return propagation, path joins,
   child-first cleanup, and reactivation in semantics, HIR, and MIR. Start with
   one origin and one carrier shape before considering nesting or multiple
@@ -756,13 +758,26 @@ analysis, HIR, MIR, and the backend.
 - **Non-goals:** raw or opaque origins, dynamic-index precision, multi-origin
   carriers, arbitrary lifetime parameters, mutex syntax, or treating every
   stored reference as safe merely because the backend can represent it.
-- **Focused tests:** stored guard-shaped carrier, returned mutable carrier,
+- **Focused tests:** stored view/guard-shaped carrier, returned mutable carrier,
   move and reassignment, early return, conditional creation, parent access
   while live, exact cleanup on every exit, and forged parent/escape graphs.
-- **Exit gate:** every supported stored or escaping child has one authoritative
-  origin and exactly one path-sensitive end; MIR rejects forged ancestry,
+- **Exit gate:** satisfied: every supported stored or escaping child has one
+  authoritative origin and exactly one path-sensitive end; MIR rejects forged ancestry,
   premature parent access, double end, and escaping unsupported shapes.
-- **Unlocks:** `C-SYNC-01`, scoped-thread guards, and richer mutable views.
+- **Completion evidence:** declaration and ownership semantics admit one exact
+  direct `mut T&` field, make its carrier move-only/non-assignable, propagate
+  exact mutable argument/carrier return summaries, and suspend/reactivate its
+  origin. HIR/MIR retain the parent/child graph across construction,
+  conditional return, and by-value move relay. Verification admits only exact
+  `Construct`/`Call` transfer operands and rejects forged ancestry and double
+  retirement. Compiler ownership tests cover owner conflict, child reborrow,
+  move, return, unsupported shape diagnostics, and MIR mutation; the dedicated
+  runtime fixture passes O0/O3 under C++20/C++23, and example 41 demonstrates a
+  source-defined exclusive view. Raw/opaque/dynamic-index, nested, captured,
+  global, custom-destructor, reseatable, and multi-origin carriers remain
+  rejected.
+- **Unlocks:** consumed by `C-SYNC-01` and scoped-thread guards; richer
+  one-origin mutable views may build on the completed contract.
 
 ### M-OWN-04: Named Expected-Payload Range Loans
 
@@ -3596,7 +3611,7 @@ owned by the rows and domain plans above.
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
 | Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
-| Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
+| Stored/escaping mutable dependencies | **complete bounded-first systems-readiness proof** | `M-OWN-03`; one direct stable-origin mutable carrier, with broader graphs client-gated |
 | Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
 | Named expected-payload range loans | **complete bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |

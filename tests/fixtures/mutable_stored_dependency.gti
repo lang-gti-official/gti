@@ -1,0 +1,48 @@
+class MutView {
+  mut int32_t& referent;
+
+public:
+  MutView(mut int32_t& source) : referent(source) {}
+  mut int32_t& get() mut { return this.referent; }
+};
+
+MutView make_view(mut int32_t& source) {
+  return MutView(source);
+}
+
+MutView relay_view(MutView view) {
+  return std::move(view);
+}
+
+MutView choose_view(mut int32_t& source, bool first) {
+  if (first) {
+    return make_view(source);
+  }
+  return MutView(source);
+}
+
+int32_t write_then_exit(mut int32_t& source, bool early) {
+  mut MutView view = MutView(source);
+  mut int32_t& slot = view.get();
+  slot = 40;
+  if (early) {
+    return 2;
+  }
+  slot = 41;
+  return 3;
+}
+
+int main() {
+  mut int32_t owner = 1;
+  {
+    mut MutView chosen = choose_view(owner, true);
+    mut MutView moved = relay_view(std::move(chosen));
+    mut int32_t& slot = moved.get();
+    slot = 40;
+  }
+
+  // The last carrier has ended, so its exact owner is active again. The
+  // early-return helper must perform the same child-first cleanup.
+  owner += write_then_exit(owner, true);
+  return owner - 42;
+}

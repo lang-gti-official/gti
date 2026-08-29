@@ -2162,6 +2162,12 @@ successors(const MirTerminator &terminator) {
           body.loans[*instruction.loan - 1].parent != 0) {
         const MirLoanId loan = *instruction.loan;
         const MirLoanId parent = body.loans[loan - 1].parent;
+        if (body.loans[loan - 1].kind == MirLoanKind::Stored) {
+          return failure(body, owner,
+                         "stored child loan " + std::to_string(loan) +
+                             " must be produced by a call or construct",
+                         block.id, instruction.id);
+        }
         if (active[loan - 1] != MirLoanFlowState::Inactive) {
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
@@ -2348,14 +2354,37 @@ successors(const MirTerminator &terminator) {
         const MirLoanId parent = body.loans[loan - 1].parent;
         if (parent != 0) {
           const auto operandFromParent = [&](const MirOperand &operand) {
-            const MirOperand &resolved = *callInputSource(operand);
-            if (resolved.kind == MirOperandKind::Loan) {
-              return resolved.loan == parent;
+            const MirOperand *resolved = callInputSource(operand);
+            if (resolved->kind == MirOperandKind::Value) {
+              const MirValue *value = body.findValue(resolved->value);
+              const MirInstruction *producer = nullptr;
+              if (value != nullptr) {
+                for (const MirBlock &candidateBlock : body.blocks) {
+                  const auto found =
+                      std::find_if(candidateBlock.instructions.begin(),
+                                   candidateBlock.instructions.end(),
+                                   [&](const MirInstruction &candidate) {
+                                     return candidate.id == value->definition;
+                                   });
+                  if (found != candidateBlock.instructions.end()) {
+                    producer = &*found;
+                    break;
+                  }
+                }
+              }
+              if (producer != nullptr &&
+                  producer->kind == MirInstructionKind::Move &&
+                  producer->operands.size() == 1) {
+                resolved = callInputSource(producer->operands.front());
+              }
             }
-            if (resolved.place == 0) {
+            if (resolved->kind == MirOperandKind::Loan) {
+              return resolved->loan == parent;
+            }
+            if (resolved->place == 0) {
               return false;
             }
-            const MirPlace *place = body.findPlace(resolved.place);
+            const MirPlace *place = body.findPlace(resolved->place);
             if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
                 std::find(body.loans[parent - 1].carriers.begin(),
                           body.loans[parent - 1].carriers.end(),
@@ -2364,7 +2393,7 @@ successors(const MirTerminator &terminator) {
               return true;
             }
             const MirCanonicalPlace operandPlace =
-                canonicalPlace(body, resolved.place, bindingLoans, active);
+                canonicalPlace(body, resolved->place, bindingLoans, active);
             return operandPlace.throughLoan == parent;
           };
           bool selectedOriginFromParent = false;
@@ -2376,13 +2405,19 @@ successors(const MirTerminator &terminator) {
             selectedOriginFromParent = operandFromParent(
                 instruction.operands[instruction.borrowArgument]);
           }
-          if (instruction.kind != MirInstructionKind::Call ||
-              body.loans[loan - 1].kind != MirLoanKind::CallResult ||
+          const bool derivedCallResult =
+              instruction.kind == MirInstructionKind::Call &&
+              body.loans[loan - 1].kind == MirLoanKind::CallResult;
+          const bool derivedStoredCarrier =
+              (instruction.kind == MirInstructionKind::Call ||
+               instruction.kind == MirInstructionKind::Construct) &&
+              body.loans[loan - 1].kind == MirLoanKind::Stored;
+          if ((!derivedCallResult && !derivedStoredCarrier) ||
               !selectedOriginFromParent) {
             return failure(body, owner,
-                           "derived call-result loan " + std::to_string(loan) +
-                               " must be produced through its declared parent "
-                               "loan",
+                           "derived loan " + std::to_string(loan) +
+                               " must be produced through its declared "
+                               "parent loan",
                            block.id, instruction.id);
           }
           if (active[loan - 1] != MirLoanFlowState::Inactive) {
@@ -2395,7 +2430,7 @@ successors(const MirTerminator &terminator) {
               (body.loans[loan - 1].twoPhase &&
                active[parent - 1] != MirLoanFlowState::Active)) {
             return failure(body, owner,
-                           "derived call-result loan " + std::to_string(loan) +
+                           "derived loan " + std::to_string(loan) +
                                " is created without one active parent loan " +
                                std::to_string(parent),
                            block.id, instruction.id);
@@ -2403,7 +2438,7 @@ successors(const MirTerminator &terminator) {
           if (body.loans[parent - 1].access != AccessMode::Mutable &&
               body.loans[loan - 1].access != AccessMode::ReadOnly) {
             return failure(body, owner,
-                           "derived call-result loan " + std::to_string(loan) +
+                           "derived loan " + std::to_string(loan) +
                                " cannot mutably reborrow a read-only parent",
                            block.id, instruction.id);
           }
@@ -2413,9 +2448,9 @@ successors(const MirTerminator &terminator) {
               body, body.loans[parent - 1].source, bindingLoans, active);
           if (!canonicalPlaceContains(parentPlace, childPlace)) {
             return failure(body, owner,
-                           "derived call-result loan " + std::to_string(loan) +
-                               " is not contained within storage protected by "
-                               "parent loan " +
+                           "derived loan " + std::to_string(loan) +
+                               " is not contained within storage protected "
+                               "by parent loan " +
                                std::to_string(parent),
                            block.id, instruction.id);
           }
@@ -2438,8 +2473,7 @@ successors(const MirTerminator &terminator) {
             if (canonicalPlacesOverlap(childPlace, otherPlace) &&
                 !compatibleReadOnlyDependency && !compatibleReservationRead) {
               return failure(body, owner,
-                             "derived call-result loan " +
-                                 std::to_string(loan) +
+                             "derived loan " + std::to_string(loan) +
                                  " conflicts with active sibling loan " +
                                  std::to_string(other.id),
                              block.id, instruction.id);
@@ -6422,10 +6456,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (loan.parent != 0) {
       const MirLoan &parent = body.loans[loan.parent - 1];
       if (loan.escapes || (loan.kind != MirLoanKind::Local &&
-                           loan.kind != MirLoanKind::CallResult)) {
+                           loan.kind != MirLoanKind::CallResult &&
+                           loan.kind != MirLoanKind::Stored)) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
-                           " must be a non-escaping Local or CallResult loan");
+                           " must be a non-escaping Local, CallResult, or "
+                           "Stored loan");
       }
       const bool sharedDerivedCall = loan.kind == MirLoanKind::CallResult &&
                                      loan.access == AccessMode::ReadOnly &&

@@ -3919,6 +3919,14 @@ private:
                                        ? sourceArguments[value.borrowArgument]
                                        : call.operands[value.borrowArgument];
       originLoan = operandLoan(argument);
+      if (originLoan == 0) {
+        const HirBindingId transferred =
+            movedBorrowCarrierBinding(arguments[value.borrowArgument]);
+        const auto found = bindingLoans.find(transferred);
+        if (transferred != 0 && found != bindingLoans.end()) {
+          originLoan = found->second;
+        }
+      }
     }
     MirInstruction originCall = call;
     if (sourceReceiver) {
@@ -3937,11 +3945,17 @@ private:
                                    ? MirLoanKind::Stored
                                    : MirLoanKind::CallResult;
       MirLoanId parent = 0;
-      if (kind == MirLoanKind::CallResult && originLoan != 0 &&
-          originLoan <= output.loans.size()) {
+      if (originLoan != 0 && originLoan <= output.loans.size()) {
         const AccessMode parentAccess = output.loans[originLoan - 1].access;
-        if (parentAccess == AccessMode::Mutable ||
-            value.borrowAccess == AccessMode::ReadOnly) {
+        const bool derivedCallResult =
+            kind == MirLoanKind::CallResult &&
+            (parentAccess == AccessMode::Mutable ||
+             value.borrowAccess == AccessMode::ReadOnly);
+        const bool derivedMutableCarrier =
+            kind == MirLoanKind::Stored &&
+            parentAccess == AccessMode::Mutable &&
+            value.borrowAccess == AccessMode::Mutable;
+        if (derivedCallResult || derivedMutableCarrier) {
           parent = originLoan;
         }
       }
@@ -4148,13 +4162,51 @@ private:
     if (!sourceArguments.empty()) {
       originConstruct.operands = sourceArguments;
     }
+    const auto operandLoan = [&](const MirOperand &operand) {
+      if (operand.kind == MirOperandKind::Loan) {
+        return operand.loan;
+      }
+      const MirPlace *place = output.findPlace(operand.place);
+      if (place == nullptr) {
+        return MirLoanId{0};
+      }
+      if (place->root == MirPlaceRootKind::Loan) {
+        return place->loan;
+      }
+      if (place->root == MirPlaceRootKind::Binding) {
+        const auto found = bindingLoans.find(place->binding);
+        return found == bindingLoans.end() ? MirLoanId{0} : found->second;
+      }
+      if (place->root == MirPlaceRootKind::Value) {
+        const MirValue *resolved = output.findValue(place->value);
+        return resolved == nullptr ? MirLoanId{0}
+                                   : loanForValue(resolved->sourceValue);
+      }
+      return MirLoanId{0};
+    };
+    MirLoanId originLoan = 0;
+    if (value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument < construct.operands.size()) {
+      const MirOperand &argument =
+          value.borrowArgument < sourceArguments.size()
+              ? sourceArguments[value.borrowArgument]
+              : construct.operands[value.borrowArgument];
+      originLoan = operandLoan(argument);
+    }
     const MirPlaceId origin = borrowOriginPlace(value, originConstruct);
     construct.borrowOrigin = value.borrowOrigin;
     construct.borrowArgument = value.borrowArgument;
     construct.borrowAccess = value.borrowAccess;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
+      MirLoanId parent = 0;
+      if (originLoan != 0 && originLoan <= output.loans.size() &&
+          output.loans[originLoan - 1].access == AccessMode::Mutable &&
+          value.borrowAccess == AccessMode::Mutable) {
+        parent = originLoan;
+      }
       const MirLoanId loan =
-          createLoan(MirLoanKind::Stored, origin, value.borrowAccess, value.id);
+          createLoan(MirLoanKind::Stored, origin, value.borrowAccess, value.id,
+                     0, 0, parent);
       construct.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -6415,7 +6467,30 @@ private:
         const HirLoan *desired = source.findLoan(semanticLoan);
         if (desired == nullptr) {
           valid = false;
-        } else if (desired->lifecycleBound) {
+        } else if (desired->lifecycleBound ||
+                   (desired->kind == SemanticLoanKind::StoredValue &&
+                    desired->access == AccessMode::Mutable)) {
+          MirLoan &retained = output.loans[retainedLoan - 1];
+          MirLoanId expectedParent = 0;
+          if (desired->parent != 0) {
+            const auto parent = semanticLoans.find(desired->parent);
+            if (parent == semanticLoans.end()) {
+              valid = false;
+            } else {
+              expectedParent = parent->second;
+            }
+          }
+          const bool exactRuntimeTransferParent =
+              desired->parent == 0 && retained.parent != 0 &&
+              retained.parent <= output.loans.size() &&
+              retained.kind == MirLoanKind::Stored &&
+              retained.access == AccessMode::Mutable &&
+              output.loans[retained.parent - 1].kind == MirLoanKind::Stored &&
+              output.loans[retained.parent - 1].access == AccessMode::Mutable;
+          if (retained.parent != expectedParent &&
+              !exactRuntimeTransferParent) {
+            valid = false;
+          }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);
         } else {
           MirLoan &retained = output.loans[retainedLoan - 1];

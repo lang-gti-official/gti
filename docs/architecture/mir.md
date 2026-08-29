@@ -308,6 +308,19 @@ result place, a reused or multiply produced return loan, a wrong payload or
 referent type, or a terminator that does not carry the same loan and exact
 runtime value/place.
 
+The bounded mutable-carrier extension reuses this explicit loan vocabulary
+rather than adding backend-only lifetime inference. A mutable parameter or
+local origin owns one active loan. Constructing a direct mutable carrier emits
+a non-escaping mutable `Stored` child; moving or returning the carrier
+transfers the exact runtime carrier and origin, and a relay result remains a
+child of the transferred stored loan. The mutable parent is suspended until
+all child reborrows and the carrier child end. Structural and flow verification
+require the selected constructor/call operand to resolve through the declared
+parent, require child-first retirement on every path, and reject copy,
+reseating, forged ancestry, parent use while suspended, or an escaping child
+shape. The C++ backend merely represents the already-verified reference field
+and schedule.
+
 Version 49 makes a summarized reference return runtime-exact. When a body
 returns the borrowed result of a reference-returning call (a transient
 `CallResult` chain whose tail matches the declared receiver, argument, or
@@ -951,8 +964,10 @@ Copy construction of a read-only stored-reference carrier adds a binding to
 that same loan while copying ordinary shell fields into independent storage.
 Moving transfers a binding, and destroying one alias does not end owner
 protection while another carrier remains live. Assignment is absent because it
-would reseat an established dependency. A mutable compiler-generated carrier
-has an exclusive loan and is noncopyable rather than gaining this shared state.
+would reseat an established dependency. A mutable stored-reference carrier has
+an exclusive loan and is noncopyable rather than gaining this shared state;
+moving it transfers the exact carrier edge, and ending the final carrier
+reactivates its suspended mutable parent.
 
 A bounded exclusive reborrow instead lowers as a distinct mutable or read-only
 child loan linked to one mutable parent. Producing the child suspends the

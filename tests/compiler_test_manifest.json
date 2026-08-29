@@ -266,6 +266,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testMutableStoredDependencies",
+      "suite": "ownership"
+    },
+    {
       "name": "testStoredCarrierReturnProvenance",
       "suite": "ownership"
     },
