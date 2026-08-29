@@ -1,0 +1,4 @@
+class Traits { public: using value_type = int32_t; Traits() {} };
+using Alias = Traits;
+using ViaAlias = Alias::value_type;
+int main() { ViaAlias v = 3; std::println(v); return 0; }
