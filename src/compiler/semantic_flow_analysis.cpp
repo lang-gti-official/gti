@@ -2639,15 +2639,14 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
     if (info != nullptr) {
       symbol = symbolForDeclaration(info->name);
     }
-  } else if (const std::optional<TypeAliasId> aliasId =
+  } else if (const std::optional<ResolvedTypeAlias> alias =
                  resolveTypeAliasPath(type.name, currentNamespace)) {
-    if (*aliasId != 0 && *aliasId <= typeAliases.size()) {
-      const RegisteredTypeAlias &alias = typeAliases[*aliasId - 1];
-      symbol = symbolForDeclaration(alias.declaration->name());
+    if (alias->id != 0 && alias->id <= typeAliases.size()) {
+      symbol = symbolForDeclaration(alias->declaration->name());
       if (symbol == 0) {
-        symbol = recordToolingSymbol(alias.declaration->name(),
-                                     SymbolKind::TypeAlias, alias.qualifiedName,
-                                     alias.type);
+        symbol = recordToolingSymbol(alias->declaration->name(),
+                                     SymbolKind::TypeAlias,
+                                     alias->qualifiedName, alias->type);
       }
     }
   } else if (const std::optional<EnumId> enumId =
@@ -3460,6 +3459,29 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
       }
     }
   }
+  if (currentClass) {
+    const ClassInfo &owner = classInfo(*currentClass);
+    for (const auto &[name, alias] : owner.typeAliases) {
+      if (!seen.insert(name).second ||
+          (alias.access == AccessModifier::Private &&
+           currentClass != alias.ownerClass) ||
+          (!isCompilerTrustedUnit(currentSourceUnit) &&
+           (alias.compilerPrivate ||
+            semanticModel.isCompilerPrivateType(alias.type)))) {
+        continue;
+      }
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::TypeAlias,
+           .name = name,
+           .qualifiedName = alias.qualifiedName,
+           .type = alias.type,
+           .scopeDistance = distance,
+           .typeAlias = alias.declaration,
+           .symbol = symbolForDeclaration(alias.declaration->name()),
+           .compilerPrivate = alias.compilerPrivate});
+    }
+    ++distance;
+  }
   for (std::size_t depth = currentNamespace.size() + 1; depth > 0;
        --depth, ++distance) {
     std::string parent = qualifiedName(currentNamespace, depth - 1, "");
@@ -3503,6 +3525,51 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
                  resolveClassPath(ownerPath, currentNamespace)) {
     context.kind = SemanticCompletionKind::Member;
     const ClassInfo &classType = classInfo(*owner);
+    std::unordered_set<std::string> seenTypeAliases;
+    for (const auto &[name, alias] : classType.typeAliases) {
+      if ((alias.access == AccessModifier::Private &&
+           currentClass != alias.ownerClass) ||
+          (!classType.genericParameters.empty() && currentClass != *owner) ||
+          (!isCompilerTrustedUnit(currentSourceUnit) &&
+           (alias.compilerPrivate ||
+            semanticModel.isCompilerPrivateType(alias.type)))) {
+        continue;
+      }
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::TypeAlias,
+           .name = name,
+           .qualifiedName = qualifiedName(classType.namespaceScope,
+                                          classType.name.lexeme + "::" + name),
+           .type = alias.type,
+           .scopeDistance = 0,
+           .typeAlias = alias.declaration,
+           .symbol = symbolForDeclaration(alias.declaration->name()),
+           .compilerPrivate = alias.compilerPrivate});
+      seenTypeAliases.insert(name);
+    }
+    for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+      const RegisteredTypeAlias &alias = typeAliases[id - 1];
+      if (alias.ownerClass != *owner ||
+          alias.resolution != TypeAliasResolution::Resolved ||
+          !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
+          (alias.access == AccessModifier::Private &&
+           currentClass != alias.ownerClass) ||
+          (!classType.genericParameters.empty() && currentClass != *owner) ||
+          (!isCompilerTrustedUnit(currentSourceUnit) &&
+           (alias.compilerPrivate ||
+            semanticModel.isCompilerPrivateType(alias.type)))) {
+        continue;
+      }
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::TypeAlias,
+           .name = alias.declaration->name().lexeme,
+           .qualifiedName = alias.qualifiedName,
+           .type = alias.type,
+           .scopeDistance = 0,
+           .typeAlias = alias.declaration,
+           .symbol = symbolForDeclaration(alias.declaration->name()),
+           .compilerPrivate = alias.compilerPrivate});
+    }
     for (const auto &[name, member] : classType.members) {
       if (!member.symbol.staticMember ||
           (member.access == AccessModifier::Private &&
@@ -3878,31 +3945,82 @@ auto SemanticVisitor::Impl::reportInvisibleSymbol(const Token &use,
 
 auto SemanticVisitor::Impl::resolveTypeAliasPath(
     const NamePath &path, const std::vector<std::string> &fromScope) const
-    -> std::optional<TypeAliasId> {
+    -> std::optional<ResolvedTypeAlias> {
   const auto &visibleAliases = currentTypeAliasIds();
+  const auto direct = [&](TypeAliasId id) -> std::optional<ResolvedTypeAlias> {
+    if (id == 0 || id > typeAliases.size()) {
+      return std::nullopt;
+    }
+    const RegisteredTypeAlias &alias = typeAliases[id - 1];
+    return ResolvedTypeAlias{.id = id,
+                             .declaration = alias.declaration,
+                             .type = alias.type,
+                             .qualifiedName = alias.qualifiedName,
+                             .ownerClass = alias.ownerClass,
+                             .access = alias.access,
+                             .compilerPrivate = alias.compilerPrivate};
+  };
+  const auto member =
+      [&](ClassId owner,
+          const std::string &name) -> std::optional<ResolvedTypeAlias> {
+    if (owner == 0 || owner > classes.size()) {
+      return std::nullopt;
+    }
+    const auto found = classInfo(owner).typeAliases.find(name);
+    if (found == classInfo(owner).typeAliases.end()) {
+      return std::nullopt;
+    }
+    const MemberTypeAliasInfo &alias = found->second;
+    return ResolvedTypeAlias{.id = alias.id,
+                             .declaration = alias.declaration,
+                             .type = alias.type,
+                             .qualifiedName = alias.qualifiedName,
+                             .ownerClass = alias.ownerClass,
+                             .access = alias.access,
+                             .compilerPrivate = alias.compilerPrivate};
+  };
   if (path.segments.size() == 1) {
+    if (currentClass) {
+      if (const std::optional<ResolvedTypeAlias> alias =
+              member(*currentClass, path.last().lexeme)) {
+        return alias;
+      }
+    }
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       const auto found = visibleAliases.find(
           qualifiedName(fromScope, depth - 1, path.last().lexeme));
       if (found != visibleAliases.end()) {
-        return found->second;
+        return direct(found->second);
       }
     }
     return std::nullopt;
+  }
+
+  const std::string written = pathSpelling(path);
+  for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    const auto found =
+        visibleAliases.find(qualifiedName(fromScope, depth - 1, written));
+    if (found != visibleAliases.end()) {
+      return direct(found->second);
+    }
   }
 
   NamePath namespacePath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
   const std::optional<std::string> resolvedNamespace =
       resolveNamespacePath(namespacePath, fromScope);
-  if (!resolvedNamespace) {
-    return std::nullopt;
+  if (resolvedNamespace) {
+    const auto found =
+        visibleAliases.find(*resolvedNamespace + "::" + path.last().lexeme);
+    if (found != visibleAliases.end()) {
+      return direct(found->second);
+    }
   }
-  const auto found =
-      visibleAliases.find(*resolvedNamespace + "::" + path.last().lexeme);
-  return found == visibleAliases.end()
-             ? std::nullopt
-             : std::optional<TypeAliasId>(found->second);
+  if (const std::optional<ClassId> owner =
+          resolveClassPath(namespacePath, fromScope)) {
+    return member(*owner, path.last().lexeme);
+  }
+  return std::nullopt;
 }
 
 auto SemanticVisitor::Impl::resolveTypeAliasPathGlobally(
@@ -3917,6 +4035,15 @@ auto SemanticVisitor::Impl::resolveTypeAliasPathGlobally(
       }
     }
     return std::nullopt;
+  }
+
+  const std::string written = pathSpelling(path);
+  for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    const auto found =
+        typeAliasIds.find(qualifiedName(fromScope, depth - 1, written));
+    if (found != typeAliasIds.end()) {
+      return found->second;
+    }
   }
 
   NamePath namespacePath(
@@ -6523,16 +6650,20 @@ auto SemanticVisitor::Impl::baseTypeOf(
             resolveTypeParameter(type.name)) {
       return type.arguments.empty() ? *parameter : SemanticType::Unknown;
     }
-    if (const std::optional<TypeAliasId> alias =
+    if (const std::optional<ResolvedTypeAlias> alias =
             resolveTypeAliasPath(type.name, fromScope)) {
-      if (!type.arguments.empty() || *alias == 0 ||
-          *alias > typeAliases.size()) {
+      if (!type.arguments.empty() || alias->id == 0 ||
+          alias->id > typeAliases.size()) {
         return SemanticType::Unknown;
       }
-      const RegisteredTypeAlias &declaration = typeAliases[*alias - 1];
-      return declaration.resolution == TypeAliasResolution::Resolved
-                 ? selectExactClassSpecialization(declaration.type)
-                 : SemanticType::Unknown;
+      const RegisteredTypeAlias &declaration = typeAliases[alias->id - 1];
+      if (declaration.resolution != TypeAliasResolution::Resolved) {
+        return SemanticType::Unknown;
+      }
+      return substituteType(
+          alias->type,
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
     }
     if (const std::optional<EnumId> id =
             resolveEnumPath(type.name, fromScope)) {

@@ -31,10 +31,11 @@ in `semantic_type_printer.cpp`.
 `SemanticVisitor::check(const Program&)` is staged because later facts depend
 on declaration-wide registration. It currently:
 
-1. registers namespaces, aliases, type aliases, enums, concepts, and primary
-   classes;
-2. resolves concepts and aliases, then registers canonical exact class
-   specializations before resolving inheritance;
+1. registers namespaces, aliases, namespace/class type aliases, enums,
+   concepts, and primary classes;
+2. resolves concepts and aliases after primary class identities exist, then
+   registers canonical exact class specializations before resolving
+   inheritance;
 3. registers function generic parameters and namespace symbols;
 4. collects root native-storage symbols, class members, and summary-only
    namespace-global storage identities;
@@ -51,6 +52,19 @@ on declaration-wide registration. It currently:
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
+
+Class-scoped type aliases use that staged boundary deliberately. Registration
+walks active conditional members while tracking access labels and records the
+owner declaration before alias targets are resolved. Once primary class IDs
+exist, resolution binds each alias to its direct owner, enters the owner's
+generic-parameter scope, resolves the transparent target, and installs a
+separate type-member map. Value and callable collection consults that map for
+same-owner name collisions but does not turn aliases into storage members or
+inherit them with base value/function members. Type lookup, concrete generic
+reanalysis, and tooling all consume the same resolved target. Lowered-program
+rows retain the source declaration so the C++ backend can emit the alias in its
+owning class; no HIR or MIR instruction is introduced because an alias has no
+runtime effect.
 
 ## Request Sessions
 

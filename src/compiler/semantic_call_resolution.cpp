@@ -107,14 +107,27 @@ auto SemanticVisitor::Impl::storageIntrinsicName(IntrinsicKind intrinsic)
 }
 
 auto SemanticVisitor::Impl::typeAliasForCallee(const ExprPtr &callee) const
-    -> std::optional<TypeAliasId> {
+    -> std::optional<ResolvedTypeAlias> {
+  const auto substituteCurrentInstance =
+      [&](std::optional<ResolvedTypeAlias> alias)
+      -> std::optional<ResolvedTypeAlias> {
+    if (alias) {
+      alias->type = substituteType(
+          alias->type,
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+    }
+    return alias;
+  };
   if (callee && callee->exprKind() == ExprKind::Variable) {
     const auto *variable = static_cast<const Variable *>(callee.get());
-    return resolveTypeAliasPath(NamePath(variable->name()), currentNamespace);
+    return substituteCurrentInstance(
+        resolveTypeAliasPath(NamePath(variable->name()), currentNamespace));
   }
   if (callee && callee->exprKind() == ExprKind::QualifiedName) {
     const auto *qualified = static_cast<const QualifiedName *>(callee.get());
-    return resolveTypeAliasPath(qualified->name(), currentNamespace);
+    return substituteCurrentInstance(
+        resolveTypeAliasPath(qualified->name(), currentNamespace));
   }
   return std::nullopt;
 }

@@ -570,6 +570,75 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
   }
 }
 
+auto SemanticVisitor::Impl::registerTypeAlias(
+    const TypeAliasDecl &alias, const std::vector<std::string> &lookupScope,
+    const std::vector<std::string> &namespaceScope, const ClassDecl *owner,
+    AccessModifier access) -> void {
+  currentSourceUnit = sourceUnitFor(alias.name());
+  const std::string qualified = qualifiedName(lookupScope, alias.name().lexeme);
+  if (namespaces.contains(qualified) || namespaceAliases.contains(qualified) ||
+      typeAliasIds.contains(qualified)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2006", DiagnosticPhase::Semantics, alias.name(),
+        "Duplicate declaration of '" + alias.name().lexeme + "'.");
+    if (const auto existing = typeAliasIds.find(qualified);
+        existing != typeAliasIds.end()) {
+      diagnostic.related.push_back(
+          {tokenSpan(typeAliases[existing->second - 1].declaration->name()),
+           "Previous declaration is here."});
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
+  if (owner != nullptr && alias.name().lexeme == owner->name().lexeme) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2006", DiagnosticPhase::Semantics, alias.name(),
+                       "Class-scoped type alias '" + alias.name().lexeme +
+                           "' cannot have the same name as its owning type.");
+    diagnostic.related.push_back(
+        {tokenSpan(owner->name()), "Owning type is declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
+
+  const TypeAliasId id = typeAliases.size() + 1;
+  typeAliasIds.emplace(qualified, id);
+  typeAliases.push_back({.sourceUnit = currentSourceUnit,
+                         .declaration = &alias,
+                         .ownerDeclaration = owner,
+                         .qualifiedName = qualified,
+                         .namespaceScope = namespaceScope,
+                         .lookupScope = lookupScope,
+                         .access = access,
+                         .compilerPrivate = compilerPrivateDeclaration(
+                             currentSourceUnit, namespaceScope)});
+  publishTypeAlias(qualified, id, currentSourceUnit,
+                   typeAliases.back().compilerPrivate);
+}
+
+auto SemanticVisitor::Impl::registerClassTypeAliases(
+    const StmtList &members, const std::vector<std::string> &scope,
+    const ClassDecl &owner, AccessModifier &access) -> void {
+  for (const StmtPtr &statement : members) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        registerClassTypeAliases(*branch, scope, owner, access);
+      }
+      continue;
+    }
+    if (const auto *specifier = stmtAs<AccessSpecifierDecl>(statement.get())) {
+      access = specifier->modifier();
+      continue;
+    }
+    if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+      registerTypeAlias(
+          *alias, scope,
+          std::vector<std::string>(scope.begin(), scope.end() - 1), &owner,
+          access);
+    }
+  }
+}
+
 auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
                                                 std::vector<std::string> scope)
     -> void {
@@ -579,34 +648,18 @@ auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
         registerTypeAliases(*branch, scope);
       }
     } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
-      currentSourceUnit = sourceUnitFor(alias->name());
-      const std::string qualified = qualifiedName(scope, alias->name().lexeme);
-      if (namespaces.contains(qualified) ||
-          namespaceAliases.contains(qualified) ||
-          typeAliasIds.contains(qualified)) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2006", DiagnosticPhase::Semantics, alias->name(),
-            "Duplicate declaration of '" + alias->name().lexeme + "'.");
-        if (const auto existing = typeAliasIds.find(qualified);
-            existing != typeAliasIds.end()) {
-          diagnostic.related.push_back(
-              {tokenSpan(typeAliases[existing->second - 1].declaration->name()),
-               "Previous declaration is here."});
-        }
-        diagnostics.emplace_back(std::move(diagnostic));
+      registerTypeAlias(*alias, scope, scope, nullptr, AccessModifier::Public);
+    } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
+      if (classDecl->isForwardDeclaration()) {
         continue;
       }
-
-      const TypeAliasId id = typeAliases.size() + 1;
-      typeAliasIds.emplace(qualified, id);
-      typeAliases.push_back({.sourceUnit = currentSourceUnit,
-                             .declaration = alias,
-                             .qualifiedName = qualified,
-                             .namespaceScope = scope,
-                             .compilerPrivate = compilerPrivateDeclaration(
-                                 currentSourceUnit, scope)});
-      publishTypeAlias(qualified, id, currentSourceUnit,
-                       typeAliases.back().compilerPrivate);
+      std::vector<std::string> memberScope = scope;
+      memberScope.emplace_back(classDecl->name().lexeme);
+      AccessModifier access = classDecl->kind() == ClassKind::Class
+                                  ? AccessModifier::Private
+                                  : AccessModifier::Public;
+      registerClassTypeAliases(classDecl->members(), memberScope, *classDecl,
+                               access);
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -618,8 +671,42 @@ auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
+  for (RegisteredTypeAlias &alias : typeAliases) {
+    if (alias.ownerDeclaration == nullptr) {
+      continue;
+    }
+    const auto owner = classDeclIds.find(alias.ownerDeclaration);
+    if (owner == classDeclIds.end()) {
+      report(alias.declaration->name(),
+             "Class-scoped type aliases are not supported in exact class "
+             "specializations.",
+             "GTI-S2030");
+      alias.resolution = TypeAliasResolution::Invalid;
+      continue;
+    }
+    alias.ownerClass = owner->second;
+    alias.compilerPrivate =
+        alias.compilerPrivate || classInfo(alias.ownerClass).compilerPrivate;
+  }
   for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
     (void)resolveTypeAlias(id, nullptr);
+  }
+  for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+    const RegisteredTypeAlias &alias = typeAliases[id - 1];
+    if (alias.ownerClass == 0 ||
+        alias.resolution != TypeAliasResolution::Resolved) {
+      continue;
+    }
+    ClassInfo &owner = classInfo(alias.ownerClass);
+    owner.typeAliases.emplace(
+        alias.declaration->name().lexeme,
+        MemberTypeAliasInfo{.id = id,
+                            .declaration = alias.declaration,
+                            .type = alias.type,
+                            .qualifiedName = alias.qualifiedName,
+                            .ownerClass = alias.ownerClass,
+                            .access = alias.access,
+                            .compilerPrivate = alias.compilerPrivate});
   }
   visibleTypeAliasIds.clear();
   for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
@@ -1098,9 +1185,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
   if (type.name.last().kind == TokenKind::IDENTIFIER) {
-    if (const std::optional<TypeAliasId> dependency =
+    if (const std::optional<ResolvedTypeAlias> dependency =
             resolveTypeAliasPath(type.name, scope)) {
-      (void)resolveTypeAlias(*dependency, &type.name.last());
+      (void)resolveTypeAlias(dependency->id, &type.name.last());
     }
   }
   for (const TypeRef &argument : type.arguments) {
@@ -1136,12 +1223,17 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   alias.resolution = TypeAliasResolution::Resolving;
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::vector<std::string> enclosingNamespace = currentNamespace;
+  const std::optional<ClassId> enclosingClass = currentClass;
   currentSourceUnit = alias.sourceUnit;
-  currentNamespace = alias.namespaceScope;
+  currentNamespace = alias.lookupScope;
+  if (alias.ownerClass != 0) {
+    currentClass = alias.ownerClass;
+    beginTypeParameterScope(classInfo(alias.ownerClass).genericParameters);
+  }
 
   const std::size_t diagnosticsBefore = diagnostics.size();
   const TypeRef &target = alias.declaration->target();
-  resolveTypeAliasDependencies(target, alias.namespaceScope);
+  resolveTypeAliasDependencies(target, alias.lookupScope);
   bool targetFormValid = true;
   if (target.name.last().kind == TokenKind::AUTO) {
     report(target.name.last(), "A type alias requires an explicit target type.",
@@ -1155,10 +1247,17 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
            "GTI-S2030");
     targetFormValid = false;
   }
+  if (alias.ownerClass != 0 && target.isNativeFunction()) {
+    report(target.name.last(),
+           "Native callback aliases must remain at namespace scope; a "
+           "class-scoped alias may name only an ordinary GTI type.",
+           "GTI-S2076");
+    targetFormValid = false;
+  }
   if (targetFormValid) {
     validateType(target, false, target.isNativeFunction());
   }
-  const SemanticType resolved = typeOf(target, alias.namespaceScope);
+  const SemanticType resolved = typeOf(target, alias.lookupScope);
   if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
       semanticModel.isCompilerPrivateType(resolved)) {
     Diagnostic diagnostic = makeDiagnostic(
@@ -1189,6 +1288,10 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     alias.resolution = TypeAliasResolution::Invalid;
   }
 
+  if (alias.ownerClass != 0) {
+    endTypeParameterScope();
+  }
+  currentClass = enclosingClass;
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   return valid ? alias.type : SemanticType::Unknown;
@@ -2538,9 +2641,12 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
       AccessModifier access = info.kind == ClassKind::Class
                                   ? AccessModifier::Private
                                   : AccessModifier::Public;
+      const std::optional<ClassId> enclosingClass = currentClass;
+      currentClass = info.id;
       beginTypeParameterScope(info.genericParameters);
       collectMembers(classDecl->members(), info, access);
       endTypeParameterScope();
+      currentClass = enclosingClass;
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -2690,6 +2796,20 @@ auto SemanticVisitor::Impl::refreshOverloadPrivacy(Symbol &symbol) -> void {
 auto SemanticVisitor::Impl::mergeInheritedMember(ClassInfo &owner,
                                                  const std::string &name,
                                                  MemberInfo incoming) -> void {
+  if (const auto alias = owner.typeAliases.find(name);
+      alias != owner.typeAliases.end()) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2043", DiagnosticPhase::Semantics, owner.name,
+                       "Inherited member name '" + name +
+                           "' conflicts with a class-scoped type alias in '" +
+                           owner.name.lexeme + "'.");
+    diagnostic.related.push_back({tokenSpan(alias->second.declaration->name()),
+                                  "Type alias is declared here."});
+    diagnostic.related.push_back({tokenSpan(incoming.symbol.declaration),
+                                  "Conflicting member is declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
   const auto found = owner.members.find(name);
   if (found == owner.members.end()) {
     owner.members.emplace(name, std::move(incoming));
@@ -2725,6 +2845,17 @@ auto SemanticVisitor::Impl::mergeInheritedMember(ClassInfo &owner,
 auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
                                                 const std::string &name,
                                                 MemberInfo local) -> void {
+  if (const auto alias = owner.typeAliases.find(name);
+      alias != owner.typeAliases.end()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2006", DiagnosticPhase::Semantics, local.symbol.declaration,
+        "Duplicate member declaration of '" + name +
+            "'; the name already denotes a class-scoped type alias.");
+    diagnostic.related.push_back({tokenSpan(alias->second.declaration->name()),
+                                  "Type alias is declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
   const auto found = owner.members.find(name);
   if (found == owner.members.end()) {
     for (const CallableCandidate &candidate : local.symbol.overloads) {
@@ -4754,6 +4885,12 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       continue;
     }
 
+    if (stmtAs<TypeAliasDecl>(statement.get()) != nullptr) {
+      // Type aliases are registered and resolved before value/function member
+      // collection so declaration order cannot affect member signatures.
+      continue;
+    }
+
     if (const auto *constructor = stmtAs<ConstructorDecl>(statement.get())) {
       if (owner.kind == ClassKind::Union) {
         report(constructor->name(),
@@ -4792,9 +4929,10 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
           }
         }
       }
-      info.genericParameters =
-          makeGenericParameters(constructor->genericParameters(),
-                                constructor->name(), owner.namespaceScope);
+      std::vector<std::string> memberScope = owner.namespaceScope;
+      memberScope.emplace_back(owner.name.lexeme);
+      info.genericParameters = makeGenericParameters(
+          constructor->genericParameters(), constructor->name(), memberScope);
       constructorGenericParameters.insert_or_assign(constructor,
                                                     info.genericParameters);
       for (std::size_t index = 0; index < info.genericParameters.size();
@@ -4811,11 +4949,10 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       info.requirements = resolveRequirements(
           constructor->requiresClause() ? &*constructor->requiresClause()
                                         : nullptr,
-          owner.namespaceScope);
+          memberScope);
       info.parameterTypes.reserve(constructor->parameters().size());
       for (const Parameter &parameter : constructor->parameters()) {
-        info.parameterTypes.emplace_back(
-            typeOf(parameter, owner.namespaceScope));
+        info.parameterTypes.emplace_back(typeOf(parameter, memberScope));
       }
       endTypeParameterScope();
       for (const GenericParameterInfo &parameter : info.genericParameters) {
@@ -5051,7 +5188,9 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
         }
       }
       name = &function->name();
-      symbol = functionSymbol(*function, owner.namespaceScope);
+      std::vector<std::string> memberScope = owner.namespaceScope;
+      memberScope.emplace_back(owner.name.lexeme);
+      symbol = functionSymbol(*function, memberScope);
       symbol.staticMember = function->isStatic();
       const bool polymorphic = function->isVirtual() || function->isPure() ||
                                function->isOverride() ||
@@ -5108,17 +5247,18 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       }
       name = &variable->name();
       field = variable;
-      symbol = Symbol{.type = typeOf(variable->type(), variable->mutability(),
-                                     owner.namespaceScope),
-                      .sourceUnit = owner.sourceUnit,
-                      .assignable = variable->isMutable(),
-                      .declaration = variable->name(),
-                      .variableDeclaration = variable,
-                      .bindingKind = variable->isStatic()
-                                         ? SemanticBindingKind::StaticField
-                                         : SemanticBindingKind::Field,
-                      .staticMember = variable->isStatic(),
-                      .compilerPrivate = owner.compilerPrivate};
+      std::vector<std::string> memberScope = owner.namespaceScope;
+      memberScope.emplace_back(owner.name.lexeme);
+      symbol = Symbol{
+          .type = typeOf(variable->type(), variable->mutability(), memberScope),
+          .sourceUnit = owner.sourceUnit,
+          .assignable = variable->isMutable(),
+          .declaration = variable->name(),
+          .variableDeclaration = variable,
+          .bindingKind = variable->isStatic() ? SemanticBindingKind::StaticField
+                                              : SemanticBindingKind::Field,
+          .staticMember = variable->isStatic(),
+          .compilerPrivate = owner.compilerPrivate};
       predeclaredVariables.insert(variable);
       if (owner.kind == ClassKind::Interface) {
         report(variable->name(),
@@ -5178,6 +5318,18 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
     if (function != nullptr && !symbol.overloads.empty()) {
       publishCallableDeclaration(*function, symbol.overloads.front(),
                                  owner.namespaceScope, owner.id);
+    }
+    if (const auto alias = owner.typeAliases.find(name->lexeme);
+        alias != owner.typeAliases.end()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2006", DiagnosticPhase::Semantics, *name,
+          "Duplicate member declaration of '" + name->lexeme +
+              "'; the name already denotes a class-scoped type alias.");
+      diagnostic.related.push_back(
+          {tokenSpan(alias->second.declaration->name()),
+           "Type alias is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      continue;
     }
     const auto existing = owner.members.find(name->lexeme);
     if (existing != owner.members.end()) {

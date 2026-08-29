@@ -3350,14 +3350,25 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       return;
     }
   }
-  if (const std::optional<TypeAliasId> aliasId =
+  if (const std::optional<ResolvedTypeAlias> alias =
           typeAliasForCallee(expr.callee())) {
-    const RegisteredTypeAlias &alias = typeAliases[*aliasId - 1];
-    if (alias.resolution != TypeAliasResolution::Resolved) {
+    const RegisteredTypeAlias &declaration = typeAliases[alias->id - 1];
+    if (declaration.resolution != TypeAliasResolution::Resolved) {
       for (const ExprPtr &argument : expr.arguments()) {
         analyze(argument);
       }
       currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!validateTypeAliasAccess(*alias, expressionToken(expr.callee()))) {
+      for (const ExprPtr &argument : expr.arguments()) {
+        analyze(argument);
+      }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (alias->type.kind == SemanticType::TypeParameter) {
+      analyzeTypeParameterCall(expr, alias->type);
       return;
     }
     if (!expr.typeArguments().empty()) {
@@ -3365,25 +3376,25 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         validateType(argument);
       }
       report(expr.paren(),
-             "Type alias '" + alias.qualifiedName +
+             "Type alias '" + alias->qualifiedName +
                  "' does not take generic arguments.",
              "GTI-S2030");
     }
-    if (isNumeric(alias.type)) {
-      analyzeAliasConversion(expr, alias.type, alias.qualifiedName);
+    if (isNumeric(alias->type)) {
+      analyzeAliasConversion(expr, alias->type, alias->qualifiedName);
       return;
     }
 
     ContextualCallArguments argumentAnalysis =
         analyzeContextualCallArguments(expr.arguments());
     std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
-    if (alias.type.kind == SemanticType::Class) {
-      analyzeConstructorCall(expr, alias.type.classId, alias.type.arguments,
-                             alias.type.valueArguments, argumentTypes,
+    if (alias->type.kind == SemanticType::Class) {
+      analyzeConstructorCall(expr, alias->type.classId, alias->type.arguments,
+                             alias->type.valueArguments, argumentTypes,
                              expr.arguments(), expr.paren());
     } else {
       report(expressionToken(expr.callee()),
-             "Type alias '" + alias.qualifiedName +
+             "Type alias '" + alias->qualifiedName +
                  "' does not name a constructible class or numeric type.",
              "GTI-S2030");
       currentType = SemanticType::Unknown;

@@ -1928,9 +1928,54 @@ auto SemanticVisitor::Impl::validateArrayExtent(
   }
 }
 
+auto SemanticVisitor::Impl::validateTypeAliasAccess(
+    const ResolvedTypeAlias &alias, const Token &use) -> bool {
+  if (alias.compilerPrivate && !isCompilerTrustedRequester(use)) {
+    reportCompilerPrivateAccess(use, alias.qualifiedName);
+    return false;
+  }
+  if (alias.ownerClass != 0 && alias.access == AccessModifier::Private &&
+      currentClass != alias.ownerClass) {
+    const ClassInfo &owner = classInfo(alias.ownerClass);
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, use,
+                       "Type alias '" + alias.declaration->name().lexeme +
+                           "' of '" + owner.name.lexeme + "' is private.");
+    diagnostic.related.push_back(
+        {tokenSpan(alias.declaration->name()), "Type alias is declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+  if (alias.ownerClass != 0 && alias.ownerClass <= classes.size() &&
+      !classInfo(alias.ownerClass).genericParameters.empty() &&
+      currentClass != alias.ownerClass) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2030", DiagnosticPhase::Semantics, use,
+        "Type alias '" + alias.qualifiedName +
+            "' belongs to a generic class; GTI cannot name a member through "
+            "an unspecialized generic class path.");
+    diagnostic.related.push_back({tokenSpan(classInfo(alias.ownerClass).name),
+                                  "Generic owning type is declared here."});
+    diagnostic.hints.emplace_back(
+        "Use the alias inside that class, inherit a concrete specialization, "
+        "or name the concrete type directly.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+  return true;
+}
+
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeCOuterPointer,
                                          bool allowNativeFunctionType) -> void {
+  if (type.name.last().completion) {
+    if (type.name.segments.size() == 1) {
+      captureUnqualifiedCompletion(type.name.last());
+    } else {
+      captureQualifiedCompletion(type.name);
+    }
+    return;
+  }
   if (type.isNativeFunction()) {
     const Token &location = type.name.last();
     if (!allowNativeFunctionType) {
@@ -2268,7 +2313,9 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     return;
   }
 
-  if (resolveTypeAliasPath(type.name, currentNamespace)) {
+  if (const std::optional<ResolvedTypeAlias> alias =
+          resolveTypeAliasPath(type.name, currentNamespace)) {
+    (void)validateTypeAliasAccess(*alias, type.name.last());
     if (!type.arguments.empty()) {
       report(type.name.last(),
              "Type alias '" + pathSpelling(type.name) +

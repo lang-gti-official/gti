@@ -98,6 +98,17 @@ disjunction publishes the shared `GTI-S2029` primary diagnostic plus related
 alternative locations. The protocol adapter neither evaluates branches nor
 reconstructs their common guarantees.
 
+Class-scoped type aliases also stay on this compiler-owned path. Their
+declaration and every resolved type use share one `TypeAlias` symbol identity,
+so hover renders `using Owner::Name = Type`, definition targets the member
+declaration, semantic tokens classify both declaration and use as a type, and a
+hierarchical document outline nests the alias below its owner. Completion in a
+type position asks semantic analysis for the accessible direct aliases of the
+qualified class; the protocol adapter does not infer class membership from the
+written `::` path. Tree-sitter accepts the alias as a class member and supplies
+the syntax-level type-definition capture while semantic tokens retain the exact
+class-versus-namespace meaning.
+
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
 read-only or mutable access and the deduplicated exact invocation signatures

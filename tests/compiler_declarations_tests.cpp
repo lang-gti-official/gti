@@ -7902,13 +7902,25 @@ using Size = uint64_t;
 using Triple = int[3];
 
 class Box<T> {
+  using stored_type = T;
   T value;
 public:
+  using value_type = stored_type;
   Box(T value) : value(value) {}
-  T get() { return this.value; }
+  value_type get() { return this.value; }
+};
+
+class Traits {
+public:
+  using value_type = hidden_type;
+private:
+  using hidden_type = int;
+public:
+  value_type identity(value_type value) { return value; }
 };
 
 using IntBox = Box<int>;
+using TraitValue = Traits::value_type;
 using Completion = expected<void, int>;
 using Result = int;
 
@@ -7918,8 +7930,11 @@ Result main() {
   LaterSize count = Size(3);
   Triple values = {1, 2, 3};
   IntBox box = IntBox(values[1]);
+  Traits traits{};
+  TraitValue trait_value = traits.identity(4);
   Completion completion = complete();
-  if (count == 3 and box.get() == 2 and completion) { return 0; }
+  if (count == 3 and box.get() == 2 and trait_value == 4 and
+      completion) { return 0; }
   return 1;
 }
 )";
@@ -7935,19 +7950,98 @@ Result main() {
          "type aliases should canonicalize before semantic checks");
 
   const std::string generated = emitAnalyzedSource(source);
-  expect(
-      generated.find("using LaterSize = std::uint64_t;") != std::string::npos &&
-          generated.find("using Triple = std::array<std::int32_t, 3>;") !=
-              std::string::npos &&
-          generated.find("using IntBox = "
-                         "::__gti_program::__gti_type_") != std::string::npos &&
-          generated.find("_Box;") != std::string::npos &&
-          generated.find("static_cast<std::uint64_t>(3)") !=
-              std::string::npos &&
-          generated.find("#include <expected>") != std::string::npos &&
-          generated.find("int main()") != std::string::npos,
-      "the C++ backend should emit canonical, declaration-order-independent "
-      "aliases");
+  expect(generated.find("using LaterSize = std::uint64_t;") !=
+                 std::string::npos &&
+             generated.find("using Triple = std::array<std::int32_t, 3>;") !=
+                 std::string::npos &&
+             generated.find("using IntBox = "
+                            "::__gti_program::Box<std::int32_t>;") !=
+                 std::string::npos &&
+             generated.find("using value_type = T;") != std::string::npos &&
+             generated.find("using TraitValue = std::int32_t;") !=
+                 std::string::npos &&
+             generated.find("static_cast<std::uint64_t>(3)") !=
+                 std::string::npos &&
+             generated.find("#include <expected>") != std::string::npos &&
+             generated.find("int main()") != std::string::npos,
+         "the C++ backend should emit canonical, declaration-order-independent "
+         "aliases");
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("class-type-aliases.gti", source);
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const lang::LanguageQueries queries;
+  const std::size_t aliasDeclaration = source.find("value_type = hidden_type");
+  const std::size_t aliasUse = source.find("Traits::value_type");
+  const std::optional<lang::HoverInfo> hover =
+      queries.hover(frontend, unit, aliasUse + 9);
+  const std::optional<lang::DefinitionInfo> definition =
+      queries.definition(frontend, unit, aliasUse + 9);
+  expect(frontend.canGenerateCode() && hover &&
+             hover->signature == "using Traits::value_type = int32_t" &&
+             definition && definition->target.start == aliasDeclaration,
+         "class-scoped aliases should participate in shared hover and "
+         "definition queries");
+
+  const lang::FrontendResult constrainedAlias =
+      lang::Frontend().analyze("generic-class-type-alias.gti",
+                               R"(
+class NumericBox<std::numeric T> {
+public:
+  using value_type = T;
+  value_type copy(value_type input) { return value_type(input); }
+};
+int main() {
+  NumericBox<int> box{};
+  return box.copy(7) - 7;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(constrainedAlias.canGenerateCode(),
+         "a generic class alias should preserve the owner's capabilities and "
+         "substitute its concrete target in an instantiated member body");
+
+  const lang::FrontendResult classKinds =
+      lang::Frontend().analyze("class-kind-type-aliases.gti",
+                               R"(
+struct RecordTraits { using value_type = int; };
+interface ContractTraits { using value_type = int; };
+union UnionTraits {
+  using value_type = int;
+  int value;
+};
+using RecordValue = RecordTraits::value_type;
+using ContractValue = ContractTraits::value_type;
+using UnionValue = UnionTraits::value_type;
+int main() {
+  RecordValue record = 1;
+  ContractValue contract = 2;
+  UnionValue variant = 3;
+  return record + contract + variant - 6;
+}
+)");
+  expect(classKinds.canGenerateCode(),
+         "struct, interface, and union aliases should follow their public "
+         "default access and remain usable as direct type members");
+
+  const std::string completionSource =
+      "class Traits { public: using value_type = int; }; "
+      "using Value = Traits::val; int main() { return 0; }";
+  const lang::CompletionResult completion = lang::LanguageQueries().complete(
+      {.entryPath = "class-alias-completion.gti",
+       .source = completionSource,
+       .byteOffset = completionSource.rfind("val") + 3});
+  const auto completionAlias =
+      std::find_if(completion.candidates.begin(), completion.candidates.end(),
+                   [](const lang::CompletionCandidate &candidate) {
+                     return candidate.label == "value_type";
+                   });
+  expect(completionAlias != completion.candidates.end() &&
+             completionAlias->kind ==
+                 lang::CompletionCandidateKind::TypeAlias &&
+             completionAlias->detail == "using Traits::value_type = int32_t",
+         "qualified completion should expose accessible class-scoped type "
+         "aliases with canonical GTI details");
 
   auto invalidTokens = lexer.scan(R"(
 using First = Second;
@@ -7973,12 +8067,86 @@ int main() { return 0; }
              hasDiagnostic(invalidSemantic, "Duplicate declaration"),
          "invalid aliases should produce focused diagnostics");
 
+  const lang::FrontendResult invalidClassAliases =
+      lang::Frontend().analyze("invalid-class-type-aliases.gti", R"(
+class PrivateTraits {
+  using secret_type = int;
+public:
+  secret_type identity(secret_type value) { return value; }
+};
+using Leaked = PrivateTraits::secret_type;
+
+struct DuplicateMember {
+  using value_type = int;
+  int value_type = 0;
+};
+
+class CallbackOwner {
+public:
+  using Callback = (int) -> void;
+};
+
+class GenericOwner<T> {
+public:
+  using value_type = T;
+};
+using UnboundGenericMember = GenericOwner::value_type;
+
+class BaseOwner {
+public:
+  using inherited_type = int;
+};
+class DerivedOwner : public BaseOwner {};
+using UninheritedMember = DerivedOwner::inherited_type;
+
+int main() { return 0; }
+)");
+  const auto privateDiagnostic =
+      std::find_if(invalidClassAliases.diagnostics.begin(),
+                   invalidClassAliases.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2007";
+                   });
+  expect(!invalidClassAliases.canGenerateCode() &&
+             hasDiagnosticCode(invalidClassAliases.diagnostics, "GTI-S2007") &&
+             hasDiagnostic(invalidClassAliases.diagnostics,
+                           "secret_type' of 'PrivateTraits' is private") &&
+             privateDiagnostic != invalidClassAliases.diagnostics.end() &&
+             !privateDiagnostic->related.empty() &&
+             hasDiagnosticCode(invalidClassAliases.diagnostics, "GTI-S2006") &&
+             hasDiagnostic(invalidClassAliases.diagnostics,
+                           "already denotes a class-scoped type alias") &&
+             hasDiagnosticCode(invalidClassAliases.diagnostics, "GTI-S2076") &&
+             hasDiagnostic(invalidClassAliases.diagnostics,
+                           "Native callback aliases must remain at namespace "
+                           "scope") &&
+             hasDiagnosticCode(invalidClassAliases.diagnostics, "GTI-S2030") &&
+             hasDiagnostic(invalidClassAliases.diagnostics,
+                           "belongs to a generic class") &&
+             hasDiagnostic(invalidClassAliases.diagnostics,
+                           "Unknown type 'DerivedOwner::inherited_type'"),
+         "class-scoped aliases should enforce access, name uniqueness, and "
+         "the deliberately bounded generic, inheritance, and native callback "
+         "boundaries");
+
   lang::Parser localAliasParser(
       lexer.scan("int main() { using Local = int; return 0; }"));
   (void)localAliasParser.parse();
-  expect(localAliasParser.hadError() &&
-             hasDiagnostic(localAliasParser.errors(), "namespace scope"),
-         "local type aliases should be rejected by the parser");
+  expect(
+      localAliasParser.hadError() &&
+          hasDiagnostic(localAliasParser.errors(), "namespace or class scope"),
+      "local type aliases should be rejected by the parser");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Traits{using hidden=int;public:using value_type=hidden;};");
+  expect(formatted == R"(class Traits {
+  using hidden = int;
+public:
+  using value_type = hidden;
+};
+)" && lang::Formatter().format(formatted) == formatted,
+         "the formatter should indent class-scoped aliases as ordinary "
+         "members and preserve access-label spacing");
 }
 
 void testNamespacesAndAliases() {

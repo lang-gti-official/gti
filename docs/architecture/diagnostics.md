@@ -208,8 +208,10 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2076` owns the named native callback boundary. Point at the anonymous
   type spelling, invalid ABI component, missing initializer, inexact function
   item, or concurrent-profile conversion that the user can change. State that
-  callback types must be named by namespace-scope `using`, and that an exposed
-  GTI target must be one exact non-generic namespace free function with a body.
+  callback types must be named by namespace-scope `using`; when a callback
+  alias is written as a class member, point at its callback target and require
+  moving the alias to namespace scope. An exposed GTI target must be one exact
+  non-generic namespace free function with a body.
   Relate all overload candidates when exact conversion is absent or ambiguous.
   Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
   those choices require intent. Foreign callback values remain valid in the

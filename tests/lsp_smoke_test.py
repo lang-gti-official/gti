@@ -1114,6 +1114,182 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_class_scoped_type_alias_tooling(executable, root):
+    source = (
+        "class Traits {\n"
+        "public:\n"
+        "  /// The scalar value exposed by Traits.\n"
+        "  using value_type = int32_t;\n"
+        "  value_type identity(value_type value) { return value; }\n"
+        "};\n"
+        "using Value = Traits::value_type;\n"
+        "int main() { Value value = 7; return value - 7; }\n"
+    )
+    path = root / "class-scoped-type-alias.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "documentSymbol": {
+                                "hierarchicalDocumentSymbolSupport": True
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        capabilities = initialization["capabilities"]
+        assert capabilities["hoverProvider"] is True
+        assert capabilities["definitionProvider"] is True
+        assert capabilities["documentSymbolProvider"] is True
+        token_types = capabilities["semanticTokensProvider"]["legend"][
+            "tokenTypes"
+        ]
+        type_token = token_types.index("type")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        alias_declaration = source.index("value_type = int32_t")
+        alias_use = source.index("value_type", source.index("using Value"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, alias_use + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert "```gti\nusing Traits::value_type = int32_t\n```" in hover[
+            "contents"
+        ]["value"], hover
+        assert "The scalar value exposed by Traits." in hover["contents"][
+            "value"
+        ], hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, alias_use + 1),
+                },
+            }
+        )
+        definition = session.receive_until(
+            lambda message: message.get("id") == 3
+        )["result"]
+        assert definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, alias_declaration),
+                "end": lsp_position(
+                    source, alias_declaration + len("value_type")
+                ),
+            },
+        }, definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, alias_use + len("val")),
+                },
+            }
+        )
+        completion = session.receive_until(
+            lambda message: message.get("id") == 4
+        )["result"]
+        value_type = next(
+            item for item in completion["items"] if item["label"] == "value_type"
+        )
+        assert value_type["kind"] == 18, value_type
+        assert value_type["detail"] == "using Traits::value_type = int32_t"
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 5)[
+                "result"
+            ]["data"]
+        )
+        for offset in (alias_declaration, alias_use):
+            position = lsp_position(source, offset)
+            token = tokens[(position["line"], position["character"])]
+            assert token["type"] == type_token, token
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        outline = session.receive_until(lambda message: message.get("id") == 6)[
+            "result"
+        ]
+        traits = next(symbol for symbol in outline if symbol["name"] == "Traits")
+        assert [(child["name"], child["kind"]) for child in traits["children"]] == [
+            ("value_type", 5),
+            ("identity", 6),
+        ], traits
+        assert next(symbol for symbol in outline if symbol["name"] == "Value")[
+            "kind"
+        ] == 5
+    finally:
+        session.close()
+
+
 def test_documentation_hover(executable, root):
     dependency_source = (
         "namespace api {\n"
@@ -8867,6 +9043,7 @@ def main():
     test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
+    test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
     test_documentation_completion_and_signature_help(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
