@@ -333,9 +333,14 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
             [&](const LoweredEnumerator &enumerator) {
               return enumerator.name.empty() ||
                      (!payload->payload && !enumerator.payloadTypes.empty()) ||
+                     (payload->payload &&
+                      enumerator.payloadTypes.size() !=
+                          enumerator.payloadRequiresActiveCleanup.size()) ||
                      !std::all_of(enumerator.payloadTypes.begin(),
                                   enumerator.payloadTypes.end(), resolvedType);
-            })) {
+            }) ||
+        (payload->requiresActiveCleanup &&
+         payload->traits.drop != DropKind::Lexical)) {
       return invalid("enum declaration payload is unresolved or incoherent");
     }
     break;
@@ -599,6 +604,37 @@ verifyLoweredProgram(const LoweredProgram &program) {
     } else if (const auto *payload =
                    std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
       recordIdentity(enumDeclarations, payload->id, "enum");
+      const MirPayloadEnum *mirEnumeration =
+          program.mir_.findPayloadEnum(payload->id);
+      if (payload->payload) {
+        bool exact =
+            mirEnumeration != nullptr &&
+            payload->traits == mirEnumeration->traits &&
+            payload->requiresActiveCleanup ==
+                mirEnumeration->requiresActiveCleanup &&
+            payload->enumerators.size() == mirEnumeration->variants.size();
+        for (std::size_t variantIndex = 0;
+             exact && variantIndex < payload->enumerators.size();
+             ++variantIndex) {
+          const LoweredEnumerator &lowered = payload->enumerators[variantIndex];
+          const MirPayloadEnumVariant &mirVariant =
+              mirEnumeration->variants[variantIndex];
+          exact = lowered.variantIndex == mirVariant.variantIndex &&
+                  lowered.payloadTypes == mirVariant.payloadTypes &&
+                  lowered.payloadRequiresActiveCleanup ==
+                      mirVariant.payloadRequiresActiveCleanup;
+        }
+        if (!exact) {
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "payload enum declaration differs from the exact MIR "
+                   "lifecycle table",
+                   std::nullopt, declaration.id);
+        }
+      } else if (mirEnumeration != nullptr) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "non-payload enum has a MIR payload lifecycle table",
+                 std::nullopt, declaration.id);
+      }
     } else if (const auto *payload = std::get_if<LoweredFunctionDeclaration>(
                    &declaration.payload)) {
       recordIdentity(functionDeclarations, payload->id, "function");

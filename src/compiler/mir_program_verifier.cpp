@@ -2325,6 +2325,214 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
   return {};
 }
 
+[[nodiscard]] MirVerificationResult
+verifyMirPayloadEnums(const MirProgram &program) {
+  MirVerificationResult result;
+  std::unordered_set<EnumId> declarations;
+  const auto typeRequiresActiveCleanup =
+      [&](const SemanticType &type, const auto &query) -> std::optional<bool> {
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+    case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
+      return true;
+    case SemanticType::Array:
+    case SemanticType::Unexpected:
+      return type.arguments.size() == 1 ? query(type.arguments.front(), query)
+                                        : std::nullopt;
+    case SemanticType::Expected:
+      for (const SemanticType &argument : type.arguments) {
+        if (argument == SemanticType::Void) {
+          continue;
+        }
+        const std::optional<bool> active = query(argument, query);
+        if (!active) {
+          return std::nullopt;
+        }
+        if (*active) {
+          return true;
+        }
+      }
+      return false;
+    case SemanticType::Class: {
+      const auto found = std::find_if(program.classInstances().begin(),
+                                      program.classInstances().end(),
+                                      [&](const MirClassInstance &candidate) {
+                                        return candidate.type == type;
+                                      });
+      return found == program.classInstances().end()
+                 ? std::nullopt
+                 : std::optional<bool>{found->requiresActiveCleanup};
+    }
+    case SemanticType::Enum: {
+      const MirPayloadEnum *enumeration = program.findPayloadEnum(type.enumId);
+      return enumeration == nullptr
+                 ? std::optional<bool>{false}
+                 : std::optional<bool>{enumeration->requiresActiveCleanup};
+    }
+    case SemanticType::Lambda: {
+      const MirLambdaInstance *lambda =
+          type.lambdaId == 0 ? nullptr : program.findLambda(type.lambdaId);
+      if (lambda == nullptr ||
+          lambda->captureTypes.size() !=
+              lambda->captureRequiresActiveCleanup.size()) {
+        return std::nullopt;
+      }
+      return std::any_of(lambda->captureRequiresActiveCleanup.begin(),
+                         lambda->captureRequiresActiveCleanup.end(),
+                         [](bool active) { return active; });
+    }
+    default:
+      return false;
+    }
+  };
+
+  for (const MirPayloadEnum &enumeration : program.payloadEnums()) {
+    bool exact = enumeration.declaration != 0 && enumeration.sourceUnit != 0 &&
+                 declarations.insert(enumeration.declaration).second &&
+                 enumeration.type.kind == SemanticType::Enum &&
+                 enumeration.type.enumId == enumeration.declaration &&
+                 !enumeration.variants.empty();
+    bool active = false;
+    for (std::size_t variantIndex = 0;
+         variantIndex < enumeration.variants.size(); ++variantIndex) {
+      const MirPayloadEnumVariant &variant = enumeration.variants[variantIndex];
+      exact = exact && variant.variantIndex == variantIndex &&
+              variant.payloadTypes.size() ==
+                  variant.payloadRequiresActiveCleanup.size();
+      for (std::size_t fieldIndex = 0; fieldIndex < variant.payloadTypes.size();
+           ++fieldIndex) {
+        const SemanticType &field = variant.payloadTypes[fieldIndex];
+        const std::optional<bool> fieldActive =
+            typeRequiresActiveCleanup(field, typeRequiresActiveCleanup);
+        exact =
+            exact && field != SemanticType::Unknown &&
+            field != SemanticType::Void && fieldActive &&
+            *fieldActive == variant.payloadRequiresActiveCleanup[fieldIndex];
+        // L-SUM-01 deliberately admits only concrete class values as active
+        // payload fields. Recursive cleanup carriers need their own
+        // partial-state representation before they can be forged into MIR.
+        exact = exact && (!variant.payloadRequiresActiveCleanup[fieldIndex] ||
+                          field.kind == SemanticType::Class);
+        active = active || variant.payloadRequiresActiveCleanup[fieldIndex];
+      }
+    }
+    exact = exact && active == enumeration.requiresActiveCleanup &&
+            (!active || enumeration.traits.drop == DropKind::Lexical);
+    if (!exact) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Module,
+           .message = "payload-enum lifecycle table is unresolved or "
+                      "incoherent"});
+    }
+  }
+
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const MirBlock &block : body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.operation != MirOperation::PayloadConstruct &&
+            instruction.operation != MirOperation::PayloadExtract) {
+          continue;
+        }
+        const MirPayloadEnum *enumeration =
+            instruction.enumOwner
+                ? program.findPayloadEnum(*instruction.enumOwner)
+                : nullptr;
+        const MirPayloadEnumVariant *variant =
+            enumeration != nullptr && instruction.enumVariant &&
+                    *instruction.enumVariant < enumeration->variants.size()
+                ? &enumeration->variants[*instruction.enumVariant]
+                : nullptr;
+        bool exact = enumeration != nullptr && variant != nullptr &&
+                     variant->variantIndex == *instruction.enumVariant;
+        if (instruction.operation == MirOperation::PayloadConstruct) {
+          const MirValue *value = instruction.result
+                                      ? body->findValue(*instruction.result)
+                                      : nullptr;
+          exact = exact && value != nullptr &&
+                  value->info.type == enumeration->type &&
+                  value->info.traits == enumeration->traits &&
+                  instruction.operands.size() == variant->payloadTypes.size();
+          for (std::size_t index = 0;
+               exact && index < instruction.operands.size(); ++index) {
+            exact = instruction.operands[index].type ==
+                    variant->payloadTypes[index];
+          }
+          std::vector<bool> transferred(variant->payloadTypes.size(), false);
+          std::size_t resultInitializations = 0;
+          for (const MirLifecycleEvent &event : instruction.lifecycle) {
+            if (event.kind == MirLifecycleEventKind::TransferOut) {
+              const MirDropObligation *source =
+                  body->findDropObligation(event.source);
+              bool matched = false;
+              for (std::size_t fieldIndex = 0;
+                   source != nullptr && fieldIndex < transferred.size();
+                   ++fieldIndex) {
+                if (!transferred[fieldIndex] &&
+                    variant->payloadRequiresActiveCleanup[fieldIndex] &&
+                    source->dropType.type ==
+                        variant->payloadTypes[fieldIndex] &&
+                    source->dropType.requiresActiveCleanup) {
+                  transferred[fieldIndex] = true;
+                  matched = true;
+                  break;
+                }
+              }
+              exact = exact && matched && event.target == 0 &&
+                      !event.conditional && !event.failureCleanup;
+            } else if (event.kind == MirLifecycleEventKind::Initialize) {
+              const MirDropObligation *target =
+                  body->findDropObligation(event.target);
+              ++resultInitializations;
+              exact = exact && enumeration->requiresActiveCleanup &&
+                      event.source == 0 && target != nullptr &&
+                      target->dropType.type == enumeration->type &&
+                      target->dropType.requiresActiveCleanup &&
+                      !event.conditional && !event.failureCleanup;
+            } else {
+              exact = false;
+            }
+          }
+          for (std::size_t fieldIndex = 0; fieldIndex < transferred.size();
+               ++fieldIndex) {
+            exact =
+                exact && transferred[fieldIndex] ==
+                             variant->payloadRequiresActiveCleanup[fieldIndex];
+          }
+          exact = exact && resultInitializations ==
+                               static_cast<std::size_t>(
+                                   enumeration->requiresActiveCleanup);
+        } else {
+          const MirValue *value = instruction.result
+                                      ? body->findValue(*instruction.result)
+                                      : nullptr;
+          exact = exact && instruction.payloadIndex && value != nullptr &&
+                  *instruction.payloadIndex < variant->payloadTypes.size() &&
+                  instruction.operands.size() == 1 &&
+                  instruction.operands.front().type == enumeration->type &&
+                  value->info.type ==
+                      variant->payloadTypes[*instruction.payloadIndex];
+        }
+        if (!exact) {
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "payload-enum instruction differs from its "
+                          "verified variant table"});
+        }
+      }
+    }
+  }
+  return result;
+}
+
 struct MirCheckedIntegerFailureContract {
   bool applicable = false;
   bool validShape = true;
@@ -5513,6 +5721,12 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
       return unknown ? std::nullopt : std::optional<bool>{false};
     }
+    case SemanticType::Enum: {
+      const MirPayloadEnum *enumeration = program.findPayloadEnum(type.enumId);
+      return enumeration == nullptr
+                 ? std::optional<bool>{false}
+                 : std::optional<bool>{enumeration->requiresActiveCleanup};
+    }
     case SemanticType::Class: {
       const auto instance = std::find_if(
           program.classInstances().begin(), program.classInstances().end(),
@@ -5552,6 +5766,7 @@ verifyMirProgramContracts(const MirProgram &program) {
       return false;
     }
   };
+  appendVerification(result, verifyMirPayloadEnums(program));
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];

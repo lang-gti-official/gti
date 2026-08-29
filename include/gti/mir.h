@@ -1384,6 +1384,31 @@ struct MirHostedStartupPlan {
                          const MirHostedStartupPlan &) = default;
 };
 
+// Pointer-free lifecycle authority for a closed payload enum. Variant rows
+// retain the exact ordered field types and active-cleanup facts that MIR
+// construction, extraction, ownership flow, and backends are allowed to use.
+// Names remain declaration/lowered-program presentation metadata.
+struct MirPayloadEnumVariant {
+  std::size_t variantIndex = 0;
+  std::vector<SemanticType> payloadTypes;
+  std::vector<bool> payloadRequiresActiveCleanup;
+
+  friend bool operator==(const MirPayloadEnumVariant &,
+                         const MirPayloadEnumVariant &) = default;
+};
+
+struct MirPayloadEnum {
+  EnumId declaration = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+  std::vector<MirPayloadEnumVariant> variants;
+  bool requiresActiveCleanup = false;
+
+  friend bool operator==(const MirPayloadEnum &,
+                         const MirPayloadEnum &) = default;
+};
+
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
@@ -1412,6 +1437,18 @@ public:
 
   [[nodiscard]] const std::vector<MirClassInstance> &classInstances() const {
     return classes;
+  }
+
+  [[nodiscard]] const std::vector<MirPayloadEnum> &payloadEnums() const {
+    return payloadEnums_;
+  }
+
+  [[nodiscard]] const MirPayloadEnum *findPayloadEnum(EnumId id) const {
+    const auto found = std::find_if(payloadEnums_.begin(), payloadEnums_.end(),
+                                    [&](const MirPayloadEnum &candidate) {
+                                      return candidate.declaration == id;
+                                    });
+    return found == payloadEnums_.end() ? nullptr : &*found;
   }
 
   [[nodiscard]] const std::vector<MirFunctionInstance> &
@@ -1485,6 +1522,7 @@ public:
 
 private:
   friend class MirLowerer;
+  friend struct MirProgramTestAccess;
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
@@ -1493,6 +1531,7 @@ private:
   std::optional<MirHostedStartupPlan> hostedStartupPlan_;
   std::optional<MirBody> hostedStartupBody;
   MirBody moduleBody;
+  std::vector<MirPayloadEnum> payloadEnums_;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;

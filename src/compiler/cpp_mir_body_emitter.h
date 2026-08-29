@@ -111,6 +111,7 @@ struct CppMirPayloadVariantRepresentation {
   std::size_t index = 0;
   std::string spelling;
   std::vector<SemanticType> fieldTypes;
+  std::vector<bool> fieldRequiresActiveCleanup;
 
   friend bool operator==(const CppMirPayloadVariantRepresentation &,
                          const CppMirPayloadVariantRepresentation &) = default;
@@ -120,6 +121,8 @@ struct CppMirEnumRepresentation {
   EnumId owner = 0;
   std::string spelling;
   SemanticType underlyingType = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+  bool requiresActiveCleanup = false;
   std::vector<CppMirPayloadVariantRepresentation> payloadVariants;
 
   friend bool operator==(const CppMirEnumRepresentation &,

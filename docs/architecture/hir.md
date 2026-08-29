@@ -36,6 +36,14 @@ obligations, not HIR declarations or executable values.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
+Each closed payload enum carries a pointer-free lifecycle table in HIR: exact
+ordered variants, exact field types, a per-field active-cleanup bit, folded
+semantic traits, and the enum-wide active-cleanup bit. Payload construction
+values still name only semantic enum/variant identity and ordered operands;
+the table is the phase-owned proof used to decide whether those operands and
+the produced enum value require transfer/drop obligations. HIR never derives
+that policy from a backend representation or alternative name.
+
 The execution profile is immutable program metadata, not a body operation.
 HIR preserves it for later concurrency boundaries but does not repeat the
 global/static validity check owned by semantics or infer runtime capabilities.

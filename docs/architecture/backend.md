@@ -505,6 +505,22 @@ trivial cleanup state. Any operation outside the listed vocabulary still
 rejects body admission; initializer emission never falls back to AST/HIR or
 general C++ expression text.
 
+An active payload-enum body uses the same verified-MIR route, not the passive
+initializer shortcut. The representation snapshot copies the exact MIR enum
+traits, enum-wide active-cleanup bit, dense variants, field types, and
+per-field cleanup facts. Admission exact-compares every row with MIR.
+`PayloadConstruct` consumes only operands carrying the matching `TransferOut`
+events, constructs the selected `std::variant` alternative in an enum lifetime
+slot, and publishes that slot only through the matching enum lifecycle event.
+Whole-enum move and tag-only switch observation use the exact MIR places and
+obligations. The exact adjacent Move -> Replace -> Drop schedule also admits
+whole-enum move assignment: native assignment replaces the destination's
+active alternative, then MIR destroys only the moved-from staging shell.
+Generated C++ names and `std::variant` are representation choices; neither
+selects ownership behavior or identifies a source enum. Owning enum
+call/return and aggregate representation are not backend vocabulary in this
+slice and are rejected semantically before MIR.
+
 A class-typed fixed-array field uses that schedule only when MIR proves every
 element construction, aggregate transfer, array-result obligation, and
 reparent into the field's `ConstructionRollback` obligation. Passive classes,

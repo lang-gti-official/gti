@@ -373,6 +373,7 @@ struct HirEnumerator {
   EnumConstant value;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<bool> payloadRequiresActiveCleanup;
 };
 
 struct HirEnum {
@@ -382,6 +383,8 @@ struct HirEnum {
   std::string qualifiedName;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<HirEnumerator> enumerators;
+  SemanticTypeTraits traits{};
+  bool requiresActiveCleanup = false;
   bool payload = false;
 };
 

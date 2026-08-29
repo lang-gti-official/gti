@@ -251,13 +251,22 @@ resolved member read/write is independently classified as an unsafe union
 operation; emitted C++ layout is not semantic authority.
 
 Payload-enum resolution assigns stable declaration-order variant identities,
-resolves exact passive field types, and records construction and switch-pattern
-selections. Pattern bindings are fresh immutable arm-local symbols. Semantics
+resolves exact field types, folds copy/move/ownership/drop traits across every
+alternative, and records construction and switch-pattern selections. A
+concrete class field may own active cleanup, while stored borrowed state and
+active recursive/non-class carriers remain rejected. Pattern bindings are
+fresh immutable arm-local copies and therefore require a copyable field;
+tag-only alternatives admit move-only payloads without extraction. Semantics
 records a switch as exhaustive only when it has `default` or every variant is
 covered once with valid patterns. `GTI-S2067` owns payload shape, exact
-construction, pattern, duplicate, and missing-variant failures. This first
-family deliberately excludes ownership-bearing payloads until variant-aware
-move/borrow and partial drop state exist.
+construction, unsupported cleanup carriers, copied-pattern capability,
+duplicate, and missing-variant failures. The initial owning family is confined
+to direct local bindings: one shared declaration-time check rejects owning
+enum state at by-value function/method, constructor, and typed-lambda
+boundaries; capture and recursive type-argument inspection reject lambda,
+field, array, and wrapper containment. A top-level checked-reference parameter
+does not contain or transfer the referent and remains valid for exhaustive tag
+inspection.
 
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.

@@ -89,6 +89,7 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   case SemanticType::Unexpected:
   case SemanticType::Expected:
   case SemanticType::Lambda:
+  case SemanticType::Enum:
   case SemanticType::Class:
     break;
   default:
@@ -149,6 +150,23 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
                                   requiresActiveCleanup(argument, query);
                          });
     break;
+  case SemanticType::Enum: {
+    if (type.enumId == 0 || type.enumId > enums.size() ||
+        !enums[type.enumId - 1].payload) {
+      break;
+    }
+    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+      if (std::any_of(enumerator.payloadTypes.begin(),
+                      enumerator.payloadTypes.end(),
+                      [&](const SemanticType &payload) {
+                        return requiresActiveCleanup(payload, query);
+                      })) {
+        result = true;
+        break;
+      }
+    }
+    break;
+  }
   case SemanticType::Lambda: {
     if (type.hasLambdaShape()) {
       result = std::any_of(type.lambdaCaptureTypes().begin(),
@@ -489,6 +507,7 @@ auto SemanticVisitor::Impl::typeTraits(
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
     SemanticTypeTraits traits = semanticTraits(type);
+    ActiveCleanupQuery cleanupQuery;
     for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const SemanticTypeTraits component = typeTraits(payload, visiting);
@@ -496,6 +515,9 @@ auto SemanticVisitor::Impl::typeTraits(
             (traits.ownership == OwnershipKind::Value &&
              component.ownership == OwnershipKind::Shared)) {
           traits.ownership = component.ownership;
+        }
+        if (requiresActiveCleanup(payload, cleanupQuery)) {
+          traits.drop = DropKind::Lexical;
         }
         traits.copyable = traits.copyable && component.copyable;
         traits.movable = traits.movable && component.movable;

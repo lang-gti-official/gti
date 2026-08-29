@@ -712,8 +712,37 @@ private:
       hir.threadTaskAdapters().size() != mir.threadTaskAdapters().size() ||
       hir.constructorInstances().size() != mir.constructorInstances().size() ||
       hir.destructorInstances().size() != mir.destructorInstances().size() ||
-      hir.lambdaInstances().size() != mir.lambdaInstances().size()) {
+      hir.lambdaInstances().size() != mir.lambdaInstances().size() ||
+      std::count_if(
+          hir.enumDeclarations().begin(), hir.enumDeclarations().end(),
+          [](const HirEnum &enumeration) { return enumeration.payload; }) !=
+          static_cast<std::ptrdiff_t>(mir.payloadEnums().size())) {
     return reject("frontend profile, place domain, or instance counts differ");
+  }
+  for (const HirEnum &source : hir.enumDeclarations()) {
+    if (!source.payload) {
+      continue;
+    }
+    const MirPayloadEnum *lowered = mir.findPayloadEnum(source.declaration);
+    if (lowered == nullptr || source.sourceUnit != lowered->sourceUnit ||
+        source.traits != lowered->traits ||
+        source.requiresActiveCleanup != lowered->requiresActiveCleanup ||
+        source.enumerators.size() != lowered->variants.size()) {
+      return reject("payload enum " + std::to_string(source.declaration) +
+                    " differs between HIR and MIR");
+    }
+    for (std::size_t index = 0; index < source.enumerators.size(); ++index) {
+      const HirEnumerator &hirVariant = source.enumerators[index];
+      const MirPayloadEnumVariant &mirVariant = lowered->variants[index];
+      if (hirVariant.variantIndex != mirVariant.variantIndex ||
+          hirVariant.payloadTypes != mirVariant.payloadTypes ||
+          hirVariant.payloadRequiresActiveCleanup !=
+              mirVariant.payloadRequiresActiveCleanup) {
+        return reject("payload enum " + std::to_string(source.declaration) +
+                      " variant " + std::to_string(index) +
+                      " differs between HIR and MIR");
+      }
+    }
   }
   for (std::size_t index = 0; index < hir.classInstances().size(); ++index) {
     const HirClassInstance &source = hir.classInstances()[index];
@@ -910,6 +939,35 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.mir_ = optimizedMir;
   lowered.declarations_ =
       DeclarationCollector(semantics, target).collect(program.declarations());
+  for (LoweredDeclaration &declaration : lowered.declarations_) {
+    auto *enumeration =
+        std::get_if<LoweredEnumDeclaration>(&declaration.payload);
+    if (enumeration == nullptr || !enumeration->payload) {
+      continue;
+    }
+    const auto hirEnumeration = std::find_if(
+        hir.enumDeclarations().begin(), hir.enumDeclarations().end(),
+        [&](const HirEnum &candidate) {
+          return candidate.declaration == enumeration->id;
+        });
+    const MirPayloadEnum *mirEnumeration =
+        optimizedMir.findPayloadEnum(enumeration->id);
+    if (hirEnumeration == hir.enumDeclarations().end() ||
+        mirEnumeration == nullptr ||
+        hirEnumeration->enumerators.size() != enumeration->enumerators.size() ||
+        mirEnumeration->variants.size() != enumeration->enumerators.size()) {
+      addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
+               "payload enum lacks matching HIR/MIR lifecycle authority");
+      continue;
+    }
+    enumeration->traits = mirEnumeration->traits;
+    enumeration->requiresActiveCleanup = mirEnumeration->requiresActiveCleanup;
+    for (std::size_t index = 0; index < enumeration->enumerators.size();
+         ++index) {
+      enumeration->enumerators[index].payloadRequiresActiveCleanup =
+          mirEnumeration->variants[index].payloadRequiresActiveCleanup;
+    }
+  }
 
   lowered.symbols_.reserve(semantics.database().symbols().size());
   for (const SymbolRecord &symbol : semantics.database().symbols()) {

@@ -12,6 +12,17 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
+
+namespace lang {
+
+struct MirProgramTestAccess {
+  static std::vector<MirPayloadEnum> &payloadEnums(MirProgram &program) {
+    return program.payloadEnums_;
+  }
+};
+
+} // namespace lang
 
 namespace {
 
@@ -42,6 +53,25 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
                      [&](const lang::Diagnostic &diagnostic) {
                        return diagnostic.message.find(text) !=
                               std::string::npos;
+                     });
+}
+
+bool hasHint(const lang::FrontendResult &result, std::string_view text) {
+  return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const lang::Diagnostic &diagnostic) {
+                       return std::any_of(
+                           diagnostic.hints.begin(), diagnostic.hints.end(),
+                           [&](const std::string &hint) {
+                             return hint.find(text) != std::string::npos;
+                           });
+                     });
+}
+
+bool hasMirMessage(const lang::MirVerificationResult &result,
+                   std::string_view text) {
+  return std::any_of(result.errors.begin(), result.errors.end(),
+                     [&](const lang::MirVerificationError &error) {
+                       return error.message.find(text) != std::string::npos;
                      });
 }
 
@@ -260,17 +290,82 @@ public:
 };
 enum class holder { one(leaf value), none };
 int main() {
-  leaf payload = leaf();
-  holder held = holder::one(payload);
+  holder held = holder::one(leaf());
+  switch (held) {
+  case holder::one:
+    break;
+  case holder::none:
+    break;
+  }
   return 0;
 }
 )");
-  expect(hasCode(cleanupPayload, "GTI-S2067") &&
-             hasMessage(cleanupPayload, "Payload type 'leaf'") &&
-             hasMessage(cleanupPayload, "requires active cleanup") &&
-             !hasMessage(cleanupPayload, "unknown class"),
-         "an active-cleanup class payload should be rejected at construction "
-         "with the class identity spelled");
+  const lang::MirPayloadEnum *cleanupTable =
+      cleanupPayload.mir.payloadEnums().empty()
+          ? nullptr
+          : &cleanupPayload.mir.payloadEnums().front();
+  expect(cleanupPayload.canGenerateCode() &&
+             lang::verifyMirProgram(cleanupPayload.mir).valid() &&
+             cleanupTable != nullptr && cleanupTable->requiresActiveCleanup &&
+             cleanupTable->traits.drop == lang::DropKind::Lexical &&
+             cleanupTable->variants.size() == 2 &&
+             cleanupTable->variants.front().payloadRequiresActiveCleanup ==
+                 std::vector<bool>{true},
+         "an active-cleanup class payload should reach a variant-aware, "
+         "verified MIR lifecycle table");
+
+  if (cleanupPayload.canGenerateCode() && cleanupTable != nullptr) {
+    lang::MirProgram forgedTable = cleanupPayload.mir;
+    lang::MirProgramTestAccess::payloadEnums(forgedTable)
+        .front()
+        .variants.front()
+        .payloadRequiresActiveCleanup.front() = false;
+    const lang::MirVerificationResult forgedTableResult =
+        lang::verifyMirProgram(forgedTable);
+    expect(!forgedTableResult.valid() &&
+               hasMirMessage(forgedTableResult, "payload-enum lifecycle table"),
+           "forged payload cleanup facts should be rejected by MIR "
+           "verification");
+
+    lang::MirProgram forgedTransfer = cleanupPayload.mir;
+    bool removedTransfer = false;
+    for (const lang::MirBodyAddress address :
+         lang::enumerateMirBodyAddresses(forgedTransfer)) {
+      lang::MirBody *body = lang::findMirBody(forgedTransfer, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (lang::MirBlock &block : body->blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.operation != lang::MirOperation::PayloadConstruct) {
+            continue;
+          }
+          const auto transfer = std::find_if(
+              instruction.lifecycle.begin(), instruction.lifecycle.end(),
+              [](const lang::MirLifecycleEvent &event) {
+                return event.kind == lang::MirLifecycleEventKind::TransferOut;
+              });
+          if (transfer != instruction.lifecycle.end()) {
+            instruction.lifecycle.erase(transfer);
+            removedTransfer = true;
+            break;
+          }
+        }
+        if (removedTransfer) {
+          break;
+        }
+      }
+      if (removedTransfer) {
+        break;
+      }
+    }
+    const lang::MirVerificationResult forgedTransferResult =
+        lang::verifyMirProgram(forgedTransfer);
+    expect(removedTransfer && !forgedTransferResult.valid() &&
+               hasMirMessage(forgedTransferResult, "payload-enum instruction"),
+           "an owning payload construction without its exact transfer event "
+           "should be rejected as forged MIR");
+  }
 
   const lang::FrontendResult backing = analyze("payload-backing.gti", R"(
 enum class Result : uint8_t { ok(int32_t value), error };
@@ -421,6 +516,215 @@ int main() {
   expect(hasCode(borrowedPayload, "GTI-S2067") &&
              hasMessage(borrowedPayload, "borrowed state"),
          "a borrowed-state class payload should be rejected at construction");
+
+  const lang::FrontendResult moveOnlyBinding =
+      analyze("payload-move-only-binding.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  holder held = holder::one(resource());
+  switch (held) {
+  case holder::one(value):
+    return 1;
+  case holder::none:
+    return 0;
+  }
+}
+)");
+  expect(hasCode(moveOnlyBinding, "GTI-S2067") &&
+             hasMessage(moveOnlyBinding, "non-consuming match binding") &&
+             hasMessage(moveOnlyBinding, "move-only type"),
+         "a copied pattern binding should reject a move-only active payload "
+         "with a tag-only-match hint");
+
+  const lang::FrontendResult referenceBoundary =
+      analyze("owning-payload-reference-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int32_t occupied(holder& value) {
+  switch (value) {
+  case holder::one:
+    return 1;
+  case holder::none:
+    return 0;
+  }
+}
+int main() {
+  holder value = holder::one(resource());
+  return occupied(value) == 1 ? 0 : 1;
+}
+)");
+  if (!referenceBoundary.canGenerateCode()) {
+    printDiagnostics(referenceBoundary);
+  }
+  expect(referenceBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(referenceBoundary.mir).valid(),
+         "an owning payload enum should cross a read-only checked-reference "
+         "parameter boundary without transferring its cleanup identity");
+
+  const lang::FrontendResult byValueBoundary =
+      analyze("owning-payload-by-value-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+holder transfer(holder value) { return std::move(value); }
+int main() {
+  holder source = holder::one(resource());
+  holder destination = transfer(std::move(source));
+  return 0;
+}
+)");
+  expect(
+      hasCode(byValueBoundary, "GTI-S2067") &&
+          hasMessage(byValueBoundary, "by-value function parameter boundary") &&
+          hasMessage(byValueBoundary, "by-value function return boundary") &&
+          hasHint(byValueBoundary, "Pass it by checked reference"),
+      "owning payload enums should reject the unimplemented by-value "
+      "call/return ABI at declaration time with a reference alternative");
+
+  const lang::FrontendResult constructorBoundary =
+      analyze("owning-payload-constructor-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class consumer {
+public:
+  consumer(holder value) {}
+};
+int main() { return 0; }
+)");
+  expect(hasCode(constructorBoundary, "GTI-S2067") &&
+             hasMessage(constructorBoundary,
+                        "by-value constructor parameter boundary") &&
+             hasHint(constructorBoundary, "Pass it by checked reference"),
+         "constructor declarations should reject owning payload-enum values "
+         "before their unsupported parameter ABI reaches MIR");
+
+  const lang::FrontendResult lambdaBoundary =
+      analyze("owning-payload-lambda-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  auto transfer = [](holder value) -> holder {
+    return std::move(value);
+  };
+  return 0;
+}
+)");
+  expect(hasCode(lambdaBoundary, "GTI-S2067") &&
+             hasMessage(lambdaBoundary, "by-value lambda parameter boundary") &&
+             hasMessage(lambdaBoundary, "by-value lambda return boundary"),
+         "typed lambda declarations should reject both owning payload-enum "
+         "by-value boundaries before lambda lowering");
+
+  const lang::FrontendResult aggregateContainment =
+      analyze("owning-payload-aggregate-containment.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class wrapper {
+private:
+  holder value;
+};
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  return 0;
+}
+)");
+  expect(hasCode(aggregateContainment, "GTI-S2067") &&
+             hasMessage(aggregateContainment, "Instance field 'value'") &&
+             hasMessage(aggregateContainment, "Fixed array 'values'") &&
+             hasMessage(aggregateContainment, "local-value slice"),
+         "class-field and fixed-array containment should reject owning "
+         "payload enums before aggregate lowering");
+
+  const lang::FrontendResult wrapperContainment =
+      analyze("owning-payload-wrapper-containment.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class shell<T> {
+public:
+  shell() {}
+};
+int main() {
+  shell<holder> wrapped = shell<holder>();
+  return 0;
+}
+)");
+  expect(
+      hasCode(wrapperContainment, "GTI-S2067") &&
+          hasMessage(wrapperContainment, "Binding 'wrapped'") &&
+          hasMessage(wrapperContainment, "wrapper type") &&
+          hasMessage(wrapperContainment, "nesting owning payload-enum state"),
+      "generic wrappers should reject nested owning payload-enum state "
+      "structurally even when the concrete wrapper has no field");
+
+  const lang::FrontendResult lambdaCapture =
+      analyze("owning-payload-lambda-capture.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  holder source = holder::one(resource());
+  auto captured = [value = std::move(source)]() -> int32_t {
+    return 1;
+  };
+  return 0;
+}
+)");
+  expect(hasCode(lambdaCapture, "GTI-S2067") &&
+             hasMessage(lambdaCapture, "Lambda capture 'value'") &&
+             hasMessage(lambdaCapture, "cannot move owning payload-enum type"),
+         "owned lambda captures should reject owning payload enums before "
+         "callable-environment lowering");
+
+  const lang::FrontendResult nestedOwning =
+      analyze("nested-owning-payload-enum.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class inner { one(resource value), none };
+enum class outer { nested(inner value), none };
+int main() {
+  outer value = outer::nested(inner::one(resource()));
+  return 0;
+}
+)");
+  expect(hasCode(nestedOwning, "GTI-S2067") &&
+             hasMessage(nestedOwning, "not a concrete class value") &&
+             hasMessage(nestedOwning, "owning class alternatives only"),
+         "nested owning payload enums should remain a diagnosed omission of "
+         "the bounded class-payload slice");
 }
 
 } // namespace

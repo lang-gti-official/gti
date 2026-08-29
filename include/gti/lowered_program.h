@@ -231,6 +231,7 @@ struct LoweredEnumerator {
   EnumConstant value;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<bool> payloadRequiresActiveCleanup;
   SourceSpan source;
 
   friend bool operator==(const LoweredEnumerator &,
@@ -243,6 +244,8 @@ struct LoweredEnumDeclaration {
   std::string qualifiedName;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<LoweredEnumerator> enumerators;
+  SemanticTypeTraits traits{};
+  bool requiresActiveCleanup = false;
   bool payload = false;
   bool compilerPrivate = false;
 

@@ -54,7 +54,7 @@ authority.
 The generic body emitter is the production text step established by
 ADR 016. `buildCppMirBodyEmissionMapRows` copies deterministic
 representation rows — type, field-symbol, body-name/call-target, and
-non-payload enum spellings drawn only from the extracted
+enum spellings plus payload-variant lifecycle facts drawn only from the extracted
 `cpp_representation` authorities — and `CppMirBodyEmitter::emitBodyText`
 emits body text from MIR and those rows alone, with no Program, semantic, or
 HIR input. The former scalar-leaf, scalar-direct-call, class-default-cleanup,
@@ -94,8 +94,13 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v52`/`mir-body-v46`.
-Program v52 serializes ordered type and `uint64_t` value arguments on every
+The deterministic serialization is currently `mir-v53`/`mir-body-v46`.
+Program v53 adds the closed payload-enum lifecycle table: exact enum identity,
+folded traits, enum-wide active cleanup, dense variants, ordered field types,
+and per-field active-cleanup facts. `PayloadConstruct` exact-checks that table,
+transfers every active class operand once, and initializes one enum value
+obligation; `PayloadExtract` and switches observe an active enum place without
+copying the enum. Program v52 serializes ordered type and `uint64_t` value arguments on every
 concrete function row. HIR-to-MIR lowering and the detached lowered verifier
 exact-compare both vectors, so a nondeducible value-only function or method
 cannot collapse into another instance or delegate identity recovery to native
@@ -704,8 +709,15 @@ values and `MirOperation::PayloadConstruct`/`PayloadExtract` instructions with
 the semantic enum, variant, field index, and ordered operands retained. An
 exhaustive payload switch carries that semantic fact in HIR; MIR terminates its
 otherwise-required unmatched CFG target with `Unreachable` instead of
-inventing a path to the switch exit. The current extracted fields are passive
-immutable copies, so this is not yet a move/borrow projection model.
+inventing a path to the switch exit. MIR additionally carries the exact
+pointer-free payload lifecycle table. Construction transfers each active class
+operand obligation into the selected alternative and arms one enum obligation;
+normal and failure cleanup therefore drop only the active alternative exactly
+once. Whole-value move construction and the adjacent Move -> Replace -> Drop
+assignment schedule transfer that obligation without copying or duplicating
+active state. A switch or extraction read-borrows an owning enum place. Extracted
+fields remain immutable copies, so move-only fields admit tag-only matching but
+not a payload binding; this is not yet a consuming/borrowed projection model.
 
 Valid passive unions retain their checked size, ABI alignment, and ordered
 field layout on semantic, HIR, and MIR class records. MIR does not infer an

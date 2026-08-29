@@ -5616,6 +5616,20 @@ private:
                                         .type = sourceValue == nullptr
                                                     ? SemanticType::Unknown
                                                     : sourceValue->info.type});
+      } else if (instruction.operation == MirOperation::PayloadExtract) {
+        const HirValue *sourceValue = findValue(operand);
+        const MirPlaceId sourcePlace = placeForValue(operand);
+        if (sourceValue != nullptr && sourcePlace != 0 &&
+            sourceValue->info.category == ValueCategory::Place &&
+            sourceValue->info.type.kind == SemanticType::Enum &&
+            sourceValue->info.traits.drop == DropKind::Lexical) {
+          emitPlaceDependencies(operand);
+          instruction.operands.push_back({.kind = MirOperandKind::BorrowRead,
+                                          .place = sourcePlace,
+                                          .type = sourceValue->info.type});
+        } else {
+          instruction.operands.push_back(valueOperand(operand));
+        }
       } else {
         instruction.operands.push_back(
             instruction.operation == MirOperation::LogicalNot
@@ -5626,6 +5640,7 @@ private:
       }
     }
     if (value->kind == HirValueKind::ArrayInitializer ||
+        value->kind == HirValueKind::PayloadConstruction ||
         value->kind == HirValueKind::Unexpected ||
         value->kind == HirValueKind::Lambda) {
       for (std::size_t index = 0; index < value->operands.size(); ++index) {
@@ -7069,8 +7084,22 @@ private:
   void lowerSwitch(const HirStatement &statement) {
     const std::vector<Scope> subjectScopes = scopes;
     const std::vector<TemporaryDrop> subjectTemporaryDrops = temporaryDrops;
-    const MirOperand subject =
-        statement.value ? valueOperand(*statement.value) : MirOperand{};
+    MirOperand subject;
+    if (statement.value) {
+      const HirValue *sourceValue = findValue(*statement.value);
+      const MirPlaceId sourcePlace = placeForValue(*statement.value);
+      if (sourceValue != nullptr && sourcePlace != 0 &&
+          sourceValue->info.category == ValueCategory::Place &&
+          sourceValue->info.type.kind == SemanticType::Enum &&
+          sourceValue->info.traits.drop == DropKind::Lexical) {
+        emitPlaceDependencies(*statement.value);
+        subject = {.kind = MirOperandKind::BorrowRead,
+                   .place = sourcePlace,
+                   .type = sourceValue->info.type};
+      } else {
+        subject = valueOperand(*statement.value);
+      }
+    }
     endFullExpressionLoans(subjectScopes);
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
                        statement.id);

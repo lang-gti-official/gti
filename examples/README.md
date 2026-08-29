@@ -259,6 +259,11 @@ with an explicit comparator, and a consuming `void()` action; invalid argument,
 result, or receiver capabilities are rejected before the generic body is
 instantiated.
 
+`78-owning-payload-enums.gti` stores an active-cleanup class in a closed
+payload enum, move-constructs and move-assigns the whole enum, observes it
+through a checked-reference parameter, matches the move-only alternative by
+tag, and checks replacement plus final active-alternative destruction.
+
 `79-class-scoped-type-aliases.gti` defines aliases as access-controlled class
 members. A non-generic owner exposes its public alias through
 `NumericTraits::value_type`; a generic owner uses an alias of `T` throughout

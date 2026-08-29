@@ -196,6 +196,55 @@ auto SemanticVisitor::Impl::requiresActiveCleanupFor(
   return requiresActiveCleanup(type, query);
 }
 
+auto SemanticVisitor::Impl::containsOwningPayloadEnum(
+    const SemanticType &type) const -> bool {
+  if (type.kind == SemanticType::Enum) {
+    return requiresActiveCleanupFor(type);
+  }
+  if (type.kind == SemanticType::Reference ||
+      type.kind == SemanticType::RawPointer) {
+    // A direct checked/raw indirection does not contain the enum's ownership
+    // state. An indirection to a wrapper still instantiates that unsupported
+    // wrapper type, so recurse unless the referent is the enum itself.
+    return type.arguments.size() != 1 ||
+                   type.arguments.front().kind != SemanticType::Enum
+               ? std::any_of(type.arguments.begin(), type.arguments.end(),
+                             [&](const SemanticType &argument) {
+                               return containsOwningPayloadEnum(argument);
+                             })
+               : false;
+  }
+  return std::any_of(type.arguments.begin(), type.arguments.end(),
+                     [&](const SemanticType &argument) {
+                       return containsOwningPayloadEnum(argument);
+                     });
+}
+
+auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
+    const SemanticType &type, const Token &location, std::string_view boundary)
+    -> void {
+  if (!containsOwningPayloadEnum(type)) {
+    return;
+  }
+  const bool byValue = type.kind != SemanticType::Reference &&
+                       type.kind != SemanticType::RawPointer;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2067", DiagnosticPhase::Semantics, location,
+      byValue ? "Owning payload enum type '" + typeSpelling(type) +
+                    "' cannot cross a by-value " + std::string(boundary) +
+                    " boundary in this slice."
+              : "Indirect " + std::string(boundary) + " type '" +
+                    typeSpelling(type) +
+                    "' nests owning payload-enum state in an unsupported "
+                    "wrapper; only a direct enum indirection is admitted in "
+                    "this slice.");
+  diagnostic.hints.emplace_back(
+      "Pass it by checked reference so ownership stays in the caller; the "
+      "by-value owning payload-enum call and return ABI remains "
+      "unimplemented.");
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
 auto SemanticVisitor::Impl::attachDeclarationDocumentation(
     SymbolId symbol, const Stmt &declaration) -> void {
   const std::optional<std::string> &documentation =
@@ -656,6 +705,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     validateType(parameter.type);
     const SemanticType parameterType = typeOf(parameter);
+    validateOwningPayloadEnumByValueBoundary(
+        parameterType, parameter.type.name.last(), "constructor parameter");
     const bool defaultLibraryStorageBorrow =
         isDefaultLibraryStorageBorrowParameter(owner, parameterType);
     validateReferencePlacement(parameter.type, true, "constructor parameter",
@@ -1503,6 +1554,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
+  validateOwningPayloadEnumByValueBoundary(
+      declaredReturnType, stmt.returnType().name.last(), "function return");
   validateReferencePlacement(
       stmt.returnType(),
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
@@ -1542,6 +1595,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
             : declaredType;
+    validateOwningPayloadEnumByValueBoundary(
+        parameterType, parameter.type.name.last(), "function parameter");
     if (nestsBorrowedState(parameterType) &&
         !isReadOnlyBorrowedCarrierParameter(parameterType)) {
       report(parameter.name,
@@ -2528,6 +2583,43 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const SemanticType declaredType =
       typeOf(stmt.type(),
              stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
+  if (declaredType.kind == SemanticType::Array &&
+      containsOwningPayloadEnum(declaredType)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
+        "Fixed array '" + stmt.name().lexeme + "' has type '" +
+            typeSpelling(declaredType) +
+            "', but owning payload-enum elements are not supported in this "
+            "local-value slice.");
+    diagnostic.hints.emplace_back(
+        "Keep each owning payload enum in its own local binding until "
+        "aggregate element lifecycle state is represented explicitly.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  } else if (instanceField && containsOwningPayloadEnum(declaredType)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
+        "Instance field '" + stmt.name().lexeme + "' has type '" +
+            typeSpelling(declaredType) +
+            "', which contains owning payload-enum state unsupported in "
+            "this local-value slice.");
+    diagnostic.hints.emplace_back(
+        "Keep the owning payload enum in a local binding until aggregate "
+        "field lifecycle state is represented explicitly.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  } else if (declaredType.kind != SemanticType::Enum &&
+             containsOwningPayloadEnum(declaredType)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
+        "Binding '" + stmt.name().lexeme + "' has wrapper type '" +
+            typeSpelling(declaredType) +
+            "', but nesting owning payload-enum state in another value type "
+            "is not supported in this local-value slice.");
+    diagnostic.hints.emplace_back(
+        "Keep the owning payload enum as a direct local binding and pass it "
+        "by checked reference until wrapper lifecycle state is represented "
+        "explicitly.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   if (functionDepth > 0) {
     recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
   }
@@ -4718,6 +4810,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     validateType(expr.returnType());
   }
   const SemanticType returnType = typeOf(expr.returnType());
+  validateOwningPayloadEnumByValueBoundary(
+      returnType, expr.returnType().name.last(), "lambda return");
   if (returnType.kind == SemanticType::Reference) {
     report(expr.returnType().name.last(),
            "Lambda reference returns require an escape-aware lifetime model "
@@ -4736,6 +4830,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     validateType(parameter.type);
     validateReferencePlacement(parameter.type, true, "lambda parameter");
     const SemanticType parameterType = typeOf(parameter);
+    validateOwningPayloadEnumByValueBoundary(
+        parameterType, parameter.type.name.last(), "lambda parameter");
     const SymbolId parameterSymbol =
         recordBindingOccurrence(parameter.name, parameterType,
                                 parameter.mutability == Mutability::Mutable,
@@ -4840,6 +4936,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                                        ? LambdaCaptureMode::Move
                                        : LambdaCaptureMode::Copy;
     const SemanticTypeTraits traits = typeTraits(source->type);
+    if (containsOwningPayloadEnum(source->type)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics, capture.name,
+          "Lambda capture '" + capture.name.lexeme + "' cannot " +
+              (mode == LambdaCaptureMode::Move ? "move" : "copy") +
+              " owning payload-enum type '" + typeSpelling(source->type) +
+              "' in this local-value slice.");
+      diagnostic.related.push_back(
+          {tokenSpan(sourceBinding.declaration), "Captured source is here."});
+      diagnostic.hints.emplace_back(
+          "Keep the owning payload enum outside the lambda and observe it "
+          "through a checked-reference function boundary.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     if (mode == LambdaCaptureMode::Copy &&
         source->type.kind == SemanticType::Reference) {
       report(capture.name,

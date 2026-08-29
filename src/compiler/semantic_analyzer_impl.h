@@ -2074,6 +2074,12 @@ private:
                              bool allowRvalueReference = false,
                              bool allowDefaultLibraryStorageReference = false);
 
+  [[nodiscard]] bool containsOwningPayloadEnum(const SemanticType &type) const;
+
+  void validateOwningPayloadEnumByValueBoundary(const SemanticType &type,
+                                                const Token &location,
+                                                std::string_view boundary);
+
   [[nodiscard]] bool
   isPublicBaseConversion(const SemanticType &derived, const SemanticType &base,
                          std::unordered_set<ClassId> &visited) const;
