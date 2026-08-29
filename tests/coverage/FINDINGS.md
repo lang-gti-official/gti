@@ -789,6 +789,55 @@ method call is slow, which points at receiver re-analysis without memoization.
 Fluent and builder APIs are mainstream, and the immutable-builder style returns
 by value deliberately.
 
+## S09 — ICE: an uninitialized `mut` scalar local
+
+`reproducers/s09-uninitialized-mut-scalar.gti`
+
+```gti
+int main(){mut int32_t r;}
+```
+
+Twenty-two bytes. GTI already has the right diagnostic for an uninitialized
+declaration and fires it correctly for an uninitialized array (`GTI-S2015`), an
+uninitialized pointer (`GTI-S2056`), an immutable scalar and a class type
+(`GTI-S2000`). The `mut` scalar is the single path that falls through to the
+emitter instead.
+
+`elementary_forms_matrix.py` sweeps 33 basic declaration and statement forms;
+this is the only hard failure in the set. `mut int32_t total;` followed by
+assignment is also one of the first things a C++ programmer types.
+
+## S10 — ICE: passing a named value to a constructor's by-value class parameter
+
+`reproducers/s10-ctor-by-value-copy.gti`
+
+A free function and a constructor with the identical by-value class parameter
+disagree:
+
+| Argument | `take(...)` free function | `Holder(...)` constructor |
+| --- | --- | --- |
+| `named` (a variable) | ok | **ICE** |
+| `named.twin()` (method result) | ok | **ICE** |
+| `Val(9)` (temporary) | ok | ok |
+| `std::move(named)` | ok | ok |
+
+Wrapping a value in a type is most of what constructors do, and `Holder(named)`
+is how anyone writes it. If an implicit copy into a by-value constructor
+parameter should be rejected, the free function needs the same treatment and
+the answer has to be a diagnostic.
+
+## S11 — ICE: a generic instantiated over its own instantiation
+
+`reproducers/s11-nested-generic-class-arg.gti`
+
+`Box<Box<Plain>>` ICEs; `Box<Box<int32_t>>` is fine. From
+`generic_shape_matrix.py`, self-nesting fails for every class-typed argument
+tried and passes for every built-in. Every non-nested shape in the same sweep
+passes for all seven arguments.
+
+This is F11, now filed. The related F5 — the same nesting unwrapped through
+chained accessors — **is fixed on main**.
+
 ---
 
 ## What was checked and found sound
@@ -813,6 +862,13 @@ above are not:
   diagnostic code. Include paths reject traversal, absolute paths, self-include
   and embedded NUL the same way. Nothing crashed, hung, or escaped the project
   directory.
+- **Ownership and control flow agree.** `ownership_flow_matrix.py` crosses six
+  ownership operations — moving out, borrowing, reassigning, constructing,
+  pushing into a container, and a nested scope — against ten control-flow
+  contexts including both arms of an `if`, `for`, `while`, `break`,
+  `continue`, nested loops and a `switch` arm. All 60 cells compile and run.
+- **The elementary surface is otherwise sound.** 33 basic declaration and
+  statement forms, of which only S09 fails.
 - **The LSP survives what crashes the compiler.** `operator-chain-500.gti`
   segfaults `gti` but `gti_lsp` opens it, answers `documentSymbol`, and stays
   alive. `lsp_probe.py` passes for UTF-16 position encoding across ASCII,
