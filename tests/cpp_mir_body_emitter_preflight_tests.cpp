@@ -840,6 +840,22 @@ int main() { return 0; }
                  "an exact lambda argument without its unique TransferOut "
                  "edge must fail admission");
 
+  const lang::MirProgram wrongDirectMoveLifecycle =
+      forge(directShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *move =
+            findMutableInstruction(body, directShape.move);
+        expect(move != nullptr && move->lifecycle.size() == 1,
+               "the direct exact-lambda move should retain one lifecycle "
+               "edge");
+        if (move != nullptr && move->lifecycle.size() == 1) {
+          move->lifecycle.front().kind =
+              lang::MirLifecycleEventKind::Initialize;
+        }
+      });
+  expectRejected(wrongDirectMoveLifecycle, directShape.function,
+                 "an exact lambda argument whose Move producer has the "
+                 "wrong lifecycle kind must fail admission");
+
   const lang::MirProgram wrongDirectFreshTransfer =
       forge(directFreshShape.function, [&](lang::MirBody &body) {
         lang::MirInstruction *producer =
@@ -880,6 +896,22 @@ int main() { return 0; }
   expectRejected(wrongDirectFreshTransfer, directFreshShape.function,
                  "a direct fresh lambda argument without its producer-to-call "
                  "TransferOut pairing must fail admission");
+
+  const lang::MirProgram wrongDirectFreshProducer =
+      forge(directFreshShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, directFreshShape.producer);
+        expect(producer != nullptr &&
+                   producer->operation == lang::MirOperation::PayloadConstruct,
+               "the direct fresh lambda argument should retain its exact "
+               "PayloadConstruct producer");
+        if (producer != nullptr) {
+          producer->operation = lang::MirOperation::Identity;
+        }
+      });
+  expectRejected(wrongDirectFreshProducer, directFreshShape.function,
+                 "a direct fresh lambda argument produced by a different MIR "
+                 "operation must fail admission");
 
   const lang::MirProgram wrongFreshReturnPlace =
       forge(directFreshReturnShape.function, [&](lang::MirBody &body) {
