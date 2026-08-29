@@ -1,0 +1,3 @@
+class Box<std::movable T> { mut T v; public: Box(T v) : v(std::move(v)) {} int32_t tag() { return 1; } };
+class Plain { mut int32_t n = 0; public: Plain(int32_t n) : n(n) {} int32_t get() { return this.n; } };
+int main() { mut Box<Box<Plain>> b = Box<Box<Plain>>(Box<Plain>(Plain(1))); int32_t r = b.tag(); std::println(r); return 0; }
