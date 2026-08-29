@@ -448,9 +448,16 @@ rewrite today. This comparison is structural rather than based on
 encode every snapshot-local identity or declaration field.
 
 Version 18 added caller-owned `PreparedParameter` obligations for eligible
-class-value inputs to ordinary calls. Copy inputs initialize their stage, move
-inputs reparent the exact source obligation when one exists, and the final
-`Call` transfers each stage exactly once when the callee begins. It also added
+class-value inputs to ordinary calls. Class copy inputs initialize their stage,
+class move inputs reparent the exact source obligation when one exists, and the
+final `Call` transfers each stage exactly once when the callee begins. The same
+schedule now admits a direct active-cleanup payload enum for the bounded
+ordinary callable family. Enum copy inputs initialize their stage only when
+the folded traits permit it; move inputs reparent a named value obligation,
+while a fresh variant reparents or transfers its value-rooted obligation
+directly. Parameter entry owns one lexical enum obligation, and an enum return
+has one initially inactive value-rooted drop that only the paired `Invoke`
+success edge activates. Version 18 also added
 normal-success lifecycle events for one bounded cleanup-owning ordinary-call
 result shape, leaving that result uninitialized on the failure edge. The same
 schema now supports an exact local scalar argument detector or un-sited static
@@ -731,6 +738,10 @@ assignment schedule transfer that obligation without copying or duplicating
 active state. A switch or extraction read-borrows an owning enum place. Extracted
 fields remain immutable copies, so move-only fields admit tag-only matching but
 not a payload binding; this is not yet a consuming/borrowed projection model.
+The bounded direct callable schedule uses those same obligations for argument
+preparation, parameter entry, direct result placement, success activation, and
+defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture
+a payload-enum call boundary.
 
 Valid passive unions retain their checked size, ABI alignment, and ordered
 field layout on semantic, HIR, and MIR class records. MIR does not infer an

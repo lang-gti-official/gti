@@ -34,10 +34,15 @@ fields and concrete class values, including move-only classes whose active
 cleanup is represented per alternative. Construction transfers owning class
 operands into the selected alternative, whole-enum move transfers that active
 alternative (including replacement assignment), and tag-only exhaustive
-matching observes move-only values without extracting them. The initial owning
-family is confined to direct local values plus top-level checked-reference
-parameters. By-value callable transport, lambda capture, fields, arrays and
-other wrapper containment, stored borrowed state, active non-class carriers,
+matching observes move-only values without extracting them. The bounded owning
+family supports direct local values, top-level checked-reference observation,
+and direct by-value transport through ordinary source-defined free functions,
+non-polymorphic methods and constructors, and exact typed lambdas. The
+call/return path retains ordered argument transfer, direct result placement,
+success-only result activation, and defined-failure cleanup in verified MIR.
+Generic callable transport (including generic-owner methods and constructors),
+polymorphic callable transport, lambda capture, fields, arrays and other
+wrapper containment, stored borrowed state, active non-class carriers,
 consuming or borrowed patterns, recursive owning payloads, generic payloads,
 and a stable source layout remain outside this decision. The C++ backend may
 use `std::variant` because all language decisions are complete before

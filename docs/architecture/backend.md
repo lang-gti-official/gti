@@ -518,8 +518,17 @@ whole-enum move assignment: native assignment replaces the destination's
 active alternative, then MIR destroys only the moved-from staging shell.
 Generated C++ names and `std::variant` are representation choices; neither
 selects ownership behavior or identifies a source enum. Owning enum
-call/return and aggregate representation are not backend vocabulary in this
-slice and are rejected semantically before MIR.
+call/return is admitted only through an exact verified-MIR transport shape.
+Named and fresh arguments are moved from their one lifetime slot into the
+native by-value parameter, parameter entry moves into its lexical slot, and a
+transformed function, method, or exact lambda placement-constructs its result
+in the caller's value-rooted slot. The paired success edge arms that slot;
+failure leaves it empty and retains MIR's cleanup order. Representation-only
+moved-from shells are destroyed immediately after their verified transfer.
+Constructor arguments use the same proof, including fresh unit variants.
+Aggregate or wrapper representation, generic callables (including methods and
+constructors declared on generic owners), polymorphic dispatch, and captures
+remain outside backend vocabulary and are rejected semantically before MIR.
 
 A class-typed fixed-array field uses that schedule only when MIR proves every
 element construction, aggregate transfer, array-result obligation, and

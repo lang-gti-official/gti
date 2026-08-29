@@ -44,6 +44,14 @@ the table is the phase-owned proof used to decide whether those operands and
 the produced enum value require transfer/drop obligations. HIR never derives
 that policy from a backend representation or alternative name.
 
+For the admitted direct by-value callable family, HIR uses the ordinary
+ordered-input schedule rather than a payload-specific call node. A direct
+active enum selects `CopyValue` only when its folded traits permit copying and
+otherwise requires an explicit or fresh move path; wrappers containing the
+enum never inherit that permission. Results retain the exact enum type and
+ordinary callable identity. This keeps callable selection and copy/move policy
+in the frontend while leaving concrete parameter and result lifetimes to MIR.
+
 The execution profile is immutable program metadata, not a body operation.
 HIR preserves it for later concurrency boundaries but does not repeat the
 global/static validity check owned by semantics or infer runtime capabilities.

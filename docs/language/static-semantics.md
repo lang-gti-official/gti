@@ -695,13 +695,17 @@ assignment between direct local bindings. Move assignment first drops the
 destination's old active alternative, transfers the source alternative, and
 leaves the moved-from source without the transferred cleanup obligation.
 
-This first owning family is deliberately a direct-local-value slice. A
-top-level read-only checked-reference parameter may observe an owning enum's
-active tag with the same exhaustive `switch` while ownership remains in its
-caller. By-value function/method parameters and
-returns, constructor parameters, typed-lambda parameters and returns, and
-lambda captures are rejected at their declaration or capture with `GTI-S2067`.
-An owning enum also cannot be nested inside a class field, fixed array,
+The bounded owning family admits direct local values and top-level read-only
+checked-reference observation. It also admits the enum itself by value across
+an ordinary source-defined free function, non-polymorphic method or ordinary
+constructor, and an exact typed lambda. The parameter and return types must be
+the direct enum rather than a containing wrapper. Ordinary argument analysis
+selects copy only when the enum's folded traits permit it; otherwise an
+explicit move or fresh value is required. Generic callable families, including
+methods and constructors declared on a generic owner, polymorphic dispatch,
+native/runtime declarations, operators, and lambda captures retain `GTI-S2067`
+at their declaration or capture boundary. An
+owning enum also cannot be nested inside a class field, fixed array,
 `expected`, owner/container, or any other wrapper value. These structural
 restrictions prevent an unsupported callable or aggregate ABI from reaching
 HIR/MIR/backend emission. A direct checked reference or raw pointer to the enum
