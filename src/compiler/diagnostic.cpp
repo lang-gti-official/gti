@@ -1,5 +1,7 @@
 #include "gti/diagnostic.h"
 
+#include "source_text.h"
+
 #include <algorithm>
 #include <iterator>
 #include <utility>
@@ -72,18 +74,16 @@ SourceLocation SourceManager::locate(const SourceSpan &span) const {
   location.lineEnd = lineIndex + 1 < entry->lineStarts.size()
                          ? entry->lineStarts[lineIndex + 1] - 1
                          : source.size();
+  if (location.lineEnd > location.lineStart &&
+      source[location.lineEnd - 1] == '\r') {
+    --location.lineEnd;
+  }
 
   location.column = 1;
   for (std::size_t index = location.lineStart; index < offset;) {
-    const unsigned char byte = static_cast<unsigned char>(source[index]);
-    std::size_t length = 1;
-    if ((byte & 0xE0U) == 0xC0U) {
-      length = 2;
-    } else if ((byte & 0xF0U) == 0xE0U) {
-      length = 3;
-    } else if ((byte & 0xF8U) == 0xF0U) {
-      length = 4;
-    }
+    const source_text::Utf8Scalar scalar =
+        source_text::decodeUtf8(source, index);
+    const std::size_t length = scalar.valid ? scalar.length : 1;
     index += std::min(length, offset - index);
     ++location.column;
   }

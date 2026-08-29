@@ -13,6 +13,13 @@
    the special-member policy token. These restrictions do not apply to
    PATH_COMPONENT.
 
+   A source unit is strict UTF-8 and may begin with one UTF-8 byte-order mark.
+   The BOM is discarded before the first grammar symbol while all token spans
+   retain their original byte offsets. LF and CRLF each separate logical
+   lines; a lone CR is invalid. IDENTIFIER and fixed token spellings are ASCII.
+   Non-ASCII scalar values are accepted only in comments and STRING_LITERAL;
+   CHARACTER_LITERAL continues to denote exactly one 8-bit code unit.
+
    INT_LITERAL accepts decimal digits, hexadecimal `0x`/`0X` digits, and
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
    magnitude no larger than uint64_t before semantic type selection.

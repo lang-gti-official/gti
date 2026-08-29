@@ -18,10 +18,26 @@ A GTI source unit is a `.gti` file presented to the implementation as source
 text. Tokens retain source-local byte offsets and source identity for
 diagnostics and tooling.
 
-**Specification gap:** The normative source encoding, treatment of a byte-order
-mark, newline normalization, Unicode identifiers, and Unicode normalization are
-not yet stated. The current lexer behaviour shall be documented before 1.0
-rather than silently elevated into a portable source-text rule.
+Source text shall be well-formed UTF-8. An implementation shall diagnose the
+first invalid byte sequence before parsing and shall not replace invalid bytes
+or infer another encoding. One UTF-8 byte-order mark is permitted only at byte
+offset zero. It is ignored for tokenization, but remains part of the exact
+source bytes and therefore shifts every following byte offset by three. A BOM
+at any other position is non-ASCII token text and is ill-formed.
+
+The accepted newline spellings are LF and CRLF. Each denotes one logical
+newline. A carriage return not immediately followed by a line feed is
+ill-formed. Compilation preserves the written bytes: source identity, cache
+digests, diagnostic spans, and token offsets do not normalize CRLF to LF.
+Formatting accepted source emits LF while preserving a leading BOM.
+
+GTI identifiers and fixed token spellings are ASCII. An identifier has the
+form `[A-Za-z_][A-Za-z0-9_]*`; Unicode normalization and confusable-identifier
+rules are consequently not required. Non-ASCII Unicode scalar values may
+appear in comments and string literals. Character literals remain the exact
+single-byte form specified in Section 2.4. A non-ASCII scalar outside those
+contexts is ill-formed and is diagnosed as one complete scalar rather than as
+separate UTF-8 bytes.
 
 ## 2.3 Tokens And Identifiers
 

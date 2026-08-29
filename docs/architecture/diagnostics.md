@@ -23,6 +23,11 @@ search rather than a scan from the first byte. It computes display
 locations. LSP UTF-16 conversion occurs at the protocol boundary; compiler
 diagnostics do not store LSP positions.
 
+`SourceManager` counts well-formed UTF-8 scalar values, rather than bytes, when
+rendering a compiler column. It removes CR as well as LF from an accepted CRLF
+display line. Byte offsets remain authoritative and no normalized copy becomes
+diagnostic storage.
+
 Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
 `GTI-P` (parsing), `GTI-S` (semantics), and `GTI-B` (driver/backend families).
 Use the existing local family and number rather than inventing a parallel code
@@ -33,6 +38,12 @@ opening delimiter, reports exactly once at end of file, and does not offer a
 fix-it because inserting `*/` at an inferred location could silently comment
 out intended code. Source loading stops later phases so parser diagnostics do
 not cascade from the discarded comment body.
+
+`GTI-L0013` owns the first invalid UTF-8 byte and stops tokenization with an
+EOF-only stream. `GTI-L0014` owns a carriage return not followed by LF and has
+the same no-cascade recovery. `GTI-L0015` owns one complete valid non-ASCII
+scalar outside a comment or string literal; its message preserves the durable
+ASCII identifier/token boundary instead of proposing Unicode normalization.
 
 `GTI-L0012` owns a configuration directive that lacks exactly one ordinary
 identifier name. It points at `#define`, `#undef`, `#ifdef`, or `#ifndef` and

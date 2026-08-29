@@ -57,6 +57,18 @@ verified cache hit or moves it into `Frontend::analyzeLoaded` on a miss. The
 loaded entry point resumes the same parser/semantic/HIR/MIR pipeline; it is not
 a second include resolver or frontend representation.
 
+Source files are opened in binary mode. Before tokenization, the lexer validates
+the complete source as strict UTF-8 and rejects a lone CR; this makes file,
+overlay, direct-compilation, and LSP snapshots share one byte contract on every
+host. An optional UTF-8 BOM is skipped only at byte zero. The source manager,
+cache digest, token positions, and diagnostics still retain the exact written
+bytes. LF and CRLF both advance one logical line, and display-line extraction
+removes both bytes of a CRLF terminator. Invalid UTF-8 (`GTI-L0013`) or newline
+spelling (`GTI-L0014`) produces one lexical diagnostic and an EOF-only token
+stream so later phases cannot cascade. ASCII remains the complete identifier
+and token alphabet; a valid non-ASCII scalar outside a comment or string is
+grouped into one `GTI-L0015` span.
+
 Each `SourceUnit` retains its path, stable exact-source digest, logical import
 where applicable, tokens, token-granular inactive spans for editor
 presentation, dependency edges, and final declaration range in the combined

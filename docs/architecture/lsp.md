@@ -34,6 +34,14 @@ tokens with UTF-16 lengths; delimiters inside literals are excluded. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
 
+JSON-RPC admits only valid UTF-8 document text. Compiler byte offsets are
+converted through one source-position index at the protocol boundary; Unicode
+supplementary scalars count as two UTF-16 code units, CRLF counts as one line
+break, and an explicit leading BOM occupies one UTF-16 position before the
+first token. The compiler remains the authority for BOM placement, ASCII token
+spelling, and `GTI-L0013` through `GTI-L0015`; the LSP publishes those exact
+diagnostics and clears them on the next valid generation.
+
 Contiguous `///` blocks are normalized by the lexer as leading trivia on the
 following declaration token. The parser transfers that Markdown onto the
 declaration, and semantic analysis attaches the same value to the exact
