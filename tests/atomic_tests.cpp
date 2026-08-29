@@ -671,7 +671,7 @@ void testFetchOperations() {
            "with every verified fetch order");
   }
 
-  for (const std::string &operation : {"fetch_add", "fetch_or"}) {
+  for (const std::string operation : {"fetch_add", "fetch_or"}) {
     const lang::FrontendResult invalid =
         analyze("atomic-bool-" + operation + ".gti",
                 "#include <std/atomic>\nint main() {\n  std::atomic<bool> "
