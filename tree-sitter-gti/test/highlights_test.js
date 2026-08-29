@@ -111,6 +111,17 @@ requireCapture(nativeCallbackRow, "NativeCallback", "type.definition");
 requireCapture(nativeCallbackRow, "int32_t", "type.builtin");
 requireCapture(nativeCallbackRow, "c_string", "type");
 requireCapture(nativeCallbackRow, "->", "operator");
+const classAliasRow = fixtureLines.findIndex((line) =>
+  line.includes("using value_type"),
+);
+const qualifiedClassAliasRow = fixtureLines.findIndex((line) =>
+  line.includes("using HighlightValue"),
+);
+requireCapture(classAliasRow, "value_type", "type.definition");
+requireCapture(classAliasRow, "int32_t", "type.builtin");
+requireCapture(qualifiedClassAliasRow, "HighlightValue", "type.definition");
+requireCapture(qualifiedClassAliasRow, "AliasHighlight", "module");
+requireCapture(qualifiedClassAliasRow, "value_type", "type");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");
@@ -405,6 +416,12 @@ requireLocalCapture(175, "compatible", "local.definition.type");
 requireLocalCapture(175, "Left", "local.definition.type");
 requireLocalCapture(175, "Right", "local.definition.type");
 requireLocalCapture(177, "constrain", "local.definition.function");
+requireLocalCapture(classAliasRow, "value_type", "local.definition.type");
+requireLocalCapture(
+  qualifiedClassAliasRow,
+  "HighlightValue",
+  "local.definition.type",
+);
 
 const highlightLines = fs.readFileSync(fixture, "utf8").split("\n");
 const moveCaptureRow = highlightLines.indexOf(

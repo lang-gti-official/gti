@@ -3199,7 +3199,20 @@ public:
                      &member->payload)) {
         writeIndent();
         output << "using " << member->name << " = ";
-        emitSemanticType(alias->type);
+        SemanticType aliasType = alias->type;
+        if (concreteInstance != nullptr) {
+          const LoweredClassDeclaration *primary =
+              loweredProgram.findClassDeclaration(
+                  concreteInstance->type.classId);
+          if (primary == nullptr) {
+            throw std::logic_error(
+                "concrete class type alias lost its primary declaration");
+          }
+          aliasType = substituteLoweredConstantType(
+              aliasType, loweredConstantClassSubstitution(
+                             *primary, concreteInstance->type));
+        }
+        emitSemanticType(aliasType);
         output << ";\n";
       } else if (member->kind == LoweredDeclarationKind::Empty) {
         writeIndent();

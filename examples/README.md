@@ -259,6 +259,12 @@ with an explicit comparator, and a consuming `void()` action; invalid argument,
 result, or receiver capabilities are rejected before the generic body is
 instantiated.
 
+`79-class-scoped-type-aliases.gti` defines aliases as access-controlled class
+members. A non-generic owner exposes its public alias through
+`NumericTraits::value_type`; a generic owner uses an alias of `T` throughout
+its own member signatures. The bounded slice does not add alias templates,
+inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

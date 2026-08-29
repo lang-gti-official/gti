@@ -742,6 +742,16 @@ private:
     AccessModifier access = AccessModifier::Private;
   };
 
+  struct MemberTypeAliasInfo {
+    TypeAliasId id = 0;
+    const TypeAliasDecl *declaration = nullptr;
+    SemanticType type = SemanticType::Unknown;
+    std::string qualifiedName;
+    ClassId ownerClass = 0;
+    AccessModifier access = AccessModifier::Private;
+    bool compilerPrivate = false;
+  };
+
   struct FieldInfo {
     const VariableDecl *declaration = nullptr;
   };
@@ -758,6 +768,7 @@ private:
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
     std::unordered_map<std::string, MemberInfo> members;
+    std::unordered_map<std::string, MemberTypeAliasInfo> typeAliases;
     std::vector<FieldInfo> fields;
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
@@ -855,10 +866,24 @@ private:
   struct RegisteredTypeAlias {
     SourceUnitId sourceUnit = 0;
     const TypeAliasDecl *declaration = nullptr;
+    const ClassDecl *ownerDeclaration = nullptr;
     std::string qualifiedName;
     std::vector<std::string> namespaceScope;
+    std::vector<std::string> lookupScope;
+    ClassId ownerClass = 0;
+    AccessModifier access = AccessModifier::Public;
     SemanticType type = SemanticType::Unknown;
     TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
+    bool compilerPrivate = false;
+  };
+
+  struct ResolvedTypeAlias {
+    TypeAliasId id = 0;
+    const TypeAliasDecl *declaration = nullptr;
+    SemanticType type = SemanticType::Unknown;
+    std::string qualifiedName;
+    ClassId ownerClass = 0;
+    AccessModifier access = AccessModifier::Public;
     bool compilerPrivate = false;
   };
 
@@ -1491,7 +1516,7 @@ private:
   [[nodiscard]] static std::string
   storageIntrinsicName(IntrinsicKind intrinsic);
 
-  [[nodiscard]] std::optional<TypeAliasId>
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
   typeAliasForCallee(const ExprPtr &callee) const;
 
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression);
@@ -2402,6 +2427,15 @@ private:
   void registerTypeAliases(const StmtList &statements,
                            std::vector<std::string> scope);
 
+  void registerClassTypeAliases(const StmtList &members,
+                                const std::vector<std::string> &scope,
+                                const ClassDecl &owner, AccessModifier &access);
+
+  void registerTypeAlias(const TypeAliasDecl &alias,
+                         const std::vector<std::string> &lookupScope,
+                         const std::vector<std::string> &namespaceScope,
+                         const ClassDecl *owner, AccessModifier access);
+
   void resolveTypeAliases();
 
   void registerConcepts(const StmtList &statements,
@@ -3043,13 +3077,16 @@ private:
   bool reportInvisibleSymbol(const Token &use, std::string name,
                              const Symbol *symbol);
 
-  [[nodiscard]] std::optional<TypeAliasId>
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
   resolveTypeAliasPath(const NamePath &path,
                        const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] std::optional<TypeAliasId>
   resolveTypeAliasPathGlobally(const NamePath &path,
                                const std::vector<std::string> &fromScope) const;
+
+  [[nodiscard]] bool validateTypeAliasAccess(const ResolvedTypeAlias &alias,
+                                             const Token &use);
 
   [[nodiscard]] std::optional<ConceptId>
   resolveConceptPath(const NamePath &path,

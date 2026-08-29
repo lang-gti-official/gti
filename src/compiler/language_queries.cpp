@@ -758,6 +758,10 @@ public:
       case SymbolKind::TypeParameter:
         result.signature = "type parameter " + symbol->name;
         break;
+      case SymbolKind::TypeAlias:
+        result.signature = "using " + symbol->qualifiedName + " = " +
+                           types.print(symbol->type);
+        break;
       case SymbolKind::ValueParameter:
         result.signature = "uint64_t " + symbol->name;
         break;

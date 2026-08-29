@@ -139,8 +139,25 @@ The complete programmer obligations are incorporated from
 ## 3.4 Names, Scopes, And Visibility
 
 Namespaces, namespace aliases, and qualified `::` names use lexical declaration
-and source-unit visibility. Namespace-scoped `using Name = Type;` aliases are
-declaration-order independent after cycle validation.
+and source-unit visibility. Namespace- and class-scoped
+`using Name = Type;` aliases are declaration-order independent within their
+direct declaring scope after cycle validation. Every class-like body (`class`,
+`struct`, `interface`, and `union`) admits aliases as type members. An alias
+follows the owner's current `public:` or `private:` section and the class key's
+default access, and its name cannot collide with a value, callable, or another
+type alias in that owner. A public alias of a non-generic type may be named with
+`Owner::Name` outside the class.
+
+A generic class alias may name the owner's type or value parameters and is
+substituted for each concrete member-body and backend instance. The alias is
+usable unqualified within that owner. The grammar does not yet represent an
+intermediate specialization in a type path, so `Box<int>::value_type` is not a
+GTI spelling and `Box::value_type` is rejected outside generic `Box` as an
+unspecialized type. Class aliases are direct members rather than inherited
+members; a derived class does not acquire a base alias. Alias templates,
+C++ `using Base::member` exposure, constructor inheritance, and access
+reshaping are not part of this declaration form. Native callback aliases remain
+namespace-only under the native C interoperation contract.
 
 Class members follow their declared access and the default associated with
 `class` or `struct`. `interface` members are public contracts. Namespace

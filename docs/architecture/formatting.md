@@ -131,6 +131,12 @@ uses the ordinary member indentation, enclosed fields use one additional level,
 and the closing brace has no semicolon. Comments and conditional directives are
 retained, and formatting never expands the group into repeated `mut` prefixes.
 
+A class-scoped `using Name = Type;` declaration uses ordinary member
+indentation. `public:` and `private:` retain the configured access offset, and
+formatting neither moves an alias across an access label nor rewrites its
+qualified target. The same token-spacing rule around `=` is used at namespace
+and class scope.
+
 Static assertions retain their declaration form. Their keyword stays adjacent
 to `(`, the condition uses ordinary expression spacing, and a message comma is
 followed by one space: `static_assert(ready, "configuration must be ready");`.

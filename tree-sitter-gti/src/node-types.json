@@ -920,6 +920,10 @@
           "named": true
         },
         {
+          "type": "type_alias_declaration",
+          "named": true
+        },
+        {
           "type": "variable_declaration",
           "named": true
         }
@@ -1349,6 +1353,10 @@
         },
         {
           "type": "static_variable_declaration",
+          "named": true
+        },
+        {
+          "type": "type_alias_declaration",
           "named": true
         },
         {

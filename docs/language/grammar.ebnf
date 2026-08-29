@@ -198,8 +198,15 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    unit alternative is the value `EnumName::case` and is not called. Payload
    field restrictions and exhaustive switch patterns are semantic rules. *)
 
-(* Type aliases are transparent, namespace-scoped names for complete types.
-   They are available regardless of declaration order and cannot be generic.
+(* Type aliases are transparent namespace or class-member names for complete
+   types. They are available regardless of declaration order in their direct
+   declaring scope and cannot themselves declare generic parameters. A class-
+   scoped alias follows the surrounding access section and the default access
+   of its class key. A public alias on a non-generic owner may be named as
+   `Owner::Name`; an alias in a generic owner may use that owner's parameters
+   in member signatures, but GTI has no `Owner<Args>::Name` type path yet.
+   Class aliases are direct members and are not inherited through base types.
+
    Alias cycles and aliases whose target contains a reference are invalid;
    keeping `&` at each use site preserves explicit borrow syntax. The standard
    prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
@@ -297,6 +304,7 @@ class-member           = conditional-class-members
                        | configuration-directive
                        | compile-error-directive
                        | static-assert-declaration
+                       | type-alias-declaration
                        | mutable-field-group
                        | access-specifier
                        | constructor-declaration

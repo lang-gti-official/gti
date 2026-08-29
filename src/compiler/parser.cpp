@@ -1476,8 +1476,11 @@ private:
     }
 
     if (match({TokenKind::USING})) {
+      if (context == ItemContext::ClassMember) {
+        return typeAliasDeclaration(previous());
+      }
       throw error(previous(),
-                  "Type aliases are currently limited to namespace scope.");
+                  "Type aliases are limited to namespace or class scope.");
     }
     if (match({TokenKind::CONCEPT})) {
       throw error(previous(),

@@ -290,12 +290,15 @@ module.exports = grammar({
       ),
 
     type_alias_declaration: ($) =>
-      seq(
-        "using",
-        field("name", $.identifier),
-        "=",
-        field("target", $.type),
-        ";",
+      prec(
+        1,
+        seq(
+          "using",
+          field("name", $.identifier),
+          "=",
+          field("target", $.type),
+          ";",
+        ),
       ),
 
     enum_declaration: ($) =>
@@ -451,6 +454,7 @@ module.exports = grammar({
         $.configuration_directive,
         $.compile_error_directive,
         $.static_assert_declaration,
+        $.type_alias_declaration,
         $.mutable_field_group,
         $.access_specifier,
         $.constructor_declaration,

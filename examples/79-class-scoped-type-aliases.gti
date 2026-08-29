@@ -1,0 +1,32 @@
+class NumericTraits {
+  using storage_type = int32_t;
+
+public:
+  using value_type = storage_type;
+
+  value_type identity(value_type value) {
+    return value;
+  }
+};
+
+class Box<T> {
+  T value;
+
+public:
+  using value_type = T;
+
+  Box(T initial) : value(initial) {}
+
+  value_type get() {
+    return this.value;
+  }
+};
+
+using Number = NumericTraits::value_type;
+using NumberBox = Box<Number>;
+
+int main() {
+  NumericTraits traits{};
+  NumberBox value{traits.identity(7)};
+  return value.get() - 7;
+}

@@ -242,6 +242,15 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
+For class-scoped type aliases, `gti_compiler_declarations_tests` owns parsing,
+declaration-order-independent resolution, access and collision diagnostics,
+generic-owner substitution, LoweredProgram/backend shape, construction,
+formatting, and shared language queries. `lsp_protocol` owns hover, definition,
+completion, semantic tokens, and nested document symbols. The Tree-sitter
+corpus, highlight, and shipped-source gates own editor parsing and captures;
+example 79 is the native compile/run composition. Aliases are static type
+members, so HIR and MIR intentionally gain no operation.
+
 For owning-string output, `string_owned_output_runtime` is the focused
 source-defined-library gate. It keeps the existing named-owner `string&`
 selection live while proving that a fresh move-only string result directly
