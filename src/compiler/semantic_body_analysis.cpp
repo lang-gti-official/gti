@@ -1522,23 +1522,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     if (!stmt.returnType().reference) {
       report(stmt.name(), "A mutable function return must be a reference type.",
              "GTI-S2017");
-    } else if (!methodDeclaration && !intrinsicDeclaration) {
-      if (hasReturnBorrowSummary &&
-          functionInfo->returnBorrowOrigin != BorrowOriginKind::Global) {
-        report(stmt.name(),
-               "A mutable free-function reference return must derive from "
-               "one exact global or static storage place.",
-               "GTI-S2017");
-      }
-    } else if (methodDeclaration && stmt.isStatic()) {
-      if (hasReturnBorrowSummary &&
-          functionInfo->returnBorrowOrigin != BorrowOriginKind::Global) {
-        report(stmt.name(),
-               "A mutable static-method reference return must derive from "
-               "one exact global or static storage place.",
-               "GTI-S2017");
-      }
-    } else if (methodDeclaration &&
+    } else if (methodDeclaration && !stmt.isStatic() &&
                stmt.receiverMutability() != ReceiverMutability::Mutable) {
       report(stmt.name(),
              "A mutable reference return requires a mutable receiver.",

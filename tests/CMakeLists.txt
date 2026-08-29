@@ -1156,6 +1156,15 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(retained_borrowed_call_result_runtime
                          PROPERTIES TIMEOUT 300)
     add_test(
+      NAME mutable_stored_dependency_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mutable_stored_dependency_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutable_stored_dependency.gti"
+    )
+    set_tests_properties(mutable_stored_dependency_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
       NAME nested_borrow_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/nested_borrow_chain_runtime_test.py"
@@ -1445,6 +1454,7 @@ if(Python3_Interpreter_FOUND)
         field_subscript_store_runtime
         disjoint_field_projection_runtime
         retained_borrowed_call_result_runtime
+        mutable_stored_dependency_runtime
         nested_borrow_chain_runtime
         mut_reference_retained_chain_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3

@@ -1714,11 +1714,6 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           "return dependency argument index is outside the formal parameters "
           "or their exact bindings");
     }
-    if ((!instance.owner || instance.staticMember) &&
-        instance.returnBorrowAccess != AccessMode::ReadOnly) {
-      return invalidSummary(
-          "ordinary free or static return dependency must be read-only");
-    }
     if (instance.returnBorrowPlace) {
       return invalidSummary(
           "argument return dependency carries a global origin place");
@@ -1727,26 +1722,25 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       const SemanticType &parameter =
           instance.parameterTypes[instance.returnBorrowParameter];
       storedCarrierReference = findStoredCarrierReference(program, parameter);
-      const bool exactReadReference =
+      const bool exactReference =
           parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1 &&
-          parameter.referenceAccess == AccessMode::ReadOnly;
-      const bool exactReadCarrier =
+          parameter.referenceAccess == instance.returnBorrowAccess;
+      const bool exactCarrier =
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
-              AccessMode::ReadOnly;
+              instance.returnBorrowAccess;
       dynamicStringViewCarrier =
           parameter.kind == SemanticType::StringView &&
           instance.returnType.kind == SemanticType::StringView &&
           instance.returnBorrowAccess == AccessMode::ReadOnly;
-      if (!exactReadReference && !exactReadCarrier &&
-          !dynamicStringViewCarrier) {
+      if (!exactReference && !exactCarrier && !dynamicStringViewCarrier) {
         return invalidSummary(
             "argument return dependency does not identify one exact "
-            "read-only reference, stored-reference carrier, or dynamic "
+            "access-compatible reference, stored-reference carrier, or dynamic "
             "string-view parameter");
       }
-      if (exactReadCarrier || dynamicStringViewCarrier) {
+      if (exactCarrier || dynamicStringViewCarrier) {
         std::optional<SemanticType> resultReferent;
         if (dynamicStringViewCarrier) {
           resultReferent = SemanticType::StringView;
@@ -1780,7 +1774,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           const MirPlace *source = body.findPlace(loan.source);
           const bool exactEntry =
               loan.kind == MirLoanKind::Stored && loan.entry && !loan.escapes &&
-              loan.access == AccessMode::ReadOnly && source != nullptr &&
+              loan.access == instance.returnBorrowAccess && source != nullptr &&
               source->root == MirPlaceRootKind::Binding &&
               source->projections.empty() &&
               source->binding == parameterBinding &&

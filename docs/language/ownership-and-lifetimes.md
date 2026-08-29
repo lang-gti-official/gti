@@ -557,20 +557,27 @@ escaping element.
 Reference globals, nested references, and references over fixed arrays or
 compiler-private owner handles remain unavailable to ordinary source. A
 free/static reference return is accepted only under the exact global/static
-origin or single read-only parameter rule above. A non-escaping local reference
-may borrow the public `std::unique_ptr<T>` class itself, but conservatively
-prevents transfer or mutation of that owner for the rest of the function.
+origin or one compatible reference-parameter rule: a read-only return selects
+one read-only origin and a mutable return selects one mutable origin. A
+non-escaping local reference may borrow the public `std::unique_ptr<T>` class
+itself, but conservatively prevents transfer or mutation of that owner for the
+rest of the function.
 
 One deliberately confined stored-reference form is available for owner-tied
-library values such as iterators. A class or struct may contain one direct
-read-only `T&` field. Every constructor must bind that field directly from one
-exact read-only reference parameter. The resulting class is move-constructible
-and copy-constructible, but neither copy nor move assignment is available. A
-copy constructs a new carrier shell, copies its ordinary fields independently,
-and adds an alias to the same shared read-only owner dependency; it never
-reseats that dependency. An instance method may return the carrier when the
+values such as iterators, views, and guard-shaped capabilities. A class or
+struct may contain one direct `T&` or `mut T&` field. Every constructor must
+bind that field directly from one exact reference parameter with the same
+access mode. Neither form supports copy or move assignment because assignment
+would reseat an established dependency.
+
+A read-only carrier is copy-constructible and move-constructible. A copy
+constructs a new carrier shell, copies its ordinary fields independently, and
+adds an alias to the same shared owner dependency. A mutable carrier is
+move-constructible but not copy-constructible: its one exclusive dependency is
+transferred, never duplicated. An instance method may return a carrier whose
 dependency is derived from `this`; a free function or static method may return
-it under the exact carrier rule above:
+one when exactly one compatible reference or direct-carrier parameter supplies
+the origin:
 
 ```gti
 class Iterator<T> {
@@ -580,39 +587,49 @@ public:
   Iterator(T& value) : current(value) {}
   T& operator*() { return this.current; }
 };
+
+class WriteView {
+  mut int& current;
+
+public:
+  WriteView(mut int& value) : current(value) {}
+  mut int& get() mut { return this.current; }
+};
 ```
 
 That one dependency survives ordinary calls, concrete generic substitution,
 explicit moves, checked returns, and lexical destruction. A helper may
-therefore construct a read-only cursor or view from one owner, pass the carrier
-through a concrete generic move relay, and return it to the caller without
-losing the owner loan. Dependency propagation follows the selected argument
-and is verified before backend entry; it is not inferred from an emitted C++
-reference field. See
+therefore construct a cursor or view from one owner, pass the carrier through
+a concrete move relay, and return it to the caller without losing the owner
+loan. For a mutable carrier, construction suspends direct access to the exact
+owner, a move transfers that suspension, and the final carrier end reactivates
+the owner. A mutable method may create a call-local or retained child reborrow;
+that child must end before the carrier dependency can end. Dependency
+propagation follows the selected argument and is verified before backend
+entry; it is not inferred from an emitted C++ reference field. See
 [`41-owner-dependencies.gti`](../../examples/41-owner-dependencies.gti) for a
-runnable free/static factory and concrete generic relay.
+runnable shared factory/generic relay and an exclusive write view.
 
-Mutable stored references, multiple reference fields, inherited or nested
-borrowed state, user-defined destructors, and global/static or captured
-borrowed storage remain rejected. The stored owner-dependency model also
-rejects mutable stored dependencies, multi-origin and dependency-changing
-returns, and assignment that would replace a carrier's dependency. The local
-exclusive-reborrow rules above do not widen that stored-value contract. The
-compiler-generated mutable range iterator described below is the one bounded
-exception: it transfers the range's existing exclusive capability into an
-ephemeral iterator rather than creating an independently retainable mutable
-stored dependency.
+Multiple reference fields, inherited or nested borrowed state, user-defined
+destructors, global/static or captured borrowed storage, multi-origin and
+dependency-changing returns, and assignment that would replace a carrier's
+dependency remain rejected. Mutable dependencies are limited to an exact
+stable local, parameter, receiver, or existing-loan origin. They do not admit
+raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
+or an independently escaping child reference.
+
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan
 remains live. Moving the carrier transfers the same loan identity; creating a
-read-only alias, including copy construction of the carrier, adds a carrier to
-that identity. Dropping one copy ends only that shell's lifetime; owner
-protection remains until the final reachable use of every alias. HIR carries proven
-straight-line, nested-merge, and conditional branch-entry endpoints, along
-with bounded switch-exit and same-path immediate-break endpoints. MIR records
-every carrier on one loan and emits an explicit borrow ending only after the
-frontend-selected aggregate endpoint. These are GTI lifetime rules; the
-emitted C++ reference field is only a backend representation.
+read-only alias, including copy construction of a shared carrier, adds a
+carrier to that identity. Dropping one shared copy ends only that shell's
+lifetime; owner protection remains until the final reachable use of every
+alias. An exclusive carrier has only one transferable shell. HIR carries
+proven straight-line, nested-merge, and conditional branch-entry endpoints,
+along with bounded switch-exit and same-path immediate-break endpoints. MIR
+records every carrier on one loan and emits an explicit borrow ending only
+after the frontend-selected aggregate endpoint. These are GTI lifetime rules;
+the emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only checked-storage reference, currently
@@ -623,9 +640,10 @@ exceptions apply only to the carrier field and its exact binding constructor
 parameter. They allow an ordinary source-defined iterator to traverse checked
 storage without exposing an address or making the compiler recognize a
 container name. The writable carrier is noncopyable: duplicating its shell
-would duplicate an exclusive capability. Application fields, user-retainable
-mutable carriers, multiple origins, and references to the private unique-owner
-capability remain rejected.
+would duplicate an exclusive capability. Ordinary source may now define the
+same one-origin mutable carrier over public stable storage, but cannot name the
+private checked-storage or unique-owner capabilities. Multiple origins remain
+rejected in both source roles.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only

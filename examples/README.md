@@ -46,7 +46,7 @@ own `main` function.
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
 | `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
-| `41-owner-dependencies.gti` | single-origin read-only owner dependencies through factories, generics, moves, and returns |
+| `41-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
 | `43-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `44-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
@@ -117,10 +117,11 @@ a small `unsafe` block. For the native-resource RAII pattern built on the same
 foundation, see
 [`../docs/language/raw-pointers.md`](../docs/language/raw-pointers.md).
 
-`41-owner-dependencies.gti` builds an ordinary source-defined read-only view,
-passes it through a concrete generic move relay plus free and static factory
-layers, and then mutates the owner only after the view's final scope or proven
-final use. The dependency is a frontend lifetime fact; the example does not
+`41-owner-dependencies.gti` builds ordinary source-defined read-only and
+exclusive views. It passes the shared view through a concrete generic move
+relay plus free and static factory layers, writes through the exclusive view,
+and mutates the owner only after the applicable view's final scope or proven
+final use. Each dependency is a frontend lifetime fact; the example does not
 expose a pointer or use a compiler-known public wrapper name.
 
 `42-exclusive-reborrows.gti` derives nested mutable and read-only child loans

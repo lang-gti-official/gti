@@ -8,6 +8,10 @@ public:
     return this.value;
   }
 
+  mut int& current_mut() mut {
+    return this.value;
+  }
+
   void replace(int next) mut {
     this.value = next;
   }
@@ -20,6 +24,17 @@ public:
   ReadingView(T& source) : value(source) {}
 
   T read() {
+    return this.value;
+  }
+};
+
+class WritableReadingView {
+  mut int& value;
+
+public:
+  WritableReadingView(mut int& source) : value(source) {}
+
+  mut int& write() mut {
     return this.value;
   }
 };
@@ -40,6 +55,10 @@ public:
   }
 };
 
+WritableReadingView make_writable_view(mut Reading& owner) {
+  return WritableReadingView(owner.current_mut());
+}
+
 int main() {
   mut Reading owner = Reading(21);
 
@@ -53,8 +72,14 @@ int main() {
   // The scoped view has been dropped, so mutating its owner is valid.
   owner.replace(42);
 
+  {
+    mut WritableReadingView writable = make_writable_view(owner);
+    mut int& slot = writable.write();
+    slot = 48;
+  }
+
   ReadingView<int> last_use = ReadingViewFactory::open(owner);
-  if (last_use.read() != 42) {
+  if (last_use.read() != 48) {
     return 1;
   }
 

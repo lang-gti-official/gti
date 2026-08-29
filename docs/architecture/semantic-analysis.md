@@ -657,6 +657,18 @@ field. HIR and MIR carry that fact directionally so MIR verification can bind a
 returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
 
+The same representation covers one direct mutable stored reference.
+Declaration analysis requires every constructor to bind the field from one
+exact mutable reference parameter. Lifecycle traits make the carrier movable,
+noncopyable, and non-assignable. Borrow-summary selection admits a mutable
+reference or direct mutable-carrier parameter only for a mutable return and
+rejects multiple compatible origins. Ownership analysis records construction
+as an exclusive stored child of that origin, transfers its carrier identity on
+move, keeps the parent unavailable while the child is live, and reactivates it
+only after the final child and carrier endpoint. Nested borrowed fields,
+custom destruction, globals/captures, dependency reseating, dynamic origins,
+and multi-origin returns remain outside this bounded graph.
+
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
@@ -676,11 +688,15 @@ state is not locally provable.
 ## Loan Flow
 
 Retained borrows receive stable semantic loan identities. A move transfers a
-carrier; a read-only alias adds another carrier to the same identity. Uses are
+carrier; a read-only alias adds another carrier to the same identity, while a
+mutable stored carrier cannot be copied. Uses are
 recorded by loan rather than by one preferred variable, so endpoint planning
 considers every alias across straight-line statements and the supported
 conditional, loop, switch, and break shapes. Shared early endings are enabled
-for semantically read-only loans.
+for semantically read-only loans. An exclusive stored carrier instead keeps
+one origin suspended across its whole moved lifetime; a returned carrier
+re-establishes that exact dependency in the caller rather than inventing a new
+root.
 
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
