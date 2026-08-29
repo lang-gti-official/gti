@@ -1038,11 +1038,14 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
                                : "GTI-S2045";
   Diagnostic diagnostic;
   if (summary.eligibleParameters > 1) {
+    const std::string dependencyDescription =
+        summary.access == AccessMode::Mutable
+            ? "mutable reference or direct mutable borrowed-value"
+            : "read-only reference or direct borrowed-value";
     diagnostic = makeDiagnostic(
         code, DiagnosticPhase::Semantics, function.name(),
-        "Borrowed return dependency is ambiguous; exactly one compatible "
-        "reference or direct borrowed-value parameter may provide its "
-        "owner.");
+        "Borrowed return dependency is ambiguous; exactly one " +
+            dependencyDescription + " parameter may provide its owner.");
     for (std::size_t index = 0; index < info.parameterTypes.size() &&
                                 index < function.parameters().size();
          ++index) {
@@ -1067,8 +1070,11 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
       }
     }
     diagnostic.hints.emplace_back(
-        "Return the borrowed value from an instance method or reduce the "
-        "function to one read-only dependency source.");
+        summary.access == AccessMode::Mutable
+            ? "Return the borrowed value from a mutable instance method or "
+              "reduce the function to one mutable dependency source."
+            : "Return the borrowed value from an instance method or reduce "
+              "the function to one read-only dependency source.");
   } else if (summary.hasMutableCandidate) {
     diagnostic = makeDiagnostic(
         code, DiagnosticPhase::Semantics, function.name(),

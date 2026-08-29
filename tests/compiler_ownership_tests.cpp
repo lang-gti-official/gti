@@ -5513,10 +5513,11 @@ int main() {
 void testMutableStoredDependencies() {
   const std::string validSource = R"(
 class MutView {
-  mut int& referent;
+  using value_type = int;
+  mut value_type& referent;
 public:
-  MutView(mut int& source) : referent(source) {}
-  mut int& get() mut { return this.referent; }
+  MutView(mut value_type& source) : referent(source) {}
+  mut value_type& get() mut { return this.referent; }
 };
 
 MutView make_view(mut int& source) {
@@ -5767,6 +5768,9 @@ int main() {
                            "Borrowed state cannot be nested") &&
              hasDiagnostic(unsupported.diagnostics,
                            "Borrowed return dependency is ambiguous") &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "mutable reference or direct mutable "
+                           "borrowed-value parameter") &&
              hasDiagnostic(unsupported.diagnostics,
                            "cannot have global or static storage") &&
              hasDiagnostic(unsupported.diagnostics,

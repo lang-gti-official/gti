@@ -4408,7 +4408,9 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         continue;
       }
       constructor.borrowParameter = parameterIndex;
-      constructor.borrowAccess = stored.access;
+      constructor.borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
+                                     ? AccessMode::Mutable
+                                     : stored.access;
     }
   }
 }

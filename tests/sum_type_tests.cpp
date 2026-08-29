@@ -450,6 +450,33 @@ int main() {
 }
 
 void testClassPayloadEnums() {
+  const lang::FrontendResult aliasedOwningPayload =
+      analyze("aliased-owning-payload.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+class payload_traits {
+public:
+  using resource_type = resource;
+};
+enum class holder { one(payload_traits::resource_type value), none };
+int main() {
+  holder value = holder::one(resource());
+  switch (value) {
+  case holder::one:
+    return 0;
+  case holder::none:
+    return 1;
+  }
+}
+)");
+  expect(aliasedOwningPayload.canGenerateCode() &&
+             lang::verifyMirProgram(aliasedOwningPayload.mir).valid(),
+         "class-scoped aliases should canonicalize before owning payload "
+         "lifecycle analysis and MIR verification");
+
   const lang::FrontendResult valid = analyze("payload-class-family.gti", R"(
 class Point {
 public:

@@ -751,8 +751,9 @@ analysis, HIR, MIR, and the backend.
 - **Delivered scope:** Extends the existing local parent/child loan graph to
   one stored or escaping mutable dependency with an exact stable origin. It
   defines creation,
-  parent suspension, movement, assignment, call/return propagation, path joins,
-  child-first cleanup, and reactivation in semantics, HIR, and MIR. Start with
+  parent suspension, movement, explicit copy/assignment rejection, call/return
+  propagation, path joins, child-first cleanup, and reactivation in semantics,
+  HIR, and MIR. Start with
   one origin and one carrier shape before considering nesting or multiple
   owners.
 - **Non-goals:** raw or opaque origins, dynamic-index precision, multi-origin
