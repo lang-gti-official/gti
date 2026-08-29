@@ -778,6 +778,8 @@ expectedTypeRepresentation(const SemanticType &type) {
     return CppMirTypeRepresentationKind::RawPointer;
   case SemanticType::NativeFunction:
     return CppMirTypeRepresentationKind::RawPointer;
+  case SemanticType::FunctionItem:
+    return CppMirTypeRepresentationKind::FunctionItem;
   case SemanticType::Array:
     return CppMirTypeRepresentationKind::FixedArray;
   case SemanticType::Class:
@@ -13409,6 +13411,22 @@ private:
       }
       break;
     }
+    case MirOperation::FunctionItem: {
+      const MirFunctionInstance *target =
+          instruction.functionTarget
+              ? program.findFunctionInstance(*instruction.functionTarget)
+              : nullptr;
+      if (target == nullptr || target->owner ||
+          instruction.info.type.functionId != target->declaration) {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, block.id,
+            instruction.id,
+            "function-item compute has no exact verified function row");
+      } else {
+        requireBody({.kind = MirBodyKind::Function, .owner = target->id},
+                    block.id, instruction.id);
+      }
+      break;
+    }
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract: {
       requireCapability(CppMirEmissionCapabilityKind::Payload, block.id,
@@ -14021,6 +14039,7 @@ CppMirEmissionEncoding classifyCppMirOperation(MirOperation operation) {
   case MirOperation::ExpectedHasValue:
   case MirOperation::Closure:
   case MirOperation::NativeCallback:
+  case MirOperation::FunctionItem:
   case MirOperation::PayloadConstruct:
   case MirOperation::PayloadExtract:
   case MirOperation::Unexpected:
@@ -19771,6 +19790,15 @@ private:
       }
       output << "(&::__gti_program::__gti_native_callback_"
              << *instruction.nativeCallbackAdapter << ");\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::FunctionItem) {
+      if (!instruction.functionTarget ||
+          instruction.info.type.kind != SemanticType::FunctionItem) {
+        throw std::logic_error(
+            "verified MIR function item lost its exact identity");
+      }
+      output << "{};\n";
       return;
     }
     if (instruction.operation == MirOperation::AddressOf) {
@@ -29031,6 +29059,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                         return row.type == function->returnType &&
                                !row.spelling.empty();
                       });
+      const bool exactFunctionItemResult =
+          returnKind &&
+          *returnKind == CppMirTypeRepresentationKind::FunctionItem &&
+          function->returnType.hasFunctionItemShape() &&
+          std::any_of(
+              representations_.types().begin(), representations_.types().end(),
+              [&](const CppMirTypeRepresentation &row) {
+                return row.type == function->returnType &&
+                       row.kind == CppMirTypeRepresentationKind::FunctionItem &&
+                       !row.spelling.empty();
+              });
       const bool exactExpectedClassResult = expectedClassPlacementResultType(
           program_, representations_, function->returnType);
       const bool exactNativeCallbackResult =
@@ -29058,7 +29097,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // the caller's paired loan own the rest of the proof.
            *returnKind != CppMirTypeRepresentationKind::Reference &&
            !exactClassResult && !exactLambdaResult &&
-           !exactExpectedClassResult &&
+           !exactFunctionItemResult && !exactExpectedClassResult &&
            // An expected-typed result publishes by value through the
            // ordinary out-parameter; the scalar-payload demand keeps the
            // boundary default-constructible on every shipped standard.
@@ -31150,6 +31189,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         switch (instruction.operation) {
+        case MirOperation::FunctionItem: {
+          const MirFunctionInstance *target =
+              instruction.functionTarget
+                  ? program_.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (target == nullptr || target->owner ||
+              instruction.info.type.functionId != target->declaration ||
+              !instruction.operands.empty() ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() || !bodyRow(target->id) ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        }
         case MirOperation::NativeCallback: {
           const MirNativeCallbackAdapter *adapter =
               instruction.nativeCallbackAdapter
@@ -31811,6 +31865,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.result || instruction.operands.size() != 1 ||
             instruction.operands.front().kind != MirOperandKind::Move ||
             instruction.operands.front().place == 0 || movedSource == nullptr ||
+            instruction.operands.front().type != movedSource->type ||
+            instruction.info.type != movedSource->type ||
             (!instruction.localFailureSites.empty() && !terminalElementMove)) {
           {
             return false;
@@ -32654,7 +32710,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const bool classReady =
                   operand.type.kind == SemanticType::Class &&
                   valueOperand(operand) && typeRow(operand.type);
-              if (!lambdaReady && !classReady) {
+              const bool functionItemReady =
+                  operand.type.hasFunctionItemShape() &&
+                  valueOperand(operand) && typeRow(operand.type);
+              if (!lambdaReady && !classReady && !functionItemReady) {
                 callableArgumentsReady = false;
                 break;
               }
@@ -32729,6 +32788,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     (!instruction.result ||
                      lambdaValueDestinationSlot(body, *instruction.result) !=
                          nullptr);
+                break;
+              case CppMirTypeRepresentationKind::FunctionItem:
+                returnReady = typeRow(target->returnType);
                 break;
               case CppMirTypeRepresentationKind::Reference:
                 returnReady =

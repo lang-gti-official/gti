@@ -270,6 +270,11 @@ members. A non-generic owner exposes its public alias through
 its own member signatures. The bounded slice does not add alias templates,
 inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
 
+`80-function-items.gti` passes exact namespace free functions directly to
+confined generic callables and standard algorithms. Function items are
+zero-state GTI callable identities; they are not native function pointers and
+cannot be stored as ordinary values.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

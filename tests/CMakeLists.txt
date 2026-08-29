@@ -256,6 +256,11 @@ add_executable("gti_managed_thread_tests"
 target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
 add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
+add_executable("gti_function_item_tests"
+               "${PROJECT_SOURCE_DIR}/tests/function_item_tests.cpp")
+target_link_libraries("gti_function_item_tests" PRIVATE gti_cpp_backend)
+add_test(NAME function_item_semantic_ir COMMAND gti_function_item_tests)
+
 add_executable("gti_atomic_tests"
                "${PROJECT_SOURCE_DIR}/tests/atomic_tests.cpp")
 target_link_libraries("gti_atomic_tests" PRIVATE gti_cpp_backend)
@@ -1044,6 +1049,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(generic_callable_concepts_runtime
                        PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME function_item_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/function_item_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/function_items.gti"
+  )
+  set_tests_properties(function_item_runtime PROPERTIES TIMEOUT 300)
     add_test(
       NAME owner_tied_by_value_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"

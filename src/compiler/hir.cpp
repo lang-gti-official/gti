@@ -62,6 +62,9 @@ std::uint64_t hashSemanticType(const SemanticType &type, std::uint64_t seed) {
   result = combine(result, type.classId);
   result = combine(result, type.enumId);
   result = combine(result, type.genericParameterId);
+  if (type.functionId != 0) {
+    result = combine(result, type.functionId);
+  }
   result = combine(result, type.lambdaId);
   result = combine(result, type.lambdaParameterCount);
   result = combine(result, type.lambdaCaptureCount);

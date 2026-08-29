@@ -713,6 +713,14 @@ C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do
 not belong in `LoweredProgram`.
 
+A verified `SemanticType::FunctionItem` receives the private zero-state C++
+representation `gti_internal::backend::function_item<FunctionId>`. This is a
+nominal tag, not a C++ function pointer, overload set, or ABI address. The body
+plan admits `MirOperation::FunctionItem` only with its exact copied target row;
+invocation spells a direct call to that already selected GTI function. Missing
+or mismatched representation, target, nominal identity, or signature fails
+body admission rather than asking C++ to resolve the name.
+
 ### Defined Failure
 
 MIR carries canonical failure metadata, detector sites, failure edges, cleanup
@@ -740,6 +748,11 @@ metadata fails closed.
 Each thread-task item produces one private type-specific adapter rooted by its
 exact verified spawn instruction, exact concrete function-or-lambda entry, and
 exact `void` or owned result type.
+For a function-item task the adapter directly invokes the selected namespace
+function and never boxes a pointer value. Explicit specialization declarations
+may precede the GTI program namespace, but definitions are emitted only after
+the complete program declaration/definition region so the direct target is
+declared before adapter text.
 For an overloaded nominal callable the adapter invokes the already selected
 generated member spelling with its verified read, mutable, or consuming
 receiver; C++ overload resolution is not authority. The backend boxes the

@@ -2231,6 +2231,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
     case SemanticType::CString:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
+    case SemanticType::FunctionItem:
     case SemanticType::NativeFunction:
     case SemanticType::Enum:
     case SemanticType::Reference:

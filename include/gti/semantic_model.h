@@ -789,6 +789,16 @@ struct NativeFunctionConversionInfo {
   SemanticType type = SemanticType::Unknown;
 };
 
+// One context-selected, namespace-scope GTI function item. The semantic type
+// carries the same declaration identity and exact signature; this record keeps
+// the source expression tied to the selected declaration for HIR and tooling.
+struct FunctionItemSelectionInfo {
+  FunctionId function = 0;
+  const FunctionDecl *declaration = nullptr;
+  SemanticType type = SemanticType::Unknown;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
+};
+
 // A deliberately bounded comma-pack fold. The frontend retains the one
 // declaration selected by the symbolic pattern and, for concrete generic
 // instances, every exact element specialization in source-pack order.
@@ -1388,6 +1398,9 @@ public:
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
 
+  [[nodiscard]] const FunctionItemSelectionInfo *
+  findFunctionItemSelection(const Expr &expression) const;
+
   [[nodiscard]] const ResolvedPackFoldInfo *
   findPackFold(const PackFold &fold) const;
 
@@ -1605,6 +1618,9 @@ private:
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
 
+  void recordFunctionItemSelection(const Expr &expression,
+                                   FunctionItemSelectionInfo info);
+
   // Concrete instance analysis may replace a declaration-time call with a
   // different expression kind. Keep that replacement from falling through
   // to the superseded call record in the base model.
@@ -1745,6 +1761,8 @@ private:
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;
+  std::unordered_map<const Expr *, FunctionItemSelectionInfo>
+      functionItemSelections;
   std::unordered_set<const Call *> suppressedInheritedCalls;
   std::unordered_map<const PackFold *, ResolvedPackFoldInfo> packFolds;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;

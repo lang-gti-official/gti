@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v53 valid=" << program.valid() << '\n';
+    output << "mir-v54 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -651,7 +651,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v46\n";
+    output << "mir-body-v47\n";
     body(value, 0);
     return output.str();
   }
@@ -876,8 +876,11 @@ private:
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId
-           << ";lambda=" << value.lambdaId
+           << ";parameter=" << value.genericParameterId;
+    if (value.functionId != 0) {
+      output << ";function=" << value.functionId;
+    }
+    output << ";lambda=" << value.lambdaId
            << ";lambda-parameters=" << value.lambdaParameterCount
            << ";lambda-captures=" << value.lambdaCaptureCount
            << ";length=" << value.arrayLength

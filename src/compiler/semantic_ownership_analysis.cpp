@@ -348,6 +348,8 @@ auto SemanticVisitor::Impl::typeCapabilities(
                      .transferCapable = lambda->traits.transferCapable,
                      .shareCapable = lambda->traits.shareCapable};
   }
+  case SemanticType::FunctionItem:
+    return {.transferCapable = true, .shareCapable = true};
   case SemanticType::Class:
     break;
   case SemanticType::Unknown:
@@ -4015,6 +4017,27 @@ auto SemanticVisitor::Impl::exactThreadTaskEntry(const SemanticType &type,
                                    .capability =
                                        CallableInvocationCapability::Read};
   }
+  if (type.hasFunctionItemShape()) {
+    const SemanticType *result = type.functionItemReturnType();
+    if (result == nullptr || *result != resultType ||
+        !type.functionItemParameterTypes().empty()) {
+      return std::nullopt;
+    }
+    const FunctionInfo *function = semanticModel.findFunction(type.functionId);
+    if (function == nullptr && instanceBaseModel != nullptr) {
+      function = instanceBaseModel->findFunction(type.functionId);
+    }
+    if (function == nullptr || function->ownerClass != 0 ||
+        function->entryPoint || function->linkage != LanguageLinkage::Gti ||
+        function->declaration == nullptr ||
+        function->declaration->body() == nullptr ||
+        !function->genericParameters.empty()) {
+      return std::nullopt;
+    }
+    return ResolvedThreadTaskEntry{.function = type.functionId,
+                                   .capability =
+                                       CallableInvocationCapability::Read};
+  }
   if (type.kind != SemanticType::Class) {
     return std::nullopt;
   }
@@ -4187,12 +4210,12 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2084", DiagnosticPhase::Semantics,
           expressionToken(expr.arguments()[1]),
-          *resultType == SemanticType::Void
-              ? "A managed thread requires one consumed, transfer-safe "
-                "exact void() task."
-              : "A result-bearing managed thread requires one consumed, "
-                "transfer-safe exact task whose return type matches its "
-                "owned transferable result.");
+          std::string(*resultType == SemanticType::Void
+                          ? "A managed thread requires one consumed, "
+                            "transfer-safe exact void() task."
+                          : "A result-bearing managed thread requires one "
+                            "consumed, transfer-safe exact task whose return "
+                            "type matches its owned transferable result."));
       if (const std::optional<TransferCapabilityDenial> denial =
               transferCapabilityDenial(task);
           denial && denial->source != nullptr) {

@@ -227,7 +227,9 @@ diagnostics or letting a backend message choose either identity.
   Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
   those choices require intent. Foreign callback values remain valid in the
   concurrent profile, so this code applies there only when GTI code is exposed
-  through an adapter.
+  through an adapter. The same code continues to own a bare namespace function
+  name used outside any exact native-callback, confined-callable, or thread-task
+  context; explain that a function name must otherwise be called directly.
 - `GTI-S2077` owns a syntactically valid but semantically invalid parameter
   default. Point at the `=` for an unsupported declaration/type or recursive
   expansion, at the first following required parameter for a non-trailing
@@ -293,6 +295,8 @@ diagnostics or letting a backend message choose either identity.
   target thread support, and its exact private capability; a task must be one
   consumed, movable, transfer-capable
   exact `void()` or context-required `Result()` lambda or nominal callable;
+  a contextually exact namespace function item is also valid without an
+  explicit move because it has no user-visible stored source value;
   typed result handles additionally require an owned, non-reference,
   non-pointer, transfer-capable result. Relate the first structural transfer
   denial and the source-defined task parameter when available.
@@ -325,6 +329,18 @@ diagnostics or letting a backend message choose either identity.
   `?std::move(result)` only for a named move-only expected. Do not offer a
   mechanical fix-it because consuming a named result changes its subsequent
   ownership state.
+- `GTI-S2090` owns the bounded GTI function-item boundary. Point at the bare
+  function name for formation/selection failures and at the binding for a
+  storage attempt. Distinguish no eligible exact namespace target, multiple
+  exact targets, a contract outside the confined/thread-task clients, direct
+  call signature mismatch after contextualization, and an attempt to store or
+  escape the item. Relate eligible overload declarations and the selected
+  callable parameter when available. Explain that the target must be one
+  non-generic body-bearing GTI namespace function with the contract's exact
+  result and ordinary argument-binding shape. Suggest passing the name
+  directly to an exact confined or managed-thread client, or wrapping other
+  intended behavior explicitly; do not offer a cast, address-of, or automatic
+  lambda fix-it because those change identity, ABI, or ownership intent.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

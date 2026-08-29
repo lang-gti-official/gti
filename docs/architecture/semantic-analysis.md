@@ -497,6 +497,30 @@ error. Both stop before HIR because the language has no accepted cleanup
 schedule for that moved receiver across the enclosing full expression; this is
 a semantic/lowering restriction, not a backend fallback.
 
+### Contextual Free-Function Items
+
+The callable-argument resolver recognizes a bare namespace function name only
+after the selected generic parameter has a complete callable contract. The
+contextual inference helper is deliberately gated to `Confined` contracts and
+`Owned` contracts whose transport kind is exactly `ThreadTask`; it is not a
+general type-inference or value-storage path. Each eligible non-generic,
+body-bearing GTI namespace function is checked against the contract's exact
+result and ordinary argument-binding rules. Semantics accepts one viable
+target, diagnoses zero or multiple targets without conversion ranking, and
+constructs `SemanticType::FunctionItem` from the selected `FunctionId`, result,
+and parameter list.
+
+The resolved expression records a function occurrence for hover and
+definition, the exact function target, read-callable capability, and the
+existing confined or task boundary. Type traits classify the zero-state item
+as trivial, transfer-capable, and share-capable, but the expression audit
+rejects storage, capture, independent result, general-owned, and native use. A
+confined exact-return contract may relay the same item only to an unbound,
+explicitly discarded result. Ordinary direct calls and the separate named-
+native-callback contextual conversion keep
+their existing resolution paths. This ensures neither HIR nor a backend sees
+an overload set or must infer which declaration the source intended.
+
 ## Owned Managed-Thread Tasks
 
 Selection of the trusted private thread-spawn declaration extends the existing
@@ -504,7 +528,8 @@ Selection of the trusted private thread-spawn declaration extends the existing
 `CallableOwnedTransportKind::ThreadTask`; it does not recognize
 `std::thread` or a public method spelling. The accepted value is one fresh or
 explicitly moved exact `void()` or context-required `Result()` lambda or
-nominal callable. It must be movable, transfer-capable, free of tracked
+nominal callable, or one contextually selected namespace function item. It
+must be movable, transfer-capable, free of tracked
 borrowed state, and invocable with no arguments. A typed result must also be an
 owned, non-reference, non-pointer, transfer-capable value matching the private
 result-handle type exactly. Every lambda capture participates in the same
@@ -522,7 +547,8 @@ call. For a concrete lambda this is its exact `LambdaId`; for a nominal
 callable it is the unique public, non-generic, exact `void operator()()`
 or exact context-required result declaration selected for the consumed
 receiver, preferring consuming over mutable over read-only when those distinct
-receiver forms exist. The selected identity, invocation capability, and exact
+receiver forms exist. For a function item it is the already selected namespace
+function instance. The selected identity, invocation capability, and exact
 result type are snapshot-local semantic facts. Later phases neither reopen
 overload selection in C++, infer callable shape from a host type, nor repeat
 transfer analysis. A direct fresh class construction is accepted by the same

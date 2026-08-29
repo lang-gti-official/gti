@@ -3518,6 +3518,18 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
+  if (calleeType.kind == SemanticType::FunctionItem) {
+    if (argumentAnalysis.hasDeferred()) {
+      report(expr.paren(),
+             "Function-item calls require ordinary exact arguments.",
+             "GTI-S2090");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    analyzeFunctionItemCall(expr, calleeType, argumentTypes);
+    return;
+  }
+
   SemanticType deferredCalleeType = calleeType;
   if (deferredCalleeType.kind == SemanticType::Reference &&
       deferredCalleeType.arguments.size() == 1) {
@@ -3703,9 +3715,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (callee->overloads.size() == 1) {
     const CallableCandidate &candidate = callee->overloads.front();
     CallableCandidate resolved = candidate;
-    bool valid = applyFunctionTypeArguments(
-        resolved, explicitTypeArguments, explicitValueArguments, argumentTypes,
-        expr.arguments(), expr.paren());
+    bool valid = contextualizeFunctionItemArguments(
+        candidate, explicitTypeArguments, explicitValueArguments,
+        expr.arguments(), argumentAnalysis, true);
+    valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
+                                       explicitValueArguments, argumentTypes,
+                                       expr.arguments(), expr.paren()) &&
+            valid;
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     CallableCandidate trial;
@@ -3822,6 +3838,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<SemanticType> typeArguments;
     std::vector<CompileTimeValue> valueArguments;
     std::vector<std::size_t> ephemeralBorrowArguments;
+    ContextualCallArguments argumentAnalysis;
     CallReceiverMode receiverMode = CallReceiverMode::None;
   };
   std::vector<ViableOverload> viable;
@@ -3830,7 +3847,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedCompilerPrivate = false;
   for (const CallableCandidate &candidate : callee->overloads) {
-    if (!acceptsArgumentShape(candidate, argumentTypes)) {
+    ContextualCallArguments candidateArguments = argumentAnalysis;
+    if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
+        !contextualizeFunctionItemArguments(
+            candidate, explicitTypeArguments, explicitValueArguments,
+            expr.arguments(), candidateArguments, false)) {
       continue;
     }
     CallableCandidate resolved;
@@ -3838,20 +3859,22 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<CompileTimeValue> resolvedValueArguments;
     std::vector<std::size_t> resolvedEphemeralBorrowArguments;
     ConstraintFailure constraintFailure;
-    if (!tryInstantiateFunction(
-            candidate, explicitTypeArguments, explicitValueArguments,
-            argumentTypes, expr.arguments(), resolved, resolvedTypeArguments,
-            resolvedValueArguments, &constraintFailure)) {
+    if (!tryInstantiateFunction(candidate, explicitTypeArguments,
+                                explicitValueArguments,
+                                candidateArguments.types, expr.arguments(),
+                                resolved, resolvedTypeArguments,
+                                resolvedValueArguments, &constraintFailure)) {
       if (hasConstraintFailure(constraintFailure)) {
         constraintFailures.emplace_back(std::move(constraintFailure));
       }
       continue;
     }
     bool exact = true;
-    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+    for (std::size_t index = 0; index < candidateArguments.types.size();
+         ++index) {
       const CallArgumentMatchKind match = functionCallArgumentMatch(
-          resolved, index, argumentTypes[index], expr.arguments()[index],
-          argumentAnalysis.deferred[index]);
+          resolved, index, candidateArguments.types[index],
+          expr.arguments()[index], candidateArguments.deferred[index]);
       if (match == CallArgumentMatchKind::Mismatch) {
         exact = false;
         break;
@@ -3878,10 +3901,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       rejectedCompilerPrivate = true;
       continue;
     }
-    viable.push_back(
-        {&candidate, std::move(resolved), std::move(resolvedTypeArguments),
-         std::move(resolvedValueArguments),
-         std::move(resolvedEphemeralBorrowArguments), receiverMode});
+    viable.push_back({&candidate, std::move(resolved),
+                      std::move(resolvedTypeArguments),
+                      std::move(resolvedValueArguments),
+                      std::move(resolvedEphemeralBorrowArguments),
+                      std::move(candidateArguments), receiverMode});
   }
 
   if (std::any_of(viable.begin(), viable.end(),
@@ -3909,8 +3933,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     });
   }
 
+  std::vector<SemanticType> rankingArgumentTypes =
+      viable.empty() ? argumentTypes : viable.front().argumentAnalysis.types;
+  for (std::size_t index = 0; index < rankingArgumentTypes.size(); ++index) {
+    if (std::any_of(viable.begin(), viable.end(),
+                    [&](const ViableOverload &row) {
+                      return index < row.argumentAnalysis.types.size() &&
+                             row.argumentAnalysis.types[index].kind ==
+                                 SemanticType::FunctionItem;
+                    })) {
+      // Contextual function-item selection is a viability decision, never an
+      // overload-ranking conversion. Other written arguments may still rank
+      // the enclosing call normally.
+      rankingArgumentTypes[index] = SemanticType::Unknown;
+    }
+  }
   retainBestCallConversionMatches(
-      viable, argumentTypes,
+      viable, rankingArgumentTypes,
       [](const ViableOverload &candidate) -> const std::vector<SemanticType> & {
         return candidate.function.parameterTypes;
       });
@@ -3955,9 +3994,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
 
   if (argumentAnalysis.hasDeferred() &&
-      !finishContextualCallArguments(viable.front().function.parameterTypes,
-                                     expr.arguments(), argumentAnalysis,
-                                     expr.paren(), "Function")) {
+      !finishContextualCallArguments(
+          viable.front().function.parameterTypes, expr.arguments(),
+          viable.front().argumentAnalysis, expr.paren(), "Function")) {
     currentType = SemanticType::Unknown;
     return;
   }
@@ -3968,9 +4007,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     currentType = SemanticType::Unknown;
     return;
   }
-  if (!validateConfinedCallableArguments(*viable.front().source,
-                                         viable.front().function, argumentTypes,
-                                         expr.arguments())) {
+  if (!validateConfinedCallableArguments(
+          *viable.front().source, viable.front().function,
+          viable.front().argumentAnalysis.types, expr.arguments())) {
     currentType = SemanticType::Unknown;
     return;
   }
@@ -5855,9 +5894,16 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
           expr, *symbol, *contextualInitializerType, expr.name().last());
       return;
     }
+    if (contextualInitializerType &&
+        contextualInitializerType->kind == SemanticType::FunctionItem) {
+      currentType = analyzeFunctionItem(
+          expr, *symbol, *contextualInitializerType, expr.name().last());
+      return;
+    }
     report(expr.name().last(),
            "Function names must be called; function values are not "
-           "supported outside an exact named native-function context.",
+           "supported outside an exact callable or named native-function "
+           "context.",
            "GTI-S2076");
   }
   currentType = symbol->type;
@@ -6432,9 +6478,16 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
           expr, *symbol, *contextualInitializerType, expr.name());
       return;
     }
+    if (contextualInitializerType &&
+        contextualInitializerType->kind == SemanticType::FunctionItem) {
+      currentType = analyzeFunctionItem(
+          expr, *symbol, *contextualInitializerType, expr.name());
+      return;
+    }
     report(expr.name(),
            "Function names must be called; function values are not "
-           "supported outside an exact named native-function context.",
+           "supported outside an exact callable or named native-function "
+           "context.",
            "GTI-S2076");
   }
   if (symbol->type.kind == SemanticType::TypePack &&
@@ -8933,6 +8986,18 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     report(declaration.name(),
            "'auto' requires an initializer with a complete value type.",
            "GTI-S2028");
+    inferredType = SemanticType::Unknown;
+  }
+  if (initializerType.kind == SemanticType::FunctionItem) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2090", DiagnosticPhase::Semantics, declaration.name(),
+        "A function item is a confined callable identity and cannot be "
+        "stored in an ordinary binding.");
+    diagnostic.hints.emplace_back(
+        "Pass the namespace function name directly to an exact confined "
+        "generic callable or managed-thread task parameter; use a named "
+        "native-function type only at a supported C ABI callback boundary.");
+    diagnostics.emplace_back(std::move(diagnostic));
     inferredType = SemanticType::Unknown;
   }
   if (!type.reference && !declaration.isRangeOwner() &&

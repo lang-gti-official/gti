@@ -57,6 +57,14 @@ transfer exactly once. References, stored borrowed state, raw pointers, and
 non-transfer-capable values do not cross. An outstanding handle automatically
 joins during deterministic cleanup; detach is absent.
 
+In addition to an exact lambda or nominal callable object, `start` accepts an
+eligible namespace free-function name whose exact `void()` or `Result()`
+signature is supplied by the selected thread contract. Semantics selects one
+non-generic body-bearing GTI function and transfers a nominal zero-state
+function item. Overloads are not ranked, and no C/C++ function pointer or ABI
+address is formed. The item is valid only for that immediate task boundary;
+general function-item storage and task arguments remain unsupported.
+
 Successful spawn orders prior evaluations before task entry. Task completion
 orders before successful explicit or automatic join continuation. Worker
 defined failures are contained, task-owned state is cleaned, and the exact

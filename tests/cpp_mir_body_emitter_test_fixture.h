@@ -145,6 +145,8 @@ representationKind(const lang::SemanticType &type) {
     return lang::CppMirTypeRepresentationKind::Enum;
   case lang::SemanticType::Function:
     return lang::CppMirTypeRepresentationKind::Function;
+  case lang::SemanticType::FunctionItem:
+    return lang::CppMirTypeRepresentationKind::FunctionItem;
   case lang::SemanticType::Lambda:
     return lang::CppMirTypeRepresentationKind::Lambda;
   case lang::SemanticType::UniqueOwner:

@@ -252,6 +252,7 @@ bool isMirBlockParameterType(const SemanticType &type) {
   case SemanticType::TypePack:
   case SemanticType::TypeName:
   case SemanticType::Function:
+  case SemanticType::FunctionItem:
   case SemanticType::NativeFunction:
   case SemanticType::Lambda:
   case SemanticType::Expected:
@@ -3565,6 +3566,10 @@ freshOwnedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
                             producer->kind == MirInstructionKind::Compute &&
                             producer->operation == MirOperation::Closure &&
                             producer->lambdaTarget.has_value();
+  const bool exactFunctionItem =
+      producer != nullptr && producer->kind == MirInstructionKind::Compute &&
+      producer->operation == MirOperation::FunctionItem &&
+      producer->functionTarget.has_value();
   const bool exactConstruction =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       producer->constructorTarget.has_value();
@@ -3580,7 +3585,8 @@ freshOwnedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
       producer->operation == MirOperation::None &&
       producer->synchronization.kind == SynchronizationOperationKind::None &&
       producer->definedFailure.empty() && producer->callableArguments.empty();
-  if ((!exactClosure && !exactConstruction && !exactDefaultConstruction) ||
+  if ((!exactClosure && !exactFunctionItem && !exactConstruction &&
+       !exactDefaultConstruction) ||
       producer->result != std::optional{producerResult.value} ||
       producerResult.type != operand.type || definition == nullptr ||
       definition->result != operand.value ||
@@ -5401,6 +5407,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::ExpectedHasValue:
     case MirOperation::Closure:
     case MirOperation::NativeCallback:
+    case MirOperation::FunctionItem:
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract:
     case MirOperation::Unexpected:
@@ -5563,6 +5570,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return instruction.operands.size() == 1;
     }
     switch (instruction.operation) {
+    case MirOperation::FunctionItem:
+      return instruction.functionTarget && *instruction.functionTarget != 0 &&
+             instruction.operands.empty() && resultType.hasFunctionItemShape();
     case MirOperation::NativeCallback:
       return instruction.nativeCallbackAdapter &&
              *instruction.nativeCallbackAdapter != 0 &&
@@ -6113,7 +6123,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
       return !instruction.receiver && !instruction.loan &&
-             !instruction.functionTarget && !instruction.constructorTarget &&
+             (instruction.operation == MirOperation::FunctionItem
+                  ? instruction.functionTarget.has_value()
+                  : !instruction.functionTarget) &&
+             !instruction.constructorTarget &&
              (instruction.operation == MirOperation::Closure ||
               !instruction.lambdaTarget) &&
              validCompute(instruction);
@@ -6174,9 +6187,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               instruction.operation == MirOperation::PreDecrement ||
               instruction.operation == MirOperation::PostIncrement ||
               instruction.operation == MirOperation::PostDecrement);
-    case MirInstructionKind::Move:
-      return noOperation && hasResult && instruction.operands.size() == 1 &&
-             instruction.operands.front().kind == MirOperandKind::Move;
+    case MirInstructionKind::Move: {
+      const MirOperand *operand = instruction.operands.size() == 1
+                                      ? &instruction.operands.front()
+                                      : nullptr;
+      const MirPlace *source =
+          operand == nullptr ? nullptr : body.findPlace(operand->place);
+      return noOperation && hasResult && operand != nullptr &&
+             operand->kind == MirOperandKind::Move && source != nullptr &&
+             operand->type == source->type &&
+             instruction.info.type == source->type;
+    }
     case MirInstructionKind::Borrow:
       return noOperation && !hasResult && instruction.loan &&
              instruction.operands.size() == 1 &&

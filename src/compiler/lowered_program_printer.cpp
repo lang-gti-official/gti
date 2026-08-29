@@ -199,8 +199,11 @@ private:
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId
-           << ";lambda=" << value.lambdaId
+           << ";parameter=" << value.genericParameterId;
+    if (value.functionId != 0) {
+      output << ";function=" << value.functionId;
+    }
+    output << ";lambda=" << value.lambdaId
            << ";lambda-parameters=" << value.lambdaParameterCount
            << ";lambda-captures=" << value.lambdaCaptureCount
            << ";length=" << value.arrayLength
@@ -751,7 +754,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v4\n";
+  output << "lowered-program-v5\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

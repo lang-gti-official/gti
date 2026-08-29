@@ -418,6 +418,38 @@ concrete generic once-call selections are rejected before HIR.
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
 
+### Contextual Namespace Function Items
+
+An eligible namespace free-function name can be used as a stateless callable
+value only where an existing confined generic-callable parameter or consumed
+managed-thread task parameter supplies one complete required signature. The
+selected declaration must be a non-generic, body-bearing GTI function at
+namespace scope. Entry functions, members, operators, native declarations,
+intrinsics, and compiler-private functions are not eligible.
+
+Selection considers all visible declarations independently of source order.
+The result type must be exactly the contract result, and each written contract
+argument must bind under the ordinary exact call-argument rules. There is no
+conversion ranking, overload-set value, ADL, or backend overload resolution.
+Exactly one viable declaration forms the item; zero candidates are a signature
+mismatch and multiple candidates are ambiguous.
+
+The resulting semantic type contains the selected nominal function identity,
+exact parameter types, and exact result type. It is a zero-state read-callable
+and is transfer- and share-capable, so the existing exact `void()` and owned-
+result managed-thread transports can consume it. Its use is nevertheless
+confined to the single contextual call: it cannot initialize an ordinary
+binding, be captured, be independently returned, enter general owned generic
+transport, or cross a native boundary. A confined client whose existing
+contract returns its exact callable parameter may relay the item only as an
+unbound result that is explicitly discarded. A named native callback alias
+uses the separate exact native-callback conversion and never exposes the GTI
+function item as a C/C++ function pointer.
+
+Ordinary direct calls to the same function names retain their existing exact
+overload behavior. Function-item contextualization neither changes their
+candidate set nor creates a value when the name is called directly.
+
 ## 3.7 Generics
 
 Named generic arguments are inferred exactly from value arguments, supplied
@@ -918,7 +950,8 @@ current implementation:
 - general place movement, partial initialization, and reinitialization;
 - owned callable escape beyond exact same-type generic return, the bounded
   one-field generic owner, local closure movement, and explicit owned
-  move-capture;
+  move-capture, including retained or independently returned function items
+  and general function-pointer values;
 - constexpr execution beyond the bounded concrete-generic, scoped-enum,
   fixed-array, and structural-aggregate subset, including references,
   allocation, mutation through aggregate places, payload enums, packs,

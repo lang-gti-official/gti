@@ -965,6 +965,16 @@ SemanticModel::findNativeFunctionConversion(const Expr &expression) const {
                          : base->findNativeFunctionConversion(expression);
 }
 
+[[nodiscard]] const FunctionItemSelectionInfo *
+SemanticModel::findFunctionItemSelection(const Expr &expression) const {
+  const auto found = functionItemSelections.find(&expression);
+  if (found != functionItemSelections.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr
+                         : base->findFunctionItemSelection(expression);
+}
+
 [[nodiscard]] const ResolvedPackFoldInfo *
 SemanticModel::findPackFold(const PackFold &fold) const {
   const auto found = packFolds.find(&fold);
@@ -1687,6 +1697,11 @@ void SemanticModel::recordNativeFunctionConversion(
   nativeFunctionConversions.insert_or_assign(&expression, std::move(info));
 }
 
+void SemanticModel::recordFunctionItemSelection(
+    const Expr &expression, FunctionItemSelectionInfo info) {
+  functionItemSelections.insert_or_assign(&expression, std::move(info));
+}
+
 void SemanticModel::suppressInheritedCall(const Call &call) {
   calls.erase(&call);
   suppressedInheritedCalls.insert(&call);
@@ -2238,6 +2253,11 @@ semanticFloatFormat(const SemanticType &type) {
     traits.moveAssignable = false;
     traits.transferCapable = false;
     traits.shareCapable = false;
+    return traits;
+  case SemanticType::FunctionItem:
+    // A function item is a zero-state, process-lifetime callable identity.
+    // Its backend representation is private; no raw address or borrowed
+    // state is exposed through the GTI type.
     return traits;
   case SemanticType::Lambda:
     traits.drop = DropKind::Lexical;

@@ -3158,6 +3158,8 @@ private:
       return MirOperation::Closure;
     case HirValueKind::NativeCallback:
       return MirOperation::NativeCallback;
+    case HirValueKind::FunctionItem:
+      return MirOperation::FunctionItem;
     case HirValueKind::LayoutQuery:
       return MirOperation::Literal;
     case HirValueKind::Literal:
@@ -5540,7 +5542,8 @@ private:
       emittedValues.insert(id);
       return;
     }
-    if (value->kind == HirValueKind::Call || value->functionTarget) {
+    if (value->kind == HirValueKind::Call ||
+        (value->functionTarget && value->kind != HirValueKind::FunctionItem)) {
       emitCall(*value);
       emittedValues.insert(id);
       return;
@@ -5580,6 +5583,7 @@ private:
                                .payloadIndex = value->payloadIndex,
                                .intrinsic = value->intrinsic,
                                .definedFailure = value->definedFailure,
+                               .functionTarget = value->functionTarget,
                                .nativeCallbackAdapter =
                                    value->nativeCallbackAdapter,
                                .lambdaTarget = value->lambdaTarget,

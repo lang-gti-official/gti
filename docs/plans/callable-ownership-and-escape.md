@@ -7,7 +7,10 @@
 > implemented for confined generic parameters. Ordered copy/move closure
 > environments, one explicit owned move-capture mode, exact same-type generic
 > return, and one exact generic field owner are implemented. General owned
-> wrappers, extraction, erasure, and external storage remain planned.
+> wrappers, extraction, erasure, and external storage remain planned. Exact
+> namespace free-function items are implemented as contextual, stateless
+> values for existing confined generic-callable and consumed managed-thread
+> task contracts; they are not general stored function values or pointers.
 
 Original design baseline: GTI 0.94.0. The status above and the operational
 sequence track later implementation.
@@ -64,7 +67,8 @@ keywords.
    arguments also has distinct concrete identities.
 10. A closure cannot capture or refer to itself during its initializer. Direct
     recursive closure graphs are later breadth; recursion remains available
-    through named functions and later exact function items.
+    through named functions. A bounded exact function item preserves that
+    named target rather than creating a recursive closure graph.
 11. Range algorithms, consumed thread tasks, and native callbacks reuse the
     same identity/signature/capability/environment vocabulary. Their iteration,
     transfer, ABI, synchronization, failure, and registration rules are
@@ -116,7 +120,14 @@ environment implements:
 - a free function's direct immutable by-value generic parameter may be
   explicitly moved through the exact same-type result or into the exact sole
   field of a generic owner whose constructor performs the matching parameter
-  move.
+  move; and
+- one eligible namespace-scope GTI function name may be supplied directly to
+  an exact confined generic callable or managed-thread task contract. The
+  contextual use selects one non-generic body-bearing GTI function with an
+  exact signature and retains its nominal function identity. An existing
+  exact-return callable client may relay the same item only as an unbound
+  result that is explicitly discarded; it cannot be stored, captured,
+  independently returned, or passed through general owned transport.
 
 Semantic, HIR, and MIR records retain capture source/field identity, ordered
 copy/move initialization, move provenance, and cleanup; moving a local closure
@@ -136,7 +147,7 @@ syntax or runtime layout:
 | --- | --- | --- | --- |
 | lexical closure | source lambda plus concrete enclosing instance | explicit captures | algorithms and generic owned transport |
 | nominal callable object | ordinary concrete class instance plus selected `operator()` | ordinary fields | algorithms and user-defined stateful operations |
-| exact function item | selected GTI function plus exact signature/instance | none | bounded native callback and later ordinary function-value clients |
+| exact function item | selected GTI function plus exact signature/instance | none | confined generic callables and consumed managed-thread tasks |
 
 A form may have a different lowering strategy, but each produces the same
 semantic callable descriptor and the same invocation requirement records.
@@ -162,8 +173,10 @@ types.
 A nominal callable object keeps its existing class identity. Its public exact
 `operator()` candidates supply callable signatures after ordinary overload
 resolution. An exact function item keeps the selected function instance
-identity. Backend-generated C++ names are serialization details for all three
-forms.
+identity. It is formed only when an existing confined or thread-task contract
+supplies a complete signature; a bare function name has no independently
+storable inferred type. Backend-generated C++ names are serialization details
+for all three forms.
 
 ### Exact Invocation Signatures
 
@@ -372,6 +385,9 @@ not overload ranking.
 `C-CALL-01` binds the same concrete callable to one owned `void()` task. The
 task container consumes and transfers the callable exactly once. A reusable
 callable may satisfy this one-call client; a once-callable naturally does so.
+An exact namespace function item is a zero-state read-callable whose nominal
+target and signature cross the same task boundary without exposing an ABI
+address.
 Every capture and the environment lifecycle must separately be
 transfer-capable. References, borrowed-state carriers, raw pointers, and
 non-transfer-capable captures fail at the thread boundary.
@@ -384,12 +400,14 @@ target identity, and invocation count.
 
 ### Native Callbacks
 
-`S-CALL-01` implements a non-capturing exact function item and a same-thread C
-callback boundary. The function item uses semantic target selection, a concrete
-HIR identity, and a MIR-owned containment record; only the typed trampoline's
-spelling is ABI-specific. A later capturing registration must own one exact
-callable plus explicit userdata and registration lifetime; it is not an
-implicit conversion to `void*` or an erased C++ closure.
+`S-CALL-01` implements a separate non-capturing exact function-to-native
+conversion and a same-thread C callback boundary. That conversion uses
+semantic target selection, a concrete native-callback HIR value, and a
+MIR-owned containment record; it is not the GTI-only `FunctionItem` value and
+only the typed trampoline's spelling is ABI-specific. A later capturing
+registration must own one exact callable plus explicit userdata and
+registration lifetime; it is not an implicit conversion to `void*` or an
+erased C++ closure.
 
 Defined failure and native exceptions are contained by the implemented
 terminating adapter, and its code address has process lifetime. Userdata
@@ -429,7 +447,8 @@ exact invocation targets, signature/capability requirements, confinement or
 ownership mode, moves, and escape destination. An owned move capture is an
 ordinary typed move edge, not an emitter annotation. Callable forwarding keeps
 the concrete target and requirement chain already used by the confined
-baseline.
+baseline. A contextual namespace function is a `FunctionItem` value naming one
+concrete function instance; it has no environment or native-pointer payload.
 
 ### MIR
 
@@ -442,6 +461,11 @@ MIR materializes:
 - at-most-once consumption and use-after-consume verification;
 - call effects and cleanup on every represented exit; and
 - task/callback adapter operations only in their later owning rows.
+
+A `FunctionItem` operation carries both its nominal function ID in the exact
+semantic type and its concrete target instance. Verification exact-compares
+those identities, the parameter/result signature, GTI linkage, namespace
+ownership, and body availability.
 
 MIR verifies semantic decisions and predecessor agreement. It does not infer a
 capture's ownership mode or rescue an escaping borrow. M-LIFE-01 makes
@@ -513,7 +537,12 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
 8. **Done for the bounded clients:** comparator `sort`, complete-vector
    predicate/operation algorithms, numeric reductions, and `invoke_once` do
    not store callables beyond the accepted exact owner. Structural range-wide
-   generalization remains L-RANGE-04 breadth.
+   generalization remains L-RANGE-04 breadth; and
+9. **Done:** an eligible namespace free-function name can contextually satisfy
+   those exact confined contracts and the existing consumed managed-thread
+   `void()`/owned-result task contracts. Exact selection remains semantic,
+   declaration-order independent, and deliberately unavailable to general
+   storage or escape.
 
 Each sub-slice must preserve the current confined bridge until its replacement
 has equivalent semantic/HIR/MIR tests. Do not add a general callable base
@@ -530,11 +559,12 @@ separate breadth.
 
 ### S-CALL-01: Native Function Item Adapter
 
-Complete. The exact non-capturing function item and one same-thread callback
-trampoline use the recursively bounded C signature family. Semantic, HIR, MIR,
-backend, C/C++ header, formatter, Tree-sitter, LSP, and GLFW 3.4 oracle evidence
-are shipped. Capturing callbacks, userdata ownership, foreign-thread entry, and
-general function values require separately named follow-ons.
+Complete. The exact non-capturing function-to-native conversion and one
+same-thread callback trampoline use the recursively bounded C signature family.
+Semantic, HIR, MIR, backend, C/C++ header, formatter, Tree-sitter, LSP, and GLFW
+3.4 oracle evidence are shipped. Capturing callbacks, userdata ownership,
+foreign-thread entry, and general function values require separately named
+follow-ons.
 
 ## Verification Matrix
 
@@ -544,6 +574,13 @@ general function values require separately named follow-ons.
 - two identical-looking lambdas have different identities;
 - concrete generic instances produce distinct concrete lambda identities;
 - exact `void`, `bool`, and later value-result requirements select one target;
+- an exact namespace function item works through ordinary algorithms and both
+  managed-thread task result forms without a lambda wrapper;
+- overloaded function-item selection succeeds only for one contextually exact
+  target; ambiguity and mismatch are diagnosed without conversion ranking;
+- a bare item without context and attempts to store, capture, independently
+  return, or pass it through general owned transport are rejected; an existing
+  exact-return client may produce only an explicitly discarded temporary;
 - read-callable satisfies repeated read, exclusive, and one-call clients;
 - mut-callable fails read-only access but satisfies repeated exclusive use;
 - once-callable succeeds on one path and fails on any path permitting a second
@@ -558,6 +595,9 @@ general function values require separately named follow-ons.
 
 - captures retain source, type, ownership mode, and initialization order;
 - call edges retain exact lambda/operator/function targets and receiver mode;
+- function-item values retain the same nominal function ID and exact signature
+  as their concrete namespace target; forged missing, mismatched, class-owned,
+  or inexact targets fail verification;
 - move capture invalidates the source and initializes one environment field;
 - closure copy/move/drop follows derived traits exactly once;
 - once invocation consumes the callable place and joins path state correctly;
@@ -607,7 +647,8 @@ This decision does not add or promise in the bounded-first slice:
 - general inferred lambda or generic callable result types;
 - lambda reference/borrowed-state results without an explicit origin summary;
 - callable references or scoped borrowed closures;
-- general function values, function pointers, or closure-to-pointer casts;
+- function items outside exact confined/task contexts, general stored function
+  values, function pointers, or closure-to-pointer casts;
 - global/static closure storage;
 - recursive/self-referential closures;
 - type-erased callable containers;
@@ -624,7 +665,7 @@ D-CALL-01 is complete when this accepted contract is reflected in the
 restriction ledger and operational queue. It supplies:
 
 - one GTI-owned concrete identity rule across lexical closures, callable
-  objects, and future function items;
+  objects, and bounded exact function items;
 - one exact signature and three-level invocation capability vocabulary;
 - explicit copy/move capture, lifecycle, confinement, ownership, escape,
   recursion, and generic-identity decisions;

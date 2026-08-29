@@ -231,6 +231,62 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyNativeCallbackValues(instance.body);
   }
 
+  const auto verifyFunctionItemValues = [&](const HirBody &body) {
+    for (const HirValue &value : body.values) {
+      if (value.kind != HirValueKind::FunctionItem) {
+        continue;
+      }
+      const FunctionItemSelectionInfo *selection =
+          value.source == nullptr
+              ? nullptr
+              : semantics.findFunctionItemSelection(*value.source);
+      const HirFunctionInstance *target =
+          value.functionTarget
+              ? program.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const FunctionInfo *declaration =
+          target == nullptr ? nullptr
+                            : semantics.findFunction(target->declaration);
+      const SemanticType *returnType = value.info.type.functionItemReturnType();
+      const std::span<const SemanticType> parameters =
+          value.info.type.functionItemParameterTypes();
+      if (selection == nullptr || target == nullptr || declaration == nullptr ||
+          !value.operands.empty() ||
+          value.info.category != ValueCategory::Value ||
+          value.info.type != selection->type ||
+          selection->capability != CallableInvocationCapability::Read ||
+          value.info.type.functionId != target->declaration ||
+          selection->function != target->declaration ||
+          selection->declaration != target->source || target->owner ||
+          target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
+          *returnType != target->returnType ||
+          parameters.size() != target->parameterTypes.size() ||
+          !std::equal(parameters.begin(), parameters.end(),
+                      target->parameterTypes.begin())) {
+        result.errors.emplace_back(
+            "function-item HIR value has no exact free-function identity");
+      }
+    }
+  };
+  verifyFunctionItemValues(program.module());
+  for (const HirClassInstance &instance : program.classInstances()) {
+    verifyFunctionItemValues(instance.fieldInitializers);
+    verifyFunctionItemValues(instance.staticFieldInitializers);
+  }
+  for (const HirFunctionInstance &instance : program.functionInstances()) {
+    verifyFunctionItemValues(instance.body);
+  }
+  for (const HirConstructorInstance &instance :
+       program.constructorInstances()) {
+    verifyFunctionItemValues(instance.body);
+  }
+  for (const HirDestructorInstance &instance : program.destructorInstances()) {
+    verifyFunctionItemValues(instance.body);
+  }
+  for (const HirLambda &instance : program.lambdaInstances()) {
+    verifyFunctionItemValues(instance.body);
+  }
+
   std::vector<std::size_t> threadTaskRoots(program.threadTaskAdapters().size(),
                                            0);
   std::vector<SemanticType> threadTaskResults(
@@ -315,17 +371,25 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   *target->owner > program.classInstances().size()
               ? nullptr
               : &program.classInstances()[*target->owner - 1];
+      const bool functionItemEntry = adapter.taskType.hasFunctionItemShape();
       exactEntry =
           exactEntry && target != nullptr && declaration != nullptr &&
           target->source != nullptr &&
-          declaration->declaration == target->source && owner != nullptr &&
-          owner->type == adapter.taskType &&
+          declaration->declaration == target->source &&
           target->returnType == threadTaskResults[index] &&
           target->parameterTypes.empty() &&
-          target->source->operatorName().has_value() &&
-          target->source->operatorName()->kind == OverloadedOperator::Call &&
-          adapter.targetInvocation == callableInvocationCapability(
-                                          target->source->receiverMutability());
+          (functionItemEntry
+               ? owner == nullptr &&
+                     adapter.taskType.functionId == target->declaration &&
+                     adapter.targetInvocation ==
+                         CallableInvocationCapability::Read
+               : owner != nullptr && owner->type == adapter.taskType &&
+                     target->source->operatorName().has_value() &&
+                     target->source->operatorName()->kind ==
+                         OverloadedOperator::Call &&
+                     adapter.targetInvocation ==
+                         callableInvocationCapability(
+                             target->source->receiverMutability()));
     }
     if (lambdaEntry) {
       const HirLambda *target = program.findLambda(*adapter.lambdaTarget);

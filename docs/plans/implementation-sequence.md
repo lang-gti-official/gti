@@ -2633,7 +2633,11 @@ name recognition.
   reachable return moves that same parameter; this serves source-defined
   `std::for_each`. Public unary/binary callable, predicate, operation,
   comparator, indirect iterator-call, and once-action capabilities now expose
-  that same exact contract to reusable generic source. External callable owners remain
+  that same exact contract to reusable generic source. An eligible namespace
+  free-function name may now contextually satisfy one of those confined
+  contracts or an exact managed-thread task contract as a nominal zero-state
+  item, with exact target identity through HIR/MIR/backend and no general
+  storage or function-pointer conversion. External callable owners remain
   systems-readiness implementation shared by algorithms, tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
@@ -3629,7 +3633,7 @@ owned by the rows and domain plans above.
 | Mutable iteration/views | L-RANGE-01/02 and the bounded read-only single-owner L-RANGE-03 release are complete; mutable, nested, and multi-owner views remain | Follow-up must first extend the ownership representation explicitly |
 | Named expected-payload range loans | **complete bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact namespace function items for confined generic and managed-thread clients, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **in progress:** passive payloads plus direct-local concrete owning-class construction, variant-aware exactly-once drop, whole-enum move construction/assignment, checked-reference observation, copied bindings, and tag-only exhaustive matching are complete; owning call/return and containment ABI, consuming/borrowed bindings, recursive owning aggregates, generics, and stable layout remain | `L-SUM-01` |
