@@ -15,6 +15,7 @@ polls `ps` and kills the process group.
 | `namespace-depth-63.gti` | unbounded memory, no diagnostic, no termination | F19 |
 | `namespace-depth-62-control.gti` | `GTI-P0005` in ~0.3s, exit 65 | F19 control |
 | `formatter-blank-lines.gti` | `format` is not idempotent (LSP path) | F20 |
+| `formatter-token-resplit.gti` | formatting changes the token stream | F20 |
 
 `namespace-depth-62-control.gti` is the pair to `namespace-depth-63.gti`: the
 two differ by one level of nesting and by everything else about what the

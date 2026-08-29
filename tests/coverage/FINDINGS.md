@@ -622,6 +622,24 @@ whitespace-only shape tested is stable — a single newline, spaces only, a tab,
 a comment followed by blank lines. It is specifically a token-free file with
 two or more newlines.
 
+A longer run on 0.329.0 produced 35 artifacts across **two** properties: 32
+non-idempotence, and 3 where **formatting changes the significant token
+stream**. `stress/formatter-token-resplit.gti`:
+
+| Input | Formatted | Tokens |
+| --- | --- | --- |
+| `a<<<=b;` | `a << <= b;` | `[<<=][<]` → `[<<][<=]` |
+| `a>>>=b;` | `a >> >= b;` | `[>>=][>]` → `[>>][>=]` |
+
+Maximal munch lexes `<<<=` as `<<=` then `<`; the formatter re-splits it as `<<`
+then `<=`. Every valid operator sequence probed is clean, so this arises only on
+ill-formed input — but the formatter's reachable path is format-on-save, which
+runs on mid-edit buffers by definition.
+
+All three symptoms — blank-file erosion, angle-bracket drift, and this
+re-splitting — are consistent with the formatter re-deriving token boundaries
+from its own spacing decisions rather than preserving the ones the lexer found.
+
 Three further non-idempotent inputs turned up on lexically invalid bytes,
 where the divergence is angle-bracket spacing: the first pass emits
 `std::name < int32_t >` and the second collapses it to `std::name<int32_t>`.
