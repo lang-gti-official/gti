@@ -155,6 +155,8 @@ requireCapture(107, "T", "type.parameter");
 requireCapture(107, "totally_ordered", "type");
 requireCapture(107, "&&", "operator");
 requireCapture(107, "movable", "type");
+requireCapture(107, "||", "operator");
+requireCapture(107, "copyable", "type");
 requireCapture(109, "sortable", "type");
 requireCapture(114, "do", "keyword.repeat");
 requireCapture(116, "while", "keyword.repeat");
@@ -497,7 +499,7 @@ requireRainbowDelimiter(
   2,
 );
 requireRainbowDelimiter(
-  "concept sortable<T> = std::totally_ordered<T> && std::movable<T>;",
+  "concept sortable<T> = std::totally_ordered<T> && std::movable<T> || std::copyable<T>;",
   "<",
   2,
 );

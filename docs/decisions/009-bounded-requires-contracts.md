@@ -15,11 +15,19 @@ overload ordering, and specialization machinery that GTI does not need.
 ## Decision
 
 GTI supports source concepts with one or more type parameters and a trailing
-function clause limited to a conjunction of concept applications:
+function clause limited to a Boolean tree of concept applications:
 
 ```gti
-requires Concept<A> && Relation<B, A>
+requires Concept<A> && (Relation<B, A> || Alternate<B, A>)
 ```
+
+`&&`/`and` binds more tightly than `||`/`or`; parentheses group the tree.
+Concrete viability uses ordinary Boolean meaning. Symbolic body analysis unions
+facts across conjunction and intersects facts across disjunction, including
+the existing callable-capability implication lattice. It therefore exposes
+only facts guaranteed by every viable alternative and never combines partial
+facts from different branches. Inline unary constraints retain the resolved
+concept identity for concrete checks even when that intersection is empty.
 
 Application arguments name visible generic type parameters. Concepts compose
 compiler-owned unary facts and exact structural relationships through private,
@@ -62,6 +70,6 @@ resolve real operations again for concrete generic instances. The first
 `T`; heterogeneous accumulation needs a new reviewed relationship rather than
 implicit conversion or native expression probing.
 
-Future disjunction, general expression requirements, associated types,
-specialization, subsumption, or constraint-based ranking are separate language
+General expression requirements, associated types, specialization,
+subsumption, negation, or constraint-based ranking remain separate language
 decisions. This ADR does not authorize them.

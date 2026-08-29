@@ -107,6 +107,7 @@ struct LoweredGenericParameter {
   bool value = false;
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
+  ConceptId constraintConcept = 0;
 
   friend bool operator==(const LoweredGenericParameter &,
                          const LoweredGenericParameter &) = default;
@@ -118,6 +119,16 @@ struct LoweredConceptRequirement {
 
   friend bool operator==(const LoweredConceptRequirement &,
                          const LoweredConceptRequirement &) = default;
+};
+
+struct LoweredConstraintExpressionNode {
+  ConstraintExpressionKind kind = ConstraintExpressionKind::Application;
+  std::size_t application = ConstraintExpressionNode::invalidIndex;
+  std::size_t left = ConstraintExpressionNode::invalidIndex;
+  std::size_t right = ConstraintExpressionNode::invalidIndex;
+
+  friend bool operator==(const LoweredConstraintExpressionNode &,
+                         const LoweredConstraintExpressionNode &) = default;
 };
 
 struct LoweredParameter {
@@ -248,6 +259,8 @@ struct LoweredFunctionDeclaration {
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<LoweredConceptRequirement> requirements;
+  std::vector<LoweredConstraintExpressionNode> requirementExpression;
+  std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
   std::vector<LoweredCallableParameter> callableParameters;
   std::size_t requiredParameterCount = 0;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
@@ -286,6 +299,8 @@ struct LoweredConstructorDeclaration {
   AccessModifier access = AccessModifier::Public;
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<LoweredConceptRequirement> requirements;
+  std::vector<LoweredConstraintExpressionNode> requirementExpression;
+  std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
   std::vector<LoweredParameter> parameters;
   std::size_t requiredParameterCount = 0;
   std::optional<std::size_t> borrowParameter;

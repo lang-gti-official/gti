@@ -26,6 +26,8 @@ struct SemanticConstraintFailure {
   std::optional<NamePath> constraintName;
   StructuralConstraintKind structural = StructuralConstraintKind::None;
   const ConceptApplication *application = nullptr;
+  const Token *disjunction = nullptr;
+  std::vector<SemanticConstraintFailure> alternatives;
 };
 
 class SemanticDiagnosticReporter {

@@ -1627,7 +1627,8 @@ def test_requires_tooling(executable, root):
     source = (
         "#include <std/functional>\n"
         "concept pairwise<Left, Right> =\n"
-        "    std::numeric<Left> && std::numeric<Right>;\n"
+        "    std::numeric<Left> && std::numeric<Right> ||\n"
+        "    std::integral<Left> && std::integral<Right>;\n"
         "Left choose<std::numeric Left, std::numeric Right>(\n"
         "    Left left, Right right)\n"
         "  requires pairwise<Left, Right> {\n"
@@ -1635,7 +1636,8 @@ def test_requires_tooling(executable, root):
         "}\n"
         "class NumericBox<T> {\n"
         "public:\n"
-        "  T doubled(T value) requires std::numeric<T> {\n"
+        "  T doubled(T value)\n"
+        "    requires std::integral<T> || std::floating_point<T> {\n"
         "    return T(value + value);\n"
         "  }\n"
         "};\n"
@@ -1668,7 +1670,11 @@ def test_requires_tooling(executable, root):
                 "params": {
                     "capabilities": {
                         "textDocument": {
-                            "hover": {"contentFormat": ["markdown"]}
+                            "hover": {"contentFormat": ["markdown"]},
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
                         }
                     }
                 },
@@ -1719,7 +1725,8 @@ def test_requires_tooling(executable, root):
         concept_hover = hover(2, concept_use + 1)
         assert concept_hover["contents"]["value"].startswith(
             "```gti\nconcept pairwise<Left, Right> = "
-            "std::numeric<Left> && std::numeric<Right>\n```"
+            "std::numeric<Left> && std::numeric<Right> || "
+            "std::integral<Left> && std::integral<Right>\n```"
         )
 
         function_declaration = source.index("choose")
@@ -1743,7 +1750,8 @@ def test_requires_tooling(executable, root):
         assert selected_method_hover["contents"]["value"].startswith(
             "```gti\n"
             "int32_t NumericBox::doubled(int32_t value) "
-            "requires std::numeric<int32_t>\n```"
+            "requires std::integral<int32_t> || "
+            "std::floating_point<int32_t>\n```"
         )
 
         callable_declaration = source.index("accepts<Predicate>")
@@ -1852,7 +1860,8 @@ def test_requires_tooling(executable, root):
         )
         assert doubled["detail"] == (
             "int32_t NumericBox::doubled(int32_t value) "
-            "requires std::numeric<int32_t>"
+            "requires std::integral<int32_t> || "
+            "std::floating_point<int32_t>"
         )
 
         completion_source = source.replace(
@@ -1893,6 +1902,61 @@ def test_requires_tooling(executable, root):
         assert choose["detail"] == (
             "Left choose<std::numeric Left, std::numeric Right>("
             "Left left, Right right) requires pairwise<Left, Right>"
+        )
+
+        rejected_source = source.replace(
+            "  bool accepted = accepts(doubled, positive());\n",
+            "  NumericBox<positive> invalid_box = NumericBox<positive>();\n"
+            "  positive invalid = invalid_box.doubled(positive());\n"
+            "  bool accepted = accepts(doubled, positive());\n",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": rejected_source}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+            and any(
+                diagnostic.get("code") == "GTI-S2029"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        disjunction = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2029"
+            and "any alternative in the requires clause"
+            in diagnostic["message"]
+        )
+        assert len(disjunction["relatedInformation"]) >= 3, disjunction
+        assert disjunction["data"]["phase"] == "semantics", disjunction
+        assert disjunction["data"]["hints"], disjunction
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 5},
+                    "contentChanges": [{"text": source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 5
+            and not message["params"]["diagnostics"]
         )
     finally:
         session.close()

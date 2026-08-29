@@ -3673,6 +3673,7 @@ auto SemanticVisitor::Impl::makeGenericParameters(
              "GTI-S2026");
     }
     GenericConstraintSet constraints = 0;
+    ConceptId constraintConcept = 0;
     if (parameter.constraint) {
       if (reportCompilerPrivatePath(*parameter.constraint)) {
         constraints = constraintBit(GenericConstraintKind::Invalid);
@@ -3694,6 +3695,7 @@ auto SemanticVisitor::Impl::makeGenericParameters(
         constraints = constraintBit(GenericConstraintKind::Invalid);
       } else if (const std::optional<ConceptId> resolved =
                      resolveConceptPath(*parameter.constraint, fromScope)) {
+        constraintConcept = *resolved;
         const RegisteredConcept &conceptInfo = concepts[*resolved - 1];
         const std::vector<std::string> enclosingNamespace = currentNamespace;
         currentNamespace = fromScope;
@@ -3723,7 +3725,7 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                    "concepts.",
                    "GTI-S2029");
             constraints = constraintBit(GenericConstraintKind::Invalid);
-          } else if (!conceptInfo.structuralConstraints.empty()) {
+          } else if (conceptInfo.hasStructuralRequirements) {
             report(parameter.constraint->last(),
                    "Structural concepts must be written in a trailing "
                    "requires clause.",
@@ -3756,13 +3758,17 @@ auto SemanticVisitor::Impl::makeGenericParameters(
     }
     const GenericParameterId id = nextGenericParameterId++;
     genericConstraints.insert_or_assign(id, constraints);
+    if (constraintConcept != 0) {
+      genericConstraintConcepts.insert_or_assign(id, constraintConcept);
+    }
     result.push_back(
         GenericParameterInfo{.id = id,
                              .name = parameter.name,
                              .pack = parameter.pack.has_value(),
                              .value = valueParameter,
                              .constraints = constraints,
-                             .constraintName = parameter.constraint});
+                             .constraintName = parameter.constraint,
+                             .conceptId = constraintConcept});
     const SemanticType parameterType =
         valueParameter ? SemanticType::UInt64 : SemanticType::typeParameter(id);
     const SymbolId symbol = recordToolingSymbol(
@@ -4192,7 +4198,10 @@ auto SemanticVisitor::Impl::resolveRequirements(
 
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   currentNamespace = scope;
-  for (const ConceptApplication &application : clause->requirements) {
+  for (std::size_t applicationIndex = 0;
+       applicationIndex < clause->requirements().size(); ++applicationIndex) {
+    const ConceptApplication &application =
+        clause->requirements()[applicationIndex];
     if (reportCompilerPrivatePath(application.name)) {
       continue;
     }
@@ -4241,7 +4250,10 @@ auto SemanticVisitor::Impl::resolveRequirements(
     }
 
     AppliedConceptRequirement requirement{.conceptId = *resolved,
-                                          .syntax = &application};
+                                          .syntax = &application,
+                                          .expression = &clause->expression,
+                                          .expressionApplication =
+                                              applicationIndex};
     bool valid = true;
     for (const TypeRef &argument : application.arguments) {
       const std::optional<SemanticType> parameter =

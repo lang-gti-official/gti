@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <optional>
 #include <sstream>
@@ -121,13 +122,36 @@ SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
   result += '>';
   if (!declaration->requirements().empty()) {
     result += " = ";
-    for (std::size_t index = 0; index < declaration->requirements().size();
-         ++index) {
-      if (index != 0) {
-        result += " && ";
-      }
-      appendConceptApplication(result, declaration->requirements()[index]);
-    }
+    const ConstraintExpression &expression =
+        declaration->constraintExpression();
+    std::function<void(std::size_t, int)> appendNode =
+        [&](std::size_t nodeIndex, int parentPrecedence) {
+          if (nodeIndex >= expression.nodes.size()) {
+            return;
+          }
+          const ConstraintExpressionNode &node = expression.nodes[nodeIndex];
+          if (node.kind == ConstraintExpressionKind::Application) {
+            if (node.application < expression.applications.size()) {
+              appendConceptApplication(
+                  result, expression.applications[node.application]);
+            }
+            return;
+          }
+          const int precedence =
+              node.kind == ConstraintExpressionKind::Conjunction ? 2 : 1;
+          const bool parenthesize = precedence < parentPrecedence;
+          if (parenthesize) {
+            result += '(';
+          }
+          appendNode(node.left, precedence);
+          result += node.kind == ConstraintExpressionKind::Conjunction ? " && "
+                                                                       : " || ";
+          appendNode(node.right, precedence);
+          if (parenthesize) {
+            result += ')';
+          }
+        };
+    appendNode(expression.root, 0);
   }
   return result;
 }
@@ -516,16 +540,20 @@ void SignaturePrinter::appendRequirements(
   if (!requiresClause) {
     return;
   }
-  const std::vector<ConceptApplication> &syntax = requiresClause->requirements;
-  for (std::size_t index = 0; index < syntax.size(); ++index) {
+  const ConstraintExpression &expression = requiresClause->expression;
+  const std::vector<ConceptApplication> &syntax = expression.applications;
+  const auto appendApplication = [&](std::size_t index) {
+    if (index >= syntax.size()) {
+      return;
+    }
     const AppliedConceptRequirement *resolvedRequirement = nullptr;
     for (const AppliedConceptRequirement &requirement : requirements) {
-      if (requirement.syntax == &syntax[index]) {
+      if (requirement.expression == &expression &&
+          requirement.expressionApplication == index) {
         resolvedRequirement = &requirement;
         break;
       }
     }
-    result += index == 0 ? " requires " : " && ";
     result += path(syntax[index].name);
     result += '<';
     for (std::size_t argumentIndex = 0;
@@ -547,7 +575,33 @@ void SignaturePrinter::appendRequirements(
       }
     }
     result += '>';
-  }
+  };
+  result += " requires ";
+  std::function<void(std::size_t, int)> appendNode = [&](std::size_t nodeIndex,
+                                                         int parentPrecedence) {
+    if (nodeIndex >= expression.nodes.size()) {
+      return;
+    }
+    const ConstraintExpressionNode &node = expression.nodes[nodeIndex];
+    if (node.kind == ConstraintExpressionKind::Application) {
+      appendApplication(node.application);
+      return;
+    }
+    const int precedence =
+        node.kind == ConstraintExpressionKind::Conjunction ? 2 : 1;
+    const bool parenthesize = precedence < parentPrecedence;
+    if (parenthesize) {
+      result += '(';
+    }
+    appendNode(node.left, precedence);
+    result +=
+        node.kind == ConstraintExpressionKind::Conjunction ? " && " : " || ";
+    appendNode(node.right, precedence);
+    if (parenthesize) {
+      result += ')';
+    }
+  };
+  appendNode(expression.root, 0);
 }
 
 class LanguageQueriesImpl {

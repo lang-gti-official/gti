@@ -345,15 +345,19 @@ diagnostics or letting a backend message choose either identity.
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
 
-`GTI-S2029` owns failure of a declared public callable relationship before a
+`GTI-S2029` owns failure of a declared public concept relationship before a
 generic body is instantiated. It retains the source concept name and required
-application, then gives a shape-specific hint for unary/binary argument and
-owned-result exactness, receiver capability, iterator dereference, or nullary
-`void()` action. An inexact argument, borrowed/wrong result, private or
-ambiguous `operator()`, and a consuming target at a repeatable site therefore
-fail at call viability. Do not postpone these cases to a body-local
-`GTI-S2022` or `GTI-S2046`: concrete reanalysis must confirm the relation, not
-discover that its public contract was insufficient.
+application, then gives a shape-specific hint for atomic lifecycle/type facts,
+unary/binary callable argument and owned-result exactness, receiver capability,
+iterator dereference, or nullary `void()` action. When every branch of a
+bounded disjunction fails, one primary diagnostic states that no alternative
+matched, relates the written `||` and each failing application, and explains
+that facts from separate alternatives are not combined. An inexact argument,
+borrowed/wrong result, private or ambiguous `operator()`, and a consuming
+target at a repeatable site therefore fail at call viability. Do not postpone
+these cases to a body-local `GTI-S2022` or `GTI-S2046`: concrete reanalysis
+must confirm the relation, not discover that its public contract was
+insufficient.
 
 `GTI-S2046` owns the confined-callable boundary after public viability. It
 points at the callable

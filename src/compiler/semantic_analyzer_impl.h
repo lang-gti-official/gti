@@ -881,11 +881,26 @@ private:
       struct Argument {
         std::optional<std::size_t> parameter;
         SemanticType concrete = SemanticType::Unknown;
+
+        friend bool operator==(const Argument &, const Argument &) = default;
       };
       StructuralConstraintKind kind = StructuralConstraintKind::None;
       std::vector<Argument> arguments;
+
+      friend bool operator==(const StructuralPattern &,
+                             const StructuralPattern &) = default;
+    };
+    struct RequirementPattern {
+      ConceptId conceptId = 0;
+      const ConceptApplication *syntax = nullptr;
+      std::vector<StructuralPattern::Argument> arguments;
+      std::size_t expressionApplication =
+          ConstraintExpressionNode::invalidIndex;
     };
     std::vector<StructuralPattern> structuralConstraints;
+    std::vector<RequirementPattern> definitionRequirements;
+    const ConstraintExpression *definitionExpression = nullptr;
+    bool hasStructuralRequirements = false;
     ConceptResolution resolution = ConceptResolution::Unresolved;
     SymbolId symbol = 0;
     std::vector<SymbolId> parameterSymbols;
@@ -1576,6 +1591,9 @@ private:
   expandStructuralRequirements(
       std::span<const AppliedConceptRequirement> requirements) const;
 
+  [[nodiscard]] static std::vector<StructuralConstraintKind>
+  guaranteedStructuralKinds(StructuralConstraintKind kind);
+
   [[nodiscard]] std::vector<ExpandedStructuralRequirement>
   activeStructuralRequirements() const;
 
@@ -1588,6 +1606,9 @@ private:
 
   [[nodiscard]] std::optional<ConstraintFailure> firstRequirementFailure(
       std::span<const AppliedConceptRequirement> requirements) const;
+
+  [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
+      const AppliedConceptRequirement &requirement) const;
 
   [[nodiscard]] static bool
   hasConstraintFailure(const ConstraintFailure &failure);
@@ -3459,6 +3480,7 @@ private:
         globalBorrowStorage;
     std::unordered_map<GenericParameterId, GenericConstraintSet>
         genericConstraints;
+    std::unordered_map<GenericParameterId, ConceptId> genericConstraintConcepts;
     std::vector<ClassInfo> classes;
     std::vector<ExactClassSpecialization> exactClassSpecializations;
     std::vector<EnumInfo> enums;
@@ -3541,6 +3563,7 @@ private:
               rootNativeStorageSymbols.size(),
               globalBorrowStorage.size(),
               genericConstraints.size(),
+              genericConstraintConcepts.size(),
               classes.size(),
               exactClassSpecializations.size(),
               enums.size(),
@@ -3742,6 +3765,8 @@ private:
       &globalBorrowStorage = requestSession.catalog.globalBorrowStorage;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
       &genericConstraints = requestSession.catalog.genericConstraints;
+  std::unordered_map<GenericParameterId, ConceptId> &genericConstraintConcepts =
+      requestSession.catalog.genericConstraintConcepts;
   std::vector<ClassInfo> &classes = requestSession.catalog.classes;
   std::vector<ExactClassSpecialization> &exactClassSpecializations =
       requestSession.catalog.exactClassSpecializations;

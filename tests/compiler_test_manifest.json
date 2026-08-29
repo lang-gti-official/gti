@@ -130,6 +130,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testRequiresDisjunction",
+      "suite": "declarations"
+    },
+    {
       "name": "testStructuralRequiresAndAccumulate",
       "suite": "declarations"
     },

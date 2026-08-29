@@ -2487,7 +2487,14 @@ name recognition.
      completion, and signature help. The named executable evidence includes
      explicit value generics, the generic algorithm cluster, public callable
      concepts, reference-parameter ranges, mixed-capture carriers, standard
-     containers, and the installed generic CLI corpus.
+     containers, and the installed generic CLI corpus; and
+  6. **Completed in 0.328.0:** source concepts and trailing clauses admit
+     precedence-aware `&&`/`and`, `||`/`or`, and parentheses. Concrete
+     viability accepts either complete alternative; symbolic bodies receive
+     only common atomic and structural facts, and inline constraints retain
+     exact concept identity even when the common set is empty. Formatting,
+     Tree-sitter, LSP signatures, structured diagnostics, lowered metadata,
+     and the four-mode native runtime matrix cover the surface.
 - **Durable boundaries:** exact unique-match overload resolution, explicit
   ownership transfer, no ADL or implicit call conversions, validity-only
   requirements, frontend-owned substitution, and verified-MIR execution do
@@ -2876,9 +2883,9 @@ name recognition.
   binary64 fraction times ten is not exact in binary64), float parsing, and
   float arguments to `std::format`. The last is blocked on a dispatch
   mechanism rather than on formatting: `std::format` constrains its pack to
-  one capability, concepts are conjunction-only so `integral || floating_point`
-  is inexpressible, and with no type predicate for `if constexpr` a single
-  generic body cannot select between the integral and binary32 conversions.
+  one capability. `integral || floating_point` is now expressible, but with no
+  type predicate for `if constexpr` a single generic body still cannot select
+  between the integral and binary32 conversions.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.
@@ -3601,7 +3608,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **complete in 0.311.0** | `L-ERR-01` |
-| Production generic functions | **complete bounded production system:** type/value/pack declarations, exact inference and explicit expressions, inferred array extents, defaults/dependent values, bounded concepts/requirements, concrete reanalysis, HIR/MIR/lowered identity, callable confinement and public relations, verified-MIR execution, deterministic ordinary free/class/member/constructor emission, ownership/failure evidence, and the stdlib/tooling/runtime matrix are implemented | `L-GEN-01`, `E-SYM-01`, and `E-INST-01` done; general requires-expressions, partial specialization, subsumption/ranking, nested-type direct emission, and removal of the audited closure/incomplete-owner physical carriers remain later breadth |
+| Production generic functions | **complete bounded production system:** type/value/pack declarations, exact inference and explicit expressions, inferred array extents, defaults/dependent values, bounded `&&`/`||` concept expressions, concrete reanalysis, HIR/MIR/lowered identity, callable confinement and public relations, verified-MIR execution, deterministic ordinary free/class/member/constructor emission, ownership/failure evidence, and the stdlib/tooling/runtime matrix are implemented | `L-GEN-01`, `E-SYM-01`, and `E-INST-01` done; general requires-expressions, partial specialization, subsumption/ranking, nested-type direct emission, and removal of the audited closure/incomplete-owner physical carriers remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

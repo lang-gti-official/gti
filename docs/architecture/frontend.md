@@ -204,14 +204,15 @@ requirements, `extern "C"`, and mutable field groups. The node introduces no
 symbol; exact typing, constant evaluation, and generic deferral belong to
 semantics.
 
-`ConceptDecl` retains every written type parameter and concept application.
-`FunctionDecl` and `ConstructorDecl` optionally retain a `RequiresClause`
-containing the `requires` token and its conjunction of applications. Concept
-applications retain `TypeRef` arguments so semantics can distinguish visible
-generic parameters from closed exact types. The parser enforces only the
-bounded application grammar and rejects disjunction; concept identity, arity,
-argument closure, capability composition, and call viability belong to
-semantic analysis.
+`ConceptDecl` retains every written type parameter and a precedence-resolved
+constraint-expression tree over its concept applications. `FunctionDecl` and
+`ConstructorDecl` optionally retain the same tree in a `RequiresClause`
+together with the `requires` token. `&&`/`and` binds more tightly than
+`||`/`or`, and parentheses change the tree shape. Concept applications retain
+`TypeRef` arguments so semantics can distinguish visible generic parameters
+from closed exact types. The parser owns only this bounded Boolean grammar;
+concept identity, arity, argument closure, common-fact derivation, and call
+viability belong to semantic analysis.
 
 `ArrayInitializer` is reused for fixed-array declarations and for braces in a
 call argument list. The parser records only the written elements; it does not

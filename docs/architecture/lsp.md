@@ -91,6 +91,13 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+Bounded constraint disjunction follows that same compiler-owned path.
+Signatures render canonical `&&`/`||` precedence and only necessary
+parentheses, selected calls substitute every application leaf, and a failed
+disjunction publishes the shared `GTI-S2029` primary diagnostic plus related
+alternative locations. The protocol adapter neither evaluates branches nor
+reconstructs their common guarantees.
+
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
 read-only or mutable access and the deduplicated exact invocation signatures

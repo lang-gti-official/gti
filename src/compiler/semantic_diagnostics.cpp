@@ -2,6 +2,8 @@
 
 #include "semantic_spelling.h"
 
+#include <functional>
+
 namespace lang {
 
 std::string
@@ -96,6 +98,63 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
 
 void SemanticDiagnosticReporter::reportConstraintFailure(
     const Token &site, const SemanticConstraintFailure &failure) {
+  if (!failure.alternatives.empty()) {
+    const std::string constraint =
+        failure.constraintName
+            ? semantic_spelling::pathSpelling(*failure.constraintName)
+            : std::string{};
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2029", DiagnosticPhase::Semantics, site,
+        constraint.empty()
+            ? "Generic arguments do not satisfy any alternative in the "
+              "requires clause."
+            : "Generic arguments do not satisfy any alternative in concept '" +
+                  constraint + "'.");
+    if (failure.disjunction != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(*failure.disjunction),
+           "Every branch joined by this disjunction was unsatisfied."});
+    }
+    std::function<void(const SemanticConstraintFailure &)> appendAlternatives =
+        [&](const SemanticConstraintFailure &alternative) {
+          if (!alternative.alternatives.empty()) {
+            for (const SemanticConstraintFailure &nested :
+                 alternative.alternatives) {
+              appendAlternatives(nested);
+            }
+            return;
+          }
+          const std::string alternativeName =
+              alternative.constraintName
+                  ? semantic_spelling::pathSpelling(*alternative.constraintName)
+                  : "the declared constraint";
+          const Token *location = alternative.application == nullptr
+                                      ? nullptr
+                                      : &alternative.application->name.last();
+          if (location == nullptr && alternative.constraintName) {
+            location = &alternative.constraintName->last();
+          }
+          if (location == nullptr) {
+            return;
+          }
+          diagnostic.related.push_back(
+              {tokenSpan(*location),
+               alternative.structural != StructuralConstraintKind::None
+                   ? "Alternative concept '" + alternativeName +
+                         "' lacks its required structural capability."
+                   : "Alternative concept '" + alternativeName +
+                         "' is not satisfied by type '" +
+                         typeSpelling(alternative.argument) + "'."});
+        };
+    for (const SemanticConstraintFailure &alternative : failure.alternatives) {
+      appendAlternatives(alternative);
+    }
+    diagnostic.hints.emplace_back(
+        "At least one complete '||' branch must be satisfied; capabilities "
+        "from different alternatives are not combined.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
   if (failure.structural != StructuralConstraintKind::None) {
     const std::string constraint =
         failure.constraintName

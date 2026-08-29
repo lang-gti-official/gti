@@ -761,6 +761,21 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
     const std::size_t end =
         parameter.pack ? arguments.size() : argumentIndex + 1;
     while (argumentIndex < end && argumentIndex < arguments.size()) {
+      if (parameter.conceptId != 0) {
+        AppliedConceptRequirement requirement{
+            .conceptId = parameter.conceptId,
+            .arguments = {arguments[argumentIndex]}};
+        if (std::optional<ConstraintFailure> failure =
+                firstConceptApplicationFailure(requirement)) {
+          failure->parameter = parameter.name;
+          failure->argument = arguments[argumentIndex];
+          failure->constraintName = parameter.constraintName;
+          failure->application = nullptr;
+          return failure;
+        }
+        ++argumentIndex;
+        continue;
+      }
       const std::optional<GenericConstraintKind> failed =
           firstUnsatisfiedConstraint(arguments[argumentIndex],
                                      parameter.constraints);
@@ -777,13 +792,31 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::guaranteedStructuralKinds(
+    StructuralConstraintKind kind) -> std::vector<StructuralConstraintKind> {
+  switch (kind) {
+  case StructuralConstraintKind::ReadCallable:
+    return {kind, StructuralConstraintKind::MutCallable,
+            StructuralConstraintKind::OnceCallable};
+  case StructuralConstraintKind::MutCallable:
+    return {kind, StructuralConstraintKind::OnceCallable};
+  case StructuralConstraintKind::ReadBinaryCallable:
+    return {kind, StructuralConstraintKind::MutBinaryCallable,
+            StructuralConstraintKind::OnceBinaryCallable};
+  case StructuralConstraintKind::MutBinaryCallable:
+    return {kind, StructuralConstraintKind::OnceBinaryCallable};
+  default:
+    return {kind};
+  }
+}
+
 auto SemanticVisitor::Impl::expandStructuralRequirements(
     std::span<const AppliedConceptRequirement> requirements) const
     -> std::vector<ExpandedStructuralRequirement> {
-  std::vector<ExpandedStructuralRequirement> result;
-  for (const AppliedConceptRequirement &requirement : requirements) {
+  const auto expandLeaf = [&](const AppliedConceptRequirement &requirement) {
+    std::vector<ExpandedStructuralRequirement> result;
     if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
-      continue;
+      return result;
     }
     const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
     for (const RegisteredConcept::StructuralPattern &pattern :
@@ -805,11 +838,79 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
             requirement.arguments[*argument.parameter]);
       }
       if (valid) {
-        result.emplace_back(std::move(expanded));
+        for (StructuralConstraintKind guaranteed :
+             guaranteedStructuralKinds(expanded.kind)) {
+          ExpandedStructuralRequirement implied = expanded;
+          implied.kind = guaranteed;
+          result.emplace_back(std::move(implied));
+        }
       }
     }
+    return result;
+  };
+  const ConstraintExpression *expression = nullptr;
+  for (const AppliedConceptRequirement &requirement : requirements) {
+    if (requirement.expression != nullptr) {
+      expression = requirement.expression;
+      break;
+    }
   }
-  return result;
+  if (expression == nullptr ||
+      expression->root == ConstraintExpressionNode::invalidIndex) {
+    std::vector<ExpandedStructuralRequirement> result;
+    for (const AppliedConceptRequirement &requirement : requirements) {
+      std::vector<ExpandedStructuralRequirement> expanded =
+          expandLeaf(requirement);
+      result.insert(result.end(), std::make_move_iterator(expanded.begin()),
+                    std::make_move_iterator(expanded.end()));
+    }
+    return result;
+  }
+  const auto sameRequirement = [](const ExpandedStructuralRequirement &left,
+                                  const ExpandedStructuralRequirement &right) {
+    return left.kind == right.kind && left.arguments == right.arguments;
+  };
+  std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
+      expandNode = [&](std::size_t nodeIndex) {
+        std::vector<ExpandedStructuralRequirement> result;
+        if (nodeIndex >= expression->nodes.size()) {
+          return result;
+        }
+        const ConstraintExpressionNode &node = expression->nodes[nodeIndex];
+        if (node.kind == ConstraintExpressionKind::Application) {
+          const auto found = std::find_if(
+              requirements.begin(), requirements.end(),
+              [&](const AppliedConceptRequirement &requirement) {
+                return requirement.expression == expression &&
+                       requirement.expressionApplication == node.application;
+              });
+          return found == requirements.end() ? result : expandLeaf(*found);
+        }
+        std::vector<ExpandedStructuralRequirement> left = expandNode(node.left);
+        std::vector<ExpandedStructuralRequirement> right =
+            expandNode(node.right);
+        if (node.kind == ConstraintExpressionKind::Conjunction) {
+          result = std::move(left);
+          for (ExpandedStructuralRequirement &candidate : right) {
+            if (std::none_of(result.begin(), result.end(),
+                             [&](const auto &existing) {
+                               return sameRequirement(existing, candidate);
+                             })) {
+              result.emplace_back(std::move(candidate));
+            }
+          }
+          return result;
+        }
+        for (ExpandedStructuralRequirement &candidate : left) {
+          if (std::any_of(right.begin(), right.end(), [&](const auto &other) {
+                return sameRequirement(candidate, other);
+              })) {
+            result.emplace_back(std::move(candidate));
+          }
+        }
+        return result;
+      };
+  return expandNode(expression->root);
 }
 
 auto SemanticVisitor::Impl::activeStructuralRequirements() const
@@ -830,22 +931,60 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
   GenericConstraintSet result = 0;
   for (const std::vector<AppliedConceptRequirement> &scope :
        requirementScopes) {
+    const auto atomicForLeaf =
+        [&](const AppliedConceptRequirement &requirement) {
+          GenericConstraintSet leaf = 0;
+          if (requirement.conceptId == 0 ||
+              requirement.conceptId > concepts.size()) {
+            return leaf;
+          }
+          const RegisteredConcept &conceptInfo =
+              concepts[requirement.conceptId - 1];
+          const std::size_t count =
+              std::min(requirement.arguments.size(),
+                       conceptInfo.parameterConstraints.size());
+          for (std::size_t index = 0; index < count; ++index) {
+            if (requirement.arguments[index] == type) {
+              leaf |= conceptInfo.parameterConstraints[index];
+            }
+          }
+          return leaf;
+        };
+    const ConstraintExpression *expression = nullptr;
     for (const AppliedConceptRequirement &requirement : scope) {
-      if (requirement.conceptId == 0 ||
-          requirement.conceptId > concepts.size()) {
-        continue;
-      }
-      const RegisteredConcept &conceptInfo =
-          concepts[requirement.conceptId - 1];
-      const std::size_t count =
-          std::min(requirement.arguments.size(),
-                   conceptInfo.parameterConstraints.size());
-      for (std::size_t index = 0; index < count; ++index) {
-        if (requirement.arguments[index] == type) {
-          result |= conceptInfo.parameterConstraints[index];
-        }
+      if (requirement.expression != nullptr) {
+        expression = requirement.expression;
+        break;
       }
     }
+    if (expression == nullptr ||
+        expression->root == ConstraintExpressionNode::invalidIndex) {
+      for (const AppliedConceptRequirement &requirement : scope) {
+        result |= atomicForLeaf(requirement);
+      }
+      continue;
+    }
+    std::function<GenericConstraintSet(std::size_t)> atomicForNode =
+        [&](std::size_t nodeIndex) -> GenericConstraintSet {
+      if (nodeIndex >= expression->nodes.size()) {
+        return 0;
+      }
+      const ConstraintExpressionNode &node = expression->nodes[nodeIndex];
+      if (node.kind == ConstraintExpressionKind::Application) {
+        const auto found = std::find_if(
+            scope.begin(), scope.end(),
+            [&](const AppliedConceptRequirement &requirement) {
+              return requirement.expression == expression &&
+                     requirement.expressionApplication == node.application;
+            });
+        return found == scope.end() ? 0 : atomicForLeaf(*found);
+      }
+      const GenericConstraintSet left = atomicForNode(node.left);
+      const GenericConstraintSet right = atomicForNode(node.right);
+      return node.kind == ConstraintExpressionKind::Conjunction ? left | right
+                                                                : left & right;
+    };
+    result |= atomicForNode(expression->root);
   }
   return result;
 }
@@ -907,45 +1046,298 @@ auto SemanticVisitor::Impl::structuralRequirementAvailable(
 auto SemanticVisitor::Impl::firstRequirementFailure(
     std::span<const AppliedConceptRequirement> requirements) const
     -> std::optional<ConstraintFailure> {
+  const auto firstFlatFailure = [&]() -> std::optional<ConstraintFailure> {
+    for (const AppliedConceptRequirement &requirement : requirements) {
+      if (std::optional<ConstraintFailure> failure =
+              firstConceptApplicationFailure(requirement)) {
+        return failure;
+      }
+    }
+    return std::nullopt;
+  };
+  const ConstraintExpression *expression = nullptr;
   for (const AppliedConceptRequirement &requirement : requirements) {
-    if (requirement.conceptId == 0 || requirement.conceptId > concepts.size() ||
-        requirement.syntax == nullptr) {
+    if (requirement.expression != nullptr) {
+      expression = requirement.expression;
+      break;
+    }
+  }
+  if (expression == nullptr ||
+      expression->root == ConstraintExpressionNode::invalidIndex) {
+    return firstFlatFailure();
+  }
+  const auto expressionOf = [](std::span<const AppliedConceptRequirement> set) {
+    const auto found = std::find_if(set.begin(), set.end(),
+                                    [](const AppliedConceptRequirement &item) {
+                                      return item.expression != nullptr;
+                                    });
+    return found == set.end()
+               ? static_cast<const ConstraintExpression *>(nullptr)
+               : found->expression;
+  };
+  const auto requirementAt =
+      [](std::span<const AppliedConceptRequirement> set,
+         const ConstraintExpression *shape,
+         std::size_t application) -> const AppliedConceptRequirement * {
+    const auto found = std::find_if(
+        set.begin(), set.end(), [&](const AppliedConceptRequirement &item) {
+          return item.expression == shape &&
+                 item.expressionApplication == application;
+        });
+    return found == set.end() ? nullptr : &*found;
+  };
+  for (const std::vector<AppliedConceptRequirement> &active :
+       requirementScopes) {
+    const ConstraintExpression *activeExpression = expressionOf(active);
+    if (activeExpression == nullptr ||
+        activeExpression->root == ConstraintExpressionNode::invalidIndex) {
       continue;
     }
-    const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
-    const std::size_t count = std::min(requirement.arguments.size(),
-                                       conceptInfo.parameterConstraints.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      if (const std::optional<GenericConstraintKind> failed =
-              firstUnsatisfiedConstraint(
-                  requirement.arguments[index],
-                  conceptInfo.parameterConstraints[index])) {
-        return ConstraintFailure{
-            .parameter = requirement.syntax->arguments[index].name.last(),
-            .argument = requirement.arguments[index],
-            .constraints = conceptInfo.parameterConstraints[index],
-            .failed = *failed,
-            .constraintName = requirement.syntax->name,
-            .application = requirement.syntax};
+    std::function<bool(std::size_t, std::size_t)> sameExpression =
+        [&](std::size_t leftIndex, std::size_t rightIndex) {
+          if (leftIndex >= expression->nodes.size() ||
+              rightIndex >= activeExpression->nodes.size()) {
+            return false;
+          }
+          const ConstraintExpressionNode &left = expression->nodes[leftIndex];
+          const ConstraintExpressionNode &right =
+              activeExpression->nodes[rightIndex];
+          if (left.kind != right.kind) {
+            return false;
+          }
+          if (left.kind == ConstraintExpressionKind::Application) {
+            const AppliedConceptRequirement *leftRequirement =
+                requirementAt(requirements, expression, left.application);
+            const AppliedConceptRequirement *rightRequirement =
+                requirementAt(active, activeExpression, right.application);
+            return leftRequirement != nullptr && rightRequirement != nullptr &&
+                   leftRequirement->conceptId == rightRequirement->conceptId &&
+                   leftRequirement->arguments == rightRequirement->arguments;
+          }
+          return sameExpression(left.left, right.left) &&
+                 sameExpression(left.right, right.right);
+        };
+    if (sameExpression(expression->root, activeExpression->root)) {
+      return std::nullopt;
+    }
+  }
+  std::function<std::optional<ConstraintFailure>(std::size_t)> failureFor =
+      [&](std::size_t nodeIndex) -> std::optional<ConstraintFailure> {
+    if (nodeIndex >= expression->nodes.size()) {
+      return std::nullopt;
+    }
+    const ConstraintExpressionNode &node = expression->nodes[nodeIndex];
+    if (node.kind == ConstraintExpressionKind::Application) {
+      const auto found = std::find_if(
+          requirements.begin(), requirements.end(),
+          [&](const AppliedConceptRequirement &requirement) {
+            return requirement.expression == expression &&
+                   requirement.expressionApplication == node.application;
+          });
+      return found == requirements.end()
+                 ? std::nullopt
+                 : firstConceptApplicationFailure(*found);
+    }
+    std::optional<ConstraintFailure> left = failureFor(node.left);
+    if (node.kind == ConstraintExpressionKind::Conjunction) {
+      return left ? left : failureFor(node.right);
+    }
+    if (!left) {
+      return std::nullopt;
+    }
+    std::optional<ConstraintFailure> right = failureFor(node.right);
+    if (!right) {
+      return std::nullopt;
+    }
+    return ConstraintFailure{.parameter = left->parameter,
+                             .argument = left->argument,
+                             .disjunction = &node.operation,
+                             .alternatives = {*left, *right}};
+  };
+  return failureFor(expression->root);
+}
+
+auto SemanticVisitor::Impl::firstConceptApplicationFailure(
+    const AppliedConceptRequirement &requirement) const
+    -> std::optional<ConstraintFailure> {
+  if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
+    return std::nullopt;
+  }
+  if (requirement.arguments.size() == 1 &&
+      requirement.arguments.front().kind == SemanticType::TypeParameter) {
+    const auto declared = genericConstraintConcepts.find(
+        requirement.arguments.front().genericParameterId);
+    if (declared != genericConstraintConcepts.end() &&
+        declared->second == requirement.conceptId) {
+      return std::nullopt;
+    }
+  }
+  const auto sameAppliedRequirement =
+      [&](const AppliedConceptRequirement &left,
+          const AppliedConceptRequirement &right) {
+        return left.conceptId == right.conceptId &&
+               left.arguments == right.arguments;
+      };
+  for (const std::vector<AppliedConceptRequirement> &scope :
+       requirementScopes) {
+    const ConstraintExpression *shape = nullptr;
+    for (const AppliedConceptRequirement &active : scope) {
+      if (active.expression != nullptr) {
+        shape = active.expression;
+        break;
       }
     }
-    for (const ExpandedStructuralRequirement &structural :
-         expandStructuralRequirements(
-             std::span<const AppliedConceptRequirement>(&requirement, 1))) {
-      if (!structuralConstraintSatisfied(structural.kind,
-                                         structural.arguments)) {
-        return ConstraintFailure{
-            .parameter =
-                requirement.syntax->arguments.empty()
-                    ? requirement.syntax->name.last()
-                    : requirement.syntax->arguments.front().name.last(),
-            .argument = structural.arguments.empty()
-                            ? SemanticType::Unknown
-                            : structural.arguments.front(),
-            .constraintName = requirement.syntax->name,
-            .structural = structural.kind,
-            .application = requirement.syntax};
+    if (shape == nullptr ||
+        shape->root == ConstraintExpressionNode::invalidIndex) {
+      if (std::any_of(scope.begin(), scope.end(), [&](const auto &active) {
+            return sameAppliedRequirement(requirement, active);
+          })) {
+        return std::nullopt;
       }
+      continue;
+    }
+    std::function<std::vector<const AppliedConceptRequirement *>(std::size_t)>
+        guaranteedAt = [&](std::size_t nodeIndex) {
+          std::vector<const AppliedConceptRequirement *> result;
+          if (nodeIndex >= shape->nodes.size()) {
+            return result;
+          }
+          const ConstraintExpressionNode &node = shape->nodes[nodeIndex];
+          if (node.kind == ConstraintExpressionKind::Application) {
+            const auto found = std::find_if(
+                scope.begin(), scope.end(),
+                [&](const AppliedConceptRequirement &active) {
+                  return active.expression == shape &&
+                         active.expressionApplication == node.application;
+                });
+            if (found != scope.end()) {
+              result.push_back(&*found);
+            }
+            return result;
+          }
+          std::vector<const AppliedConceptRequirement *> left =
+              guaranteedAt(node.left);
+          std::vector<const AppliedConceptRequirement *> right =
+              guaranteedAt(node.right);
+          if (node.kind == ConstraintExpressionKind::Conjunction) {
+            result = std::move(left);
+            for (const AppliedConceptRequirement *candidate : right) {
+              if (std::none_of(
+                      result.begin(), result.end(), [&](const auto *item) {
+                        return sameAppliedRequirement(*item, *candidate);
+                      })) {
+                result.push_back(candidate);
+              }
+            }
+            return result;
+          }
+          for (const AppliedConceptRequirement *candidate : left) {
+            if (std::any_of(right.begin(), right.end(), [&](const auto *item) {
+                  return sameAppliedRequirement(*item, *candidate);
+                })) {
+              result.push_back(candidate);
+            }
+          }
+          return result;
+        };
+    const std::vector<const AppliedConceptRequirement *> guaranteed =
+        guaranteedAt(shape->root);
+    if (std::any_of(guaranteed.begin(), guaranteed.end(),
+                    [&](const auto *active) {
+                      return sameAppliedRequirement(requirement, *active);
+                    })) {
+      return std::nullopt;
+    }
+  }
+  const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
+  if (conceptInfo.definitionExpression != nullptr &&
+      !conceptInfo.definitionRequirements.empty()) {
+    std::vector<AppliedConceptRequirement> expanded;
+    expanded.reserve(conceptInfo.definitionRequirements.size());
+    for (const RegisteredConcept::RequirementPattern &pattern :
+         conceptInfo.definitionRequirements) {
+      AppliedConceptRequirement applied{
+          .conceptId = pattern.conceptId,
+          .syntax = pattern.syntax,
+          .expression = conceptInfo.definitionExpression,
+          .expressionApplication = pattern.expressionApplication};
+      bool valid = true;
+      for (const RegisteredConcept::StructuralPattern::Argument &argument :
+           pattern.arguments) {
+        if (!argument.parameter) {
+          applied.arguments.emplace_back(argument.concrete);
+        } else if (*argument.parameter < requirement.arguments.size()) {
+          applied.arguments.emplace_back(
+              requirement.arguments[*argument.parameter]);
+        } else {
+          valid = false;
+          break;
+        }
+      }
+      if (valid) {
+        expanded.emplace_back(std::move(applied));
+      }
+    }
+    if (std::optional<ConstraintFailure> failure =
+            firstRequirementFailure(expanded)) {
+      if (requirement.syntax != nullptr) {
+        failure->constraintName = requirement.syntax->name;
+        failure->application = requirement.syntax;
+        failure->parameter =
+            requirement.syntax->arguments.empty()
+                ? requirement.syntax->name.last()
+                : requirement.syntax->arguments.front().name.last();
+      }
+      if (!requirement.arguments.empty()) {
+        failure->argument = requirement.arguments.front();
+      }
+      return failure;
+    }
+    return std::nullopt;
+  }
+
+  const std::size_t count = std::min(requirement.arguments.size(),
+                                     conceptInfo.parameterConstraints.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    if (const std::optional<GenericConstraintKind> failed =
+            firstUnsatisfiedConstraint(
+                requirement.arguments[index],
+                conceptInfo.parameterConstraints[index])) {
+      return ConstraintFailure{
+          .parameter = requirement.syntax != nullptr &&
+                               index < requirement.syntax->arguments.size()
+                           ? requirement.syntax->arguments[index].name.last()
+                           : Token{},
+          .argument = requirement.arguments[index],
+          .constraints = conceptInfo.parameterConstraints[index],
+          .failed = *failed,
+          .constraintName =
+              requirement.syntax == nullptr
+                  ? std::optional<NamePath>{}
+                  : std::optional<NamePath>{requirement.syntax->name},
+          .application = requirement.syntax};
+    }
+  }
+  AppliedConceptRequirement direct = requirement;
+  direct.expression = nullptr;
+  for (const ExpandedStructuralRequirement &structural :
+       expandStructuralRequirements(
+           std::span<const AppliedConceptRequirement>(&direct, 1))) {
+    if (!structuralConstraintSatisfied(structural.kind, structural.arguments)) {
+      return ConstraintFailure{
+          .parameter = requirement.syntax == nullptr ? Token{}
+                       : requirement.syntax->arguments.empty()
+                           ? requirement.syntax->name.last()
+                           : requirement.syntax->arguments.front().name.last(),
+          .argument = structural.arguments.empty()
+                          ? SemanticType::Unknown
+                          : structural.arguments.front(),
+          .constraintName =
+              requirement.syntax == nullptr
+                  ? std::optional<NamePath>{}
+                  : std::optional<NamePath>{requirement.syntax->name},
+          .structural = structural.kind,
+          .application = requirement.syntax};
     }
   }
   return std::nullopt;
@@ -954,7 +1346,8 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
 auto SemanticVisitor::Impl::hasConstraintFailure(
     const ConstraintFailure &failure) -> bool {
   return failure.failed != GenericConstraintKind::None ||
-         failure.structural != StructuralConstraintKind::None;
+         failure.structural != StructuralConstraintKind::None ||
+         !failure.alternatives.empty();
 }
 
 auto SemanticVisitor::Impl::reportConstraintFailure(

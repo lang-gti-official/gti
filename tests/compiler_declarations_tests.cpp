@@ -3918,12 +3918,20 @@ concept signed_value<T> = std::signed_numeric<T>;
       "concept either<T> = std::integral<T> || std::floating_point<T>; "
       "int okay = 1;"));
   const lang::Program recovered = disjunctionParser.parse();
-  expect(disjunctionParser.hadError() &&
-             hasDiagnostic(disjunctionParser.errors(),
-                           "support conjunction only") &&
-             recovered.declarations().size() == 1,
-         "concept disjunction should be rejected explicitly without losing "
-         "the following declaration");
+  const lang::ConceptDecl *either =
+      recovered.declarations().empty()
+          ? nullptr
+          : lang::stmtAs<lang::ConceptDecl>(
+                recovered.declarations().front().get());
+  expect(!disjunctionParser.hadError() && either != nullptr &&
+             recovered.declarations().size() == 2 &&
+             either->constraintExpression().root <
+                 either->constraintExpression().nodes.size() &&
+             either->constraintExpression()
+                     .nodes[either->constraintExpression().root]
+                     .kind == lang::ConstraintExpressionKind::Disjunction,
+         "concept disjunction should parse as an explicit constraint tree "
+         "without losing the following declaration");
 
   const std::string formatted = lang::Formatter().format(
       "concept sortable<T>=std::totally_ordered<T>&&std::movable<T>;");
@@ -3932,6 +3940,281 @@ concept signed_value<T> = std::signed_numeric<T>;
              lang::Formatter().format(formatted) == formatted,
          "concept declarations should format with C++-familiar generic and "
          "conjunction spacing");
+}
+
+void testRequiresDisjunction() {
+  const std::string source = R"(
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+concept floating_or_closed<T> =
+    std::integral<double> || std::floating_point<T>;
+
+T doubled<scalar T>(T value) { return value + value; }
+T floating_identity<floating_or_closed T>(T value) { return value; }
+T forward_scalar<scalar T>(T value) { return doubled(value); }
+
+T trailing_identity<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return value;
+}
+
+T forward_trailing<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return trailing_identity(value);
+}
+
+T tripled<T>(T value)
+  requires (std::integral<T> || std::floating_point<T>) && std::copyable<T> {
+  return value + value + value;
+}
+
+int main() {
+  if (doubled(2) != 4) { return 1; }
+  if (doubled(1.5) != 3.0) { return 2; }
+  if (floating_identity(1.25) != 1.25) { return 3; }
+  if (forward_scalar(4) != 8) { return 4; }
+  if (forward_trailing(2.5) != 2.5) { return 5; }
+  if (tripled(3) != 9) { return 6; }
+  if (tripled(2.0) != 6.0) { return 7; }
+  return 0;
+}
+)";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "requires-disjunction.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected requires disjunction diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "inline and trailing disjunctions should accept either complete "
+         "satisfied branch");
+
+  const lang::ConceptDecl *scalar = nullptr;
+  for (const lang::StmtPtr &declaration : valid.program.declarations()) {
+    const auto *candidate = lang::stmtAs<lang::ConceptDecl>(declaration.get());
+    if (candidate != nullptr && candidate->name().lexeme == "scalar") {
+      scalar = candidate;
+      break;
+    }
+  }
+  const lang::FunctionDecl *doubled =
+      findTopLevelFunction(valid.program, "doubled");
+  const lang::FunctionDecl *tripled =
+      findTopLevelFunction(valid.program, "tripled");
+  const lang::FunctionInfo *doubledInfo =
+      doubled == nullptr ? nullptr : valid.semantics.findFunction(*doubled);
+  expect(scalar != nullptr &&
+             scalar->constraintExpression().root <
+                 scalar->constraintExpression().nodes.size() &&
+             scalar->constraintExpression()
+                     .nodes[scalar->constraintExpression().root]
+                     .kind == lang::ConstraintExpressionKind::Disjunction,
+         "source concepts should retain disjunction in their AST expression "
+         "tree");
+  expect(
+      tripled != nullptr && tripled->requiresClause() &&
+          tripled->requiresClause()->expression.root <
+              tripled->requiresClause()->expression.nodes.size() &&
+          tripled->requiresClause()
+                  ->expression.nodes[tripled->requiresClause()->expression.root]
+                  .kind == lang::ConstraintExpressionKind::Conjunction,
+      "parentheses should override the default &&-before-|| precedence");
+  lang::Lexer lexer;
+  lang::Parser precedenceParser(lexer.scan(
+      "concept precedence<T> = std::copyable<T> || std::movable<T> && "
+      "std::default_initializable<T>;"));
+  const lang::Program precedenceProgram = precedenceParser.parse();
+  const auto *precedence =
+      precedenceProgram.declarations().empty()
+          ? nullptr
+          : lang::stmtAs<lang::ConceptDecl>(
+                precedenceProgram.declarations().front().get());
+  const lang::ConstraintExpression *precedenceExpression =
+      precedence == nullptr ? nullptr : &precedence->constraintExpression();
+  const lang::ConstraintExpressionNode *precedenceRoot =
+      precedenceExpression == nullptr ||
+              precedenceExpression->root >= precedenceExpression->nodes.size()
+          ? nullptr
+          : &precedenceExpression->nodes[precedenceExpression->root];
+  expect(!precedenceParser.hadError() && precedenceRoot != nullptr &&
+             precedenceRoot->kind ==
+                 lang::ConstraintExpressionKind::Disjunction &&
+             precedenceRoot->right < precedenceExpression->nodes.size() &&
+             precedenceExpression->nodes[precedenceRoot->right].kind ==
+                 lang::ConstraintExpressionKind::Conjunction,
+         "&& should bind more tightly than || without parentheses");
+  expect(doubledInfo != nullptr &&
+             doubledInfo->genericParameters.front().conceptId != 0 &&
+             lang::hasConstraint(
+                 doubledInfo->genericParameters.front().constraints,
+                 lang::GenericConstraintKind::Numeric) &&
+             !lang::hasConstraint(
+                 doubledInfo->genericParameters.front().constraints,
+                 lang::GenericConstraintKind::Integral) &&
+             !lang::hasConstraint(
+                 doubledInfo->genericParameters.front().constraints,
+                 lang::GenericConstraintKind::FloatingPoint),
+         "a disjunctive inline constraint should retain its concept identity "
+         "and expose only common branch guarantees inside the generic body");
+
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      valid, valid.mir, valid.mir, lang::TargetInfo::host());
+  const lang::LoweredFunctionDeclaration *loweredDoubled = nullptr;
+  const lang::LoweredFunctionDeclaration *loweredTripled = nullptr;
+  for (const lang::LoweredDeclaration &declaration : lowered.declarations()) {
+    const auto *function =
+        std::get_if<lang::LoweredFunctionDeclaration>(&declaration.payload);
+    if (function == nullptr) {
+      continue;
+    }
+    if (function->qualifiedName == "doubled") {
+      loweredDoubled = function;
+    } else if (function->qualifiedName == "tripled") {
+      loweredTripled = function;
+    }
+  }
+  expect(
+      lang::verifyLoweredProgram(lowered).empty() &&
+          loweredDoubled != nullptr &&
+          loweredDoubled->genericParameters.front().constraintConcept != 0 &&
+          loweredTripled != nullptr &&
+          loweredTripled->requirementRoot <
+              loweredTripled->requirementExpression.size() &&
+          loweredTripled->requirementExpression[loweredTripled->requirementRoot]
+                  .kind == lang::ConstraintExpressionKind::Conjunction,
+      "LoweredProgram should preserve and verify inline concept identity "
+      "and the trailing Boolean expression tree");
+
+  const lang::SourceUnitId sourceUnit = valid.sourceGraph.entryUnit();
+  const lang::LanguageQueries queries;
+  const std::size_t scalarUse = source.find("scalar T");
+  const std::optional<lang::HoverInfo> scalarHover =
+      queries.hover(valid, sourceUnit, scalarUse + 1);
+  expect(scalarHover && scalarHover->signature ==
+                            "concept scalar<T> = std::integral<T> || "
+                            "std::floating_point<T>",
+         "concept hover should render canonical disjunction syntax");
+
+  const lang::FrontendResult rejected =
+      lang::Frontend().analyze("requires-disjunction-rejected.gti", R"(
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+class marker { public: marker() {} };
+T require_scalar<scalar T>(T value) { return value; }
+int main() {
+  marker value = require_scalar(marker());
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  const auto failure = std::find_if(
+      rejected.diagnostics.begin(), rejected.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2029" &&
+               diagnostic.message.find("any alternative in concept 'scalar'") !=
+                   std::string::npos;
+      });
+  expect(!rejected.canGenerateCode() && failure != rejected.diagnostics.end() &&
+             failure->related.size() >= 3 && !failure->hints.empty(),
+         "a concrete type satisfying neither branch should receive one "
+         "structured diagnostic with both alternative failures");
+
+  const lang::FrontendResult emptyIntersection = lang::Frontend().analyze(
+      "requires-disjunction-empty-intersection.gti", R"(
+concept floating_or_closed<T> =
+    std::integral<double> || std::floating_point<T>;
+T require_floating<floating_or_closed T>(T value) { return value; }
+int main() { return require_floating(1); }
+)",
+      {standardLibraryPrelude()});
+  expect(!emptyIntersection.canGenerateCode() &&
+             hasDiagnostic(emptyIntersection.diagnostics,
+                           "any alternative in concept "
+                           "'floating_or_closed'"),
+         "an inline concept with no common facts should still enforce its "
+         "exact Boolean predicate at concrete instantiation");
+
+  const lang::FrontendResult rejectedTrailing =
+      lang::Frontend().analyze("requires-disjunction-trailing-rejected.gti", R"(
+class marker { public: marker() {} };
+T require_scalar<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return value;
+}
+int main() {
+  marker value = require_scalar(marker());
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedTrailing.canGenerateCode() &&
+             hasDiagnostic(rejectedTrailing.diagnostics,
+                           "any alternative in the requires clause") &&
+             hasRelatedDiagnostic(rejectedTrailing.diagnostics,
+                                  "Every branch joined by this disjunction"),
+         "a failed trailing disjunction should report the operator and both "
+         "unsatisfied alternatives");
+
+  const lang::FrontendResult unsoundBody =
+      lang::Frontend().analyze("requires-disjunction-proof.gti", R"(
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+T invalid_remainder<scalar T>(T value) { return value % value; }
+int main() { return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!unsoundBody.canGenerateCode(),
+         "a generic body must not use a capability supplied by only one "
+         "disjunction branch");
+
+  const lang::FrontendResult structuralCommon = lang::Frontend().analyze(
+      "requires-disjunction-structural.gti", R"(
+#include <std/functional>
+class readable {
+public:
+  int32_t operator()(int32_t& value) { return value + 1; }
+};
+class mutable_callable {
+public:
+  int32_t operator()(int32_t& value) mut { return value + 2; }
+};
+int32_t invoke<Callable>(int32_t value, mut Callable callable)
+  requires std::read_callable<Callable, int32_t, int32_t> ||
+           std::mut_callable<Callable, int32_t, int32_t> {
+  return callable(value);
+}
+int main() {
+  if (invoke(1, readable()) != 2) { return 1; }
+  if (invoke(1, mutable_callable()) != 3) { return 2; }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(structuralCommon.canGenerateCode(),
+         "disjunctive structural branches should expose their strongest "
+         "common callable capability to the generic body");
+
+  lang::Parser malformed(lexer.scan(R"(
+T broken<T>(T value) requires (std::integral<T> || ) { return value; }
+int okay() { return 0; }
+)"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() &&
+             findTopLevelFunction(recovered, "okay") != nullptr,
+         "a missing disjunction operand should diagnose and recover at the "
+         "following declaration");
+
+  const std::string formatted = lang::Formatter().format(
+      "concept scalar<T>=std::integral<T>||std::floating_point<T>;\n"
+      "T select<T>(T value)requires(std::integral<T>or "
+      "std::floating_point<T>)and std::copyable<T>{return value;}");
+  expect(formatted.find("std::integral<T> || std::floating_point<T>") !=
+                 std::string::npos &&
+             formatted.find("(std::integral<T> or "
+                            "std::floating_point<T>) and "
+                            "std::copyable<T>") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve keyword aliases and normalize "
+         "spacing for parenthesized disjunctions");
 }
 
 void testDomainValueOperatorCapabilities() {
@@ -4163,16 +4446,16 @@ int main() {
          "the AST should retain multi-parameter concept declarations and "
          "their relational argument mapping");
   expect(requiresClause != nullptr &&
-             requiresClause->requirements.size() == 3 &&
-             requiresClause->requirements[0].name.last().lexeme ==
+             requiresClause->requirements().size() == 3 &&
+             requiresClause->requirements()[0].name.last().lexeme ==
                  "input_iterator" &&
-             requiresClause->requirements[0].arguments.size() == 1 &&
-             requiresClause->requirements[1].name.last().lexeme ==
+             requiresClause->requirements()[0].arguments.size() == 1 &&
+             requiresClause->requirements()[1].name.last().lexeme ==
                  "compatible_sentinel" &&
-             requiresClause->requirements[1].arguments.size() == 2 &&
-             requiresClause->requirements[2].name.last().lexeme ==
+             requiresClause->requirements()[1].arguments.size() == 2 &&
+             requiresClause->requirements()[2].name.last().lexeme ==
                  "accumulates_into" &&
-             requiresClause->requirements[2].arguments.size() == 2,
+             requiresClause->requirements()[2].arguments.size() == 2,
          "the AST should preserve each trailing requires application and its "
          "type-parameter arguments in source order");
 
@@ -4672,10 +4955,17 @@ T broken<I>(I value)
 int okay() { return 0; }
 )"));
   const lang::Program recovered = malformed.parse();
-  expect(malformed.hadError() &&
-             findTopLevelFunction(recovered, "okay") != nullptr,
-         "requires-clause disjunction should be rejected while parser "
-         "recovery preserves the next declaration");
+  const lang::FunctionDecl *broken = findTopLevelFunction(recovered, "broken");
+  expect(
+      !malformed.hadError() && broken != nullptr && broken->requiresClause() &&
+          broken->requiresClause()->expression.root <
+              broken->requiresClause()->expression.nodes.size() &&
+          broken->requiresClause()
+                  ->expression.nodes[broken->requiresClause()->expression.root]
+                  .kind == lang::ConstraintExpressionKind::Disjunction &&
+          findTopLevelFunction(recovered, "okay") != nullptr,
+      "requires-clause disjunction should parse without losing the next "
+      "declaration");
 
   const std::string requiresSource =
       "T sum<I,std::numeric T>(I first,T init)requires "
@@ -8728,6 +9018,7 @@ constexpr NamedTest kTests[] = {
     {"testConstrainedGenerics", testConstrainedGenerics},
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
+    {"testRequiresDisjunction", testRequiresDisjunction},
     {"testStructuralRequiresAndAccumulate",
      testStructuralRequiresAndAccumulate},
     {"testDomainValueOperatorCapabilities",

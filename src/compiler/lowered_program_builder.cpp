@@ -214,7 +214,8 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .constraints = parameter.constraints,
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
-                               : std::vector<std::string>{}});
+                               : std::vector<std::string>{},
+         .constraintConcept = parameter.conceptId});
   }
   return result;
 }
@@ -228,6 +229,39 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
                       .arguments = requirement.arguments});
   }
   return result;
+}
+
+[[nodiscard]] std::vector<LoweredConstraintExpressionNode>
+lowerRequirementExpression(
+    const std::vector<AppliedConceptRequirement> &requirements) {
+  const auto found =
+      std::find_if(requirements.begin(), requirements.end(),
+                   [](const AppliedConceptRequirement &requirement) {
+                     return requirement.expression != nullptr;
+                   });
+  if (found == requirements.end()) {
+    return {};
+  }
+  std::vector<LoweredConstraintExpressionNode> result;
+  result.reserve(found->expression->nodes.size());
+  for (const ConstraintExpressionNode &node : found->expression->nodes) {
+    result.push_back({.kind = node.kind,
+                      .application = node.application,
+                      .left = node.left,
+                      .right = node.right});
+  }
+  return result;
+}
+
+[[nodiscard]] std::size_t lowerRequirementRoot(
+    const std::vector<AppliedConceptRequirement> &requirements) {
+  const auto found =
+      std::find_if(requirements.begin(), requirements.end(),
+                   [](const AppliedConceptRequirement &requirement) {
+                     return requirement.expression != nullptr;
+                   });
+  return found == requirements.end() ? ConstraintExpressionNode::invalidIndex
+                                     : found->expression->root;
 }
 
 [[nodiscard]] std::vector<LoweredParameter>
@@ -509,6 +543,9 @@ private:
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .requirements = lowerRequirements(info->requirements),
+            .requirementExpression =
+                lowerRequirementExpression(info->requirements),
+            .requirementRoot = lowerRequirementRoot(info->requirements),
             .callableParameters =
                 lowerCallableParameters(info->callableParameters),
             .requiredParameterCount = info->requiredParameterCount,
@@ -562,6 +599,9 @@ private:
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .requirements = lowerRequirements(info->requirements),
+            .requirementExpression =
+                lowerRequirementExpression(info->requirements),
+            .requirementRoot = lowerRequirementRoot(info->requirements),
             .parameters = lowerParameters(declaration->parameters(),
                                           info->parameterTypes, semantics_),
             .requiredParameterCount = info->requiredParameterCount,

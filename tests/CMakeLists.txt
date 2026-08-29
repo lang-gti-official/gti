@@ -1015,6 +1015,14 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(generic_symbolic_auto_local_runtime
                        PROPERTIES TIMEOUT 180)
   add_test(
+    NAME requires_disjunction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/requires_disjunction.gti"
+  )
+  set_tests_properties(requires_disjunction_runtime PROPERTIES TIMEOUT 180)
+  add_test(
     NAME explicit_function_value_generics_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/explicit_function_value_generics_runtime_test.py"
@@ -1420,6 +1428,7 @@ if(Python3_Interpreter_FOUND)
         subscript_store_read_order_runtime
         owner_tied_reference_argument_runtime
         generic_symbolic_auto_local_runtime
+        requires_disjunction_runtime
         explicit_function_value_generics_runtime
         generic_callable_concepts_runtime
         owner_tied_by_value_argument_runtime
