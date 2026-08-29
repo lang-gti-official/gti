@@ -39,7 +39,7 @@
     "38-vector-emplace.gti": 69,
     "39-raw-pointers.gti": 18,
     "40-loan-flow-edges.gti": 189,
-    "41-owner-dependencies.gti": 32,
+    "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 34,
     "43-program-arguments.gti": 200,
     "44-bounded-requires.gti": 140,
@@ -75,7 +75,9 @@
     "74-read-only-range-loans.gti": 36,
     "75-bounded-arena-pool.gti": 54,
     "76-scalar-atomics.gti": 61,
-    "77-callable-concepts.gti": 51
+    "77-callable-concepts.gti": 51,
+    "78-owning-payload-enums.gti": 25,
+    "79-class-scoped-type-aliases.gti": 25
   },
-  "total": 3651
+  "total": 3707
 }

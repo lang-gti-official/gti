@@ -586,8 +586,8 @@
       }
     },
     "41-owner-dependencies.gti": {
-      "declarations": 92,
-      "bodies": 32,
+      "declarations": 99,
+      "bodies": 38,
       "generated_items": 4,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1139,11 +1139,41 @@
         "concrete_instance_adapter": 0,
         "thread_task_adapter": 6
       }
+    },
+    "78-owning-payload-enums.gti": {
+      "declarations": 87,
+      "bodies": 25,
+      "generated_items": 3,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
+      }
+    },
+    "79-class-scoped-type-aliases.gti": {
+      "declarations": 89,
+      "bodies": 25,
+      "generated_items": 3,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 2
+      }
     }
   },
   "totals": {
-    "declarations": 11601,
-    "bodies": 3652,
-    "generated_items": 663
+    "declarations": 11784,
+    "bodies": 3708,
+    "generated_items": 669
   }
 }
