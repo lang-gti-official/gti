@@ -2874,7 +2874,7 @@ name recognition.
   `{}` replacement for heterogeneous integral packs is also implemented in
   ordinary GTI through `std::format`, `std::try_print`, and
   `std::try_println`; malformed patterns and argument-count mismatches return
-  `format_errc` before output. The source-text contract sub-slice is ready.
+  `format_errc` before output. The source-text contract sub-slice is complete.
   This integral replacement slice is no longer blocked on `L-RANGE-03` or the
   remaining `L-CALL-01` work: indexed counted text, a bounded call-pack fold,
   and scalar byte output are sufficient. Dynamic borrowed views, generalized
@@ -2883,9 +2883,13 @@ name recognition.
   from this fold. All are systems-readiness work. Each implemented float width
   joins formatting/parsing in its own numeric sub-slice rather than blocking
   the whole text layer.
-- **Scope:** First specify source encoding, BOM/newline handling, Unicode
-  identifiers/normalization, and source-offset behavior across the lexer,
-  formatter, Tree-sitter, and LSP. Then state the public byte/UTF-8 policy,
+- **Implemented source-text sub-slice:** Source units are strict UTF-8 with one
+  optional byte-zero BOM, exact byte identity/offsets, LF or CRLF input, LF
+  formatter output, ASCII identifiers/tokens, and Unicode scalar values in
+  comments and string literals. The lexer rejects invalid UTF-8, lone CR, and
+  non-ASCII syntax before later phases can cascade; the formatter, source
+  manager, Tree-sitter grammar, and UTF-16 LSP boundary follow the same policy.
+- **Remaining scope:** State the public runtime byte/UTF-8 policy,
   owning/view conversions, numeric parsing, formatting, and explicit failure.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
   The current formatter recognizes sequential `{}` plus `{{`/`}}`, accepts

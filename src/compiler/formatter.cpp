@@ -1,5 +1,9 @@
 #include "gti/formatter.h"
 
+#include "gti/lexer.h"
+
+#include "source_text.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -25,7 +29,30 @@ public:
       return std::string(source);
     }
 
-    const std::vector<Lexeme> lexemes = scan(source);
+    if (source_text::firstInvalidUtf8(source) ||
+        source_text::firstLoneCarriageReturn(source)) {
+      return std::string(source);
+    }
+    Lexer validationLexer;
+    static_cast<void>(validationLexer.scan(std::string(source)));
+    if (std::any_of(validationLexer.errors().begin(),
+                    validationLexer.errors().end(),
+                    [](const LexDiagnostic &diagnostic) {
+                      return diagnostic.code == "GTI-L0015";
+                    })) {
+      return std::string(source);
+    }
+
+    const bool hasBom = source_text::hasUtf8Bom(source);
+    std::string normalizedSource;
+    normalizedSource.reserve(source.size());
+    for (const char character : source) {
+      if (character != '\r') {
+        normalizedSource.push_back(character);
+      }
+    }
+
+    const std::vector<Lexeme> lexemes = scan(normalizedSource);
     const std::unordered_set<std::string> declaredTypes =
         collectDeclaredTypes(lexemes);
     State state(options);
@@ -396,6 +423,9 @@ public:
     }
     if (!state.output.empty() && state.output.back() != '\n') {
       state.output.push_back('\n');
+    }
+    if (hasBom) {
+      state.output.insert(0, source_text::utf8Bom);
     }
     return state.output;
   }
@@ -1381,7 +1411,8 @@ private:
 
   static std::vector<Lexeme> scan(std::string_view source) {
     std::vector<Lexeme> result;
-    std::size_t current = 0;
+    std::size_t current =
+        source_text::hasUtf8Bom(source) ? source_text::utf8Bom.size() : 0;
 
     const auto add = [&result](Kind kind, std::string_view text) {
       result.push_back({kind, std::string(text)});

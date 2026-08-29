@@ -118,6 +118,13 @@ indentation beneath the containing structure, and remains idempotent.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 
+The formatter shares the compiler's source-text boundary. It validates strict
+UTF-8 and LF/CRLF spelling before structural scanning, preserves an optional
+leading BOM, preserves Unicode bytes inside comments and string or character
+literals, and canonicalizes accepted CRLF input to LF output. Invalid UTF-8, a
+lone CR, or non-ASCII token text is returned unchanged because formatting has
+no authority to repair or reinterpret rejected source.
+
 Whitespace normalization is also constrained by the scanner's maximal-munch
 boundaries. Before appending a token, the formatter rescans the adjacent
 two- and three-token window and retains a separator when concatenation would

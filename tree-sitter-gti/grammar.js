@@ -88,7 +88,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
 module.exports = grammar({
   name: "gti",
 
-  extras: ($) => [/\s/, $.comment],
+  extras: ($) => [/[ \t]|\r?\n/, $.comment],
   word: ($) => $.identifier,
 
   supertypes: ($) => [$.declaration, $.statement, $.expression],
@@ -109,7 +109,13 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: ($) => repeat(choice($.include_directive, $.declaration)),
+    source_file: ($) =>
+      seq(
+        optional($._byte_order_mark),
+        repeat(choice($.include_directive, $.declaration)),
+      ),
+
+    _byte_order_mark: () => "\uFEFF",
 
     include_directive: ($) =>
       prec.right(
@@ -1267,8 +1273,10 @@ module.exports = grammar({
     boolean_literal: () => choice("true", "false"),
     integer_literal: () => /0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+/,
     float_literal: () => /[0-9]+\.[0-9]+[dD]?/,
-    string_literal: () => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
-    character_literal: () => token(seq("'", choice(/[^'\\\n]/, /\\./), "'")),
+    string_literal: () =>
+      token(seq('"', repeat(choice(/[^"\\\r\n]/, /\\[^\r\n]/)), '"')),
+    character_literal: () =>
+      token(seq("'", choice(/[^'\\\r\n]/, /\\[^\r\n]/), "'")),
 
     _qualified_identifier: ($) => choice($.identifier, $.scoped_identifier),
 
@@ -1315,8 +1323,18 @@ module.exports = grammar({
     comment: () =>
       token(
         choice(
-          seq("//", /[^\n]*/),
-          seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/"),
+          seq("//", /[^\r\n]*/),
+          seq(
+            "/*",
+            repeat(
+              choice(
+                /[^*\r]/,
+                "\r\n",
+                seq(/\*+/, choice(/[^/*\r]/, "\r\n")),
+              ),
+            ),
+            /\*+\//,
+          ),
         ),
       ),
   },

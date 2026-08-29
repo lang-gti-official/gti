@@ -1,5 +1,7 @@
 #include "gti/lexer.h"
 
+#include "source_text.h"
+
 #include <algorithm>
 #include <charconv>
 #include <fstream>
@@ -10,7 +12,7 @@
 namespace lang {
 
 std::vector<Token> Lexer::consume(const std::filesystem::path &path) {
-  std::ifstream file(path);
+  std::ifstream file(path, std::ios::binary);
 
   if (!file) {
     reset(path.string());
@@ -27,6 +29,27 @@ std::vector<Token> Lexer::consume(const std::filesystem::path &path) {
 std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
   reset(std::move(sourceName));
   source = std::move(sourceText);
+
+  if (const auto invalid = source_text::firstInvalidUtf8(source)) {
+    report("GTI-L0013", "Source text is not valid UTF-8.", *invalid,
+           *invalid + 1);
+    start = current = source.size();
+    addToken(TokenKind::END_OF_FILE);
+    return std::move(tokens);
+  }
+  if (const auto loneCarriageReturn =
+          source_text::firstLoneCarriageReturn(source)) {
+    report("GTI-L0014",
+           "A carriage return must be followed by a line feed; use LF or "
+           "CRLF line endings.",
+           *loneCarriageReturn, *loneCarriageReturn + 1);
+    start = current = source.size();
+    addToken(TokenKind::END_OF_FILE);
+    return std::move(tokens);
+  }
+  if (source_text::hasUtf8Bom(source)) {
+    current = source_text::utf8Bom.size();
+  }
 
   while (!isAtEnd()) {
     start = current;
@@ -235,6 +258,13 @@ void Lexer::scanToken() {
       number();
     } else if (isAlpha(currentCharacter)) {
       identifier();
+    } else if (static_cast<unsigned char>(currentCharacter) >= 0x80U) {
+      const source_text::Utf8Scalar scalar =
+          source_text::decodeUtf8(source, start);
+      current = start + scalar.length;
+      report("GTI-L0015",
+             "Non-ASCII source text is permitted only inside comments and "
+             "string literals; GTI identifiers and tokens use ASCII.");
     } else {
       report("GTI-L0002",
              std::string("Unexpected character '") + currentCharacter + "'.");

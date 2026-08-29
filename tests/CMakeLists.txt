@@ -138,6 +138,10 @@ add_executable("gti_block_comment_tests" "${PROJECT_SOURCE_DIR}/tests/block_comm
 target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
 add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)
 
+add_executable("gti_source_text_tests" "${PROJECT_SOURCE_DIR}/tests/source_text_tests.cpp")
+target_link_libraries("gti_source_text_tests" PRIVATE gti_compiler)
+add_test(NAME source_text_pipeline COMMAND gti_source_text_tests)
+
 add_executable("gti_source_unit_services_tests"
                "${PROJECT_SOURCE_DIR}/tests/source_unit_services_tests.cpp")
 target_link_libraries("gti_source_unit_services_tests" PRIVATE gti_compiler)
@@ -1499,6 +1503,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
+      NAME source_text_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/source_text_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    add_test(
       NAME lsp_scalability_benchmark_smoke
       COMMAND
         "${Python3_EXECUTABLE}"
@@ -1510,7 +1520,8 @@ if(Python3_Interpreter_FOUND)
     )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
-        lsp_protocol block_comment_lsp lsp_scalability_benchmark_smoke
+        lsp_protocol block_comment_lsp source_text_lsp
+        lsp_scalability_benchmark_smoke
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib"
       )

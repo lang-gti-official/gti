@@ -127,6 +127,7 @@ jobs:
           npm test
           npm run test:highlights
           npm run test:shipped
+          npm run test:source-text
           git diff --exit-code -- src
 
   reference:
