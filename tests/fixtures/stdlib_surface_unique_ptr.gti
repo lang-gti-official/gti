@@ -1,3 +1,5 @@
+#include <std/memory>
+
 class Value {
 public:
   int32_t value() {

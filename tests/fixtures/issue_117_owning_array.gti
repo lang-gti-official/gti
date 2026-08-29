@@ -1,3 +1,5 @@
+#include <std/memory>
+
 struct record {
   int32_t value;
   record(int32_t initial) : value(initial) {}

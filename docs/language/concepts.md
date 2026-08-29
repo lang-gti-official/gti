@@ -244,8 +244,9 @@ C++ conversion or expression probing must not fill that gap implicitly.
 
 ## Trusted bindings
 
-The standard prelude uses reserved syntax to connect an internal declaration to
-one compiler fact:
+The prelude and selected canonical standard-library units use reserved syntax
+to connect an internal declaration to one compiler fact. For example,
+`<std/iterator>` owns its exact sentinel relationship:
 
 ```gti
 namespace gti_internal {
@@ -254,12 +255,15 @@ concept sentinel_for_capability<S, I>;
 }
 ```
 
-`@compiler_constraint` is accepted only in the implicit prelude and only inside
-`gti_internal`. Compiler-trusted standard-library units may compose these
-declarations into public concepts. Application source cannot forge a binding,
-name the private capability, or expose it through a public signature. Binding
-names and bound declarations are compiler/standard-library integration details,
-not a public language API.
+`@compiler_constraint` is accepted only inside `gti_internal` in the implicit
+prelude or in the exact trusted unit assigned to that binding. Atomic scalar
+facts belong to `<std/atomic>`, iterator relationships to `<std/iterator>`, and
+callable relationships to `<std/functional>`; core type and operator facts
+remain in the prelude. Each unit composes its private declarations into public
+concepts. Application source cannot forge a binding, name the private
+capability, or expose it through a public signature. Binding names and bound
+declarations are compiler/standard-library integration details, not a public
+language API.
 
 ## Frontend and backend contract
 

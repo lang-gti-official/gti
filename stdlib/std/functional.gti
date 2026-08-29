@@ -1,6 +1,18 @@
 // C++-familiar API scaffold for <std/functional>.
 // Owning type erasure and escaping callable storage are not implemented yet.
 
+namespace gti_internal {
+@compiler_constraint("read_callable") concept read_callable_capability<Callable, Argument, Result>;
+@compiler_constraint("mut_callable") concept mut_callable_capability<Callable, Argument, Result>;
+@compiler_constraint("once_callable") concept once_callable_capability<Callable, Argument, Result>;
+@compiler_constraint("read_binary_callable") concept read_binary_callable_capability<Callable, Left, Right, Result>;
+@compiler_constraint("mut_binary_callable") concept mut_binary_callable_capability<Callable, Left, Right, Result>;
+@compiler_constraint("once_binary_callable") concept once_binary_callable_capability<Callable, Left, Right, Result>;
+@compiler_constraint("once_action") concept once_action_capability<Callable>;
+@compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
+@compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
+}
+
 namespace std {
   /// Exact confined-call relationships. `read_callable` requires a public
   /// read-only target; `mut_callable` is a repeatable exclusive-use site and

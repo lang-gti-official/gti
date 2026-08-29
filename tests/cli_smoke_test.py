@@ -828,6 +828,7 @@ def main():
         auto_source = root / "auto-inference.gti"
         auto_executable = root / "auto-inference"
         auto_source.write_text(
+            "#include <std/memory>\n"
             "struct Value { int value = 0; "
             "Value(int initial) : value(initial) {} };\n"
             "T preserve<T>(T value) { auto inferred = value; "
@@ -968,6 +969,7 @@ def main():
         standard_vector_executable = root / "standard-vector"
         standard_vector_source.write_text(
             "#include <std/vector>\n"
+            "#include <std/memory>\n"
             "class Pair { int left; int right; public: "
             "Pair(int first, int second) : left(first), right(second) {} "
             "int sum() { return this.left + this.right; } }; "
@@ -1517,6 +1519,7 @@ def main():
         ownership_source = root / "unique-ownership.gti"
         ownership_executable = root / "unique-ownership"
         ownership_source.write_text(
+            "#include <std/memory>\n"
             "struct HeapValue { public: mut int value = 0; "
             "HeapValue(int initial) : value(initial) {} "
             "int read() { return this.value; } "
@@ -1546,6 +1549,7 @@ def main():
 
         indexed_ownership_source = root / "indexed-ownership.gti"
         indexed_ownership_source.write_text(
+            "#include <std/memory>\n"
             "struct Record { int value; "
             "Record(int initial) : value(initial) {} };\n"
             "int partial_drop() { "
@@ -1808,6 +1812,7 @@ def main():
         empty_owner_source = root / "empty-owner.gti"
         empty_owner_executable = root / "empty-owner"
         empty_owner_source.write_text(
+            "#include <std/memory>\n"
             "struct HeapValue { public: int read() { return 1; } };\n"
             "int main() { std::unique_ptr<HeapValue> value = "
             "std::unique_ptr<HeapValue>(); "
@@ -1826,6 +1831,7 @@ def main():
 
         moved_owner_source = root / "moved-owner.gti"
         moved_owner_source.write_text(
+            "#include <std/memory>\n"
             "struct HeapValue { public: int read() { return 1; } };\n"
             "int main() { "
             "std::unique_ptr<HeapValue> value = std::make_unique<HeapValue>(); "
@@ -3165,6 +3171,7 @@ def main():
 
         invalid_auto = root / "invalid-auto.gti"
         invalid_auto.write_text(
+            "#include <std/memory>\n"
             "struct Value { int value = 1; };\n"
             "int main() { auto owner = std::make_unique<Value>(); "
             "auto copied = owner; return copied->value; }\n",
