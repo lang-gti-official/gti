@@ -13,13 +13,17 @@ or deterministic cleanup rules. Source-level `new` and `delete` remain absent.
 The implemented unique ownership surface is:
 
 ```gti
+#include <std/memory>
+
 std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
 std::unique_ptr<Base> erased = std::upcast_unique<Base, Entity>(
     std::move(entity));
 ```
 
 These names are standard-library API, not keywords. The current implementation
-defines `std::unique_ptr<T>` as a nominal GTI class in `stdlib/prelude.gti`.
+defines `std::unique_ptr<T>` as a nominal GTI class in
+`stdlib/std/memory.gti`; application source imports it with
+`#include <std/memory>`.
 Its private field is a compiler-defined owner capability, while dereference,
 member access, boolean conversion, null comparison, movement, and destruction
 use the ordinary class, operator, and lifecycle systems.
@@ -79,19 +83,22 @@ C++-style `new` and `delete`. Any future untyped or manual-lifetime surface must
 define its own provenance, aliasing, initialization, failure, and diagnostic
 contracts before it becomes public.
 
-Intrinsic capabilities are declared as ordinary bodyless functions in the
-implicit prelude. Semantic registration marks only the trusted prelude
-declarations, and a call receives intrinsic behavior from its selected
-`FunctionId`, including through a namespace alias. Reusing the same spelling in
-application source creates an ordinary function and grants no compiler
-behavior. No source attribute, keyword, or public wrapper name selects an
-intrinsic.
+Intrinsic capabilities are ordinary bodyless functions declared either in the
+implicit prelude when shared across modules or in the one canonical
+standard-library unit that owns them. Unique ownership and sparse storage live
+in `<std/memory>`; prefix storage and the public logical-bounds check remain
+shared prelude facilities. Semantic registration marks only those exact
+trusted declarations, and a call receives intrinsic behavior from its selected
+`FunctionId`. Reusing the same spelling in application source creates an
+ordinary function and grants no compiler behavior. No source attribute,
+keyword, or public wrapper name selects an intrinsic.
 
-The private owner, storage, and text-view types also have ordinary nominal
-declarations in the implicit prelude. Their selected `ClassId` receives a
-compiler-capability kind only for the exact trusted declaration. Application
-source cannot enter or alias `gti_internal`; doing so is `GTI-S2058`, and a
-same-spelled application declaration never acquires the private semantic type.
+The private owner, storage, prefix-storage, and text-view types have ordinary
+nominal declarations in those same owning units. Their selected `ClassId`
+receives a compiler-capability kind only for the exact trusted declaration.
+Application source cannot enter or alias `gti_internal`; doing so is
+`GTI-S2058`, and a same-spelled application declaration never acquires the
+private semantic type.
 
 The C++ backend may implement one through C++ RAII or aligned allocation while
 a future LLVM backend lowers the same operation differently. HIR retains the
@@ -1070,8 +1077,8 @@ sufficient underlying storage for fixed-size aggregates and a future
 A GTI implementation of `std::vector<T>` needs capacity containing partially
 constructed elements. Smart pointers alone cannot safely represent that
 storage, and a fixed array cannot represent it because all of its elements are
-always initialized. GTI therefore provides this compiler-private storage
-surface:
+always initialized. `<std/memory>` therefore declares this compiler-private
+storage surface:
 
 ```gti
 gti_internal::storage<T>

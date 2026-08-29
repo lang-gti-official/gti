@@ -1269,6 +1269,93 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     return IntrinsicKind::None;
   }
+  if (isMemoryLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "allocate_unique_owner") {
+      return IntrinsicKind::AllocateUniqueOwner;
+    }
+    if (name == "unique_owner_borrow") {
+      return IntrinsicKind::UniqueOwnerBorrow;
+    }
+    if (name == "unique_owner_borrow_mut") {
+      return IntrinsicKind::UniqueOwnerBorrowMut;
+    }
+    if (name == "unique_owner_is_null") {
+      return IntrinsicKind::UniqueOwnerIsNull;
+    }
+    if (name == "unique_owner_upcast") {
+      return IntrinsicKind::UniqueOwnerUpcast;
+    }
+    if (name == "allocate_storage") {
+      return IntrinsicKind::AllocateStorage;
+    }
+    if (name == "storage_try_allocate") {
+      return IntrinsicKind::StorageTryAllocate;
+    }
+    if (name == "storage_capacity") {
+      return IntrinsicKind::StorageCapacity;
+    }
+    if (name == "storage_initialized") {
+      return IntrinsicKind::StorageInitialized;
+    }
+    if (name == "storage_construct") {
+      return IntrinsicKind::StorageConstruct;
+    }
+    if (name == "storage_read") {
+      return IntrinsicKind::StorageRead;
+    }
+    if (name == "storage_read_mut") {
+      return IntrinsicKind::StorageReadMut;
+    }
+    if (name == "storage_destroy") {
+      return IntrinsicKind::StorageDestroy;
+    }
+    if (name == "storage_relocate") {
+      return IntrinsicKind::StorageRelocate;
+    }
+    if (name == "storage_shift_right") {
+      return IntrinsicKind::StorageShiftRight;
+    }
+    if (name == "storage_shift_left") {
+      return IntrinsicKind::StorageShiftLeft;
+    }
+    return IntrinsicKind::None;
+  }
+  if (isNumericLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "integer_wrapping_add") {
+      return IntrinsicKind::IntegerWrappingAdd;
+    }
+    if (name == "integer_wrapping_sub") {
+      return IntrinsicKind::IntegerWrappingSubtract;
+    }
+    if (name == "integer_wrapping_mul") {
+      return IntrinsicKind::IntegerWrappingMultiply;
+    }
+    if (name == "integer_saturating_add") {
+      return IntrinsicKind::IntegerSaturatingAdd;
+    }
+    if (name == "integer_saturating_sub") {
+      return IntrinsicKind::IntegerSaturatingSubtract;
+    }
+    if (name == "integer_saturating_mul") {
+      return IntrinsicKind::IntegerSaturatingMultiply;
+    }
+    if (name == "integer_checked_add") {
+      return IntrinsicKind::IntegerCheckedAdd;
+    }
+    if (name == "integer_checked_sub") {
+      return IntrinsicKind::IntegerCheckedSubtract;
+    }
+    if (name == "integer_checked_mul") {
+      return IntrinsicKind::IntegerCheckedMultiply;
+    }
+    return IntrinsicKind::None;
+  }
   if (!isPreludeUnit(sourceUnit)) {
     return IntrinsicKind::None;
   }
@@ -1277,54 +1364,6 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (scope.front() != "gti_internal") {
     return IntrinsicKind::None;
-  }
-  if (name == "allocate_unique_owner") {
-    return IntrinsicKind::AllocateUniqueOwner;
-  }
-  if (name == "unique_owner_borrow") {
-    return IntrinsicKind::UniqueOwnerBorrow;
-  }
-  if (name == "unique_owner_borrow_mut") {
-    return IntrinsicKind::UniqueOwnerBorrowMut;
-  }
-  if (name == "unique_owner_is_null") {
-    return IntrinsicKind::UniqueOwnerIsNull;
-  }
-  if (name == "unique_owner_upcast") {
-    return IntrinsicKind::UniqueOwnerUpcast;
-  }
-  if (name == "allocate_storage") {
-    return IntrinsicKind::AllocateStorage;
-  }
-  if (name == "storage_try_allocate") {
-    return IntrinsicKind::StorageTryAllocate;
-  }
-  if (name == "storage_capacity") {
-    return IntrinsicKind::StorageCapacity;
-  }
-  if (name == "storage_initialized") {
-    return IntrinsicKind::StorageInitialized;
-  }
-  if (name == "storage_construct") {
-    return IntrinsicKind::StorageConstruct;
-  }
-  if (name == "storage_read") {
-    return IntrinsicKind::StorageRead;
-  }
-  if (name == "storage_read_mut") {
-    return IntrinsicKind::StorageReadMut;
-  }
-  if (name == "storage_destroy") {
-    return IntrinsicKind::StorageDestroy;
-  }
-  if (name == "storage_relocate") {
-    return IntrinsicKind::StorageRelocate;
-  }
-  if (name == "storage_shift_right") {
-    return IntrinsicKind::StorageShiftRight;
-  }
-  if (name == "storage_shift_left") {
-    return IntrinsicKind::StorageShiftLeft;
   }
   if (name == "index_bounds_check") {
     return IntrinsicKind::StorageBoundsCheck;
@@ -1358,33 +1397,6 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "prefix_storage_text_view") {
     return IntrinsicKind::PrefixStorageTextView;
-  }
-  if (name == "integer_wrapping_add") {
-    return IntrinsicKind::IntegerWrappingAdd;
-  }
-  if (name == "integer_wrapping_sub") {
-    return IntrinsicKind::IntegerWrappingSubtract;
-  }
-  if (name == "integer_wrapping_mul") {
-    return IntrinsicKind::IntegerWrappingMultiply;
-  }
-  if (name == "integer_saturating_add") {
-    return IntrinsicKind::IntegerSaturatingAdd;
-  }
-  if (name == "integer_saturating_sub") {
-    return IntrinsicKind::IntegerSaturatingSubtract;
-  }
-  if (name == "integer_saturating_mul") {
-    return IntrinsicKind::IntegerSaturatingMultiply;
-  }
-  if (name == "integer_checked_add") {
-    return IntrinsicKind::IntegerCheckedAdd;
-  }
-  if (name == "integer_checked_sub") {
-    return IntrinsicKind::IntegerCheckedSubtract;
-  }
-  if (name == "integer_checked_mul") {
-    return IntrinsicKind::IntegerCheckedMultiply;
   }
   return IntrinsicKind::None;
 }

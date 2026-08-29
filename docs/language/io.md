@@ -13,6 +13,7 @@ domain-specific records remain ordinary higher-level libraries.
 
 ```gti
 #include <std/cstdio>
+#include <std/memory> // when spelling std::unique_ptr explicitly
 
 expected<int32_t, std::io_errc> std::getchar();
 expected<std::string, std::io_errc>

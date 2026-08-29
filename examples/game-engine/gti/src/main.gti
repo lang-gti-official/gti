@@ -1,5 +1,6 @@
 #include "app/app.gti"
 #include "core/application.gti"
+#include <std/memory>
 
 int main() {
   mut std::unique_ptr<game::App> app_owner = std::make_unique<game::App>();

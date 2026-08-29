@@ -752,6 +752,8 @@ int main() {
 void testMoveOnlyClassResultReceiverFieldTransfer() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-move-only-result-field-transfer.gti", R"(
+#include <std/memory>
+
 class Node {
 public:
   mut int32_t value;
@@ -1405,6 +1407,7 @@ int main() {
 void testContainedAbstractBaseConstructor() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-body-contained-abstract-base.gti", R"(
+#include <std/memory>
 #include <std/vector>
 
 class Item {
@@ -2310,6 +2313,8 @@ int32_t main() {
 void testOwningFixedArrayAggregateAndCheckedMove() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-owning-fixed-array.gti", R"(
+#include <std/memory>
+
 struct record {
   int32_t value;
   record(int32_t initial) : value(initial) {}
@@ -3067,6 +3072,8 @@ int32_t main() {
 void testConditionalClassReturnAndPreparedResultStage() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-conditional-class-return.gti", R"(
+#include <std/memory>
+
 struct Reading {
   int32_t value;
 
@@ -3761,6 +3768,8 @@ int32_t main() {
 void testUniqueOwnerUpcastFailureBody() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-unique-owner-upcast.gti", R"(
+#include <std/memory>
+
 interface Base {
   int32_t value();
 };

@@ -1,3 +1,5 @@
+#include <std/memory>
+
 class Base {
 public:
   virtual int32_t value() {

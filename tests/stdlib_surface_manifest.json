@@ -1,22 +1,22 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "3f2914cd85fdb02f11082974fe6001c0a5229e154726ff7a375615c947f3fb7a",
+    "stdlib/prelude.gti": "ca7e8829b48da291e23b56f8c23baabbf3483ebb5f45f82b19cd95d6411a0eff",
     "stdlib/std/algorithm.gti": "bfc75d270ea682075d88bbdf50f9d5afe22f68806c877331936ea83b22f10186",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
-    "stdlib/std/atomic.gti": "20754efcfb369cd8d8955d5e2f132132657eda5ab0ab59ad52fb41d6cbb4f749",
+    "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
-    "stdlib/std/cstdio.gti": "13aa9146e9d587fe8cd3ad995f70eee192dfa9bb01336af830f99c029d181ef3",
+    "stdlib/std/cstdio.gti": "3bc53122406a8e5f22fec798ab82f8701898f36b1229974120dd020bf3e024b3",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
-    "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
-    "stdlib/std/functional.gti": "0ff67576bf3144e02b25f677be164673da3e26481c4cc23676844f77fa14868c",
-    "stdlib/std/iterator.gti": "26f28bebc19ddd9fd58a2fcc6af778bcd90094e9d45fe57d88f939ea82736066",
+    "stdlib/std/forward_list.gti": "935c5d80a864386e7ef7c58f42afe5b8bcd5434b25f0570082b029d39b3fbac1",
+    "stdlib/std/functional.gti": "3a9adc4ad2a9f41533e5252960a3a1852da4834d069e4c967da87dbae99fdf24",
+    "stdlib/std/iterator.gti": "72a49b4d6fea7f96ecd0ab452cc04c8c7e6c427d0de423e06a2f59b0726b7b9b",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
-    "stdlib/std/memory.gti": "8994829d83715c6d855a758d9ce701231ec68a16f45bd9e5d2aeb42710fab86e",
+    "stdlib/std/memory.gti": "b1b7cd67371d764d584c250b6638a2e1ec8c579d2e1a0992a2130ada75a99fe4",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "598c80e5c3f8f7904029002dcbaca7417742b30b5cf2e26bc70268edc20abbc5",
-    "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
+    "stdlib/std/numeric.gti": "e1fb604aa2118418ee039a3e35f66674eb9ceba60b11fe20e63c5dd42f1786ed",
+    "stdlib/std/optional.gti": "a156c868437b3130c0ba725f01c45fa3a26d8540ff03beb21be400279180c46e",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "a1a20bd2ab4de21a4a44974263079a4da7cf663e7b4f562e33fc9a7834db7882",
@@ -647,6 +647,33 @@
       "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
     },
     {
+      "id": "memory.unique-ptr",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": [
+        "std::make_unique",
+        "std::unique_ptr::operator bool",
+        "std::unique_ptr::operator!=nullptr",
+        "std::unique_ptr::operator*",
+        "std::unique_ptr::operator->",
+        "std::unique_ptr::operator==nullptr",
+        "std::unique_ptr::operator=nullptr",
+        "std::unique_ptr::reset"
+      ],
+      "case_ids": ["unique-ptr"],
+      "required_instantiations": ["std::unique_ptr<Value>"],
+      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/std/memory.gti"]
+    },
+    {
+      "id": "memory.unique-ptr-upcast",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
+      "case_ids": ["unique-ptr-upcast"],
+      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/std/memory.gti"],
+      "required_instantiations": ["Base/Derived"]
+    },
+    {
       "id": "mutex.executable",
       "source": "stdlib/std/mutex.gti",
       "status": "executable",
@@ -725,33 +752,6 @@
       "case_ids": ["prelude-output"],
       "required_instantiations": ["std::print<int32_t>", "std::println<uint64_t>"],
       "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
-    },
-    {
-      "id": "prelude.unique-ptr",
-      "source": "stdlib/prelude.gti",
-      "status": "executable",
-      "operations": [
-        "std::make_unique",
-        "std::unique_ptr::operator bool",
-        "std::unique_ptr::operator!=nullptr",
-        "std::unique_ptr::operator*",
-        "std::unique_ptr::operator->",
-        "std::unique_ptr::operator==nullptr",
-        "std::unique_ptr::operator=nullptr",
-        "std::unique_ptr::reset"
-      ],
-      "case_ids": ["unique-ptr"],
-      "required_instantiations": ["std::unique_ptr<Value>"],
-      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/prelude.gti"]
-    },
-    {
-      "id": "prelude.unique-ptr-upcast",
-      "source": "stdlib/prelude.gti",
-      "status": "executable",
-      "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
-      "case_ids": ["unique-ptr-upcast"],
-      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/prelude.gti"],
-      "required_instantiations": ["Base/Derived"]
     },
     {
       "id": "random.executable",

@@ -20,6 +20,17 @@ under `std` own API policy, logical state, error handling, and RAII. The
 compiler must not recognize public wrapper names such as `std::vector` or
 `std::make_unique` as shortcuts for container or ownership behavior.
 
+The implicit prelude is deliberately limited to language-wide vocabulary,
+shared compiler-capability declarations, `std::move`, and the minimal hosted
+output surface. Header-owned policy is not ambient: the `std::unique_ptr`
+family and its private owner/storage capabilities are declared by
+`<std/memory>`, the private file-descriptor bridge is declared by
+`<std/cstdio>`, and defined integer arithmetic intrinsics are declared by
+`<std/numeric>`. Atomic, iterator, and callable compiler constraints likewise
+live with their public header. Optional units do not re-export their own
+dependencies, so application source names the canonical unit for every API it
+uses directly.
+
 Integer `std::print`/`std::println` overloads, `<std/string>`'s integer
 `std::to_string`, and `<std/format>`'s bounded sequential replacement are a
 deliberate boundary example. Digit extraction, brace validation, exact
@@ -70,11 +81,14 @@ quoted application file, an override-only path beneath that root, or a source
 spelling cannot mint that role.
 
 Semantic analysis grants intrinsic behavior by exact trusted declaration
-identity. The private `unique_owner<T>`, `storage<T>`, `prefix_storage<T>`, and
-`text_view` type declarations receive compiler-capability identities only when
-the exact trusted prelude declarations are selected. Module-specific
-capabilities may instead be bound to one exact installed standard-library unit;
-managed threads use this route. Aliases preserve the selected semantic type;
+identity. The shared private `prefix_storage<T>`, `text_view`, and `c_string`
+type declarations receive compiler-capability identities only when the exact
+trusted prelude declarations are selected. Module-specific capabilities bind
+to one exact installed standard-library unit: `unique_owner<T>` and
+`storage<T>` to `<std/memory>`, managed threads to `<std/thread>`, atomics to
+`<std/atomic>`, mutexes to `<std/mutex>`, and defined integer arithmetic to
+`<std/numeric>`. Iterator and callable structural constraints are similarly
+owned by `<std/iterator>` and `<std/functional>`. Aliases preserve the selected semantic type;
 reusing a declaration or qualified spelling in application source creates no
 capability. HIR/MIR retain selected intrinsic identity, and the backend queries
 semantic capability facts rather than recognizing a source name before choosing
@@ -89,6 +103,7 @@ source-defined `std::storage<T>` wrapper expose checked `capacity()` and
 deallocation operation.
 
 The first public typed-allocation slice is the ordinary source-defined
+`std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
 surface in `<std/memory>`. The compiler recognizes none of those public names.
 The stateless allocator calls one recoverable private allocation operation; a

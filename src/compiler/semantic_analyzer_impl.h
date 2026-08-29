@@ -2837,6 +2837,14 @@ private:
 
   [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
 
+  [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] bool isIteratorLibraryUnit(SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] bool isFunctionalLibraryUnit(SourceUnitId sourceUnit) const;
+
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;
 

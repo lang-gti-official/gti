@@ -75,7 +75,7 @@ def main() -> int:
             return fail("emit C++23/O0", emitted)
         generated = generated_path.read_text(encoding="utf8")
         entry_start = generated.rfind("bool __gti_entry__gti_mir_failure(")
-        entry_end = generated.find("\n  namespace __gti_std", entry_start)
+        entry_end = generated.find("\n  }", entry_start)
         if entry_start < 0 or entry_end < 0:
             sys.stderr.write("generated C++ lost the transformed entry body\n")
             return 1

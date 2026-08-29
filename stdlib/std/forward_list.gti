@@ -5,6 +5,8 @@
 // splice_after, and middle-node algorithms still require nullable owner-tied
 // traversal and invalidation support.
 
+#include <std/memory>
+
 namespace std {
   namespace detail {
     struct forward_list_node<T> {

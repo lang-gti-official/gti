@@ -3488,9 +3488,11 @@ public:
 }
 
 void testTypedHirGenericInstances() {
-  const lang::FrontendResult valid =
-      lang::Frontend().analyze("hir-generics.gti",
-                               R"(
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "hir-generics.gti",
+      R"(
+#include <std/memory>
+
 struct Widget {
 public:
   int value = 7;
@@ -3514,7 +3516,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected HIR diagnostic: " << diagnostic.message << '\n';
@@ -3616,9 +3618,11 @@ int main() {
          "MIR verification should reject ownership-consuming ordinary "
          "construction whose exact target identity was erased");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-hir-generics.gti",
-                               R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-hir-generics.gti",
+      R"(
+#include <std/memory>
+
 struct Widget {};
 
 T accidental_copy<T>(T value) {
@@ -3640,7 +3644,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() && invalid.semanticValid &&
              !invalid.hirValid,
          "invalid ownership in a concrete generic instance should fail in "

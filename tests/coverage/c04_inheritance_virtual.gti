@@ -1,4 +1,5 @@
 // Interface dispatch through unique_ptr upcast and a polymorphic collection.
+#include <std/memory>
 #include <std/vector>
 
 interface Shape {
