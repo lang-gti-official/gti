@@ -29,11 +29,19 @@ GTI adopts two separate source constructs:
   every case or provide `default`. The frontend owns case identity,
   construction, binding, and exhaustiveness.
 
-The first payload family is intentionally non-generic and accepts only passive,
-copyable fields. It does not yet define borrowing, moving, cleanup-owning
-payloads, partial initialization, or a stable source layout. The C++ backend may
-use `std::variant` for this family because all language decisions are complete
-before emission; a future backend may choose a different representation.
+The payload family remains intentionally non-generic. It accepts passive
+fields and concrete class values, including move-only classes whose active
+cleanup is represented per alternative. Construction transfers owning class
+operands into the selected alternative, whole-enum move transfers that active
+alternative (including replacement assignment), and tag-only exhaustive
+matching observes move-only values without extracting them. The initial owning
+family is confined to direct local values plus top-level checked-reference
+parameters. By-value callable transport, lambda capture, fields, arrays and
+other wrapper containment, stored borrowed state, active non-class carriers,
+consuming or borrowed patterns, recursive owning payloads, generic payloads,
+and a stable source layout remain outside this decision. The C++ backend may
+use `std::variant` because all language decisions are complete before
+emission; a future backend may choose a different representation.
 
 Native C interoperation remains separately opt-in through `[[c_abi]]` and the
 generated native header. A source union is not accepted in a C ABI signature in
@@ -47,8 +55,9 @@ this decision.
   compiler-private optional or variant abstraction.
 - Exhaustiveness is a semantic control-flow fact retained through HIR and MIR,
   so a backend cannot silently add an unmatched continuation.
-- Ownership-capable and generic payloads must extend initialization, move,
-  borrow, and drop proofs before their syntax is accepted.
+- Broader ownership-capable and generic payloads must extend partial
+  initialization, recursive cleanup, and consuming/borrowed pattern proofs
+  before their syntax is accepted.
 - Stable payload layout and C ABI unions require separate decisions and
   evidence.
 
@@ -59,6 +68,6 @@ this decision.
 - **Make `std::variant` or `std::optional` intrinsic:** this would force the
   compiler to understand a high-level library policy and obstruct alternate
   backends.
-- **Expose payload enums immediately for arbitrary owning types:** the current
-  lifecycle model does not yet prove partial construction, move matching, and
-  exactly-once cleanup for every alternative.
+- **Expose payload enums immediately for arbitrary owning types:** the bounded
+  concrete-class family proves exactly-once cleanup, but recursive aggregates,
+  stored loans, and consuming patterns still lack complete lifecycle proofs.

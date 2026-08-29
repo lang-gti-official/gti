@@ -2460,7 +2460,7 @@ name recognition.
 - **Required slices, in dependency order:**
   1. **Completed:** explicit immutable `uint64_t` function and method
      arguments preserve ordered type/value identity through concrete
-     reanalysis, HIR, `mir-v52`, LoweredProgram, constexpr evaluation, exact
+     reanalysis, HIR, `mir-v53`, LoweredProgram, constexpr evaluation, exact
      backend calls, formatting, Tree-sitter, and LSP signatures. Literal,
      named-constant, symbolic forwarding, mixed type/value, value-only, and
      method calls execute across the production mode matrix;
@@ -2730,19 +2730,28 @@ name recognition.
   copies, or explicit moves (each an exact fused emission vocabulary), with
   copied class bindings armed and dropped like ordinary locals, payload-enum
   struct definitions scheduled after every class definition, and enum
-  copy/move/ownership traits folded from payload components. Active-cleanup
-  or borrowed-state payload constructions are rejected at the construction
-  site with `GTI-S2067`.
+  copy/move/ownership traits folded from payload components. The bounded
+  owning-class family is also complete: active-cleanup class operands transfer
+  into a variant-aware enum obligation, whole-enum move construction and
+  replacement assignment transfer the active alternative, tag-only exhaustive
+  patterns observe move-only payloads, and normal/control-flow/defined-failure
+  exits drop only the active alternative exactly once. This is a direct-local
+  slice with checked-reference parameter observation; by-value function,
+  method, constructor and lambda transport, lambda capture, aggregate/wrapper
+  containment, stored borrowed state, and active non-class/recursive carriers
+  remain diagnosed with `GTI-S2067`.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add variant-aware drop transport for owning
-  (active-cleanup) payloads, ownership-aware move/borrow matching, partial
-  initialization and drop, generic payloads, deterministic layout, and
-  interleaved enum/class definition scheduling (which would also lift the
-  construction-site-only rejection) in separately proven families.
+- **Remaining scope:** Add an owning payload-enum call/return ABI (including
+  parameter entry, placement result publication, failure cleanup, constructors
+  and typed lambdas), lambda capture and aggregate/wrapper lifecycle transport,
+  consuming and borrowed payload bindings, recursive active aggregates/nested
+  payload enums with explicit partial state, generic payloads, deterministic
+  layout, and broader interleaved enum/class definition scheduling in
+  separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
@@ -2762,7 +2771,7 @@ name recognition.
   produces `T`/`void` on success, and returns `unexpected(E)` on failure only
   from an enclosing `expected<U, E>` callable. Named places copy; prvalues and
   explicit `std::move` operands move. HIR retains the selected extraction and
-  transport plan; `mir-v52`/`mir-body-v46` carry explicit mutually exclusive
+  transport plan; `mir-v53`/`mir-body-v46` carry explicit mutually exclusive
   early full-expression endpoints, cleanup, and return control flow; C++20 and
   C++23 spell the same verified behavior.
 - **Completion evidence:** Positive and negative compiler tests cover exact
@@ -3618,7 +3627,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive exact construction, exhaustive copied matching, and the cleanup-free class-payload family complete; owning-payload drop transport, move/borrow patterns, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **in progress:** passive payloads plus direct-local concrete owning-class construction, variant-aware exactly-once drop, whole-enum move construction/assignment, checked-reference observation, copied bindings, and tag-only exhaustive matching are complete; owning call/return and containment ABI, consuming/borrowed bindings, recursive owning aggregates, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |

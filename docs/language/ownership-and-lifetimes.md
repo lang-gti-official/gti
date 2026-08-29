@@ -924,6 +924,17 @@ temporary cleanup use the deterministic cross-unit order in Execution Section
 aggregates, and concrete generic fields; ordinary cleanup-free value globals
 remain governed by the separate global-storage and concurrency rules.
 
+A closed payload enum also requires active cleanup when any alternative owns
+an active-cleanup class. The enum carries one obligation whose concrete drop
+dispatches only to the active alternative. Construction and whole-enum movement
+transfer that obligation exactly once; tag-only matching borrows the enum for
+the duration of the switch and does not move its payload. Move assignment
+replaces and drops the destination's old alternative before transferring the
+source obligation. In the first owning-enum slice, this obligation may belong
+only to a direct local binding or its whole-value move staging slot; callable
+by-value transport, lambda capture, fields, arrays, and wrapper containment
+remain diagnosed rather than inventing indirect cleanup state.
+
 The semantic `GTI-S2061` check implements the recursive active-cleanup
 restriction after the more-specific unique-owner, private-storage, and
 borrowed-state global diagnostics. Its related information identifies a

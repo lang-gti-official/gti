@@ -1236,6 +1236,16 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   }
   if (kind == ExprKind::QualifiedName) {
     const QualifiedName &qualified = static_cast<const QualifiedName &>(expr);
+    const ResolvedEnumeratorInfo *enumerator =
+        semanticModel.findEnumerator(qualified);
+    if (enumerator != nullptr && enumerator->owner != 0 &&
+        enumerator->owner <= enums.size() &&
+        enums[enumerator->owner - 1].payload) {
+      // An enumerator is a freshly produced value, not storage that must be
+      // copied. This distinction is observable for a unit alternative of an
+      // otherwise move-only payload enum.
+      return expressionInfo(std::move(type));
+    }
     const Symbol *symbol = resolveQualified(qualified.name());
     if (symbol != nullptr && (symbol->type == SemanticType::Function ||
                               symbol->type == SemanticType::TypeName)) {
@@ -4349,24 +4359,34 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                  typeSpelling(enumerator.payloadTypes[index]) + "'.",
              "GTI-S2067");
     }
-    // The first class-payload family stores classes without active cleanup or
-    // borrowed state; variant-aware drop transport for owning payloads is a
-    // separately proven follow-on slice.
-    if (actual.kind == SemanticType::Class &&
-        (requiresActiveCleanupFor(actual) ||
-         typeTraits(actual).containsBorrowedState)) {
+    // Closed payload alternatives may own active-cleanup class values. Stored
+    // borrowed state remains outside this family because the variant would
+    // otherwise outlive or relocate an untracked referent.
+    if (typeTraits(actual).containsBorrowedState) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics,
           expressionToken(call.arguments()[index]),
           "Payload type '" + typeSpelling(actual) +
-              (requiresActiveCleanupFor(actual)
-                   ? "' requires active cleanup; variant-aware drop state "
-                     "is not implemented yet."
-                   : "' carries borrowed state and cannot live inside a "
-                     "variant alternative."));
+              "' carries borrowed state and cannot live inside a variant "
+              "alternative.");
       diagnostic.hints.emplace_back(
-          "The first class-payload family stores classes without destructor "
-          "or owning-storage cleanup and without stored references.");
+          "Payload alternatives may own values, but they cannot store GTI "
+          "references or other borrowed-state carriers.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+    if (requiresActiveCleanupFor(actual) &&
+        actual.kind != SemanticType::Class) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics,
+          expressionToken(call.arguments()[index]),
+          "Payload type '" + typeSpelling(actual) +
+              "' requires active cleanup but is not a concrete class value; "
+              "this payload-enum slice supports owning class alternatives "
+              "only.");
+      diagnostic.hints.emplace_back(
+          "Nested owning payload enums, owning arrays, and other recursive "
+          "cleanup carriers remain unsupported until their partial-state "
+          "lifecycle is represented explicitly.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -4452,11 +4472,26 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
              "GTI-S2067");
       return std::nullopt;
     }
+    const SemanticType &payloadType = enumerator->payloadTypes[index];
+    if (!typeTraits(payloadType).copyable) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
+          "Payload field " + std::to_string(index + 1) + " of variant '" +
+              enumerator->declaration->name.lexeme + "' has move-only type '" +
+              typeSpelling(payloadType) +
+              "' and cannot be copied into a non-consuming match binding.");
+      diagnostic.hints.emplace_back(
+          "Match the variant without payload bindings (for example 'case " +
+          typeSpelling(subjectType) +
+          "::" + enumerator->declaration->name.lexeme +
+          ":') until consuming payload patterns are available.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return std::nullopt;
+    }
     result.bindings.push_back(
         {.name = &binding->name(),
          .source = binding,
-         .binding =
-             bindingInfo(enumerator->payloadTypes[index], AccessMode::ReadOnly),
+         .binding = bindingInfo(payloadType, AccessMode::ReadOnly),
          .payloadIndex = index});
   }
   return result;

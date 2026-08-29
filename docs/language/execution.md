@@ -551,10 +551,31 @@ value only after its admitted fields are available; a class payload enters
 its alternative by copy from a named value, by transfer from an explicit
 `std::move`, or directly from a fresh prvalue construction, before any later
 sibling field expression evaluates. A payload switch evaluates its subject
-once, selects by the active alternative, copies that alternative's fields
-into immutable arm bindings, and executes the selected arm; a class-typed
-arm binding owns its copy and drops at the arm's end. An exhaustive payload
-switch has no unmatched execution path.
+once through a read-only observation, selects by the active alternative,
+copies that alternative's fields into immutable arm bindings, and executes the
+selected arm; a class-typed arm binding owns its copy and drops at the arm's
+end. A move-only payload is observed through a tag-only pattern because the
+current pattern family does not consume or borrow its field. An exhaustive
+payload switch has no unmatched execution path.
+
+When any alternative contains an active-cleanup class, the enum owns one
+variant-aware lexical cleanup obligation. Payload construction transfers each
+successfully produced owning class value into the selected alternative before
+arming the enum value. A failure before publication cleans the produced
+operand through its existing construction obligation; a failure after
+publication, ordinary fallthrough, `return`, `break`, and `continue` all drop
+the enum exactly once. Whole-enum move construction transfers the active
+alternative and disarms the source. Whole-enum move assignment drops the old
+destination alternative exactly once, transfers the source alternative, and
+later destroys only the moved-from staging shell. A unit alternative has no
+payload cleanup to run.
+
+Owning payload enums currently execute only as direct local values. They may
+be passed to an ordinary function through a top-level checked reference, which
+may inspect the active tag without transferring cleanup identity. By-value
+call/return transport, lambda
+capture, and aggregate or generic-wrapper containment are diagnosed before
+execution lowering; no native ABI or implicit wrapper cleanup is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the

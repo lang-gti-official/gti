@@ -497,14 +497,25 @@ private:
                           .source = enumDeclaration,
                           .qualifiedName = info->qualifiedName,
                           .underlyingType = info->underlyingType,
+                          .traits = instanceProvider->traitsFor(
+                              SemanticType::enumType(info->id)),
+                          .requiresActiveCleanup =
+                              instanceProvider->requiresActiveCleanupFor(
+                                  SemanticType::enumType(info->id)),
                           .payload = info->payload};
           lowered.enumerators.reserve(info->enumerators.size());
           for (const EnumeratorInfo &enumerator : info->enumerators) {
-            lowered.enumerators.push_back(
-                {.source = enumerator.declaration,
-                 .value = enumerator.value,
-                 .variantIndex = enumerator.variantIndex,
-                 .payloadTypes = enumerator.payloadTypes});
+            HirEnumerator variant{.source = enumerator.declaration,
+                                  .value = enumerator.value,
+                                  .variantIndex = enumerator.variantIndex,
+                                  .payloadTypes = enumerator.payloadTypes};
+            variant.payloadRequiresActiveCleanup.reserve(
+                enumerator.payloadTypes.size());
+            for (const SemanticType &payload : enumerator.payloadTypes) {
+              variant.payloadRequiresActiveCleanup.push_back(
+                  instanceProvider->requiresActiveCleanupFor(payload));
+            }
+            lowered.enumerators.push_back(std::move(variant));
           }
           output.program.enums.push_back(std::move(lowered));
         }

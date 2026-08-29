@@ -500,7 +500,9 @@ private:
            << ";qualified=" << std::quoted(value.qualifiedName)
            << ";underlying=";
     type(value.underlyingType);
-    output << ";payload=" << value.payload
+    output << ";payload=" << value.payload << ";traits=";
+    traits(value.traits);
+    output << ";active-cleanup=" << value.requiresActiveCleanup
            << ";private=" << value.compilerPrivate << ";values=[";
     for (std::size_t index = 0; index < value.enumerators.size(); ++index) {
       separator(index);
@@ -513,6 +515,10 @@ private:
            ++payload) {
         separator(payload);
         type(enumerator.payloadTypes[payload]);
+        output << ":active="
+               << (payload < enumerator.payloadRequiresActiveCleanup.size()
+                       ? enumerator.payloadRequiresActiveCleanup[payload]
+                       : false);
       }
       output << "];source=";
       span(enumerator.source);

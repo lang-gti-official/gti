@@ -176,6 +176,63 @@ int32_t identity(int32_t value) { return value; }
       "duplicate copied type rows should fail closed as incoherent");
 }
 
+void testOwningPayloadEnumRepresentationAdmission() {
+  const lang::FrontendResult frontend = analyze("owning-payload-map.gti", R"(
+mut int32_t drops = 0;
+class leaf { public: leaf() {} ~leaf() { drops = drops + 1; } mut int32_t value = 7; };
+enum class holder { one(leaf value), none };
+int main() {
+  holder held = holder::one(leaf());
+  switch (held) { case holder::one: break; case holder::none: break; }
+  return drops;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning payload-enum map fixture should pass the frontend");
+  const lang::MirFunctionInstance *function = firstSourceFunction(frontend.mir);
+  if (!frontend.canGenerateCode() || function == nullptr) {
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function->id};
+  lang::CppMirBodyEmissionMapRows rows = buildRows(frontend, frontend.mir);
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::CppMirBodyEmissionAnalysis exact = emitter.analyze(address);
+  if (!exact.ready()) {
+    for (const lang::CppMirBodyEmissionIssue &issue : exact.issues) {
+      std::cerr << "owning payload admission: " << issue.detail << '\n';
+    }
+  }
+  expect(exact.ready(),
+         "an exact owning payload-enum lifecycle row should admit verified "
+         "MIR body analysis");
+
+  const auto enumeration = std::find_if(
+      rows.enums.begin(), rows.enums.end(),
+      [](const lang::CppMirEnumRepresentation &row) {
+        return row.requiresActiveCleanup && !row.payloadVariants.empty();
+      });
+  expect(enumeration != rows.enums.end(),
+         "the sealed representation map should carry the owning enum row");
+  if (enumeration == rows.enums.end() ||
+      enumeration->payloadVariants.front().fieldRequiresActiveCleanup.empty()) {
+    return;
+  }
+  enumeration->payloadVariants.front().fieldRequiresActiveCleanup.front() =
+      false;
+  const lang::CppMirBodyEmissionAnalysis forged =
+      lang::CppMirBodyEmitter(frontend.mir,
+                              lang::CppMirBodyEmissionMap(std::move(rows)))
+          .analyze(address);
+  expect(
+      forged.readiness == lang::CppMirBodyEmissionReadiness::Incoherent &&
+          hasIssue(forged,
+                   lang::CppMirBodyEmissionIssueKind::InvalidRepresentationRow),
+      "a forged payload cleanup row should fail closed against verified "
+      "MIR");
+}
+
 void testImmutableBodyPlanOutlivesAdmissionInputs() {
   const lang::CppMirBodyEmissionPlan plan = [] {
     const lang::FrontendResult frontend =
@@ -2168,6 +2225,8 @@ int main() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"testOwningPayloadEnumRepresentationAdmission",
+     testOwningPayloadEnumRepresentationAdmission},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},

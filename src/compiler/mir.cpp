@@ -6708,16 +6708,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        HirCallInputKind::MoveBorrowedTemporary);
               break;
             case MirInstructionKind::Compute:
-              consuming = instruction.operation == MirOperation::Aggregate ||
-                          instruction.operation == MirOperation::Unexpected ||
-                          (instruction.operation == MirOperation::Closure &&
-                           index < instruction.closureCaptureModes.size() &&
-                           instruction.closureCaptureModes[index] ==
-                               LambdaCaptureMode::Move) ||
-                          ((instruction.operation == MirOperation::Identity ||
-                            instruction.operation == MirOperation::Convert ||
-                            instruction.operation == MirOperation::Comma) &&
-                           index + 1 == instruction.operands.size());
+              consuming =
+                  instruction.operation == MirOperation::Aggregate ||
+                  instruction.operation == MirOperation::PayloadConstruct ||
+                  instruction.operation == MirOperation::Unexpected ||
+                  (instruction.operation == MirOperation::Closure &&
+                   index < instruction.closureCaptureModes.size() &&
+                   instruction.closureCaptureModes[index] ==
+                       LambdaCaptureMode::Move) ||
+                  ((instruction.operation == MirOperation::Identity ||
+                    instruction.operation == MirOperation::Convert ||
+                    instruction.operation == MirOperation::Comma) &&
+                   index + 1 == instruction.operands.size());
               break;
             default:
               consuming = false;

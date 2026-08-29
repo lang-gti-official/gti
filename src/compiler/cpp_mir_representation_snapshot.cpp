@@ -1001,10 +1001,13 @@ struct RowClassFacts {
 struct RowEnumVariantFacts {
   std::size_t index = 0;
   std::vector<SemanticType> fieldTypes;
+  std::vector<bool> fieldRequiresActiveCleanup;
 };
 
 struct RowEnumFacts {
   SemanticType underlyingType = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+  bool requiresActiveCleanup = false;
   bool payload = false;
   std::vector<RowEnumVariantFacts> variants;
 };
@@ -1073,11 +1076,15 @@ public:
       return std::nullopt;
     }
     result.underlyingType = info->underlyingType;
+    result.traits = info->traits;
+    result.requiresActiveCleanup = info->requiresActiveCleanup;
     result.payload = info->payload;
     result.variants.reserve(info->enumerators.size());
     for (const LoweredEnumerator &enumerator : info->enumerators) {
       result.variants.push_back({.index = enumerator.variantIndex,
-                                 .fieldTypes = enumerator.payloadTypes});
+                                 .fieldTypes = enumerator.payloadTypes,
+                                 .fieldRequiresActiveCleanup =
+                                     enumerator.payloadRequiresActiveCleanup});
     }
     return result;
   }
@@ -1259,7 +1266,10 @@ struct RowsBuilder {
     type.enumId = owner;
     CppMirEnumRepresentation row{.owner = owner,
                                  .spelling = facts.typeSpelling(standard, type),
-                                 .underlyingType = info->underlyingType};
+                                 .underlyingType = info->underlyingType,
+                                 .traits = info->traits,
+                                 .requiresActiveCleanup =
+                                     info->requiresActiveCleanup};
     // A payload enum's row copies the compatibility record layout: each
     // enumerator is a __gti_variant_<index> alternative of the __gti_value
     // variant, holding its payload fields in declaration order.
@@ -1268,7 +1278,9 @@ struct RowsBuilder {
         row.payloadVariants.push_back(
             {.index = enumerator.index,
              .spelling = "__gti_variant_" + std::to_string(enumerator.index),
-             .fieldTypes = enumerator.fieldTypes});
+             .fieldTypes = enumerator.fieldTypes,
+             .fieldRequiresActiveCleanup =
+                 enumerator.fieldRequiresActiveCleanup});
         for (const SemanticType &field : enumerator.fieldTypes) {
           addType(field);
         }

@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v52 valid=" << program.valid() << '\n';
+    output << "mir-v53 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -300,6 +300,33 @@ public:
              << (adapter.catchesWorkerFailure ? "catch" : "leak")
              << " native-exception="
              << (adapter.catchesNativeExceptions ? "catch" : "leak") << '\n';
+    }
+    output << "payload-enums " << program.payloadEnums().size() << '\n';
+    for (const MirPayloadEnum &enumeration : program.payloadEnums()) {
+      output << "payload-enum @" << enumeration.declaration
+             << " source-unit=" << enumeration.sourceUnit << " type=";
+      type(enumeration.type);
+      output << " active-cleanup=" << enumeration.requiresActiveCleanup << ' ';
+      traits(enumeration.traits);
+      output << " variants=[";
+      for (std::size_t variantIndex = 0;
+           variantIndex < enumeration.variants.size(); ++variantIndex) {
+        separator(variantIndex);
+        const MirPayloadEnumVariant &variant =
+            enumeration.variants[variantIndex];
+        output << "{index=" << variant.variantIndex << ",payload=[";
+        for (std::size_t fieldIndex = 0;
+             fieldIndex < variant.payloadTypes.size(); ++fieldIndex) {
+          separator(fieldIndex);
+          type(variant.payloadTypes[fieldIndex]);
+          output << ":active="
+                 << (fieldIndex < variant.payloadRequiresActiveCleanup.size()
+                         ? variant.payloadRequiresActiveCleanup[fieldIndex]
+                         : false);
+        }
+        output << "]}";
+      }
+      output << "]\n";
     }
     output << "module\n";
     body(program.module(), 0);

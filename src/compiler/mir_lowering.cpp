@@ -154,6 +154,25 @@ MirLowerer::lowerProgram(const HirProgram &source,
   bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
   result.program.failureMetadata_ = failureMetadata;
+  for (const HirEnum &enumeration : source.enumDeclarations()) {
+    if (!enumeration.payload) {
+      continue;
+    }
+    MirPayloadEnum lowered{
+        .declaration = enumeration.declaration,
+        .sourceUnit = enumeration.sourceUnit,
+        .type = SemanticType::enumType(enumeration.declaration),
+        .traits = enumeration.traits,
+        .requiresActiveCleanup = enumeration.requiresActiveCleanup};
+    lowered.variants.reserve(enumeration.enumerators.size());
+    for (const HirEnumerator &variant : enumeration.enumerators) {
+      lowered.variants.push_back({.variantIndex = variant.variantIndex,
+                                  .payloadTypes = variant.payloadTypes,
+                                  .payloadRequiresActiveCleanup =
+                                      variant.payloadRequiresActiveCleanup});
+    }
+    result.program.payloadEnums_.push_back(std::move(lowered));
+  }
   if (includeProgramInitialization) {
     result.program.moduleBody = lowerBody(
         source, failureMetadata, source.module(), MirBodyKind::Module,

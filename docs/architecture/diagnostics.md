@@ -470,8 +470,15 @@ appropriate, relates duplicates to their first declaration/arm, and names
 missing alternatives. A rejected class payload uses the class identity already
 registered by semantic analysis, including its qualified name and exact generic
 arguments; diagnostics must not substitute `unknown class` merely because
-complete member metadata is recorded later. No fix-it is offered when choosing
-a payload type, binding, or missing-arm behavior requires program intent.
+complete member metadata is recorded later. A move-only payload binding names
+the non-consuming copied-pattern boundary and points users to the tag-only
+form; an active recursive/non-class carrier names the bounded owning-class
+boundary. The direct-local owning slice reports by-value function/method,
+constructor, and typed-lambda boundaries at their type declaration and
+suggests a checked reference; lambda capture and field/array/wrapper
+containment name the exact storage boundary before MIR. No fix-it is offered
+when choosing a payload type, binding, transport, or missing-arm behavior
+requires program intent.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and
