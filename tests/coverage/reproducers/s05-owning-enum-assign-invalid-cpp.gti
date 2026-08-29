@@ -1,0 +1,8 @@
+mut int32_t drops = 0;
+class res { public: res(int32_t id) : id(id) {} ~res() { drops++; } private: int32_t id; };
+enum class slot { empty, one(res a), };
+int main() {
+  mut slot s = slot::empty;
+  s = slot::one(res(1));
+  return 0;
+}

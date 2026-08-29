@@ -460,24 +460,11 @@ Corpus program: `c52_higher_order_lambdas`.
 
 ## F15 — ICE: calling a method on the result of an overloaded operator
 
-`reproducers/f15-method-on-operator-result.gti`
-
-```gti
-Counter operator+(Counter& o) { return Counter(this.n + o.n); }
-...
-std::println((a + b).value());   // ICE
-```
-
-Emitter-vocabulary ICE. Two neighbouring shapes are both fine:
-
-- `mut Counter c = a + b;` then `c.value()`
-- `a.plus(b).value()`, where `plus` is an ordinary method returning the same
-  temporary
-
-So it is neither the temporary nor the method call on its own. It is a method
-call applied to the result of an *operator* invocation.
-
-Corpus program: `c53_operator_breadth`.
+**Superseded and mischaracterized — see S01.** The reproducer was written
+`(a + b).value()`, and later work established that the *parentheses* are the
+defect, not the method call. `a.plus(b).get()` and
+`mut Val c = a + b; c.get();` both compile and run. Keeping the entry so the
+correction is on the record rather than silently edited away.
 
 ## F16 — The canonical C++ iterator loop does not compile over `std::vector`
 
@@ -649,6 +636,161 @@ content.
 
 ---
 
+# Stabilization pass (0.329.0)
+
+A second campaign against `main` at 0.329.0, aimed at v1.0 readiness. Seven
+of the findings above were fixed in the interim — F1, F2, F3, F4, F5, F6 and
+F9 all compile now, and the corpus sweep went from 50 to 56 passing.
+
+The defects below were found with combination matrices
+(`matrices/`), the sanitizer harnesses, and structural stress inputs.
+
+## S01 — ICE: parenthesizing a constructor call or operator result
+
+`reproducers/s01-parenthesized-constructor.gti`
+
+```gti
+mut Val c = Val(4);     // ok, prints 4
+mut Val c = (Val(4));   // ICE
+```
+
+One redundant bracket pair. It is fatal only around expressions that
+*materialize* a class value — a constructor call or an operator result.
+Parenthesizing a variable, a method call, or a free call is fine, and
+parenthesizing a built-in operator result is fine.
+
+This is what F15 actually was.
+
+## S02 — ICE: a ternary producing a class value
+
+`reproducers/s02-ternary-class-value.gti`
+
+```gti
+mut Val x = flag ? Val(1) : Val(2);   // ICE
+int32_t x = flag ? 1 : 2;             // ok
+```
+
+ICEs in all eight consumer positions tried, so it is the ternary itself and
+not what is done with the result.
+
+## S03 — ICE: a method call directly on `std::move(x)`
+
+`reproducers/s03-method-on-moved-value.gti`
+
+```gti
+std::println(std::move(a).get());        // ICE
+mut Val b = std::move(a); b.get();       // ok
+```
+
+The inconsistency is the interesting part: `std::move(r).value()` is the
+**required** idiom for extracting an owner from an `expected`, and works. The
+same shape on a user class or a `unique_ptr` is an ICE — and the `unique_ptr`
+case fails in MIR construction while the user-class case fails in the emitter,
+so there may be two defects here.
+
+## S04 — ICE: any bodyless declaration with an unnamed parameter
+
+`reproducers/s04-bodyless-decl-unnamed-param.gti`
+
+```gti
+interface I { int32_t f(int32_t); };
+int main() { return 0; }
+```
+
+Two lines. `declaration_matrix.py` puts the whole family on one page: **14 ICE
+cells**, every combination of a bodyless declaration form (free declaration,
+`extern "C"`, class method declaration, interface method) with an unnamed
+parameter of any shape. A *defined* function with an unnamed parameter is fine,
+which is why nothing shipped hits it.
+
+The `extern "C"` row matters most: omitting parameter names is normal C style,
+so hand-transcribing a C API hits this immediately. `gti bindgen` is unaffected
+— it synthesizes `argument0`, `argument1`, and its output compiles.
+
+## S05 — Invalid C++ emitted for an owning payload enum assignment
+
+`reproducers/s05-owning-enum-assign-invalid-cpp.gti`
+
+```gti
+mut slot s = slot::empty;
+s = slot::one(res(1));      // res has a destructor
+```
+
+```
+error: use of undeclared identifier '__gti_mir_v_2'
+```
+
+The front end accepts the program and emits C++ that does not compile. The
+body declares `v_4`, `v_5`, `v_7` — there is no `v_2`. It needs all three of an
+assignment (not an initialization), a payload with a destructor, and a
+construction expression on the right; `examples/78-owning-payload-enums.gti`
+only ever assigns from a named value, which is the gap.
+
+Worth separating from the ICEs: the verified-MIR contract is supposed to
+guarantee the emitter can spell what it accepts, or decline with `GTI-B0001`.
+Here it did neither.
+
+## S06 — A primary diagnostic with no location at all
+
+`reproducers/s06-constexpr-unnamed-param-no-span.gti`
+
+```gti
+constexpr int32_t reads(int32_t*) { return 0; }
+```
+
+```
+<source>:1:1: error[GTI-S2057]: Constexpr function parameters must be
+              non-pack, by-value supported values.
+```
+
+F17 was a related *note* pointing outside the source; this is the **primary
+diagnostic** with no line, column or caret anywhere. Naming the parameter
+restores a correct location.
+
+Both are one root cause: a diagnostic anchored on a parameter's name token,
+which is default-constructed for a legal unnamed parameter. There are **9 uses
+of `tokenSpan(parameter.name)` across 5 files**, so this is a pattern worth
+auditing as a whole.
+
+## S07 — A type alias cannot be used as a scope qualifier
+
+`reproducers/s07-alias-as-scope-qualifier.gti`
+
+```gti
+using Alias = Traits;
+using ViaAlias = Alias::value_type;        // GTI-S2000: Unknown type
+using Direct = Traits::value_type;         // ok
+```
+
+And separately, a class-scoped alias on a *generic* class cannot be named from
+outside the class at all — `Box<int32_t>::value_type` is a parse error in a
+`using`, in a variable declaration, and in a parameter list. The alias works
+inside the class body, which is all
+`examples/79-class-scoped-type-aliases.gti` exercises.
+
+## S08 — Compile time is exponential in method-chain length
+
+`reproducers/s08-exponential-method-chain.gti`
+
+| chain length | compile time |
+| --- | --- |
+| 20 | 0.3s |
+| 30 | 1.7s |
+| 40 | 6.5s |
+| 50 | 21.4s |
+| 60 | 59.7s |
+
+Each ten links multiplies the time by about three. Three variants at length 40
+isolate it: a **reference**-returning `self()` is 0.3s, a free function chained
+by value is 0.3s, and the same 40 calls written as 40 separate statements is
+0.3s. Only a chained expression whose receiver is the by-value result of a
+method call is slow, which points at receiver re-analysis without memoization.
+
+Fluent and builder APIs are mainstream, and the immutable-builder style returns
+by value deliberately.
+
+---
+
 ## What was checked and found sound
 
 Recording the negative results as well, since they bound where the defects
@@ -658,6 +800,23 @@ above are not:
   stdout and exit status at `-O0`, `-O1`, `-O2`, `-O3` and under both C++20 and
   C++23 — 250 configurations. The optimizer does not change observable
   behaviour anywhere this corpus reaches.
+- **No runtime undefined behaviour.** All 56 programs that build on 0.329.0
+  were compiled with ASan and UBSan applied to the *generated C++* and run:
+  zero reports. This covers miscompilation that produces UB, which an output
+  differential cannot see if every optimization level is wrong the same way.
+- **Deterministic output.** Emitted C++ and emitted MIR are byte-identical
+  across repeated compiles of all 57 programs.
+- **The build system is solid.** Twenty malformed manifests — missing and
+  wrong `manifest-version`, absent `[package]`, wrong value types, unknown
+  target kinds, duplicate targets, invalid TOML, absolute and `../` traversal
+  roots, empty and non-ASCII package names — each produce a distinct, specific
+  diagnostic code. Include paths reject traversal, absolute paths, self-include
+  and embedded NUL the same way. Nothing crashed, hung, or escaped the project
+  directory.
+- **The LSP survives what crashes the compiler.** `operator-chain-500.gti`
+  segfaults `gti` but `gti_lsp` opens it, answers `documentSymbol`, and stays
+  alive. `lsp_probe.py` passes for UTF-16 position encoding across ASCII,
+  Latin-1, CJK and emoji, and for edit staleness.
 - **Arithmetic is correct.** 400 randomly generated, provably-defined integer
   expressions over the full operator set agree exactly between an independent
   evaluator, C++ at `-O0`/`-O2`, and GTI at `-O0`/`-O3`.
