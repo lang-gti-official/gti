@@ -5795,12 +5795,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              left.transferCapable == right.transferCapable &&
              left.shareCapable == right.shareCapable;
     };
+    const auto validOwnedValueInputType = [](const ExpressionInfo &info) {
+      return info.type.kind == SemanticType::Class ||
+             (info.type.kind == SemanticType::Enum &&
+              info.traits.drop == DropKind::Lexical);
+    };
     const auto validClassCopyInput = [&](const MirInstruction &input,
                                          const MirOperand &operand) {
       const MirPlace *place = body.findPlace(operand.place);
       const bool exactSource =
-          input.info.type.kind == SemanticType::Class &&
-          input.info.traits.copyable &&
+          validOwnedValueInputType(input.info) && input.info.traits.copyable &&
           !input.info.traits.containsBorrowedState &&
           operand.kind == MirOperandKind::Copy && place != nullptr &&
           place->type == input.info.type &&
@@ -5827,8 +5831,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     };
     const auto validClassMoveInput = [&](const MirInstruction &input,
                                          const MirOperand &operand) {
-      if (input.info.type.kind != SemanticType::Class ||
-          !input.info.traits.movable ||
+      if (!validOwnedValueInputType(input.info) || !input.info.traits.movable ||
           input.info.traits.containsBorrowedState ||
           operand.kind != MirOperandKind::Value) {
         return false;
@@ -8705,10 +8708,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const bool exactKind =
             argument != nullptr &&
             (mutableStorageInput || temporaryReadArgument ||
-             (parameter.kind == SemanticType::Class
+             ((parameter.kind == SemanticType::Class ||
+               (parameter.kind == SemanticType::Enum &&
+                argument->info.traits.drop == DropKind::Lexical))
                   ? (argument->callInputKind == HirCallInputKind::CopyValue ||
                      argument->callInputKind == HirCallInputKind::MoveValue ||
-                     (invocation.kind == MirInstructionKind::Construct &&
+                     (parameter.kind == SemanticType::Class &&
+                      invocation.kind == MirInstructionKind::Construct &&
                       parameter == argument->info.type &&
                       parameter == argument->operands.front().type &&
                       argument->info.traits.containsBorrowedState &&

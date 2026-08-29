@@ -1600,6 +1600,13 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                  "The first payload-enum family does not store references "
                  "or fixed arrays.",
                  "GTI-S2067");
+        } else if (type.kind == SemanticType::Class &&
+                   (!type.arguments.empty() || !type.valueArguments.empty())) {
+          report(location,
+                 "Generic class payload type '" + typeSpelling(type) +
+                     "' is not supported by the bounded payload-enum "
+                     "representation.",
+                 "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,

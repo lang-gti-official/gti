@@ -221,13 +221,16 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
 }
 
 auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
-    const SemanticType &type, const Token &location, std::string_view boundary)
-    -> void {
+    const SemanticType &type, const Token &location, std::string_view boundary,
+    bool directTransport) -> void {
   if (!containsOwningPayloadEnum(type)) {
     return;
   }
   const bool byValue = type.kind != SemanticType::Reference &&
                        type.kind != SemanticType::RawPointer;
+  if (directTransport && byValue && type.kind == SemanticType::Enum) {
+    return;
+  }
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2067", DiagnosticPhase::Semantics, location,
       byValue ? "Owning payload enum type '" + typeSpelling(type) +
@@ -239,9 +242,13 @@ auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
                     "wrapper; only a direct enum indirection is admitted in "
                     "this slice.");
   diagnostic.hints.emplace_back(
-      "Pass it by checked reference so ownership stays in the caller; the "
-      "by-value owning payload-enum call and return ABI remains "
-      "unimplemented.");
+      byValue && type.kind == SemanticType::Enum
+          ? "Use an ordinary non-polymorphic GTI callable definition for "
+            "direct owning payload-enum transport, or pass it by checked "
+            "reference."
+          : "Keep the owning payload enum as the direct value; aggregate, "
+            "wrapper, indirection-to-wrapper, and polymorphic transport "
+            "remain unsupported.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -681,6 +688,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
   const ClassInfo &owner = classInfo(*currentClass);
   const ConstructorInfo *constructorInfo = semanticModel.findConstructor(stmt);
+  const bool directOwningPayloadTransport =
+      stmt.body() != nullptr && constructorInfo != nullptr &&
+      constructorInfo->kind == ConstructorKind::Ordinary &&
+      constructorInfo->genericParameters.empty() &&
+      owner.genericParameters.empty() && !owner.polymorphic;
   bool requirementsValid = true;
   if (constructorInfo != nullptr) {
     beginTypeParameterScope(constructorInfo->genericParameters);
@@ -706,7 +718,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     validateType(parameter.type);
     const SemanticType parameterType = typeOf(parameter);
     validateOwningPayloadEnumByValueBoundary(
-        parameterType, parameter.type.name.last(), "constructor parameter");
+        parameterType, parameter.type.name.last(), "constructor parameter",
+        directOwningPayloadTransport);
     const bool defaultLibraryStorageBorrow =
         isDefaultLibraryStorageBorrowParameter(owner, parameterType);
     validateReferencePlacement(parameter.type, true, "constructor parameter",
@@ -1515,6 +1528,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateType(stmt.returnType(), stmt.nativeCArray().has_value());
   allowPackTypeReference = enclosingPackTypeReference;
   const bool methodDeclaration = currentClass && functionDepth == 0;
+  const bool polymorphic =
+      methodDeclaration &&
+      (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
+       (currentClass && classInfo(*currentClass).kind == ClassKind::Interface));
+  const bool directOwningPayloadTransport =
+      stmt.body() != nullptr && !intrinsicDeclaration &&
+      !stmt.runtimeBinding() && !stmt.hasCLinkage() && !stmt.operatorName() &&
+      !polymorphic && genericParameters.empty() &&
+      (!currentClass || classInfo(*currentClass).genericParameters.empty());
   if ((stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) &&
       !methodDeclaration) {
     const Token &location =
@@ -1555,7 +1577,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
   validateOwningPayloadEnumByValueBoundary(
-      declaredReturnType, stmt.returnType().name.last(), "function return");
+      declaredReturnType, stmt.returnType().name.last(), "function return",
+      directOwningPayloadTransport);
   validateReferencePlacement(
       stmt.returnType(),
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
@@ -1596,7 +1619,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
             ? SemanticType::typePack(declaredType.genericParameterId)
             : declaredType;
     validateOwningPayloadEnumByValueBoundary(
-        parameterType, parameter.type.name.last(), "function parameter");
+        parameterType, parameter.type.name.last(), "function parameter",
+        directOwningPayloadTransport);
     if (nestsBorrowedState(parameterType) &&
         !isReadOnlyBorrowedCarrierParameter(parameterType)) {
       report(parameter.name,
@@ -1622,10 +1646,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "Function parameters cannot have type void.");
     }
   }
-  const bool polymorphic =
-      methodDeclaration &&
-      (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
-       (currentClass && classInfo(*currentClass).kind == ClassKind::Interface));
   const bool defaultsPermitted =
       !stmt.operatorName() && !stmt.runtimeBinding() && !stmt.hasCLinkage() &&
       !polymorphic && !isEntryPoint && !intrinsicDeclaration;
@@ -4848,9 +4868,11 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   } else {
     validateType(expr.returnType());
   }
+  const bool directOwningPayloadTransport = expr.captures().empty();
   const SemanticType returnType = typeOf(expr.returnType());
   validateOwningPayloadEnumByValueBoundary(
-      returnType, expr.returnType().name.last(), "lambda return");
+      returnType, expr.returnType().name.last(), "lambda return",
+      directOwningPayloadTransport);
   if (returnType.kind == SemanticType::Reference) {
     report(expr.returnType().name.last(),
            "Lambda reference returns require an escape-aware lifetime model "
@@ -4870,7 +4892,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     validateReferencePlacement(parameter.type, true, "lambda parameter");
     const SemanticType parameterType = typeOf(parameter);
     validateOwningPayloadEnumByValueBoundary(
-        parameterType, parameter.type.name.last(), "lambda parameter");
+        parameterType, parameter.type.name.last(), "lambda parameter",
+        directOwningPayloadTransport);
     const SymbolId parameterSymbol =
         recordBindingOccurrence(parameter.name, parameterType,
                                 parameter.mutability == Mutability::Mutable,

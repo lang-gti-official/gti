@@ -732,6 +732,18 @@ private:
 
   [[nodiscard]] std::optional<MirDropType>
   preparedParameterDropType(const SemanticType &type) const {
+    if (type.kind == SemanticType::Enum) {
+      const auto enumeration = std::find_if(
+          program.enumDeclarations().begin(), program.enumDeclarations().end(),
+          [&](const HirEnum &candidate) {
+            return candidate.declaration == type.enumId;
+          });
+      if (enumeration == program.enumDeclarations().end() ||
+          !enumeration->requiresActiveCleanup) {
+        return std::nullopt;
+      }
+      return MirDropType{.type = type, .requiresActiveCleanup = true};
+    }
     if (type.kind != SemanticType::Class) {
       return std::nullopt;
     }

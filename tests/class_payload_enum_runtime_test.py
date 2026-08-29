@@ -278,20 +278,83 @@ FAILURE_SOURCE = """\
 class loud {
 public:
   loud() {}
+  loud(loud&& other) = default;
   ~loud() { std::println("drop"); }
 };
 
 enum class holder { one(loud value), none };
 
-int32_t fail_after_owner(int32_t divisor) {
-  holder held = holder::one(loud());
-  return int32_t(1) / divisor;
+holder transfer_or_fail(holder value, int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
+  return std::move(value);
 }
 
-int main() { return fail_after_owner(0); }
+int main() {
+  holder source = holder::one(loud());
+  holder result = transfer_or_fail(std::move(source), 0);
+  return 1;
+}
 """
 
 BY_VALUE_BOUNDARY = """\
+class resource {
+public:
+  resource() {}
+  resource(resource&& other) = default;
+  ~resource() { std::println("drop"); }
+};
+
+enum class holder { one(resource value), none };
+
+holder transfer(holder value) { return std::move(value); }
+
+holder make() { return holder::one(resource()); }
+
+class relay {
+public:
+  relay(holder value) {
+    switch (value) {
+    case holder::one:
+      break;
+    case holder::none:
+      break;
+    }
+  }
+
+  holder pass(holder value) { return std::move(value); }
+};
+
+int main() {
+  holder made = make();
+  holder fresh_result = transfer(holder::one(resource()));
+  switch (fresh_result) {
+  case holder::one:
+    break;
+  case holder::none:
+    return 1;
+  }
+  holder source = holder::one(resource());
+  holder destination = transfer(std::move(source));
+  relay fresh_service = relay(holder::one(resource()));
+  holder constructor_source = holder::one(resource());
+  relay moved_service = relay(std::move(constructor_source));
+  relay service = relay(holder::none);
+  holder fresh_method_result = service.pass(holder::one(resource()));
+  holder method_result = service.pass(std::move(destination));
+  auto lambda = [](holder value) -> holder { return std::move(value); };
+  holder fresh_lambda_result = lambda(holder::one(resource()));
+  holder lambda_result = lambda(std::move(method_result));
+  switch (lambda_result) {
+  case holder::one:
+    break;
+  case holder::none:
+    return 2;
+  }
+  return 0;
+}
+"""
+
+COPY_BOUNDARY = """\
 class resource {
 public:
   resource() {}
@@ -300,11 +363,11 @@ public:
 
 enum class holder { one(resource value), none };
 
-holder transfer(holder value) { return std::move(value); }
+holder transfer(holder value) { return holder::none; }
 
 int main() {
   holder source = holder::one(resource());
-  holder destination = transfer(std::move(source));
+  holder destination = transfer(source);
   return 0;
 }
 """
@@ -373,32 +436,55 @@ def main() -> int:
 
         boundary = root / "class-payload-by-value-boundary.gti"
         boundary.write_text(BY_VALUE_BOUNDARY, encoding="utf8")
+        for standard in ("c++20", "c++23"):
+            for optimization in ("O0", "O3"):
+                executable = root / (
+                    f"class-payload-transport-{standard}-{optimization}"
+                )
+                built = run(
+                    [
+                        str(compiler),
+                        str(boundary),
+                        "--std",
+                        standard,
+                        f"-{optimization}",
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    return fail(built)
+                executed = run([str(executable)])
+                if (executed.returncode != 0 or
+                        executed.stdout != "drop\n" * 7):
+                    sys.stderr.write(
+                        "owning payload-enum function, method, constructor, "
+                        "and lambda transport must preserve one cleanup for "
+                        f"{standard} {optimization}: "
+                        f"exit={executed.returncode} "
+                        f"stdout={executed.stdout!r} "
+                        f"stderr={executed.stderr!r}\n"
+                    )
+                    return 1
+
+        copy_boundary = root / "class-payload-copy-boundary.gti"
+        copy_boundary.write_text(COPY_BOUNDARY, encoding="utf8")
         refused = run(
-            [str(compiler), str(boundary), "-o", str(root / "boundary")]
+            [str(compiler), str(copy_boundary), "-o", str(root / "copied")]
         )
         if refused.returncode == 0:
             sys.stderr.write(
-                "an owning payload enum must not cross the unimplemented "
-                "by-value function boundary\n"
+                "a move-only owning payload enum must not be copied into a "
+                "by-value parameter\n"
             )
             return 1
         refused_text = refused.stdout + refused.stderr
-        required = (
-            "GTI-S2067",
-            "by-value function parameter boundary",
-            "by-value function return boundary",
-            "Pass it by checked reference",
-        )
-        if any(fragment not in refused_text for fragment in required):
+        if ("GTI-S2018" not in refused_text or
+                "use std::move(owner)" not in refused_text or
+                "GTI-B0001" in refused_text):
             sys.stderr.write(
-                "the owning payload-enum call-boundary rejection must name "
-                "both boundaries and suggest a checked reference; got:\n"
-            )
-            return fail(refused)
-        if "GTI-B0001" in refused_text:
-            sys.stderr.write(
-                "the by-value boundary rejection must not reach a backend "
-                "internal compiler error\n"
+                "owning payload-enum argument policy must reject an "
+                "unavailable variant copy before the backend; got:\n"
             )
             return fail(refused)
 

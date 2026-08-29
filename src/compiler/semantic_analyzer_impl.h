@@ -2095,7 +2095,8 @@ private:
 
   void validateOwningPayloadEnumByValueBoundary(const SemanticType &type,
                                                 const Token &location,
-                                                std::string_view boundary);
+                                                std::string_view boundary,
+                                                bool directTransport = false);
 
   [[nodiscard]] bool
   isPublicBaseConversion(const SemanticType &derived, const SemanticType &base,
