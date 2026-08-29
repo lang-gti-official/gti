@@ -807,6 +807,29 @@ method call is slow, which points at receiver re-analysis without memoization.
 Fluent and builder APIs are mainstream, and the immutable-builder style returns
 by value deliberately.
 
+## S15 — ICE: a payload enum carrying a class without a destructor
+
+`reproducers/s15-payload-enum-plain-class.gti`
+
+```gti
+class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {} };
+enum class E { a(P p), b, };
+mut E e = E::a(P(1));            // ICE
+```
+
+Adding `~P() {}` to the payload class makes the identical program compile and
+run. From `payload_enum_matrix.py`, the destructor-free class payload fails all
+ten operations tried, while tag-only, `int32_t` and two-field payloads all pass
+every one.
+
+`examples/78-owning-payload-enums.gti` is the only shipped file with a class
+payload and its class has a destructor, so the cleanup-free path has no
+coverage. A plain data-carrying class is the simpler case and the more likely
+thing to write first.
+
+Opposite half of S05, which needs a payload *with* a destructor and emits
+invalid C++ rather than an ICE.
+
 ## S12 — Implicit integer-to-float conversions silently lose value
 
 `reproducers/s12-lossy-implicit-int-to-float.gti`
@@ -924,6 +947,12 @@ above are not:
   `continue`, nested loops and a `switch` arm. All 60 cells compile and run.
 - **The elementary surface is otherwise sound.** 33 basic declaration and
   statement forms, of which only S09 fails.
+- **Threading is sound.** Ten constructs — spawn and join, joinable before and
+  after, value capture, two concurrent threads, spawning in a loop, dropping
+  without joining, a thread in a nested scope, moving a thread, and an owner
+  alive across a join — all compile and run under
+  `--execution-profile concurrent`, and all are correctly rejected under the
+  default profile with `GTI-S2084`.
 - **The LSP survives what crashes the compiler.** `operator-chain-500.gti`
   segfaults `gti` but `gti_lsp` opens it, answers `documentSymbol`, and stays
   alive. `lsp_probe.py` passes for UTF-16 position encoding across ASCII,

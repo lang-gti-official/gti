@@ -29,6 +29,8 @@ the server consumes memory without bound on that input.
 | `conversion_matrix.py` | source numeric type × target numeric type | S12 — implicit integer→float conversions that lose value |
 | `semantics_oracle.py` | stdlib and control-flow results × expected values | nothing — 11/12, the twelfth an API mistake in the test |
 | `lsp_survival.py` | files × `gti_lsp` staying alive and answering | that S13's memory exhaustion is reachable through the editor |
+| `payload_enum_matrix.py` | payload kind × operation | S15 — a class payload with no destructor |
+| `concurrency_matrix.py` | threading construct × execution profile | nothing — 10/10 under `concurrent`, correctly rejected under the default |
 
 ## Reading the output
 
@@ -43,3 +45,8 @@ What matters is the *shape*:
   S10 was found that way: one column where an *unwrapped* expression failed.
 - A **clean matrix is a result worth recording.** `ownership_flow_matrix.py`
   passing 60/60 is evidence that moves, borrows and drops agree with branching.
+- **Check whether the harness itself caused the failure.** The payload-enum
+  sweep showed two rows failing uniformly with `GTI-S2067`, which turned out to
+  come from a `produce()` helper the generator put in every file — a documented
+  limitation, correctly diagnosed, and not a defect. Verify a cell in isolation
+  before believing it.
