@@ -233,6 +233,779 @@ int main() {
       "MIR");
 }
 
+void testOwningPayloadEnumTransportAdmissionFailsClosed() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("owning-payload-transport-preflight.gti", R"(
+class resource {
+public:
+  resource() {}
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+
+enum class holder { one(resource value), none };
+
+class relay {
+public:
+  relay(holder value) {}
+};
+
+holder transfer(holder value, int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
+  return std::move(value);
+}
+
+holder named(holder value) {
+  return transfer(std::move(value), 1);
+}
+
+holder fresh() {
+  return transfer(holder::one(resource()), 1);
+}
+
+holder direct_fresh_return() {
+  return holder::one(resource());
+}
+
+holder constructor_direct(holder value) {
+  relay service = relay(std::move(value));
+  return holder::none;
+}
+
+holder exact_lambda(holder value) {
+  auto invoke = [](holder inner, int32_t divisor) -> holder {
+    int32_t checked = int32_t(1) / divisor;
+    return std::move(inner);
+  };
+  return invoke(std::move(value), 1);
+}
+
+holder fresh_exact_lambda() {
+  auto invoke = [](holder inner, int32_t divisor) -> holder {
+    int32_t checked = int32_t(1) / divisor;
+    return std::move(inner);
+  };
+  return invoke(holder::one(resource()), 1);
+}
+
+int main() { return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning payload-enum transport preflight fixture should pass "
+         "the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto findInstruction = [](const lang::MirBody &body,
+                                  lang::MirInstructionId id) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const auto findMutableInstruction = [](lang::MirBody &body,
+                                         lang::MirInstructionId id) {
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == id) {
+          return &instruction;
+        }
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  const auto owningPayload = [&](const lang::SemanticType &type) {
+    const lang::MirPayloadEnum *enumeration =
+        type.kind == lang::SemanticType::Enum
+            ? frontend.mir.findPayloadEnum(type.enumId)
+            : nullptr;
+    return enumeration != nullptr && enumeration->requiresActiveCleanup;
+  };
+
+  struct StagedShape {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId producer = 0;
+    lang::MirInstructionId stage = 0;
+    lang::MirInstructionId consumer = 0;
+
+    [[nodiscard]] explicit operator bool() const {
+      return function != 0 && producer != 0 && stage != 0 && consumer != 0;
+    }
+  };
+  struct DirectShape {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId move = 0;
+    lang::MirInstructionId consumer = 0;
+
+    [[nodiscard]] explicit operator bool() const {
+      return function != 0 && move != 0 && consumer != 0;
+    }
+  };
+  struct DirectFreshShape {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId producer = 0;
+    lang::MirInstructionId consumer = 0;
+
+    [[nodiscard]] explicit operator bool() const {
+      return function != 0 && producer != 0 && consumer != 0;
+    }
+  };
+  struct DirectFreshReturnShape {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId producer = 0;
+    lang::MirValueId value = 0;
+
+    [[nodiscard]] explicit operator bool() const {
+      return function != 0 && producer != 0 && value != 0;
+    }
+  };
+
+  StagedShape namedShape;
+  StagedShape freshShape;
+  StagedShape directConstructorShape;
+  DirectShape directShape;
+  DirectFreshShape directFreshShape;
+  DirectFreshReturnShape directFreshReturnShape;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.definitionKind != lang::MirDefinitionKind::Source) {
+      continue;
+    }
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::PayloadConstruct &&
+            instruction.result && !instruction.operands.empty() &&
+            owningPayload(instruction.info.type) &&
+            block.terminator.kind == lang::MirTerminatorKind::Return &&
+            block.terminator.value &&
+            block.terminator.value->kind == lang::MirOperandKind::Value &&
+            block.terminator.value->value == *instruction.result) {
+          directFreshReturnShape = {.function = function.id,
+                                    .producer = instruction.id,
+                                    .value = *instruction.result};
+        }
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.result && instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Value &&
+            owningPayload(instruction.operands.front().type)) {
+          const lang::MirValue *source =
+              function.body.findValue(instruction.operands.front().value);
+          const lang::MirInstruction *producer =
+              source == nullptr
+                  ? nullptr
+                  : findInstruction(function.body, source->definition);
+          const std::vector<lang::MirValueUse> &uses =
+              function.body.usesOf(*instruction.result);
+          const lang::MirInstruction *consumer =
+              uses.size() == 1 && uses.front().kind ==
+                                      lang::MirValueUseKind::InstructionOperand
+                  ? findInstruction(function.body, uses.front().instruction)
+                  : nullptr;
+          if (producer != nullptr && consumer != nullptr &&
+              (consumer->kind == lang::MirInstructionKind::Call ||
+               consumer->kind == lang::MirInstructionKind::Construct)) {
+            StagedShape shape{.function = function.id,
+                              .producer = producer->id,
+                              .stage = instruction.id,
+                              .consumer = consumer->id};
+            if (producer->kind == lang::MirInstructionKind::Move) {
+              if (consumer->kind == lang::MirInstructionKind::Construct &&
+                  !instruction.destination &&
+                  !instruction.preparedParameterDrop) {
+                directConstructorShape = shape;
+              } else {
+                namedShape = shape;
+              }
+            } else if (producer->kind == lang::MirInstructionKind::Compute &&
+                       producer->operation ==
+                           lang::MirOperation::PayloadConstruct) {
+              freshShape = shape;
+            }
+          }
+        }
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.callableInvocation || !instruction.lambdaTarget ||
+            !instruction.result || !owningPayload(instruction.info.type)) {
+          continue;
+        }
+        for (const lang::MirOperand &operand : instruction.operands) {
+          const lang::MirValue *value =
+              operand.kind == lang::MirOperandKind::Value
+                  ? function.body.findValue(operand.value)
+                  : nullptr;
+          const lang::MirInstruction *producer =
+              value == nullptr
+                  ? nullptr
+                  : findInstruction(function.body, value->definition);
+          if (producer != nullptr &&
+              producer->kind == lang::MirInstructionKind::Move &&
+              owningPayload(operand.type)) {
+            directShape = {.function = function.id,
+                           .move = producer->id,
+                           .consumer = instruction.id};
+          } else if (producer != nullptr &&
+                     producer->kind == lang::MirInstructionKind::Compute &&
+                     producer->operation ==
+                         lang::MirOperation::PayloadConstruct &&
+                     owningPayload(operand.type)) {
+            directFreshShape = {.function = function.id,
+                                .producer = producer->id,
+                                .consumer = instruction.id};
+          }
+        }
+      }
+    }
+  }
+  expect(namedShape && freshShape && directConstructorShape && directShape &&
+             directFreshShape && directFreshReturnShape,
+         "the transport fixture should retain prepared and direct named, "
+         "staged-fresh, both direct-lambda, and direct fresh-return owning "
+         "payload-enum schedules");
+  if (!namedShape || !freshShape || !directConstructorShape || !directShape ||
+      !directFreshShape || !directFreshReturnShape) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto address = [](lang::HirFunctionInstanceId function) {
+    return lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                .owner = function};
+  };
+  const lang::CppMirBodyEmitter canonical(frontend.mir, map);
+  const auto admits = [&](lang::HirFunctionInstanceId function,
+                          std::string_view label) {
+    const bool supported = canonical.supportsFailureBodyText(address(function));
+    if (!supported) {
+      std::cerr << "owning payload transport rejected canonical " << label
+                << '\n';
+    }
+    return supported;
+  };
+  expect(admits(namedShape.function, "named call") &&
+             admits(freshShape.function, "fresh call") &&
+             admits(directConstructorShape.function, "direct constructor") &&
+             admits(directShape.function, "named exact lambda") &&
+             admits(directFreshShape.function, "fresh exact lambda") &&
+             admits(directFreshReturnShape.function, "direct fresh return"),
+         "all canonical owning payload-enum transport bodies should pass "
+         "failure-form admission");
+
+  const auto forge = [&](lang::HirFunctionInstanceId functionId,
+                         const auto &mutation) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    const auto found =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &function) {
+                       return function.id == functionId;
+                     });
+    expect(found != functions.end(),
+           "the forged transport body should retain its function instance");
+    if (found != functions.end()) {
+      mutation(found->body);
+      expect(lang::rebuildMirValueUses(found->body),
+             "the forged transport body should retain a rebuildable use "
+             "index");
+    }
+    return forged;
+  };
+  const auto expectRejected = [&](const lang::MirProgram &forged,
+                                  lang::HirFunctionInstanceId function,
+                                  std::string_view message) {
+    expect(!lang::CppMirBodyEmitter(forged, map)
+                .supportsFailureBodyText(address(function)),
+           message);
+  };
+
+  const lang::MirProgram wrongParameterEntryDrop =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        const auto place = std::find_if(
+            body.places.begin(), body.places.end(),
+            [&](const lang::MirPlace &candidate) {
+              return candidate.root == lang::MirPlaceRootKind::Binding &&
+                     candidate.projections.empty() &&
+                     candidate.initiallyAvailable &&
+                     owningPayload(candidate.type);
+            });
+        expect(place != body.places.end(),
+               "the named transport body should retain its active payload "
+               "parameter place");
+        if (place == body.places.end()) {
+          return;
+        }
+        const auto drop = std::find_if(
+            body.dropObligations.begin(), body.dropObligations.end(),
+            [&](const lang::MirDropObligation &candidate) {
+              return candidate.place == place->id &&
+                     candidate.kind == lang::MirDropObligationKind::Binding;
+            });
+        expect(drop != body.dropObligations.end() && drop->initiallyActive,
+               "the owning payload parameter should enter with one active "
+               "binding drop");
+        if (drop != body.dropObligations.end()) {
+          drop->initiallyActive = false;
+        }
+      });
+  expectRejected(wrongParameterEntryDrop, namedShape.function,
+                 "an owning payload-enum parameter whose entry drop is not "
+                 "active must fail admission");
+
+  const lang::MirProgram wrongMoveKind =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *move =
+            findMutableInstruction(body, namedShape.producer);
+        expect(move != nullptr && move->lifecycle.size() == 1,
+               "the named transport move should retain one lifecycle edge");
+        if (move != nullptr && move->lifecycle.size() == 1) {
+          move->lifecycle.front().kind =
+              lang::MirLifecycleEventKind::Initialize;
+        }
+      });
+  expectRejected(wrongMoveKind, namedShape.function,
+                 "an owning payload-enum move with the wrong lifecycle kind "
+                 "must fail admission");
+
+  const lang::MirProgram wrongStageTarget =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, namedShape.stage);
+        expect(stage != nullptr && stage->lifecycle.size() == 1,
+               "the named transport stage should retain one lifecycle edge");
+        if (stage != nullptr && stage->lifecycle.size() == 1) {
+          stage->lifecycle.front().target = stage->lifecycle.front().source;
+        }
+      });
+  expectRejected(wrongStageTarget, namedShape.function,
+                 "an owning payload-enum stage with the wrong lifecycle "
+                 "target must fail admission");
+
+  const lang::MirProgram wrongCallSite =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, namedShape.stage);
+        if (stage != nullptr) {
+          ++stage->callSite;
+        }
+      });
+  expectRejected(wrongCallSite, namedShape.function,
+                 "a payload-enum stage paired to a different call site must "
+                 "fail admission");
+
+  lang::MirProgram wrongConsumerKind = frontend.mir;
+  {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongConsumerKind.functionInstances());
+    const auto caller =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &function) {
+                       return function.id == namedShape.function;
+                     });
+    lang::MirInstruction *consumer =
+        caller == functions.end()
+            ? nullptr
+            : findMutableInstruction(caller->body, namedShape.consumer);
+    const auto target =
+        consumer != nullptr && consumer->functionTarget
+            ? std::find_if(functions.begin(), functions.end(),
+                           [&](const lang::MirFunctionInstance &function) {
+                             return function.id == *consumer->functionTarget;
+                           })
+            : functions.end();
+    expect(target != functions.end(),
+           "the named payload transport should retain its exact source "
+           "function target");
+    if (target != functions.end()) {
+      target->typeArguments.push_back(lang::SemanticType::Int32);
+    }
+  }
+  expectRejected(wrongConsumerKind, namedShape.function,
+                 "a payload-enum CallInput targeting a generic callable "
+                 "instance must fail admission");
+
+  const lang::MirProgram wrongInputIndex =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, namedShape.stage);
+        lang::MirInstruction *consumer =
+            findMutableInstruction(body, namedShape.consumer);
+        if (stage != nullptr && consumer != nullptr) {
+          stage->callInputIndex = consumer->operands.size();
+        }
+      });
+  expectRejected(wrongInputIndex, namedShape.function,
+                 "a payload-enum stage with an out-of-range argument index "
+                 "must fail admission");
+
+  const lang::MirProgram duplicateStagedUse =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, namedShape.stage);
+        lang::MirInstruction *consumer =
+            findMutableInstruction(body, namedShape.consumer);
+        if (stage != nullptr && stage->result && consumer != nullptr) {
+          consumer->operands.push_back({.kind = lang::MirOperandKind::Value,
+                                        .value = *stage->result,
+                                        .type = stage->info.type});
+        }
+      });
+  expectRejected(duplicateStagedUse, namedShape.function,
+                 "a payload-enum stage with multiple consuming uses must "
+                 "fail admission");
+
+  const lang::MirProgram wrongFreshInitialization =
+      forge(freshShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, freshShape.producer);
+        if (producer == nullptr) {
+          return;
+        }
+        const auto event = std::find_if(
+            producer->lifecycle.begin(), producer->lifecycle.end(),
+            [](const lang::MirLifecycleEvent &candidate) {
+              return candidate.kind == lang::MirLifecycleEventKind::Initialize;
+            });
+        expect(event != producer->lifecycle.end(),
+               "the fresh payload construction should arm one result drop");
+        if (event != producer->lifecycle.end()) {
+          event->target = 0;
+        }
+      });
+  expectRejected(wrongFreshInitialization, freshShape.function,
+                 "a fresh payload-enum stage with no exact construction "
+                 "activation must fail admission");
+
+  const lang::MirProgram wrongPreparedPlace =
+      forge(freshShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, freshShape.stage);
+        expect(stage != nullptr && stage->preparedParameterDrop &&
+                   stage->destination,
+               "the fresh free-function argument should retain its prepared "
+               "parameter place");
+        if (stage == nullptr || !stage->preparedParameterDrop ||
+            !stage->destination) {
+          return;
+        }
+        const auto drop = std::find_if(
+            body.dropObligations.begin(), body.dropObligations.end(),
+            [&](const lang::MirDropObligation &candidate) {
+              return candidate.id == *stage->preparedParameterDrop;
+            });
+        if (drop != body.dropObligations.end()) {
+          drop->place = 0;
+        }
+      });
+  expectRejected(wrongPreparedPlace, freshShape.function,
+                 "a prepared payload-enum drop detached from its destination "
+                 "place must fail admission");
+
+  const lang::MirProgram wrongResultPlace =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *call =
+            findMutableInstruction(body, namedShape.consumer);
+        expect(call != nullptr && call->successResultDrop,
+               "the owning payload-enum call should retain a result drop");
+        if (call == nullptr || !call->successResultDrop) {
+          return;
+        }
+        const auto drop = std::find_if(
+            body.dropObligations.begin(), body.dropObligations.end(),
+            [&](const lang::MirDropObligation &candidate) {
+              return candidate.id == *call->successResultDrop;
+            });
+        if (drop != body.dropObligations.end()) {
+          drop->place = 0;
+        }
+      });
+  expectRejected(wrongResultPlace, namedShape.function,
+                 "an owning payload-enum result drop without its exact value "
+                 "slot must fail admission");
+
+  const lang::MirProgram wrongSuccessPairing =
+      forge(namedShape.function, [&](lang::MirBody &body) {
+        const auto block =
+            std::find_if(body.blocks.begin(), body.blocks.end(),
+                         [&](const lang::MirBlock &candidate) {
+                           return candidate.terminator.kind ==
+                                      lang::MirTerminatorKind::Invoke &&
+                                  candidate.terminator.invokeInstruction ==
+                                      namedShape.consumer;
+                         });
+        expect(block != body.blocks.end() &&
+                   block->terminator.successLifecycle.size() == 1,
+               "the payload-enum result should retain one Invoke-success "
+               "activation");
+        if (block != body.blocks.end() &&
+            block->terminator.successLifecycle.size() == 1) {
+          block->terminator.successLifecycle.front().target = 0;
+        }
+      });
+  expectRejected(wrongSuccessPairing, namedShape.function,
+                 "a payload-enum result whose Invoke success edge activates "
+                 "the wrong drop must fail admission");
+
+  const lang::MirProgram wrongDirectConstructorTransfer =
+      forge(directConstructorShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *stage =
+            findMutableInstruction(body, directConstructorShape.stage);
+        expect(stage != nullptr && stage->lifecycle.size() == 1 &&
+                   !stage->destination && !stage->preparedParameterDrop,
+               "the direct constructor argument should retain its direct "
+               "CallInput transfer");
+        if (stage != nullptr && stage->lifecycle.size() == 1) {
+          stage->lifecycle.front().kind = lang::MirLifecycleEventKind::Reparent;
+        }
+      });
+  expectRejected(
+      wrongDirectConstructorTransfer, directConstructorShape.function,
+      "a direct constructor argument without its exact CallInput TransferOut "
+      "must fail admission");
+
+  lang::MirProgram wrongConstructorOwner = frontend.mir;
+  {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongConstructorOwner.functionInstances());
+    const auto caller =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &function) {
+                       return function.id == directConstructorShape.function;
+                     });
+    lang::MirInstruction *consumer =
+        caller == functions.end()
+            ? nullptr
+            : findMutableInstruction(caller->body,
+                                     directConstructorShape.consumer);
+    const lang::MirConstructorInstance *constructor =
+        consumer != nullptr && consumer->constructorTarget
+            ? wrongConstructorOwner.findConstructorInstance(
+                  *consumer->constructorTarget)
+            : nullptr;
+    auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+        wrongConstructorOwner.classInstances());
+    const auto owner =
+        constructor == nullptr
+            ? classes.end()
+            : std::find_if(classes.begin(), classes.end(),
+                           [&](const lang::MirClassInstance &candidate) {
+                             return candidate.id == constructor->owner;
+                           });
+    expect(owner != classes.end(),
+           "the direct constructor transport should retain its exact owner "
+           "instance");
+    if (owner != classes.end()) {
+      owner->type.arguments.push_back(lang::SemanticType::Int32);
+    }
+  }
+  expectRejected(wrongConstructorOwner, directConstructorShape.function,
+                 "a payload-enum CallInput targeting a generic-owner "
+                 "constructor must fail admission");
+
+  const lang::MirProgram wrongDirectTransfer =
+      forge(directShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *move =
+            findMutableInstruction(body, directShape.move);
+        lang::MirInstruction *call =
+            findMutableInstruction(body, directShape.consumer);
+        expect(move != nullptr && move->lifecycle.size() == 1 &&
+                   call != nullptr,
+               "the exact lambda argument should retain its move and call "
+               "lifecycle records");
+        if (move == nullptr || move->lifecycle.size() != 1 || call == nullptr) {
+          return;
+        }
+        const lang::MirDropObligationId movedDrop =
+            move->lifecycle.front().target;
+        const auto transfer = std::find_if(
+            call->lifecycle.begin(), call->lifecycle.end(),
+            [&](const lang::MirLifecycleEvent &candidate) {
+              return candidate.kind ==
+                         lang::MirLifecycleEventKind::TransferOut &&
+                     candidate.source == movedDrop;
+            });
+        expect(transfer != call->lifecycle.end(),
+               "the exact lambda call should transfer the moved argument");
+        if (transfer != call->lifecycle.end()) {
+          transfer->kind = lang::MirLifecycleEventKind::Initialize;
+        }
+      });
+  expectRejected(wrongDirectTransfer, directShape.function,
+                 "an exact lambda argument without its unique TransferOut "
+                 "edge must fail admission");
+
+  const lang::MirProgram wrongDirectFreshTransfer =
+      forge(directFreshShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, directFreshShape.producer);
+        lang::MirInstruction *call =
+            findMutableInstruction(body, directFreshShape.consumer);
+        expect(producer != nullptr && call != nullptr,
+               "the direct fresh lambda argument should retain its producer "
+               "and call");
+        if (producer == nullptr || call == nullptr) {
+          return;
+        }
+        const auto initialization =
+            std::find_if(producer->lifecycle.begin(), producer->lifecycle.end(),
+                         [](const lang::MirLifecycleEvent &candidate) {
+                           return candidate.kind ==
+                                      lang::MirLifecycleEventKind::Initialize &&
+                                  candidate.target != 0;
+                         });
+        expect(initialization != producer->lifecycle.end(),
+               "the direct fresh lambda argument should arm one value drop");
+        if (initialization == producer->lifecycle.end()) {
+          return;
+        }
+        const auto transfer = std::find_if(
+            call->lifecycle.begin(), call->lifecycle.end(),
+            [&](const lang::MirLifecycleEvent &candidate) {
+              return candidate.kind ==
+                         lang::MirLifecycleEventKind::TransferOut &&
+                     candidate.source == initialization->target;
+            });
+        expect(transfer != call->lifecycle.end(),
+               "the direct fresh lambda call should consume that value drop");
+        if (transfer != call->lifecycle.end()) {
+          transfer->kind = lang::MirLifecycleEventKind::Initialize;
+        }
+      });
+  expectRejected(wrongDirectFreshTransfer, directFreshShape.function,
+                 "a direct fresh lambda argument without its producer-to-call "
+                 "TransferOut pairing must fail admission");
+
+  const lang::MirProgram wrongFreshReturnPlace =
+      forge(directFreshReturnShape.function, [&](lang::MirBody &body) {
+        const auto place = std::find_if(
+            body.places.begin(), body.places.end(),
+            [&](const lang::MirPlace &candidate) {
+              return candidate.root == lang::MirPlaceRootKind::Value &&
+                     candidate.value == directFreshReturnShape.value;
+            });
+        expect(place != body.places.end(),
+               "the direct fresh return should retain its value-rooted "
+               "result place");
+        if (place != body.places.end()) {
+          place->root = lang::MirPlaceRootKind::Temporary;
+          place->value = 0;
+        }
+      });
+  expectRejected(wrongFreshReturnPlace, directFreshReturnShape.function,
+                 "a direct fresh return detached from its exact value-rooted "
+                 "result place must fail admission");
+
+  const lang::MirProgram wrongFreshReturnDrop =
+      forge(directFreshReturnShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, directFreshReturnShape.producer);
+        if (producer == nullptr) {
+          return;
+        }
+        const auto initialization =
+            std::find_if(producer->lifecycle.begin(), producer->lifecycle.end(),
+                         [](const lang::MirLifecycleEvent &candidate) {
+                           return candidate.kind ==
+                                      lang::MirLifecycleEventKind::Initialize &&
+                                  candidate.target != 0;
+                         });
+        expect(initialization != producer->lifecycle.end(),
+               "the direct fresh return should arm one result drop");
+        if (initialization == producer->lifecycle.end()) {
+          return;
+        }
+        const auto drop = std::find_if(
+            body.dropObligations.begin(), body.dropObligations.end(),
+            [&](const lang::MirDropObligation &candidate) {
+              return candidate.id == initialization->target;
+            });
+        expect(drop != body.dropObligations.end(),
+               "the direct fresh return should retain its result drop row");
+        if (drop != body.dropObligations.end()) {
+          drop->dropType.requiresActiveCleanup = false;
+        }
+      });
+  expectRejected(wrongFreshReturnDrop, directFreshReturnShape.function,
+                 "a direct fresh return whose result drop loses active "
+                 "cleanup must fail admission");
+
+  const lang::MirProgram wrongFreshReturnTransfer =
+      forge(directFreshReturnShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, directFreshReturnShape.producer);
+        if (producer == nullptr) {
+          return;
+        }
+        const auto initialization =
+            std::find_if(producer->lifecycle.begin(), producer->lifecycle.end(),
+                         [](const lang::MirLifecycleEvent &candidate) {
+                           return candidate.kind ==
+                                      lang::MirLifecycleEventKind::Initialize &&
+                                  candidate.target != 0;
+                         });
+        if (initialization == producer->lifecycle.end()) {
+          return;
+        }
+        lang::MirLifecycleEvent *transfer = nullptr;
+        for (lang::MirBlock &block : body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            const auto found = std::find_if(
+                instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                [&](const lang::MirLifecycleEvent &candidate) {
+                  return candidate.kind ==
+                             lang::MirLifecycleEventKind::TransferOut &&
+                         candidate.source == initialization->target;
+                });
+            if (found != instruction.lifecycle.end()) {
+              transfer = &*found;
+            }
+          }
+        }
+        expect(transfer != nullptr,
+               "the direct fresh return should transfer its result drop");
+        if (transfer != nullptr) {
+          transfer->target = transfer->source;
+        }
+      });
+  expectRejected(wrongFreshReturnTransfer, directFreshReturnShape.function,
+                 "a direct fresh return without its exact out-result "
+                 "TransferOut pairing must fail admission");
+
+  const lang::MirProgram wrongFreshReturnUse =
+      forge(directFreshReturnShape.function, [&](lang::MirBody &body) {
+        lang::MirInstruction *producer =
+            findMutableInstruction(body, directFreshReturnShape.producer);
+        if (producer == nullptr || producer->operands.empty()) {
+          return;
+        }
+        const auto returnBlock =
+            std::find_if(body.blocks.begin(), body.blocks.end(),
+                         [&](const lang::MirBlock &candidate) {
+                           return candidate.terminator.kind ==
+                                      lang::MirTerminatorKind::Return &&
+                                  candidate.terminator.value &&
+                                  candidate.terminator.value->kind ==
+                                      lang::MirOperandKind::Value &&
+                                  candidate.terminator.value->value ==
+                                      directFreshReturnShape.value;
+                         });
+        expect(returnBlock != body.blocks.end(),
+               "the direct fresh result should retain its exact Return use");
+        if (returnBlock != body.blocks.end()) {
+          returnBlock->terminator.value = producer->operands.front();
+        }
+      });
+  expectRejected(wrongFreshReturnUse, directFreshReturnShape.function,
+                 "a direct fresh payload construction returned through a "
+                 "different value must fail admission");
+}
+
 void testImmutableBodyPlanOutlivesAdmissionInputs() {
   const lang::CppMirBodyEmissionPlan plan = [] {
     const lang::FrontendResult frontend =
@@ -2227,6 +3000,8 @@ int main() {
 constexpr NamedTest kTests[] = {
     {"testOwningPayloadEnumRepresentationAdmission",
      testOwningPayloadEnumRepresentationAdmission},
+    {"testOwningPayloadEnumTransportAdmissionFailsClosed",
+     testOwningPayloadEnumTransportAdmissionFailsClosed},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},

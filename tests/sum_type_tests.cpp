@@ -56,17 +56,6 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
                      });
 }
 
-bool hasHint(const lang::FrontendResult &result, std::string_view text) {
-  return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                     [&](const lang::Diagnostic &diagnostic) {
-                       return std::any_of(
-                           diagnostic.hints.begin(), diagnostic.hints.end(),
-                           [&](const std::string &hint) {
-                             return hint.find(text) != std::string::npos;
-                           });
-                     });
-}
-
 bool hasMirMessage(const lang::MirVerificationResult &result,
                    std::string_view text) {
   return std::any_of(result.errors.begin(), result.errors.end(),
@@ -605,20 +594,19 @@ public:
   ~resource() {}
 };
 enum class holder { one(resource value), none };
-holder transfer(holder value) { return std::move(value); }
+holder transfer(holder value) { return holder::none; }
 int main() {
-  holder source = holder::one(resource());
-  holder destination = transfer(std::move(source));
+  holder destination = transfer(holder::one(resource()));
   return 0;
 }
 )");
-  expect(
-      hasCode(byValueBoundary, "GTI-S2067") &&
-          hasMessage(byValueBoundary, "by-value function parameter boundary") &&
-          hasMessage(byValueBoundary, "by-value function return boundary") &&
-          hasHint(byValueBoundary, "Pass it by checked reference"),
-      "owning payload enums should reject the unimplemented by-value "
-      "call/return ABI at declaration time with a reference alternative");
+  if (!byValueBoundary.canGenerateCode()) {
+    printDiagnostics(byValueBoundary);
+  }
+  expect(byValueBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(byValueBoundary.mir).valid(),
+         "an ordinary free function should transport an owning payload enum "
+         "by value through verified MIR");
 
   const lang::FrontendResult constructorBoundary =
       analyze("owning-payload-constructor-boundary.gti", R"(
@@ -632,14 +620,18 @@ class consumer {
 public:
   consumer(holder value) {}
 };
-int main() { return 0; }
+int main() {
+  consumer value = consumer(holder::one(resource()));
+  return 0;
+}
 )");
-  expect(hasCode(constructorBoundary, "GTI-S2067") &&
-             hasMessage(constructorBoundary,
-                        "by-value constructor parameter boundary") &&
-             hasHint(constructorBoundary, "Pass it by checked reference"),
-         "constructor declarations should reject owning payload-enum values "
-         "before their unsupported parameter ABI reaches MIR");
+  if (!constructorBoundary.canGenerateCode()) {
+    printDiagnostics(constructorBoundary);
+  }
+  expect(constructorBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(constructorBoundary.mir).valid(),
+         "an ordinary constructor should accept an owning payload enum by "
+         "value through verified MIR");
 
   const lang::FrontendResult lambdaBoundary =
       analyze("owning-payload-lambda-boundary.gti", R"(
@@ -651,16 +643,85 @@ public:
 enum class holder { one(resource value), none };
 int main() {
   auto transfer = [](holder value) -> holder {
-    return std::move(value);
+    return holder::none;
   };
+  holder destination = transfer(holder::one(resource()));
   return 0;
 }
 )");
-  expect(hasCode(lambdaBoundary, "GTI-S2067") &&
-             hasMessage(lambdaBoundary, "by-value lambda parameter boundary") &&
-             hasMessage(lambdaBoundary, "by-value lambda return boundary"),
-         "typed lambda declarations should reject both owning payload-enum "
-         "by-value boundaries before lambda lowering");
+  if (!lambdaBoundary.canGenerateCode()) {
+    printDiagnostics(lambdaBoundary);
+  }
+  expect(lambdaBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(lambdaBoundary.mir).valid(),
+         "an exact typed lambda should transport an owning payload enum by "
+         "value through verified MIR");
+
+  const lang::FrontendResult genericCallableBoundary =
+      analyze("owning-payload-generic-callable-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+holder transfer<T>(holder value) { return holder::none; }
+int main() { return 0; }
+)");
+  expect(hasCode(genericCallableBoundary, "GTI-S2067") &&
+             hasMessage(genericCallableBoundary,
+                        "by-value function parameter boundary") &&
+             hasMessage(genericCallableBoundary,
+                        "by-value function return boundary"),
+         "generic callable families should retain the stable early owning "
+         "payload-enum boundary diagnostic");
+
+  const lang::FrontendResult polymorphicBoundary =
+      analyze("owning-payload-polymorphic-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+interface relay {
+public:
+  virtual holder pass(holder value) = 0;
+};
+int main() { return 0; }
+)");
+  expect(
+      hasCode(polymorphicBoundary, "GTI-S2067") &&
+          hasMessage(polymorphicBoundary,
+                     "by-value function parameter boundary") &&
+          hasMessage(polymorphicBoundary, "by-value function return boundary"),
+      "polymorphic callable families should retain the stable early "
+      "owning payload-enum boundary diagnostic");
+
+  const lang::FrontendResult genericOwnerBoundary =
+      analyze("owning-payload-generic-owner-boundary.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class relay<T> {
+public:
+  relay(holder value) {}
+  holder pass(holder value) { return std::move(value); }
+};
+int main() { return 0; }
+)");
+  expect(
+      hasCode(genericOwnerBoundary, "GTI-S2067") &&
+          hasMessage(genericOwnerBoundary,
+                     "by-value constructor parameter boundary") &&
+          hasMessage(genericOwnerBoundary,
+                     "by-value function parameter boundary") &&
+          hasMessage(genericOwnerBoundary, "by-value function return boundary"),
+      "methods and constructors owned by a generic class should retain "
+      "the stable early owning payload-enum boundary diagnostic");
 
   const lang::FrontendResult aggregateContainment =
       analyze("owning-payload-aggregate-containment.gti", R"(
@@ -733,6 +794,29 @@ int main() {
          "owned lambda captures should reject owning payload enums before "
          "callable-environment lowering");
 
+  const lang::FrontendResult capturingTransport =
+      analyze("owning-payload-capturing-transport.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  mut int32_t marker = 1;
+  auto captured = [marker = std::move(marker)](holder value) -> holder {
+    return holder::none;
+  };
+  return 0;
+}
+)");
+  expect(hasCode(capturingTransport, "GTI-S2067") &&
+             hasMessage(capturingTransport,
+                        "by-value lambda parameter boundary") &&
+             hasMessage(capturingTransport, "by-value lambda return boundary"),
+         "capturing lambdas should retain the stable early diagnostic for "
+         "owning payload-enum callable transport");
+
   const lang::FrontendResult nestedOwning =
       analyze("nested-owning-payload-enum.gti", R"(
 class resource {
@@ -752,6 +836,37 @@ int main() {
              hasMessage(nestedOwning, "owning class alternatives only"),
          "nested owning payload enums should remain a diagnosed omission of "
          "the bounded class-payload slice");
+
+  const lang::FrontendResult genericPayload =
+      analyze("generic-class-payload-enum.gti", R"(
+class shell<T> {
+public:
+  shell() {}
+};
+enum class holder { one(shell<int32_t> value), none };
+int main() { return 0; }
+)");
+  expect(hasCode(genericPayload, "GTI-S2067") &&
+             hasMessage(genericPayload, "Generic class payload type") &&
+             hasMessage(genericPayload, "bounded payload-enum representation"),
+         "concrete generic class payloads should retain a stable early "
+         "diagnostic until their representation is defined");
+
+  const lang::FrontendResult stableLayout =
+      analyze("owning-payload-layout-query.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+uint64_t payload_size() { return sizeof(holder); }
+int main() { return 0; }
+)");
+  expect(hasCode(stableLayout, "GTI-S2063") &&
+             hasMessage(stableLayout, "has no GTI layout contract"),
+         "owning payload enums should retain the stable layout-query "
+         "diagnostic before HIR lowering");
 }
 
 } // namespace

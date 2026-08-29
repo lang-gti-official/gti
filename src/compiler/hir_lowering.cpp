@@ -2465,8 +2465,7 @@ private:
     return id;
   }
 
-  [[nodiscard]] static bool
-  orderedValueParameterType(const SemanticType &type) {
+  [[nodiscard]] bool orderedValueParameterType(const SemanticType &type) const {
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -2484,11 +2483,19 @@ private:
     case SemanticType::CString:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
-    case SemanticType::Enum:
       return true;
+    case SemanticType::Enum:
+      return !instanceProvider->requiresActiveCleanupFor(type);
     default:
       return false;
     }
+  }
+
+  [[nodiscard]] bool
+  orderedOwningParameterType(const SemanticType &type) const {
+    return type.kind == SemanticType::Class ||
+           (type.kind == SemanticType::Enum &&
+            instanceProvider->requiresActiveCleanupFor(type));
   }
 
   [[nodiscard]] std::optional<std::vector<HirCallArgument>> orderedArguments(
@@ -2544,7 +2551,7 @@ private:
                    : HirCallInputKind::ReadBorrow;
       } else if (orderedValueParameterType(parameter)) {
         kind = HirCallInputKind::Value;
-      } else if (parameter.kind != SemanticType::Class ||
+      } else if (!orderedOwningParameterType(parameter) ||
                  input->info.type != parameter ||
                  input->info.traits.containsBorrowedState) {
         return std::nullopt;
@@ -2602,7 +2609,7 @@ private:
                    : HirCallInputKind::ReadBorrow;
       } else if (orderedValueParameterType(parameter)) {
         kind = HirCallInputKind::Value;
-      } else if (parameter.kind != SemanticType::Class ||
+      } else if (!orderedOwningParameterType(parameter) ||
                  input->info.type != parameter) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
