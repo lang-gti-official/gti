@@ -77,7 +77,8 @@
     "76-scalar-atomics.gti": 61,
     "77-callable-concepts.gti": 51,
     "78-owning-payload-enums.gti": 25,
-    "79-class-scoped-type-aliases.gti": 25
+    "79-class-scoped-type-aliases.gti": 25,
+    "80-function-items.gti": 45
   },
-  "total": 3707
+  "total": 3752
 }

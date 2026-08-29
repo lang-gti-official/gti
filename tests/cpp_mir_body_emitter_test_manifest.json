@@ -6,6 +6,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testOwningPayloadEnumTransportAdmissionFailsClosed",
+      "suite": "preflight"
+    },
+    {
       "name": "testDischargedCompoundOperatorVocabulary",
       "suite": "preflight"
     },
