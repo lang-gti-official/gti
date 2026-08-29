@@ -1957,8 +1957,8 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     diagnostic.related.push_back({tokenSpan(classInfo(alias.ownerClass).name),
                                   "Generic owning type is declared here."});
     diagnostic.hints.emplace_back(
-        "Use the alias inside that class, inherit a concrete specialization, "
-        "or name the concrete type directly.");
+        "Use the alias inside its declaring generic class, or name the "
+        "concrete target type directly.");
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }

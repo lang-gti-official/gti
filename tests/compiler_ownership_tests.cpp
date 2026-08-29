@@ -5769,6 +5769,8 @@ int main() {
                            "Borrowed return dependency is ambiguous") &&
              hasDiagnostic(unsupported.diagnostics,
                            "cannot have global or static storage") &&
+             hasDiagnostic(unsupported.diagnostics,
+                           "Cannot initialize 'copied'") &&
              hasDiagnosticCode(unsupported.diagnostics, "GTI-S2003") &&
              hasDiagnostic(unsupported.diagnostics,
                            "Cannot assign a value of type"),
