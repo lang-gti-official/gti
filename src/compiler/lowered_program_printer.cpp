@@ -362,7 +362,7 @@ private:
            << ";pack=" << value.pack << ";value=" << value.value
            << ";constraints=" << value.constraints << ";constraint=";
     strings(value.constraintName);
-    output << ')';
+    output << ";constraint-concept=" << value.constraintConcept << ')';
   }
 
   void genericParameters(const std::vector<LoweredGenericParameter> &values) {
@@ -542,7 +542,22 @@ private:
       }
       output << "]}";
     }
-    output << "];callables=[";
+    output << "];requirement-expression=[";
+    for (std::size_t index = 0; index < value.requirementExpression.size();
+         ++index) {
+      separator(index);
+      const LoweredConstraintExpressionNode &node =
+          value.requirementExpression[index];
+      output << number(node.kind) << ':' << node.application << ':' << node.left
+             << ':' << node.right;
+    }
+    output << "];requirement-root=";
+    if (value.requirementRoot == ConstraintExpressionNode::invalidIndex) {
+      output << '-';
+    } else {
+      output << value.requirementRoot;
+    }
+    output << ";callables=[";
     for (std::size_t index = 0; index < value.callableParameters.size();
          ++index) {
       separator(index);
@@ -655,7 +670,21 @@ private:
       }
       output << "]}";
     }
-    output << ']';
+    output << "];requirement-expression=[";
+    for (std::size_t index = 0; index < value.requirementExpression.size();
+         ++index) {
+      separator(index);
+      const LoweredConstraintExpressionNode &node =
+          value.requirementExpression[index];
+      output << number(node.kind) << ':' << node.application << ':' << node.left
+             << ':' << node.right;
+    }
+    output << "];requirement-root=";
+    if (value.requirementRoot == ConstraintExpressionNode::invalidIndex) {
+      output << '-';
+    } else {
+      output << value.requirementRoot;
+    }
     output << ";required=" << value.requiredParameterCount << ";borrow=";
     if (value.borrowParameter) {
       output << *value.borrowParameter;

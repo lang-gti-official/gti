@@ -1,0 +1,79 @@
+#include <std/functional>
+
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+concept floating_or_closed<T> =
+    std::integral<double> || std::floating_point<T>;
+
+T doubled<scalar T>(T value) {
+  return value + value;
+}
+
+T floating_identity<floating_or_closed T>(T value) {
+  return value;
+}
+
+T forward_scalar<scalar T>(T value) {
+  return doubled(value);
+}
+
+T trailing_identity<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return value;
+}
+
+T forward_trailing<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return trailing_identity(value);
+}
+
+T tripled<T>(T value)
+  requires (std::integral<T> || std::floating_point<T>) && std::copyable<T> {
+  return value + value + value;
+}
+
+class readable {
+public:
+  int32_t operator()(int32_t& value) { return value + 1; }
+};
+
+class mutable_callable {
+public:
+  int32_t operator()(int32_t& value) mut { return value + 2; }
+};
+
+int32_t invoke<Callable>(int32_t value, mut Callable callable)
+  requires std::read_callable<Callable, int32_t, int32_t> ||
+           std::mut_callable<Callable, int32_t, int32_t> {
+  return callable(value);
+}
+
+int main() {
+  if (doubled(2) != 4) {
+    return 1;
+  }
+  if (doubled(1.5) != 3.0) {
+    return 2;
+  }
+  if (floating_identity(1.25) != 1.25) {
+    return 3;
+  }
+  if (forward_scalar(4) != 8) {
+    return 4;
+  }
+  if (forward_trailing(2.5) != 2.5) {
+    return 5;
+  }
+  if (tripled(3) != 9) {
+    return 6;
+  }
+  if (tripled(2.0) != 6.0) {
+    return 7;
+  }
+  if (invoke(1, readable()) != 2) {
+    return 8;
+  }
+  if (invoke(1, mutable_callable()) != 3) {
+    return 9;
+  }
+  return 0;
+}

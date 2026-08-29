@@ -1202,20 +1202,6 @@
           }
         ]
       },
-      "operator": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": "&&",
-            "named": false
-          },
-          {
-            "type": "and",
-            "named": false
-          }
-        ]
-      },
       "parameter": {
         "multiple": true,
         "required": true,
@@ -1226,12 +1212,12 @@
           }
         ]
       },
-      "requirement": {
-        "multiple": true,
+      "requirements": {
+        "multiple": false,
         "required": false,
         "types": [
           {
-            "type": "concept_application",
+            "type": "constraint_expression",
             "named": true
           }
         ]
@@ -1564,6 +1550,68 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "constraint_expression",
+    "named": true,
+    "fields": {
+      "left": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constraint_expression",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "&&",
+            "named": false
+          },
+          {
+            "type": "and",
+            "named": false
+          },
+          {
+            "type": "or",
+            "named": false
+          },
+          {
+            "type": "||",
+            "named": false
+          }
+        ]
+      },
+      "right": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constraint_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "concept_application",
+          "named": true
+        },
+        {
+          "type": "constraint_expression",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -3901,26 +3949,12 @@
     "type": "requires_clause",
     "named": true,
     "fields": {
-      "operator": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": "&&",
-            "named": false
-          },
-          {
-            "type": "and",
-            "named": false
-          }
-        ]
-      },
-      "requirement": {
-        "multiple": true,
+      "requirements": {
+        "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "concept_application",
+            "type": "constraint_expression",
             "named": true
           }
         ]

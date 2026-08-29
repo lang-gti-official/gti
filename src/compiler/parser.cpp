@@ -294,20 +294,13 @@ private:
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept type parameters.");
 
-    std::vector<ConceptApplication> requirements;
+    ConstraintExpression requirements;
     if (compilerBinding) {
       consume(TokenKind::SEMICOLON,
               "Compiler-bound concepts are declarations and must end in ';'.");
     } else {
       consume(TokenKind::EQUAL, "Expect '=' after concept parameter list.");
-      do {
-        requirements.emplace_back(conceptApplication());
-      } while (match({TokenKind::AND}));
-      if (check(TokenKind::OR)) {
-        throw error(peek(),
-                    "Concept definitions currently support conjunction only; "
-                    "'||' and 'or' are not supported.");
-      }
+      requirements = constraintExpression();
       consume(TokenKind::SEMICOLON, "Expect ';' after concept declaration.");
     }
 
@@ -325,6 +318,55 @@ private:
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept arguments.");
     return {std::move(name), std::move(arguments)};
+  }
+
+  ConstraintExpression constraintExpression() {
+    ConstraintExpression expression;
+    expression.root = constraintDisjunction(expression);
+    return expression;
+  }
+
+  std::size_t constraintDisjunction(ConstraintExpression &expression) {
+    std::size_t left = constraintConjunction(expression);
+    while (match({TokenKind::OR})) {
+      Token operation = previous();
+      const std::size_t right = constraintConjunction(expression);
+      expression.nodes.push_back({.kind = ConstraintExpressionKind::Disjunction,
+                                  .left = left,
+                                  .right = right,
+                                  .operation = std::move(operation)});
+      left = expression.nodes.size() - 1;
+    }
+    return left;
+  }
+
+  std::size_t constraintConjunction(ConstraintExpression &expression) {
+    std::size_t left = constraintPrimary(expression);
+    while (match({TokenKind::AND})) {
+      Token operation = previous();
+      const std::size_t right = constraintPrimary(expression);
+      expression.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                  .left = left,
+                                  .right = right,
+                                  .operation = std::move(operation)});
+      left = expression.nodes.size() - 1;
+    }
+    return left;
+  }
+
+  std::size_t constraintPrimary(ConstraintExpression &expression) {
+    if (match({TokenKind::LEFT_PAREN})) {
+      const NestingGuard nesting = enterNesting(previous());
+      const std::size_t nested = constraintDisjunction(expression);
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after parenthesized constraint expression.");
+      return nested;
+    }
+    const std::size_t application = expression.applications.size();
+    expression.applications.emplace_back(conceptApplication());
+    expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
+                                .application = application});
+    return expression.nodes.size() - 1;
   }
 
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
@@ -647,17 +689,8 @@ private:
     std::optional<RequiresClause> requiresClause;
     if (match({TokenKind::REQUIRES})) {
       Token keyword = previous();
-      std::vector<ConceptApplication> requirements;
-      do {
-        requirements.emplace_back(conceptApplication());
-      } while (match({TokenKind::AND}));
-      if (check(TokenKind::OR)) {
-        throw error(peek(),
-                    "Requires clauses currently support conjunction only; "
-                    "'||' and 'or' are not supported.");
-      }
       requiresClause =
-          RequiresClause{std::move(keyword), std::move(requirements)};
+          RequiresClause{std::move(keyword), constraintExpression()};
     }
 
     std::optional<Token> overrideKeyword;
@@ -915,17 +948,8 @@ private:
     std::optional<RequiresClause> requiresClause;
     if (match({TokenKind::REQUIRES})) {
       Token keyword = previous();
-      std::vector<ConceptApplication> requirements;
-      do {
-        requirements.emplace_back(conceptApplication());
-      } while (match({TokenKind::AND}));
-      if (check(TokenKind::OR)) {
-        throw error(peek(),
-                    "Requires clauses currently support conjunction only; "
-                    "'||' and 'or' are not supported.");
-      }
       requiresClause =
-          RequiresClause{std::move(keyword), std::move(requirements)};
+          RequiresClause{std::move(keyword), constraintExpression()};
     }
 
     std::vector<ConstructorInitializer> initializers;

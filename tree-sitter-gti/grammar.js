@@ -353,13 +353,7 @@ module.exports = grammar({
           commaSep1(field("parameter", $.identifier)),
           ">",
           "=",
-          field("requirement", $.concept_application),
-          repeat(
-            seq(
-              field("operator", choice("&&", "and")),
-              field("requirement", $.concept_application),
-            ),
-          ),
+          field("requirements", $.constraint_expression),
           ";",
         ),
       ),
@@ -372,16 +366,32 @@ module.exports = grammar({
         ">",
       ),
 
+    constraint_expression: ($) =>
+      choice(
+        $.concept_application,
+        seq("(", $.constraint_expression, ")"),
+        prec.left(
+          2,
+          seq(
+            field("left", $.constraint_expression),
+            field("operator", choice("&&", "and")),
+            field("right", $.constraint_expression),
+          ),
+        ),
+        prec.left(
+          1,
+          seq(
+            field("left", $.constraint_expression),
+            field("operator", choice("||", "or")),
+            field("right", $.constraint_expression),
+          ),
+        ),
+      ),
+
     requires_clause: ($) =>
       seq(
         "requires",
-        field("requirement", $.concept_application),
-        repeat(
-          seq(
-            field("operator", choice("&&", "and")),
-            field("requirement", $.concept_application),
-          ),
-        ),
+        field("requirements", $.constraint_expression),
       ),
 
     class_declaration: ($) =>

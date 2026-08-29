@@ -753,6 +753,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   std::vector<GenericConstraintSet> parameterConstraints(
       declaration.typeParameters().size(), 0);
   std::vector<RegisteredConcept::StructuralPattern> structuralConstraints;
+  conceptInfo.definitionRequirements.clear();
+  conceptInfo.definitionExpression = nullptr;
+  conceptInfo.hasStructuralRequirements = false;
   bool valid = true;
   if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
@@ -823,7 +826,20 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
       valid = false;
     }
   } else {
-    for (const ConceptApplication &requirement : declaration.requirements()) {
+    conceptInfo.definitionExpression = &declaration.constraintExpression();
+    std::vector<std::vector<GenericConstraintSet>> leafParameterConstraints(
+        declaration.requirements().size(),
+        std::vector<GenericConstraintSet>(declaration.typeParameters().size(),
+                                          0));
+    std::vector<std::vector<RegisteredConcept::StructuralPattern>>
+        leafStructuralConstraints(declaration.requirements().size());
+    std::vector<bool> leafHasStructural(declaration.requirements().size(),
+                                        false);
+    for (std::size_t requirementIndex = 0;
+         requirementIndex < declaration.requirements().size();
+         ++requirementIndex) {
+      const ConceptApplication &requirement =
+          declaration.requirements()[requirementIndex];
       std::vector<RegisteredConcept::StructuralPattern::Argument> argumentMap;
       argumentMap.reserve(requirement.arguments.size());
       for (const TypeRef &argument : requirement.arguments) {
@@ -936,26 +952,21 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         valid = false;
         continue;
       }
+      conceptInfo.definitionRequirements.push_back(
+          {.conceptId = *dependency,
+           .syntax = &requirement,
+           .arguments = argumentMap,
+           .expressionApplication = requirementIndex});
+      leafHasStructural[requirementIndex] =
+          required.hasStructuralRequirements ||
+          !required.structuralConstraints.empty();
       for (std::size_t index = 0; index < required.parameterConstraints.size();
            ++index) {
         const auto &mappedArgument = argumentMap[index];
         if (mappedArgument.parameter) {
-          parameterConstraints[*mappedArgument.parameter] |=
+          leafParameterConstraints[requirementIndex]
+                                  [*mappedArgument.parameter] |=
               required.parameterConstraints[index];
-        } else if (const std::optional<GenericConstraintKind> failed =
-                       firstUnsatisfiedConstraint(
-                           mappedArgument.concrete,
-                           required.parameterConstraints[index])) {
-          reportConstraintFailure(
-              requirement.arguments[index].name.last(),
-              ConstraintFailure{
-                  .parameter = requirement.arguments[index].name.last(),
-                  .argument = mappedArgument.concrete,
-                  .constraints = required.parameterConstraints[index],
-                  .failed = *failed,
-                  .constraintName = requirement.name,
-                  .application = &requirement});
-          valid = false;
         }
       }
       for (const RegisteredConcept::StructuralPattern &pattern :
@@ -975,7 +986,15 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
           mapped.arguments.push_back(argumentMap[*argument.parameter]);
         }
         if (mapped.arguments.size() == pattern.arguments.size()) {
-          structuralConstraints.emplace_back(std::move(mapped));
+          for (StructuralConstraintKind guaranteed :
+               guaranteedStructuralKinds(mapped.kind)) {
+            RegisteredConcept::StructuralPattern implied = mapped;
+            implied.kind = guaranteed;
+            auto &leaf = leafStructuralConstraints[requirementIndex];
+            if (std::find(leaf.begin(), leaf.end(), implied) == leaf.end()) {
+              leaf.emplace_back(std::move(implied));
+            }
+          }
         }
       }
     }
@@ -985,12 +1004,82 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
              "GTI-S2049");
       valid = false;
     }
+
+    struct Guarantees {
+      std::vector<GenericConstraintSet> parameters;
+      std::vector<RegisteredConcept::StructuralPattern> structural;
+      bool hasStructural = false;
+    };
+    const auto appendUnique = [](auto &destination, const auto &source) {
+      for (const auto &value : source) {
+        if (std::find(destination.begin(), destination.end(), value) ==
+            destination.end()) {
+          destination.push_back(value);
+        }
+      }
+    };
+    const ConstraintExpression &expression = declaration.constraintExpression();
+    std::function<Guarantees(std::size_t)> guaranteesFor =
+        [&](std::size_t nodeIndex) -> Guarantees {
+      Guarantees result{.parameters = std::vector<GenericConstraintSet>(
+                            declaration.typeParameters().size(), 0)};
+      if (nodeIndex >= expression.nodes.size()) {
+        valid = false;
+        return result;
+      }
+      const ConstraintExpressionNode &node = expression.nodes[nodeIndex];
+      if (node.kind == ConstraintExpressionKind::Application) {
+        if (node.application >= leafParameterConstraints.size()) {
+          valid = false;
+          return result;
+        }
+        result.parameters = leafParameterConstraints[node.application];
+        result.structural = leafStructuralConstraints[node.application];
+        result.hasStructural = leafHasStructural[node.application];
+        return result;
+      }
+      Guarantees left = guaranteesFor(node.left);
+      Guarantees right = guaranteesFor(node.right);
+      result.hasStructural = left.hasStructural || right.hasStructural;
+      if (node.kind == ConstraintExpressionKind::Conjunction) {
+        for (std::size_t index = 0; index < result.parameters.size(); ++index) {
+          result.parameters[index] =
+              left.parameters[index] | right.parameters[index];
+        }
+        result.structural = std::move(left.structural);
+        appendUnique(result.structural, right.structural);
+        return result;
+      }
+      for (std::size_t index = 0; index < result.parameters.size(); ++index) {
+        result.parameters[index] =
+            left.parameters[index] & right.parameters[index];
+      }
+      for (const RegisteredConcept::StructuralPattern &candidate :
+           left.structural) {
+        if (std::find(right.structural.begin(), right.structural.end(),
+                      candidate) != right.structural.end()) {
+          result.structural.push_back(candidate);
+        }
+      }
+      return result;
+    };
+    if (!expression.empty() &&
+        expression.root != ConstraintExpressionNode::invalidIndex) {
+      Guarantees guarantees = guaranteesFor(expression.root);
+      parameterConstraints = std::move(guarantees.parameters);
+      structuralConstraints = std::move(guarantees.structural);
+      conceptInfo.hasStructuralRequirements = guarantees.hasStructural;
+    }
   }
 
   currentSourceUnit = enclosingSourceUnit;
   currentNamespace = enclosingNamespace;
   conceptInfo.parameterConstraints = std::move(parameterConstraints);
   conceptInfo.structuralConstraints = std::move(structuralConstraints);
+  if (declaration.compilerBinding()) {
+    conceptInfo.hasStructuralRequirements =
+        !conceptInfo.structuralConstraints.empty();
+  }
   conceptInfo.constraints =
       valid && conceptInfo.parameterConstraints.size() == 1
           ? conceptInfo.parameterConstraints.front()

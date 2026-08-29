@@ -113,6 +113,49 @@ validGenericParameters(const std::vector<LoweredGenericParameter> &parameters) {
   return true;
 }
 
+[[nodiscard]] bool validRequirementExpression(
+    const std::vector<LoweredConceptRequirement> &requirements,
+    const std::vector<LoweredConstraintExpressionNode> &nodes, std::size_t root,
+    bool hasClause) {
+  if (!hasClause) {
+    return requirements.empty() && nodes.empty() &&
+           root == ConstraintExpressionNode::invalidIndex;
+  }
+  if (requirements.empty() || nodes.empty() || root >= nodes.size()) {
+    return false;
+  }
+  std::vector<bool> referenced(requirements.size(), false);
+  std::vector<bool> reachable(nodes.size(), false);
+  std::function<bool(std::size_t)> visit = [&](std::size_t index) {
+    if (index >= nodes.size() || reachable[index]) {
+      return false;
+    }
+    reachable[index] = true;
+    const LoweredConstraintExpressionNode &node = nodes[index];
+    switch (node.kind) {
+    case ConstraintExpressionKind::Application:
+      if (node.application >= requirements.size() ||
+          node.left != ConstraintExpressionNode::invalidIndex ||
+          node.right != ConstraintExpressionNode::invalidIndex) {
+        return false;
+      }
+      referenced[node.application] = true;
+      return true;
+    case ConstraintExpressionKind::Conjunction:
+    case ConstraintExpressionKind::Disjunction:
+      return node.application == ConstraintExpressionNode::invalidIndex &&
+             node.left < index && node.right < index && visit(node.left) &&
+             visit(node.right);
+    }
+    return false;
+  };
+  return visit(root) &&
+         std::all_of(reachable.begin(), reachable.end(),
+                     [](bool value) { return value; }) &&
+         std::all_of(referenced.begin(), referenced.end(),
+                     [](bool value) { return value; });
+}
+
 [[nodiscard]] std::optional<std::string>
 parameterMetadataError(const std::vector<LoweredParameter> &parameters) {
   for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -335,7 +378,10 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
                              !std::all_of(requirement.arguments.begin(),
                                           requirement.arguments.end(),
                                           resolvedType);
-                    })) {
+                    }) ||
+        !validRequirementExpression(
+            payload->requirements, payload->requirementExpression,
+            payload->requirementRoot, payload->hasRequiresClause)) {
       return invalid("function declaration has invalid concept requirements");
     }
     if (std::any_of(payload->virtualRoots.begin(), payload->virtualRoots.end(),
@@ -383,7 +429,9 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
                                           requirement.arguments.end(),
                                           resolvedType);
                     }) ||
-        payload->hasRequiresClause != !payload->requirements.empty()) {
+        !validRequirementExpression(
+            payload->requirements, payload->requirementExpression,
+            payload->requirementRoot, payload->hasRequiresClause)) {
       return invalid(
           "constructor declaration has invalid concept requirements");
     }

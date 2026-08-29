@@ -359,9 +359,37 @@ struct ConceptApplication {
   std::vector<TypeRef> arguments;
 };
 
+enum class ConstraintExpressionKind {
+  Application,
+  Conjunction,
+  Disjunction,
+};
+
+struct ConstraintExpressionNode {
+  static constexpr std::size_t invalidIndex = static_cast<std::size_t>(-1);
+
+  ConstraintExpressionKind kind = ConstraintExpressionKind::Application;
+  std::size_t application = invalidIndex;
+  std::size_t left = invalidIndex;
+  std::size_t right = invalidIndex;
+  Token operation;
+};
+
+struct ConstraintExpression {
+  std::vector<ConceptApplication> applications;
+  std::vector<ConstraintExpressionNode> nodes;
+  std::size_t root = ConstraintExpressionNode::invalidIndex;
+
+  [[nodiscard]] bool empty() const { return applications.empty(); }
+};
+
 struct RequiresClause {
   Token keyword;
-  std::vector<ConceptApplication> requirements;
+  ConstraintExpression expression;
+
+  [[nodiscard]] const std::vector<ConceptApplication> &requirements() const {
+    return expression.applications;
+  }
 };
 
 struct NativeCArrayAttribute {
@@ -2216,7 +2244,7 @@ class ConceptDecl final : public StmtOfKind<StmtKind::ConceptDecl> {
 public:
   ConceptDecl(
       Token keyword, Token name, std::vector<Token> typeParameters,
-      std::vector<ConceptApplication> requirements,
+      ConstraintExpression requirements,
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt)
       : keyword_(std::move(keyword)), name_(std::move(name)),
         typeParameters_(std::move(typeParameters)),
@@ -2233,6 +2261,9 @@ public:
     return typeParameters_;
   }
   [[nodiscard]] const std::vector<ConceptApplication> &requirements() const {
+    return requirements_.applications;
+  }
+  [[nodiscard]] const ConstraintExpression &constraintExpression() const {
     return requirements_;
   }
   [[nodiscard]] const std::optional<CompilerConstraintBinding> &
@@ -2244,7 +2275,7 @@ private:
   Token keyword_;
   Token name_;
   std::vector<Token> typeParameters_;
-  std::vector<ConceptApplication> requirements_;
+  ConstraintExpression requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;
 };
 

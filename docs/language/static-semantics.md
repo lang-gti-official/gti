@@ -410,7 +410,8 @@ generic class name is concrete only when every parameter has a default.
 
 The current standard constraints describe frontend-owned primitive, lifecycle,
 and exact structural capabilities. Namespace-scoped user concepts may declare
-one or more type parameters and compose existing concepts with conjunction.
+one or more type parameters and compose existing concepts with `&&`/`and`,
+`||`/`or`, and parentheses. Conjunction binds more tightly than disjunction.
 Each concept application supplies visible non-pack type parameters or closed
 exact types containing no unresolved generic parameter and must match the
 referenced declaration's arity. A dependent compound type such as
@@ -418,11 +419,19 @@ referenced declaration's arity. A dependent compound type such as
 
 An inline constraint such as `std::numeric T` remains unary and
 non-structural. A generic free function, non-polymorphic method, or ordinary
-generic constructor may instead use a trailing clause of the form
-`requires Concept<Parameter...> && Concept<Parameter...>`. Clause arguments
+generic constructor may instead use a trailing bounded constraint expression,
+for example `requires Concept<Parameter...> &&
+(Relation<Parameter...> || Alternate<Parameter...>)`. Clause arguments
 must be visible non-pack generic type parameters or closed exact types. These
 requirements provide exact facts while the symbolic body is checked and are
 substituted and revalidated for every concrete call.
+
+A concrete disjunction succeeds when either complete branch succeeds. During
+symbolic body checking it exposes only the intersection of the alternatives'
+guaranteed atomic and structural facts; conjunction exposes their union. This
+prevents facts from separate alternatives from being combined into a proof.
+The named concept predicate remains attached to an inline generic parameter
+for concrete viability even when the common fact set is empty.
 
 Operators and virtual, pure, overriding, or interface methods cannot carry a
 trailing clause in the bounded first version. Operator availability and
@@ -430,8 +439,8 @@ polymorphic contract equivalence require separate representation rules.
 
 Constraints affect candidate validity but do not rank overloads, distinguish
 otherwise identical signatures, provide SFINAE, or select specializations.
-Disjunction, negation, general requires-expressions, arbitrary expression
-requirements, value constraints, constraint subsumption, forwarding
+Negation, general requires-expressions, arbitrary expression requirements,
+value constraints, constraint subsumption, forwarding
 references, and unrestricted metaprogramming are not part of the implemented
 language.
 

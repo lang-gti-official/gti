@@ -176,6 +176,7 @@ struct GenericParameterInfo {
   bool value = false;
   GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
+  ConceptId conceptId = 0;
   std::shared_ptr<const SemanticType> defaultType;
   std::shared_ptr<const GenericValueExpression> defaultValue;
 };
@@ -507,6 +508,8 @@ struct AppliedConceptRequirement {
   ConceptId conceptId = 0;
   const ConceptApplication *syntax = nullptr;
   std::vector<SemanticType> arguments;
+  const ConstraintExpression *expression = nullptr;
+  std::size_t expressionApplication = ConstraintExpressionNode::invalidIndex;
 };
 
 [[nodiscard]] std::optional<CheckedIntegerDomain>

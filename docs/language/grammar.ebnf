@@ -133,13 +133,20 @@ native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 
 concept-declaration    = "concept" IDENTIFIER
                          "<" concept-parameter-list ">" "="
-                         concept-application
-                         { ( "&&" | "and" ) concept-application } ";" ;
+                         constraint-expression ";" ;
 
 concept-parameter-list = IDENTIFIER { "," IDENTIFIER } ;
 
-concept-application    = qualified-name "<" IDENTIFIER
-                         { "," IDENTIFIER } ">" ;
+concept-application    = qualified-name "<" type { "," type } ">" ;
+
+constraint-expression = constraint-disjunction ;
+constraint-disjunction
+                       = constraint-conjunction
+                         { ( "||" | "or" ) constraint-conjunction } ;
+constraint-conjunction = constraint-primary
+                         { ( "&&" | "and" ) constraint-primary } ;
+constraint-primary     = concept-application
+                       | "(" constraint-expression ")" ;
 
 compiler-concept-declaration
                        = compiler-constraint-binding "concept" IDENTIFIER
@@ -149,12 +156,13 @@ compiler-constraint-binding
                        = "@" "compiler_constraint" "(" STRING_LITERAL ")" ;
 
 (* Source concepts are namespace-scoped declarations over one or more distinct
-   type parameters. Their right-hand side is a non-empty conjunction, and every
-   application argument must name one of that declaration's type parameters.
-   An application supplies the referenced concept's exact arity and may map,
-   reorder, or reuse the enclosing parameters. Concepts may be referenced
-   before their declaration; cycles are invalid. Disjunction, negation,
-   expression requirements, concept specialization, and constraint-based
+   type parameters. Their right-hand side is a non-empty bounded Boolean
+   expression, and every application argument must name one of that
+   declaration's type parameters or a closed exact type. An application
+   supplies the referenced concept's exact arity and may map, reorder, or reuse
+   the enclosing parameters. Concepts may be referenced
+   before their declaration; cycles are invalid. Negation, expression
+   requirements, concept specialization, and constraint-based
    overload ranking are not part of this layer.
 
    `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
@@ -462,8 +470,7 @@ function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          parameter-clause [ requires-clause ]
                          ( block | ";" ) ;
 
-requires-clause        = "requires" concept-application
-                         { ( "&&" | "and" ) concept-application } ;
+requires-clause        = "requires" constraint-expression ;
 
 (* A leading `mut` on a function declaration requires a reference return.
    A free/static borrowed return is accepted when every reachable return
@@ -1190,9 +1197,9 @@ pack-expansion         = IDENTIFIER "..." ;
    concept composition in the prelude, not by a compiler-owned implication
    graph.
 
-   A trailing requires clause is a bounded conjunction of concept applications
-   whose arguments are visible non-pack generic type parameters or closed exact
-   types containing no unresolved type/value parameter. It can
+   A trailing requires clause is a bounded Boolean expression of concept
+   applications whose arguments are visible non-pack generic type parameters
+   or closed exact types containing no unresolved type/value parameter. It can
    express exact multi-type relationships, such as
    `std::sentinel_for<Sentinel, Iterator>`,
    and its facts are active while the symbolic body is checked. Concrete
@@ -1215,8 +1222,8 @@ pack-expansion         = IDENTIFIER "..." ;
    fixed-array extent.
 
    A trailing clause is semantically rejected on an operator
-   or a virtual, pure, overriding, or interface method. Concept disjunction,
-   negation, general requires-expressions, arbitrary expression requirements,
+   or a virtual, pure, overriding, or interface method. Concept negation,
+   general requires-expressions, arbitrary expression requirements,
    and concept, partial, or constraint-selected specialization are not
    implemented.
 

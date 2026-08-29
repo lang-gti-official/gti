@@ -8,7 +8,7 @@ separate compile-time metaprogramming language.
 ## Concept declarations
 
 A namespace-scoped source concept declares one or more type parameters and
-combines existing concepts with conjunction:
+combines existing concepts with bounded conjunction and disjunction:
 
 ```gti
 concept sortable<T> =
@@ -17,6 +17,9 @@ concept sortable<T> =
 concept readable_as<Iterator, T> =
     std::input_iterator<Iterator> &&
     std::accumulates_into<Iterator, T>;
+
+concept scalar<T> =
+    std::integral<T> || std::floating_point<T>;
 ```
 
 Every application argument is either one of the declaration's visible
@@ -24,11 +27,14 @@ non-pack type parameters or a closed exact type containing no unresolved
 type/value parameter. An application must supply the referenced concept's
 exact arity, but may map, reorder, or reuse enclosing parameters. A closed
 argument such as `char` supplies an exact fact but does not participate in
-generic inference. Dependent compound arguments such as `Wrapper<T>`, packs,
+generic inference. Its application remains an ordinary predicate branch, so a
+false closed application may be bypassed by a satisfied `||` alternative.
+Dependent compound arguments such as `Wrapper<T>`, packs,
 values, and expressions remain outside this bounded grammar. Concept names
 follow ordinary namespace and direct-source-unit visibility. They may be
-declared after use within a visible source unit. Definitions may use `&&` or
-`and`; cycles and disjunction are rejected.
+declared after use within a visible source unit. Definitions may use
+`&&`/`and` and `||`/`or`. Conjunction binds more tightly than disjunction, and
+parentheses group a constraint expression. Cycles are rejected.
 
 An inline generic-parameter constraint remains the compact unary form:
 
@@ -59,21 +65,34 @@ T consume<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, mut T init)
 }
 ```
 
-The implemented clause has exactly this form:
+The implemented clause has this bounded grammar:
 
 ```text
-requires concept-application (&& concept-application)*
+constraint-primary    = concept-application | '(' constraint-expression ')'
+constraint-and        = constraint-primary (('&&' | 'and') constraint-primary)*
+constraint-expression = constraint-and (('||' | 'or') constraint-and)*
+requires-clause       = 'requires' constraint-expression
 ```
 
-`and` is an equivalent conjunction spelling. Every argument must be a visible
-non-pack type parameter or closed exact type, and every application must have
-the declared arity. Dependent compound types, packs, values, expressions,
-nested requirements, boolean predicates, `||`/`or`, and negation are not
-accepted in this clause.
+Every argument must be a visible non-pack type parameter or closed exact type,
+and every application must have the declared arity. Dependent compound types,
+packs, values, arbitrary expressions, nested requires-expressions, boolean
+predicates, and negation are not accepted in this clause.
 
-The active requirements supply facts while the symbolic generic body is
-checked. At a concrete call, the requirements are substituted and checked
-again against the inferred or explicit types. During the symbolic check, the
+At a concrete call, conjunction requires both operands and disjunction accepts
+either complete operand. Facts are never mixed across alternatives. During
+symbolic generic-body checking, conjunction contributes the union of its
+facts, while disjunction contributes only facts guaranteed by every branch.
+For example, `std::integral<T> || std::floating_point<T>` permits operations
+proved by both numeric branches but does not prove integral-only remainder.
+Callable capability implications are retained when computing the common fact:
+read-only and mutable callable alternatives both prove the repeatable mutable
+use site and the weaker once-use site. The original concept identity remains
+part of concrete viability even when its alternatives have no common body
+fact, so an empty intersection never accepts every type.
+
+At a concrete call, the requirements are substituted and checked again
+against the inferred or explicit types. During the symbolic check, the
 value produced by a constrained dereference has no exact type unless a
 `std::dereferences_to` requirement names one. An `auto` local may still bind
 that value: each concrete generic instance owns the binding's exact inferred
@@ -377,8 +396,8 @@ create escaping callable storage.
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,
-arbitrary expression requirements, disjunction, negation, associated types,
-value constraints, concept or partial specialization, constraint subsumption,
+arbitrary expression requirements, negation, associated types, value
+constraints, concept or partial specialization, constraint subsumption,
 constraint-based overload ordering, conditionally available operators,
 constrained polymorphic contracts, or unrestricted compile-time reflection.
 Variadic callable relations, generic `operator()` requirements, and function

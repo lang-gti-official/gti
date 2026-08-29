@@ -1350,32 +1350,37 @@ public:
                 (identifier)))
             (identifier)))
         (requires_clause
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier))))
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier)))
-            (type
-              (user_type
-                (identifier))))
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier)))
-            (type
-              (primitive_type))))
+          (constraint_expression
+            (constraint_expression
+              (constraint_expression
+                (concept_application
+                  (scoped_identifier
+                    (identifier)
+                    (identifier))
+                  (type
+                    (user_type
+                      (identifier)))))
+              (constraint_expression
+                (concept_application
+                  (scoped_identifier
+                    (identifier)
+                    (identifier))
+                  (type
+                    (user_type
+                      (identifier)))
+                  (type
+                    (user_type
+                      (identifier))))))
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier)))
+                (type
+                  (primitive_type))))))
         (constructor_initializer_list
           (constructor_initializer
             (user_type
@@ -1689,26 +1694,28 @@ public:
               (reference_declarator))
             (identifier)))
         (requires_clause
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier)))
-            (type
-              (user_type
-                (identifier))))))
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier)))
+              (type
+                (user_type
+                  (identifier)))))))
       (operator_declaration
         (parameter_clause)
         (requires_clause
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier)))))))))
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier))))))))))
 
 =====================================================
 Multi-parameter concepts and trailing requires clauses
@@ -1741,16 +1748,17 @@ public:
     (identifier)
     (identifier)
     (identifier)
-    (concept_application
-      (scoped_identifier
-        (identifier)
-        (identifier))
-      (type
-        (user_type
-          (identifier)))
-      (type
-        (user_type
-          (identifier)))))
+    (constraint_expression
+      (concept_application
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (user_type
+            (identifier))))))
   (function_declaration
     (type
       (user_type
@@ -1783,33 +1791,38 @@ public:
             (identifier)))
         (identifier)))
     (requires_clause
-      (concept_application
-        (scoped_identifier
-          (identifier)
-          (identifier))
-        (type
-          (user_type
-            (identifier))))
-      (concept_application
-        (scoped_identifier
-          (identifier)
-          (identifier))
-        (type
-          (user_type
-            (identifier)))
-        (type
-          (user_type
-            (identifier))))
-      (concept_application
-        (scoped_identifier
-          (identifier)
-          (identifier))
-        (type
-          (user_type
-            (identifier)))
-        (type
-          (user_type
-            (identifier)))))
+      (constraint_expression
+        (constraint_expression
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier)))))
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier)))
+              (type
+                (user_type
+                  (identifier))))))
+        (constraint_expression
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type
+              (user_type
+                (identifier)))
+            (type
+              (user_type
+                (identifier)))))))
     (block
       (return_statement
         (initializer_expression
@@ -1851,23 +1864,26 @@ public:
                 (identifier)))
             (identifier)))
         (requires_clause
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier))))
-          (concept_application
-            (scoped_identifier
-              (identifier)
-              (identifier))
-            (type
-              (user_type
-                (identifier)))
-            (type
-              (user_type
-                (identifier)))))))))
+          (constraint_expression
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier)))))
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier)))
+                (type
+                  (user_type
+                    (identifier)))))))))))
 
 ==================
 Constexpr declarations
@@ -2356,10 +2372,17 @@ Source-defined concept composition
 ====================================
 
 concept sortable<T> = std::totally_ordered<T> && std::movable<T>;
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
 
 @compiler_constraint("movable") concept movable_capability<T>;
 
 T choose<sortable T>(T value) { return value; }
+
+T select<T>(T value)
+  requires (std::integral<T> or std::floating_point<T>)
+        and std::copyable<T> {
+  return value;
+}
 
 ---
 
@@ -2367,20 +2390,43 @@ T choose<sortable T>(T value) { return value; }
   (concept_declaration
     (identifier)
     (identifier)
-    (concept_application
-      (scoped_identifier
-        (identifier)
-        (identifier))
-      (type
-        (user_type
-          (identifier))))
-    (concept_application
-      (scoped_identifier
-        (identifier)
-        (identifier))
-      (type
-        (user_type
-          (identifier)))))
+    (constraint_expression
+      (constraint_expression
+        (concept_application
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))
+      (constraint_expression
+        (concept_application
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (constraint_expression
+        (concept_application
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))
+      (constraint_expression
+        (concept_application
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))))
   (concept_declaration
     (compiler_constraint_binding
       (string_literal))
@@ -2401,6 +2447,53 @@ T choose<sortable T>(T value) { return value; }
           (user_type
             (identifier)))
         (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (function_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (requires_clause
+      (constraint_expression
+        (constraint_expression
+          (constraint_expression
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier)))))
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier)))))))
+        (constraint_expression
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type
+              (user_type
+                (identifier)))))))
     (block
       (return_statement
         (initializer_expression

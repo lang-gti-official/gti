@@ -105,7 +105,7 @@ int decompose(Pair value) {
   return first;
 }
 
-concept sortable<T> = std::totally_ordered<T> && std::movable<T>;
+concept sortable<T> = std::totally_ordered<T> && std::movable<T> || std::copyable<T>;
 
 T choose_lower<sortable T>(T left, T right) {
   return left;

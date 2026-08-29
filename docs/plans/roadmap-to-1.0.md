@@ -595,9 +595,11 @@ Lifecycle checks use GTI traits and public construction availability. Nominal
 comparison checks require exact public read-only member operators, and
 constrained `T()` construction is represented through MIR rather than inferred
 by the backend. Public aliases and implications are composed in the prelude;
-the compiler owns only irreducible facts. User code may define
-multi-parameter conjunction concepts and bounded trailing `requires` clauses
-without introducing a second metaprogramming language. The first relational
+the compiler owns only irreducible facts. User code may define multi-parameter
+concepts and bounded trailing `requires` expressions with conjunction,
+disjunction, and parentheses without introducing a second metaprogramming
+language. Symbolic bodies receive only facts common to every alternative. The
+first relational
 slice supplies public input-iterator, iterator/sentinel, exact dereference, and
 forward-iterator concepts; ordinary `<std/numeric>` uses them for
 `std::accumulate`, and `<std/algorithm>` uses the forward contract for

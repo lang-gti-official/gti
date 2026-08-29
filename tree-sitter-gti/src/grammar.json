@@ -1622,43 +1622,10 @@
             },
             {
               "type": "FIELD",
-              "name": "requirement",
+              "name": "requirements",
               "content": {
                 "type": "SYMBOL",
-                "name": "concept_application"
-              }
-            },
-            {
-              "type": "REPEAT",
-              "content": {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "FIELD",
-                    "name": "operator",
-                    "content": {
-                      "type": "CHOICE",
-                      "members": [
-                        {
-                          "type": "STRING",
-                          "value": "&&"
-                        },
-                        {
-                          "type": "STRING",
-                          "value": "and"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "type": "FIELD",
-                    "name": "requirement",
-                    "content": {
-                      "type": "SYMBOL",
-                      "name": "concept_application"
-                    }
-                  }
-                ]
+                "name": "constraint_expression"
               }
             },
             {
@@ -1723,26 +1690,44 @@
         }
       ]
     },
-    "requires_clause": {
-      "type": "SEQ",
+    "constraint_expression": {
+      "type": "CHOICE",
       "members": [
         {
-          "type": "STRING",
-          "value": "requires"
+          "type": "SYMBOL",
+          "name": "concept_application"
         },
         {
-          "type": "FIELD",
-          "name": "requirement",
-          "content": {
-            "type": "SYMBOL",
-            "name": "concept_application"
-          }
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "("
+            },
+            {
+              "type": "SYMBOL",
+              "name": "constraint_expression"
+            },
+            {
+              "type": "STRING",
+              "value": ")"
+            }
+          ]
         },
         {
-          "type": "REPEAT",
+          "type": "PREC_LEFT",
+          "value": 2,
           "content": {
             "type": "SEQ",
             "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "constraint_expression"
+                }
+              },
               {
                 "type": "FIELD",
                 "name": "operator",
@@ -1762,13 +1747,72 @@
               },
               {
                 "type": "FIELD",
-                "name": "requirement",
+                "name": "right",
                 "content": {
                   "type": "SYMBOL",
-                  "name": "concept_application"
+                  "name": "constraint_expression"
                 }
               }
             ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
+          "value": 1,
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "left",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "constraint_expression"
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "operator",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "STRING",
+                      "value": "||"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "or"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "FIELD",
+                "name": "right",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "constraint_expression"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requires_clause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "requires"
+        },
+        {
+          "type": "FIELD",
+          "name": "requirements",
+          "content": {
+            "type": "SYMBOL",
+            "name": "constraint_expression"
           }
         }
       ]

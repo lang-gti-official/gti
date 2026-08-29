@@ -174,8 +174,9 @@ whether the parameter position, declaration kind, and expression are valid.
 
 The same token distinction applies inside concept declarations and trailing
 `requires` clauses. Concept applications retain compact generic angles while
-their conjunction remains an ordinary spaced logical operator; formatting does
-not attempt to interpret or validate the requirement semantically.
+their `&&`/`and` and `||`/`or` operators remain ordinarily spaced. Written
+parentheses are preserved; formatting does not attempt to interpret or
+validate the requirement semantically.
 
 A trailing `requires` clause starts its own line, indented one level past the
 declaration it constrains, and the declaration's brace or semicolon returns to
