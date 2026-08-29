@@ -260,13 +260,18 @@ tag-only alternatives admit move-only payloads without extraction. Semantics
 records a switch as exhaustive only when it has `default` or every variant is
 covered once with valid patterns. `GTI-S2067` owns payload shape, exact
 construction, unsupported cleanup carriers, copied-pattern capability,
-duplicate, and missing-variant failures. The initial owning family is confined
-to direct local bindings: one shared declaration-time check rejects owning
-enum state at by-value function/method, constructor, and typed-lambda
-boundaries; capture and recursive type-argument inspection reject lambda,
-field, array, and wrapper containment. A top-level checked-reference parameter
-does not contain or transfer the referent and remains valid for exhaustive tag
-inspection.
+duplicate, and missing-variant failures. The bounded owning callable family
+admits a direct enum type at ordinary source-defined free-function,
+non-polymorphic method and ordinary-constructor boundaries and at exact typed
+lambdas. It never grants permission to a containing type. Ordinary call
+analysis selects copy/move from the enum's folded traits, so unavailable copies
+retain the normal ownership diagnostic before HIR. The shared declaration-time
+check continues to reject generic or polymorphic callable families, including
+methods and constructors declared by a generic owner, native/runtime/operator
+boundaries, and wrapper-shaped transport; capture and recursive type-argument
+inspection reject lambda, field, array, and wrapper containment. A top-level
+checked-reference parameter does not contain or transfer the referent and
+remains valid for exhaustive tag inspection.
 
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.

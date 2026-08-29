@@ -570,12 +570,24 @@ destination alternative exactly once, transfers the source alternative, and
 later destroys only the moved-from staging shell. A unit alternative has no
 payload cleanup to run.
 
-Owning payload enums currently execute only as direct local values. They may
-be passed to an ordinary function through a top-level checked reference, which
-may inspect the active tag without transferring cleanup identity. By-value
-call/return transport, lambda
-capture, and aggregate or generic-wrapper containment are diagnosed before
-execution lowering; no native ABI or implicit wrapper cleanup is inferred.
+Owning payload enums may remain direct local values, cross a top-level checked
+reference for non-consuming observation, or cross an admitted ordinary
+callable by value. The by-value family covers ordinary source-defined free
+functions, non-polymorphic methods and ordinary constructors, and exact typed
+lambdas. Argument preparation follows the enum's folded copy/move traits: a
+named move transfers its obligation, a fresh variant is consumed directly,
+and an unavailable copy is rejected before lowering. Entry moves the native
+parameter into the callable's lexical enum obligation. An enum result is
+constructed directly in caller-provided storage and is armed only on the
+call's success edge; defined failure cleans active arguments but never cleans
+an unpublished result. These rules preserve one active variant and
+exactly-once cleanup across the boundary.
+
+Generic callable families, polymorphic dispatch, lambda capture of an owning
+payload enum, aggregate or generic-wrapper containment, stored borrowed state,
+recursive active carriers, and consuming or borrowed match bindings remain
+diagnosed before execution lowering. No native C ABI or implicit wrapper
+cleanup is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the
