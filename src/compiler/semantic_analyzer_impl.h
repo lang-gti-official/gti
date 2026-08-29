@@ -1560,6 +1560,9 @@ private:
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes);
 
+  void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
+                               const std::vector<SemanticType> &argumentTypes);
+
   [[nodiscard]] static const GenericParameterInfo *
   findGenericParameter(const std::vector<GenericParameterInfo> &parameters,
                        GenericParameterId id);
@@ -1896,6 +1899,9 @@ private:
   [[nodiscard]] static bool
   nativeFunctionCandidateIsEligible(const CallableCandidate &candidate);
 
+  [[nodiscard]] static bool
+  functionItemCandidateIsEligible(const CallableCandidate &candidate);
+
   [[nodiscard]] bool
   nativeFunctionCandidateMatches(const CallableCandidate &candidate,
                                  const SemanticType &expectedType) const;
@@ -1908,6 +1914,17 @@ private:
   analyzeNativeFunctionItem(const Expr &expression, const Symbol &symbol,
                             const SemanticType &expectedType,
                             const Token &location);
+
+  [[nodiscard]] SemanticType
+  analyzeFunctionItem(const Expr &expression, const Symbol &symbol,
+                      const SemanticType &expectedType, const Token &location);
+
+  [[nodiscard]] bool contextualizeFunctionItemArguments(
+      const CallableCandidate &target,
+      const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<CompileTimeValue> &explicitValueArguments,
+      const ExprList &arguments, ContextualCallArguments &analysis,
+      bool diagnose);
 
   [[nodiscard]] bool
   isContextualNativeFunctionArgument(const ExprPtr &expression) const;

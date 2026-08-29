@@ -961,7 +961,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v46\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v47\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -2954,7 +2954,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v53 ") &&
+  expect(mirDump.starts_with("mir-v54 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -15279,7 +15279,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v53 ") &&
+             mirDump.starts_with("mir-v54 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

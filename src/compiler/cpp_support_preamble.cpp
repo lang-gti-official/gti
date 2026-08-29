@@ -86,6 +86,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "exact_call",
       "exact_call_type_compatible",
       "exact_type",
+      "function_item",
       "expected_result",
       "forward_pack_argument",
       "gti_internal",
@@ -373,6 +374,8 @@ namespace gti_internal::backend {
 struct mir_empty_state_constructor_tag_v1;
 template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1;
+template <std::uint64_t Function>
+struct function_item final {};
 )";
   if (usesExpected) {
     output << (features.standard == CppStandard::Cpp23 ? R"(

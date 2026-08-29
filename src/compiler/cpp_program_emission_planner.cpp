@@ -112,7 +112,7 @@ public:
       writeCppFailureArtifactDescriptor(output, mir.failureMetadata());
     });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
-            [&] { emitThreadTaskAdapterDefinitions(); });
+            [&] { emitThreadTaskAdapterDeclarations(); });
     capture(plan, CppProgramTextRole::FailureAndLifecycleSupport,
             [&] { writeCppMirFailureHelpers(output); });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
@@ -5336,6 +5336,8 @@ public:
       --indentation;
       output << "} // namespace __gti_program\n";
     });
+    capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
+            [&] { emitThreadTaskAdapterDefinitions(); });
     capture(plan, CppProgramTextRole::HostedEntryAdapter,
             [&] { emitLoweredProgramEntryAdapter(); });
   }
@@ -5403,14 +5405,24 @@ public:
         target != nullptr &&
         (target->mayRaiseDefinedFailure ? loweredFailureBodySupported(*target)
                                         : loweredNormalBodySupported(*target));
-    if (target == nullptr || owner == nullptr || declaration == nullptr ||
-        row == nullptr || owner->type != adapter.taskType ||
+    const bool functionItem = adapter.taskType.hasFunctionItemShape();
+    if (target == nullptr || declaration == nullptr || row == nullptr ||
         target->definitionKind != MirDefinitionKind::Source ||
-        target->overloadedOperator != std::optional{OverloadedOperator::Call} ||
+        target->linkage != LanguageLinkage::Gti ||
         target->returnType != adapter.resultType ||
         !target->parameterTypes.empty() || target->pureVirtual ||
-        adapter.targetInvocation !=
-            callableInvocationCapability(target->receiverMutability) ||
+        (functionItem
+             ? owner != nullptr ||
+                   adapter.taskType.functionId != target->declaration ||
+                   target->overloadedOperator.has_value() ||
+                   adapter.targetInvocation !=
+                       CallableInvocationCapability::Read
+             : owner == nullptr || owner->type != adapter.taskType ||
+                   target->overloadedOperator !=
+                       std::optional{OverloadedOperator::Call} ||
+                   adapter.targetInvocation !=
+                       callableInvocationCapability(
+                           target->receiverMutability)) ||
         !supportedBody) {
       throw std::logic_error(
           "verified thread task adapter lost its exact function entry");
@@ -5461,11 +5473,26 @@ public:
           "verified thread task function lost its declaration spelling");
     }
     const std::string name = cppFunctionSpelling(*declaration, row->name);
+    const bool functionItem = adapter.taskType.hasFunctionItemShape();
+    const auto emitTargetName = [&](bool failureForm) {
+      output << "::__gti_program::";
+      for (const std::string &scope : row->namespaceScope) {
+        output << (scope == "std" ? emittedStandardNamespace
+                                  : std::string_view(scope))
+               << "::";
+      }
+      output << (failureForm ? cppMirFailureSiblingSpelling(name) : name);
+    };
     const bool valueBearing = adapter.resultType != SemanticType::Void;
     if (target.mayRaiseDefinedFailure) {
       output << "      const bool success = ";
-      emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
-      output << '.' << cppMirFailureSiblingSpelling(name) << '(';
+      if (functionItem) {
+        emitTargetName(true);
+      } else {
+        emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+        output << '.' << cppMirFailureSiblingSpelling(name);
+      }
+      output << '(';
       if (valueBearing) {
         output << "box->result.construction_address(), ";
       }
@@ -5487,8 +5514,13 @@ public:
     if (valueBearing) {
       output << "box->result.construct_from([&] { return ";
     }
-    emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
-    output << '.' << name << "()";
+    if (functionItem) {
+      emitTargetName(false);
+    } else {
+      emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+      output << '.' << name;
+    }
+    output << "()";
     output << (valueBearing ? "; });\n" : ";\n");
   }
 
@@ -5629,6 +5661,30 @@ public:
     }
     if (opened) {
       output << "} // namespace gti_internal::backend\n\n";
+    }
+  }
+
+  void emitThreadTaskAdapterDeclarations() {
+    bool opened = false;
+    for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+      if (thunk.identity.kind != CppMirThunkKind::ThreadTaskAdapter) {
+        continue;
+      }
+      const CppMirThreadTaskThunk &thread = threadTaskPayload(thunk);
+      if (mir.findThreadTaskAdapter(thread.adapter.id) == nullptr) {
+        throw std::logic_error(
+            "planned thread task declaration lost its exact adapter");
+      }
+      if (!opened) {
+        output << "namespace gti_internal::backend {\n\n";
+        opened = true;
+      }
+      output << "template <>\n"
+                "struct managed_thread_task_adapter<"
+             << thread.adapter.id << ">;\n";
+    }
+    if (opened) {
+      output << "\n} // namespace gti_internal::backend\n\n";
     }
   }
 

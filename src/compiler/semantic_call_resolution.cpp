@@ -535,6 +535,91 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
       valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
 }
 
+auto SemanticVisitor::Impl::analyzeFunctionItemCall(
+    const Call &call, const SemanticType &calleeType,
+    const std::vector<SemanticType> &argumentTypes) -> void {
+  const FunctionInfo *target =
+      semanticModel.findFunction(calleeType.functionId);
+  if (target == nullptr && instanceBaseModel != nullptr) {
+    target = instanceBaseModel->findFunction(calleeType.functionId);
+  }
+  const SemanticType *itemReturn = calleeType.functionItemReturnType();
+  const std::span<const SemanticType> itemParameters =
+      calleeType.functionItemParameterTypes();
+  if (target == nullptr || target->declaration == nullptr ||
+      target->ownerClass != 0 || target->entryPoint ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->returnType !=
+          (itemReturn == nullptr ? SemanticType::Unknown : *itemReturn) ||
+      target->parameterTypes.size() != itemParameters.size() ||
+      !std::equal(target->parameterTypes.begin(), target->parameterTypes.end(),
+                  itemParameters.begin())) {
+    report(call.paren(),
+           "Function-item invocation lost its exact namespace function "
+           "identity.",
+           "GTI-S2090");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  bool valid = true;
+  if (!call.typeArguments().empty()) {
+    for (const TypeRef &argument : call.typeArguments()) {
+      validateType(argument);
+    }
+    report(call.paren(),
+           "Function items do not take explicit generic arguments.",
+           "GTI-S2090");
+    valid = false;
+  }
+  if (argumentTypes.size() != target->parameterTypes.size()) {
+    report(call.paren(),
+           "Function item expects " +
+               std::to_string(target->parameterTypes.size()) + " argument" +
+               (target->parameterTypes.size() == 1 ? "" : "s") +
+               " but received " + std::to_string(argumentTypes.size()) + ".",
+           "GTI-S2005");
+    valid = false;
+  }
+  const std::size_t count =
+      std::min(argumentTypes.size(), target->parameterTypes.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    if (!callArgumentMatches(target->parameterTypes[index],
+                             argumentTypes[index], call.arguments()[index])) {
+      reportCallArgumentMismatch(index, target->parameterTypes[index],
+                                 argumentTypes[index], call.arguments()[index],
+                                 "Function item");
+      valid = false;
+    }
+  }
+  valid = validateCallableReturn(call, target->returnType) && valid;
+  valid =
+      validateCallableCapability(call, CallableInvocationCapability::Read) &&
+      valid;
+  validateMutableCallArgumentLoans(target->parameterTypes, call.arguments(),
+                                   call.paren());
+  validateCallPlaceExclusivity(target->parameterTypes, call.arguments(),
+                               call.paren());
+  if (!valid) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  ResolvedCallInfo resolved{.function = target->id,
+                            .declaration = target->declaration,
+                            .returnType = target->returnType,
+                            .parameterTypes = target->parameterTypes,
+                            .borrowOrigin = target->returnBorrowOrigin,
+                            .borrowArgument = target->returnBorrowParameter,
+                            .borrowAccess = target->returnBorrowAccess,
+                            .borrowPlace = target->returnBorrowPlace,
+                            .dispatch = CallDispatch::Static,
+                            .receiverMode = CallReceiverMode::None};
+  semanticModel.record(call, resolved);
+  recordSelectedCallOccurrence(call, std::move(resolved));
+  currentType = callExpressionType(target->returnType);
+}
+
 auto SemanticVisitor::Impl::findGenericParameter(
     const std::vector<GenericParameterInfo> &parameters, GenericParameterId id)
     -> const GenericParameterInfo * {
@@ -2088,6 +2173,11 @@ auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const SemanticType &type, std::unordered_set<ClassId> &visiting) const
     -> bool {
+  if (type.kind == SemanticType::FunctionItem) {
+    // Parameters and results describe the selected target; they are not
+    // stored state in the zero-state function-item value.
+    return false;
+  }
   if (type.kind == SemanticType::Reference ||
       type.kind == SemanticType::RawPointer ||
       type.kind == SemanticType::StringView) {
@@ -2423,12 +2513,13 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
           !ownedTransportMatchesConcrete(*target, contract, resolved)) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2084", DiagnosticPhase::Semantics, expressionToken(argument),
-            contract.ownedTransport->destinationType == SemanticType::Void
-                ? "A managed thread requires one consumed, transfer-safe "
-                  "exact void() task."
-                : "A managed thread requires one consumed, transfer-safe "
-                  "exact task whose return type matches its transferable "
-                  "result.");
+            std::string(contract.ownedTransport->destinationType ==
+                                SemanticType::Void
+                            ? "A managed thread requires one consumed, "
+                              "transfer-safe exact void() task."
+                            : "A managed thread requires one consumed, "
+                              "transfer-safe exact task whose return type "
+                              "matches its transferable result."));
         diagnostic.related.push_back(
             {tokenSpan(
                  target->declaration->parameters()[contract.parameterIndex]
@@ -3531,6 +3622,30 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       return structuralOperatorCandidates(callable, OverloadedOperator::Call);
     }
     std::vector<CallableCandidate> result;
+    if (callable.hasFunctionItemShape()) {
+      const FunctionInfo *function =
+          semanticModel.findFunction(callable.functionId);
+      if (function == nullptr && instanceBaseModel != nullptr) {
+        function = instanceBaseModel->findFunction(callable.functionId);
+      }
+      const SemanticType *returnType = callable.functionItemReturnType();
+      if (function != nullptr && returnType != nullptr &&
+          function->ownerClass == 0 && !function->entryPoint &&
+          function->linkage == LanguageLinkage::Gti &&
+          function->returnType == *returnType &&
+          function->parameterTypes.size() ==
+              callable.functionItemParameterTypes().size() &&
+          std::equal(function->parameterTypes.begin(),
+                     function->parameterTypes.end(),
+                     callable.functionItemParameterTypes().begin())) {
+        result.push_back({.id = function->id,
+                          .returnType = function->returnType,
+                          .parameterTypes = function->parameterTypes,
+                          .receiverMutability = ReceiverMutability::ReadOnly,
+                          .access = AccessModifier::Public});
+      }
+      return result;
+    }
     if (callable.kind != SemanticType::Lambda) {
       return result;
     }

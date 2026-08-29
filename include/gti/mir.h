@@ -466,6 +466,7 @@ enum class MirOperation {
   ExpectedHasValue,
   Closure,
   NativeCallback,
+  FunctionItem,
   PayloadConstruct,
   PayloadExtract,
   Unexpected,

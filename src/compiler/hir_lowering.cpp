@@ -1218,6 +1218,14 @@ private:
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.selectedCapability = resolved->capability;
+          } else if (const ResolvedCallInfo *resolved =
+                         model->findCall(*signature.source);
+                     resolved != nullptr &&
+                     model->typeOf(*signature.source->callee())
+                         .hasFunctionItemShape()) {
+            concrete.returnType = resolved->returnType;
+            concrete.parameterTypes = resolved->parameterTypes;
+            concrete.selectedCapability = CallableInvocationCapability::Read;
           }
           const auto value =
               std::find_if(body.values.begin(), body.values.end(),
@@ -1708,6 +1716,7 @@ private:
     case HirValueKind::Conditional:
     case HirValueKind::Move:
     case HirValueKind::NativeCallback:
+    case HirValueKind::FunctionItem:
     case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
     case HirValueKind::ExpectedPropagation:
@@ -3125,6 +3134,7 @@ private:
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
     std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
+    std::optional<HirFunctionInstanceId> functionItemTarget;
     std::optional<HirFunctionInstanceId> contextualBoolTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
@@ -3522,6 +3532,22 @@ private:
         nativeCallbackAdapter = adapter;
       }
     }
+    if (const FunctionItemSelectionInfo *selection =
+            model.findFunctionItemSelection(*raw)) {
+      kind = HirValueKind::FunctionItem;
+      if (const FunctionInfo *target =
+              baseModel->findFunction(selection->function)) {
+        const HirFunctionInstanceId instance =
+            enqueueFunction(*target, {}, {}, {}, {}, target->returnType,
+                            target->parameterTypes);
+        if (instance != 0) {
+          functionItemTarget = instance;
+        }
+      }
+      if (!functionItemTarget) {
+        lifecycleValid = false;
+      }
+    }
 
     HirValue value{.id = nextValueId++,
                    .kind = kind,
@@ -3535,6 +3561,7 @@ private:
                    .programConstantSubstitution =
                        model.isProgramConstantSubstitution(*raw),
                    .receiver = receiver,
+                   .functionTarget = functionItemTarget,
                    .nativeCallbackAdapter = nativeCallbackAdapter,
                    .threadTaskAdapter = threadTaskAdapter,
                    .lambdaTarget = lambdaTarget,
@@ -3650,12 +3677,19 @@ private:
           std::optional<HirFunctionInstanceId> functionTarget;
           std::optional<HirLambdaId> lambdaTarget;
           if (entry.function != 0 && entry.lambda == 0 &&
-              taskType.kind == SemanticType::Class) {
+              (taskType.kind == SemanticType::Class ||
+               taskType.kind == SemanticType::FunctionItem)) {
             if (const FunctionInfo *target =
                     baseModel->findFunction(entry.function)) {
-              const HirFunctionInstanceId instance = enqueueFunction(
-                  *target, taskType.arguments, taskType.valueArguments, {}, {},
-                  resultType, {});
+              const HirFunctionInstanceId instance =
+                  enqueueFunction(*target,
+                                  taskType.kind == SemanticType::Class
+                                      ? taskType.arguments
+                                      : std::vector<SemanticType>{},
+                                  taskType.kind == SemanticType::Class
+                                      ? taskType.valueArguments
+                                      : std::vector<CompileTimeValue>{},
+                                  {}, {}, resultType, {});
               if (instance != 0) {
                 functionTarget = instance;
               }
@@ -3789,7 +3823,8 @@ private:
         }
       }
       if (model.findLambdaCall(*call) == nullptr &&
-          model.findOperator(*call) == nullptr) {
+          model.findOperator(*call) == nullptr &&
+          model.findCall(*call) == nullptr) {
         if (const DeferredCallableCallInfo *deferred =
                 model.findDeferredCallableCall(*call)) {
           value.parameterTypes = deferred->parameterTypes;

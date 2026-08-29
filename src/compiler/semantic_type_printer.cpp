@@ -86,6 +86,23 @@ public:
       return "type";
     case SemanticType::Function:
       return "function";
+    case SemanticType::FunctionItem: {
+      if (!type.hasFunctionItemShape()) {
+        return "function item";
+      }
+      std::string result = "function item (";
+      bool separator = false;
+      for (const SemanticType &parameter : type.functionItemParameterTypes()) {
+        if (separator) {
+          result += ", ";
+        }
+        result += print(parameter);
+        separator = true;
+      }
+      result += ") -> ";
+      result += print(*type.functionItemReturnType());
+      return result;
+    }
     case SemanticType::NativeFunction: {
       if (!type.hasNativeFunctionShape()) {
         return "native function";

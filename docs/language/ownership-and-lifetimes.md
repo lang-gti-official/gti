@@ -809,6 +809,26 @@ by its first `values...` expansion, so forwarding it again is a use-after-move
 error. Copyable packs may still be forwarded repeatedly; individual pack
 elements cannot yet be named or moved separately.
 
+### Stateless Namespace Function Items
+
+A contextually selected namespace free-function item owns no capture
+environment, storage address, or native resource. Its nominal identity and
+exact signature are compile-time state, so it is trivially copyable, movable,
+destructible, transfer-capable, and share-capable. The current language does
+not expose any of those lifecycle operations as general value transport:
+formation is admitted only as the immediate argument of an existing confined
+generic-callable or managed-thread task contract.
+
+This bounded rule is intentional. It lets an algorithm invoke a named
+function and lets a managed worker receive the same exact zero-state task
+without introducing storage lifetime, pointer provenance, ABI-address, or
+erasure rules. A function item cannot be captured, retained in a local or
+field, independently returned, or relayed through the general owned callable
+transport above. A confined client's existing exact same-type return may carry
+the item only to an unbound temporary that the caller explicitly discards. The
+managed-thread boundary consumes the immediate item under its existing once-
+task contract; no user-visible moved-from function-item value remains.
+
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not
 solve cycles, so GTI also needs a non-owning weak observation type before shared

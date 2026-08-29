@@ -94,11 +94,14 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v53`/`mir-body-v46`.
-Program v53 adds the closed payload-enum lifecycle table: exact enum identity,
-folded traits, enum-wide active cleanup, dense variants, ordered field types,
-and per-field active-cleanup facts. `PayloadConstruct` exact-checks that table,
-transfers every active class operand once, and initializes one enum value
+The deterministic serialization is currently `mir-v54`/`mir-body-v47`.
+Program v54/body v47 add the nominal function ID to function-item semantic
+types and serialize the new zero-state `FunctionItem` operation with its exact
+concrete namespace target. Program v53 adds the closed payload-enum lifecycle
+table: exact enum identity, folded traits, enum-wide active cleanup, dense
+variants, ordered field types, and per-field active-cleanup facts.
+`PayloadConstruct` exact-checks that table, transfers every active class
+operand once, and initializes one enum value
 obligation; `PayloadExtract` and switches observe an active enum place without
 copying the enum. Program v52 serializes ordered type and `uint64_t` value arguments on every
 concrete function row. HIR-to-MIR lowering and the detached lowered verifier
@@ -587,6 +590,14 @@ A `MirBody` owns:
   compare-exchange. Release loads, acquire stores, release/acquire-release
   failure orders, and a failure order stronger than success are rejected.
   Synchronization metadata on a non-call instruction is invalid;
+- one `MirOperation::FunctionItem` for each contextual GTI function item. The
+  result type carries the nominal `FunctionId` and exact signature, and
+  `functionTarget` carries the concrete MIR function instance. It has no
+  operands, place, ownership event, capture environment, or failure behavior.
+  Verification requires the target to exist, have GTI linkage and a body, be
+  namespace-owned rather than class-owned, and exactly match the nominal ID,
+  result, and parameter rows. A missing target or forged identity/signature/
+  owner is invalid before optimization or backend entry;
 - one ordered `MirThreadTaskAdapter` for every HIR thread-task adapter. The row
   retains the task type, HIR spawn value, exact MIR spawning body/instruction,
   exactly one concrete function or lambda entry, its selected receiver
@@ -594,7 +605,9 @@ A `MirBody` owns:
   exception firewall. Program verification requires a one-to-one HIR/MIR
   inventory, an entry whose type/signature/body match that row, and an exact
   `ThreadSpawn` instruction/synchronization pair; duplicate, reordered,
-  retargeted, unrooted, capability-forged, or non-firewalled rows are invalid;
+  retargeted, unrooted, capability-forged, or non-firewalled rows are invalid.
+  A function-item task additionally requires its spawning operand to be the
+  exact `FunctionItem` target carried by the adapter;
 - exact confined invocation and confined/owned argument-boundary records. The
   verifier permits this metadata only on calls; requires descriptors to be
   ordered, unique, within the call's operand list, and identical to the
@@ -746,7 +759,10 @@ summaries. It
 also requires each lambda instance's exact type to reproduce its declaration,
 result, parameters, and captures, and requires callable targets to match that
 full type. Same-shaped closures from distinct enclosing generic instances are
-therefore not interchangeable. It rejects an adapter
+therefore not interchangeable. Function-item instructions receive the same
+cross-body exactness check against their concrete namespace function row, so
+matching native representation cannot make distinct `FunctionId` values
+interchangeable. It rejects an adapter
 identity on an ordinary or no-argument function, a malformed owned-argument
 entry shape, and multiple MIR entry points. A value use in its defining block
 must follow its defining instruction. A reachable cross-block use must be

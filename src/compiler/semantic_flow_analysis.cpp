@@ -2138,6 +2138,13 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       symbolId = toolingSymbolFor(resolved->symbol);
     }
   }
+  const FunctionDecl *functionItemDeclaration = nullptr;
+  if (const FunctionItemSelectionInfo *item =
+          semanticModel.findFunctionItemSelection(expr);
+      item != nullptr && item->declaration != nullptr) {
+    functionItemDeclaration = item->declaration;
+    symbolId = symbolForDeclaration(functionItemDeclaration->name());
+  }
   semanticModel.recordResolvedSymbol(expr, symbolId);
   recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
   recordProgramCallEffects(expr);
@@ -2147,18 +2154,22 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   recordSemanticLoanUse(symbolId);
   if (!token.generated) {
-    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                    .span = tokenSpan(token),
-                                    .kind = SemanticOccurrenceKind::Expression,
-                                    .symbol = symbolId,
-                                    .roles = roles,
-                                    .name = token.lexeme,
-                                    .type = info.type,
-                                    .traits = info.traits,
-                                    .access = info.access,
-                                    .mutableBinding = mutableBinding,
-                                    .bindingKind = bindingKind,
-                                    .staticMember = staticMember});
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(token),
+         .kind = functionItemDeclaration == nullptr
+                     ? SemanticOccurrenceKind::Expression
+                     : SemanticOccurrenceKind::Function,
+         .symbol = symbolId,
+         .roles = roles,
+         .name = token.lexeme,
+         .type = info.type,
+         .traits = info.traits,
+         .access = info.access,
+         .mutableBinding = mutableBinding,
+         .bindingKind = bindingKind,
+         .function = functionItemDeclaration,
+         .staticMember = staticMember});
   }
   currentType = result;
   return result;
@@ -2881,6 +2892,7 @@ auto SemanticVisitor::Impl::sameSignatureType(
   }
   if (left.kind != right.kind || left.classId != right.classId ||
       left.genericParameterId != right.genericParameterId ||
+      left.functionId != right.functionId ||
       left.arrayLength != right.arrayLength ||
       (!leftExtent && !rightExtent &&
        left.arrayLengthParameterId != right.arrayLengthParameterId) ||

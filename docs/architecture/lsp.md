@@ -143,6 +143,16 @@ protocol adapter only serializes these notes. Hovering the parameter binding
 itself remains ordinary binding hover until semantic occurrences retain its
 owning function and parameter contract directly.
 
+A namespace name selected contextually as a GTI function item records the
+exact function declaration symbol as an ordinary `Function` semantic
+occurrence. Hover therefore shows the canonical selected function signature,
+definition jumps to that declaration even when it appears later in source, and
+semantic tokens classify the name as a function. Ambiguous or inexact item
+formation publishes the shared `GTI-S2090` diagnostic; a bare name without an
+eligible callable context retains `GTI-S2076`. The query and protocol layers do
+not infer a function-item type, choose among overloads, or expose the backend's
+private nominal tag.
+
 Defaulted default constructors and destructors use those same compiler-owned
 declaration identities. Declaration hover and document-symbol detail include
 `= default`, selected construction hover presents the callable `Type()`

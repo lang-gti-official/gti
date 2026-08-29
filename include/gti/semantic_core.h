@@ -287,6 +287,7 @@ struct SemanticType {
     TypePack,
     TypeName,
     Function,
+    FunctionItem,
     NativeFunction,
     Lambda,
     Expected,
@@ -337,6 +338,33 @@ struct SemanticType {
     SemanticType type(TypeName);
     type.classId = id;
     return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  functionItemType(FunctionId id, SemanticType returnType,
+                   std::span<const SemanticType> parameterTypes) {
+    SemanticType type(FunctionItem);
+    type.functionId = id;
+    type.arguments.reserve(parameterTypes.size() + 1);
+    type.arguments.emplace_back(std::move(returnType));
+    type.arguments.insert(type.arguments.end(), parameterTypes.begin(),
+                          parameterTypes.end());
+    return type;
+  }
+
+  [[nodiscard]] bool hasFunctionItemShape() const {
+    return kind == FunctionItem && functionId != 0 && !arguments.empty();
+  }
+
+  [[nodiscard]] const SemanticType *functionItemReturnType() const {
+    return hasFunctionItemShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] std::span<const SemanticType>
+  functionItemParameterTypes() const {
+    return hasFunctionItemShape()
+               ? std::span<const SemanticType>(arguments).subspan(1)
+               : std::span<const SemanticType>{};
   }
 
   [[nodiscard]] static SemanticType
@@ -490,6 +518,7 @@ struct SemanticType {
   ClassId classId = 0;
   EnumId enumId = 0;
   GenericParameterId genericParameterId = 0;
+  FunctionId functionId = 0;
   LambdaId lambdaId = 0;
   std::uint64_t lambdaParameterCount = 0;
   std::uint64_t lambdaCaptureCount = 0;

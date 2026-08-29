@@ -1,0 +1,23 @@
+#include <std/algorithm>
+#include <std/vector>
+
+int32_t apply<Function>(int32_t value, Function function) {
+  return function(value);
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+
+  // An exact namespace function can satisfy a confined generic callable
+  // contract directly. No lambda wrapper or function-pointer conversion is
+  // involved.
+  auto positive = std::count_if(values, operations::is_positive);
+  int32_t doubled = apply(21, operations::twice);
+
+  return positive == 3 && doubled == 42 ? 0 : 1;
+}
+
+namespace operations {
+bool is_positive(int32_t& value) { return value > 0; }
+int32_t twice(int32_t value) { return value * 2; }
+}

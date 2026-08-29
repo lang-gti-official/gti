@@ -173,11 +173,22 @@ linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
 
+A contextual GTI-only namespace function becomes
+`HirValueKind::FunctionItem`. Its `SemanticType::FunctionItem` contains the
+nominal declaration ID and exact signature, while `functionTarget` names the
+one concrete `HirFunctionInstanceId`. It has no operands, capture environment,
+native adapter, or backend address. HIR plan verification requires the target
+to be the same body-bearing, GTI-linkage, owner-free namespace function and
+exact-compares result and parameter types. This preserves declaration-order-
+independent semantic selection without making an overload set available to
+later phases.
+
 An exact trusted thread-spawn call creates one `HirThreadTaskAdapter`. Its
 identity retains the concrete task type, the exact spawning `HirValueId`, and
 the required outer `Once` invocation capability. It also retains exactly one
 concrete `HirFunctionInstanceId` or `HirLambdaId` task entry plus the selected
-read, mutable, or consuming receiver capability. The spawn value simultaneously
+read, mutable, or consuming receiver capability. A function-item task uses its
+already selected namespace function instance. The spawn value simultaneously
 retains the ordinary owned callable transport and
 `SynchronizationOperationKind::ThreadSpawn`; explicit and automatic join
 values retain `ThreadJoin`. Program verification requires every adapter to be

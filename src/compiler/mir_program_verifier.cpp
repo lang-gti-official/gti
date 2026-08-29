@@ -5488,6 +5488,32 @@ verifyMirProgramContracts(const MirProgram &program) {
                             "program adapter"});
           }
         }
+        if (instruction.operation == MirOperation::FunctionItem) {
+          const MirFunctionInstance *target =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          const SemanticType *returnType =
+              instruction.info.type.functionItemReturnType();
+          const std::span<const SemanticType> parameters =
+              instruction.info.type.functionItemParameterTypes();
+          if (target == nullptr || target->owner ||
+              target->definitionKind != MirDefinitionKind::Source ||
+              target->linkage != LanguageLinkage::Gti ||
+              instruction.info.type.functionId != target->declaration ||
+              returnType == nullptr || *returnType != target->returnType ||
+              parameters.size() != target->parameterTypes.size() ||
+              !std::equal(parameters.begin(), parameters.end(),
+                          target->parameterTypes.begin())) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "function-item instruction has no exact GTI "
+                            "free-function target"});
+          }
+        }
         if (instruction.threadTaskAdapter) {
           const MirThreadTaskAdapter *adapter =
               program.findThreadTaskAdapter(*instruction.threadTaskAdapter);
@@ -5647,15 +5673,24 @@ verifyMirProgramContracts(const MirProgram &program) {
           target == nullptr || !target->owner
               ? nullptr
               : program.findClassInstance(*target->owner);
-      exactEntry = exactEntry && target != nullptr && owner != nullptr &&
-                   owner->type == adapter.taskType &&
-                   target->definitionKind == MirDefinitionKind::Source &&
-                   target->overloadedOperator ==
-                       std::optional{OverloadedOperator::Call} &&
-                   target->returnType == adapter.resultType &&
-                   target->parameterTypes.empty() && !target->pureVirtual &&
-                   adapter.targetInvocation ==
-                       callableInvocationCapability(target->receiverMutability);
+      const bool functionItemEntry = adapter.taskType.hasFunctionItemShape();
+      exactEntry =
+          exactEntry && target != nullptr &&
+          target->definitionKind == MirDefinitionKind::Source &&
+          target->linkage == LanguageLinkage::Gti &&
+          target->returnType == adapter.resultType &&
+          target->parameterTypes.empty() && !target->pureVirtual &&
+          (functionItemEntry
+               ? owner == nullptr &&
+                     adapter.taskType.functionId == target->declaration &&
+                     adapter.targetInvocation ==
+                         CallableInvocationCapability::Read
+               : owner != nullptr && owner->type == adapter.taskType &&
+                     target->overloadedOperator ==
+                         std::optional{OverloadedOperator::Call} &&
+                     adapter.targetInvocation ==
+                         callableInvocationCapability(
+                             target->receiverMutability));
     }
     if (lambdaEntry) {
       const MirLambdaInstance *target =
@@ -6337,14 +6372,23 @@ verifyMirProgramContracts(const MirProgram &program) {
           }
           const MirFunctionInstance &target =
               program.functionInstances().at(*signature.functionTarget - 1);
-          if (target.overloadedOperator != OverloadedOperator::Call ||
-              !target.owner || target.staticMember ||
+          const bool functionItem =
+              parameter.callableType.hasFunctionItemShape();
+          if ((functionItem
+                   ? target.owner.has_value() ||
+                         target.overloadedOperator.has_value() ||
+                         parameter.callableType.functionId != target.declaration
+                   : target.overloadedOperator != OverloadedOperator::Call ||
+                         !target.owner || target.staticMember) ||
               signature.returnType != target.returnType ||
               signature.parameterTypes != target.parameterTypes) {
             rejectCallableContract(prefix +
-                                   "does not match an exact operator() target");
+                                   "does not match an exact callable target");
           }
-          expected = callableInvocationCapability(target.receiverMutability);
+          expected =
+              functionItem
+                  ? CallableInvocationCapability::Read
+                  : callableInvocationCapability(target.receiverMutability);
         } else if (signature.lambdaTarget) {
           const MirLambdaInstance *target =
               program.findLambda(*signature.lambdaTarget);

@@ -23,6 +23,22 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
          !declaration.hasCLinkage() && !declaration.operatorName();
 }
 
+auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
+    const CallableCandidate &candidate) -> bool {
+  if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+      candidate.id == 0 || !candidate.record().genericParameters.empty() ||
+      candidate.record().parameterPack || !candidate.requirements.empty() ||
+      candidate.virtualMethod || candidate.pureVirtual ||
+      candidate.overrideMethod || candidate.compilerPrivate ||
+      candidate.record().intrinsic != IntrinsicKind::None) {
+    return false;
+  }
+  const FunctionDecl &declaration = *candidate.declaration;
+  return declaration.body() != nullptr && !declaration.runtimeBinding() &&
+         !declaration.hasCLinkage() && !declaration.operatorName() &&
+         !candidate.record().entryPoint;
+}
+
 auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
     const CallableCandidate &candidate, const SemanticType &expectedType) const
     -> bool {
@@ -111,6 +127,45 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
   return expectedType;
 }
 
+auto SemanticVisitor::Impl::analyzeFunctionItem(
+    const Expr &expression, const Symbol &symbol,
+    const SemanticType &expectedType, const Token &location) -> SemanticType {
+  const CallableCandidate *selected = nullptr;
+  for (const CallableCandidate &candidate : symbol.overloads) {
+    if (candidate.id == expectedType.functionId &&
+        functionItemCandidateIsEligible(candidate) &&
+        expectedType.hasFunctionItemShape() &&
+        expectedType.functionItemReturnType() != nullptr &&
+        candidate.returnType == *expectedType.functionItemReturnType() &&
+        candidate.parameterTypes.size() ==
+            expectedType.functionItemParameterTypes().size() &&
+        std::equal(candidate.parameterTypes.begin(),
+                   candidate.parameterTypes.end(),
+                   expectedType.functionItemParameterTypes().begin())) {
+      selected = &candidate;
+      break;
+    }
+  }
+  if (selected == nullptr) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2090", DiagnosticPhase::Semantics, location,
+        "The selected function-item context no longer names one exact "
+        "eligible namespace-scope GTI function.");
+    diagnostic.hints.emplace_back(
+        "Function items require a non-generic namespace-scope GTI function "
+        "with a body and an exact callable signature.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return SemanticType::Unknown;
+  }
+  semanticModel.recordFunctionItemSelection(
+      expression, FunctionItemSelectionInfo{
+                      .function = selected->id,
+                      .declaration = selected->declaration,
+                      .type = expectedType,
+                      .capability = CallableInvocationCapability::Read});
+  return expectedType;
+}
+
 auto SemanticVisitor::Impl::isContextualNativeFunctionArgument(
     const ExprPtr &expression) const -> bool {
   if (!expression) {
@@ -123,6 +178,307 @@ auto SemanticVisitor::Impl::isContextualNativeFunctionArgument(
     symbol = resolveQualified(qualified->name());
   }
   return symbol != nullptr && symbol->type == SemanticType::Function;
+}
+
+auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
+    const CallableCandidate &target,
+    const std::vector<SemanticType> &explicitTypeArguments,
+    const std::vector<CompileTimeValue> &explicitValueArguments,
+    const ExprList &arguments, ContextualCallArguments &analysis, bool diagnose)
+    -> bool {
+  if (arguments.size() != analysis.types.size() ||
+      arguments.size() != analysis.deferred.size()) {
+    return false;
+  }
+
+  GenericSubstitution baseSubstitution;
+  std::size_t explicitType = 0;
+  std::size_t explicitValue = 0;
+  for (const GenericParameterInfo &parameter :
+       target.record().genericParameters) {
+    if (parameter.value) {
+      if (explicitValue < explicitValueArguments.size()) {
+        baseSubstitution.values.emplace(
+            parameter.id, explicitValueArguments[explicitValue++]);
+      }
+    } else if (explicitType < explicitTypeArguments.size()) {
+      baseSubstitution.types.emplace(parameter.id,
+                                     explicitTypeArguments[explicitType++]);
+    }
+  }
+  if (target.ownerClass != 0 &&
+      target.dispatchOwner.kind == SemanticType::Class) {
+    const GenericSubstitution owner = classSubstitution(target.dispatchOwner);
+    baseSubstitution.types.insert(owner.types.begin(), owner.types.end());
+    baseSubstitution.values.insert(owner.values.begin(), owner.values.end());
+  }
+
+  const auto isTargetTypeParameter = [&](GenericParameterId id) {
+    return std::any_of(target.record().genericParameters.begin(),
+                       target.record().genericParameters.end(),
+                       [&](const GenericParameterInfo &parameter) {
+                         return !parameter.value && parameter.id == id;
+                       });
+  };
+  const auto isTargetValueParameter = [&](GenericParameterId id) {
+    return std::any_of(target.record().genericParameters.begin(),
+                       target.record().genericParameters.end(),
+                       [&](const GenericParameterInfo &parameter) {
+                         return parameter.value && parameter.id == id;
+                       });
+  };
+
+  const auto inferOuter = [&](const auto &self, const SemanticType &pattern,
+                              const SemanticType &argument,
+                              GenericSubstitution &substitution) -> bool {
+    if (argument == SemanticType::Unknown) {
+      return true;
+    }
+    if (pattern.kind == SemanticType::Reference &&
+        pattern.arguments.size() == 1) {
+      return self(self, pattern.arguments.front(), argument, substitution);
+    }
+    if (pattern.kind == SemanticType::TypeParameter &&
+        isTargetTypeParameter(pattern.genericParameterId)) {
+      const auto found = substitution.types.find(pattern.genericParameterId);
+      if (found == substitution.types.end()) {
+        substitution.types.emplace(pattern.genericParameterId, argument);
+        return true;
+      }
+      return found->second == argument;
+    }
+    if (pattern.kind == SemanticType::Array &&
+        pattern.arrayLengthParameterId != 0 &&
+        isTargetValueParameter(pattern.arrayLengthParameterId) &&
+        argument.kind == SemanticType::Array &&
+        argument.arrayLengthParameterId == 0) {
+      const CompileTimeValue length =
+          CompileTimeValue::uint64(argument.arrayLength);
+      const auto found =
+          substitution.values.find(pattern.arrayLengthParameterId);
+      if (found == substitution.values.end()) {
+        substitution.values.emplace(pattern.arrayLengthParameterId, length);
+      } else if (found->second != length) {
+        return false;
+      }
+    }
+    if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+        pattern.enumId != argument.enumId ||
+        pattern.arguments.size() != argument.arguments.size()) {
+      return true;
+    }
+    for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
+      if (!self(self, pattern.arguments[index], argument.arguments[index],
+                substitution)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (std::size_t index = 0;
+       index < analysis.types.size() && index < target.parameterTypes.size();
+       ++index) {
+    if (isContextualNativeFunctionArgument(arguments[index])) {
+      continue;
+    }
+    if (!inferOuter(inferOuter, target.parameterTypes[index],
+                    analysis.types[index], baseSubstitution)) {
+      return false;
+    }
+  }
+
+  const auto exactMatch = [&](const auto &self, const SemanticType &pattern,
+                              const SemanticType &actual,
+                              GenericSubstitution &substitution) -> bool {
+    if (pattern.kind == SemanticType::TypeParameter &&
+        isTargetTypeParameter(pattern.genericParameterId)) {
+      const auto found = substitution.types.find(pattern.genericParameterId);
+      if (found == substitution.types.end()) {
+        substitution.types.emplace(pattern.genericParameterId, actual);
+        return true;
+      }
+      return found->second == actual;
+    }
+    const bool targetArrayExtent =
+        pattern.kind == SemanticType::Array &&
+        pattern.arrayLengthParameterId != 0 &&
+        isTargetValueParameter(pattern.arrayLengthParameterId);
+    if (pattern.kind != actual.kind || pattern.classId != actual.classId ||
+        pattern.enumId != actual.enumId ||
+        pattern.genericParameterId != actual.genericParameterId ||
+        pattern.functionId != actual.functionId ||
+        pattern.lambdaId != actual.lambdaId ||
+        pattern.lambdaParameterCount != actual.lambdaParameterCount ||
+        pattern.lambdaCaptureCount != actual.lambdaCaptureCount ||
+        pattern.lambdaEnclosingClassTypes != actual.lambdaEnclosingClassTypes ||
+        pattern.lambdaEnclosingFunctionTypes !=
+            actual.lambdaEnclosingFunctionTypes ||
+        pattern.lambdaEnclosingClassValues !=
+            actual.lambdaEnclosingClassValues ||
+        pattern.lambdaEnclosingFunctionValues !=
+            actual.lambdaEnclosingFunctionValues ||
+        pattern.referenceAccess != actual.referenceAccess ||
+        pattern.pointerAccess != actual.pointerAccess ||
+        (!targetArrayExtent && pattern.arrayLength != actual.arrayLength) ||
+        pattern.valueArguments != actual.valueArguments ||
+        pattern.concretePack != actual.concretePack ||
+        pattern.arguments.size() != actual.arguments.size()) {
+      return false;
+    }
+    if (targetArrayExtent) {
+      if (actual.arrayLengthParameterId != 0) {
+        return false;
+      }
+      const CompileTimeValue length =
+          CompileTimeValue::uint64(actual.arrayLength);
+      const auto found =
+          substitution.values.find(pattern.arrayLengthParameterId);
+      if (found == substitution.values.end()) {
+        substitution.values.emplace(pattern.arrayLengthParameterId, length);
+      } else if (found->second != length) {
+        return false;
+      }
+    } else if (pattern.arrayLengthParameterId !=
+               actual.arrayLengthParameterId) {
+      return false;
+    }
+    for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
+      if (!self(self, pattern.arguments[index], actual.arguments[index],
+                substitution)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  bool valid = true;
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    if (!isContextualNativeFunctionArgument(arguments[index])) {
+      continue;
+    }
+    if (index < target.parameterTypes.size() &&
+        target.parameterTypes[index].kind == SemanticType::NativeFunction) {
+      continue;
+    }
+    const CallableParameterContract *contract =
+        callableParameterContract(target.id, index);
+    const bool threadTask = contract != nullptr &&
+                            contract->boundary == CallableBoundary::Owned &&
+                            contract->ownedTransport &&
+                            contract->ownedTransport->kind ==
+                                CallableOwnedTransportKind::ThreadTask;
+    if (contract == nullptr ||
+        (contract->boundary != CallableBoundary::Confined && !threadTask) ||
+        (contract->signatures.empty() && !threadTask)) {
+      if (diagnose) {
+        report(expressionToken(arguments[index]),
+               "A free-function item requires an exact confined callable "
+               "parameter or managed-thread task contract.",
+               "GTI-S2090");
+      }
+      valid = false;
+      continue;
+    }
+
+    const std::optional<Symbol> source =
+        resolveExpressionSymbol(arguments[index]);
+    std::vector<std::pair<const CallableCandidate *, GenericSubstitution>>
+        matches;
+    if (source) {
+      for (const CallableCandidate &candidate : source->overloads) {
+        if (!functionItemCandidateIsEligible(candidate)) {
+          continue;
+        }
+        GenericSubstitution substitution = baseSubstitution;
+        bool matchesContract = true;
+        if (threadTask) {
+          SemanticType result = contract->ownedTransport->destinationType;
+          result = substituteType(result, substitution);
+          matchesContract = candidate.parameterTypes.empty() &&
+                            exactMatch(exactMatch, result, candidate.returnType,
+                                       substitution);
+        } else {
+          for (const CallableSignatureRequirement &signature :
+               contract->signatures) {
+            if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
+                                             signature.capability) ||
+                signature.parameterTypes.size() !=
+                    candidate.parameterTypes.size() ||
+                !exactMatch(exactMatch, signature.returnType,
+                            candidate.returnType, substitution)) {
+              matchesContract = false;
+              break;
+            }
+            for (std::size_t parameter = 0;
+                 parameter < signature.parameterTypes.size(); ++parameter) {
+              const SemanticType argument = substituteType(
+                  signature.parameterTypes[parameter], substitution);
+              const ExprPtr *expression =
+                  signature.source != nullptr &&
+                          parameter < signature.source->arguments().size()
+                      ? &signature.source->arguments()[parameter]
+                      : nullptr;
+              if (expression == nullptr ||
+                  !callArgumentMatches(candidate.parameterTypes[parameter],
+                                       argument, *expression)) {
+                matchesContract = false;
+                break;
+              }
+            }
+            if (!matchesContract) {
+              break;
+            }
+          }
+        }
+        if (!matchesContract) {
+          continue;
+        }
+        const SemanticType item = SemanticType::functionItemType(
+            candidate.id, candidate.returnType, candidate.parameterTypes);
+        if (index >= target.parameterTypes.size() ||
+            !inferOuter(inferOuter, target.parameterTypes[index], item,
+                        substitution)) {
+          continue;
+        }
+        matches.emplace_back(&candidate, std::move(substitution));
+      }
+    }
+    if (matches.size() != 1) {
+      if (diagnose) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2090", DiagnosticPhase::Semantics,
+            expressionToken(arguments[index]),
+            matches.empty()
+                ? "No eligible namespace-scope GTI function overload "
+                  "exactly matches the required callable signature."
+                : "The function item is ambiguous; " +
+                      std::to_string(matches.size()) +
+                      " overloads exactly match the required callable "
+                      "signature.");
+        diagnostic.hints.emplace_back(
+            "Use one non-generic namespace-scope GTI function whose exact "
+            "parameters and result match the selected callable contract.");
+        if (source) {
+          for (const CallableCandidate &candidate : source->overloads) {
+            if (candidate.declaration != nullptr) {
+              diagnostic.related.push_back(
+                  {tokenSpan(candidate.declaration->name()),
+                   "Candidate: " + functionSignatureSpelling(candidate)});
+            }
+          }
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      valid = false;
+      continue;
+    }
+    const CallableCandidate &selected = *matches.front().first;
+    baseSubstitution = std::move(matches.front().second);
+    analysis.types[index] = SemanticType::functionItemType(
+        selected.id, selected.returnType, selected.parameterTypes);
+  }
+  return valid;
 }
 
 auto SemanticVisitor::Impl::isContextualNativeOutPointerArgument(
@@ -168,8 +524,18 @@ auto SemanticVisitor::Impl::contextualCallArgumentPotentiallyMatches(
             initializer->elements().size() == parameter.arrayLength);
   }
   if (isContextualNativeFunctionArgument(expression)) {
-    if (parameter.kind != SemanticType::NativeFunction) {
+    if (parameter.kind != SemanticType::NativeFunction &&
+        parameter.kind != SemanticType::FunctionItem) {
       return false;
+    }
+    if (parameter.kind == SemanticType::FunctionItem) {
+      const std::optional<Symbol> symbol = resolveExpressionSymbol(expression);
+      return symbol && parameter.hasFunctionItemShape() &&
+             std::any_of(symbol->overloads.begin(), symbol->overloads.end(),
+                         [&](const CallableCandidate &candidate) {
+                           return candidate.id == parameter.functionId &&
+                                  functionItemCandidateIsEligible(candidate);
+                         });
     }
     const std::optional<Symbol> symbol = resolveExpressionSymbol(expression);
     return symbol &&
@@ -214,11 +580,12 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
       }
       analysis.types[index] = analyzeInitializer(arguments[index], parameter);
     } else if (isContextualNativeFunctionArgument(arguments[index])) {
-      if (parameter.kind != SemanticType::NativeFunction) {
+      if (parameter.kind != SemanticType::NativeFunction &&
+          parameter.kind != SemanticType::FunctionItem) {
         report(expressionToken(arguments[index]),
-               "A function item argument requires one exact named native "
-               "function parameter type from the selected callable.",
-               "GTI-S2076");
+               "A function name argument requires one exact callable or "
+               "named native-function context from the selected target.",
+               "GTI-S2090");
         analysis.types[index] = SemanticType::Unknown;
         valid = false;
         continue;

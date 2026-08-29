@@ -27,6 +27,7 @@ enum class CppMirTypeRepresentationKind {
   Class,
   Enum,
   Function,
+  FunctionItem,
   Lambda,
   UniqueOwner,
   SharedPointer,

@@ -343,6 +343,19 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     }
     appendIdentityText(output, "native-function");
     return appendArguments();
+  case SemanticType::FunctionItem: {
+    const LoweredFunctionDeclaration *declaration =
+        program.findFunctionDeclaration(type.functionId);
+    if (!type.hasFunctionItemShape() || declaration == nullptr ||
+        declaration->ownerClass != 0 ||
+        declaration->linkage != LanguageLinkage::Gti) {
+      return false;
+    }
+    appendIdentityText(output, "function-item");
+    appendIdentityText(output, declaration->qualifiedName);
+    appendIdentityInteger(output, declaration->sourceUnit);
+    return appendArguments();
+  }
   case SemanticType::Expected:
     appendIdentityText(output, "expected");
     return appendArguments();
@@ -442,6 +455,11 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     result += ")>";
     return result;
   }
+  case SemanticType::FunctionItem:
+    return type.hasFunctionItemShape()
+               ? "::gti_internal::backend::function_item<" +
+                     std::to_string(type.functionId) + ">"
+               : "void";
   case SemanticType::Array: {
     std::string result = "std::array<";
     result += type.arguments.empty() ? "void" : spell(type.arguments.front());

@@ -73,6 +73,7 @@ enum class HirValueKind {
   Conditional,
   Move,
   NativeCallback,
+  FunctionItem,
   Conversion,
   DirectInitializer,
   DereferenceSet,
