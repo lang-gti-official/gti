@@ -789,6 +789,43 @@ method call is slow, which points at receiver re-analysis without memoization.
 Fluent and builder APIs are mainstream, and the immutable-builder style returns
 by value deliberately.
 
+## S12 — Implicit integer-to-float conversions silently lose value
+
+`reproducers/s12-lossy-implicit-int-to-float.gti`
+
+```gti
+mut int32_t exact = 16777217;   // 2^24 + 1
+mut float widened = exact;      // accepted implicitly
+int32_t(widened) == 16777216    // the value changed
+```
+
+`conversion_matrix.py` maps the permitted set: 35 implicit conversions, exactly
+the widening ones plus every integer type to `float` and `double` — including
+`int64_t` → `float`, which can lose 40 bits. Meanwhile integer *narrowing* is
+rejected (`GTI-S2003`), as are out-of-range literals.
+
+Not a crash, but the one implicit conversion that can change a value in a
+language that otherwise refuses conversions that might. Cheaper to settle
+before 1.0 than after.
+
+## S13 — The memory exhaustion is reachable through the LSP
+
+Following up F19: `gti_lsp` opening `stress/namespace-depth-63.gti` grows
+without bound and is killed at the cap, while the 62-level control answers
+normally. The compiler is invoked deliberately; the language server runs on
+file open, so this is a path where *looking at* a file exhausts memory.
+
+The input that segfaults the compiler (`operator-chain-500.gti`) is handled
+fine by the LSP, so the two subsystems do not share this failure generally.
+
+## S14 — The `--target` triple parser ignores the environment field
+
+`x86_64-unknown-linux-gnu` and `x86_64-unknown-linux-musl` both resolve to
+`x86_64-unknown-linux`, and arbitrary trailing text is accepted —
+`aarch64-apple-macos-total-nonsense-here` builds as `arm64-apple-macos`.
+Unsupported architectures and operating systems *are* rejected properly, so
+the parser validates the first two fields and then discards the rest.
+
 ## S09 — ICE: an uninitialized `mut` scalar local
 
 `reproducers/s09-uninitialized-mut-scalar.gti`

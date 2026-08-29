@@ -10,7 +10,12 @@ All take the compiler path as their first argument:
 
 ```bash
 tests/coverage/matrices/declaration_matrix.py build/gti
+tests/coverage/matrices/lsp_survival.py build/gti_lsp file.gti [more.gti ...]
 ```
+
+`lsp_survival.py` takes the server path and then the files to open. **Do not
+point it at `../stress/namespace-depth-63.gti` without an external memory cap** —
+the server consumes memory without bound on that input.
 
 | Script | Axes | Found |
 | --- | --- | --- |
@@ -21,6 +26,9 @@ tests/coverage/matrices/declaration_matrix.py build/gti
 | `generic_shape_matrix.py` | generic shape × type argument | S11 |
 | `ownership_flow_matrix.py` | ownership operation × control-flow context | nothing — 60/60 clean |
 | `elementary_forms_matrix.py` | elementary declaration and statement forms | S09, and confirmation that its 32 siblings are correct |
+| `conversion_matrix.py` | source numeric type × target numeric type | S12 — implicit integer→float conversions that lose value |
+| `semantics_oracle.py` | stdlib and control-flow results × expected values | nothing — 11/12, the twelfth an API mistake in the test |
+| `lsp_survival.py` | files × `gti_lsp` staying alive and answering | that S13's memory exhaustion is reachable through the editor |
 
 ## Reading the output
 
