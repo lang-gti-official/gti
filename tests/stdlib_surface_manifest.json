@@ -16,7 +16,7 @@
     "stdlib/std/memory.gti": "b1b7cd67371d764d584c250b6638a2e1ec8c579d2e1a0992a2130ada75a99fe4",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "e1fb604aa2118418ee039a3e35f66674eb9ceba60b11fe20e63c5dd42f1786ed",
-    "stdlib/std/optional.gti": "a156c868437b3130c0ba725f01c45fa3a26d8540ff03beb21be400279180c46e",
+    "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "a1a20bd2ab4de21a4a44974263079a4da7cf663e7b4f562e33fc9a7834db7882",
@@ -186,6 +186,13 @@
       "id": "numeric",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_numeric.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional",
+      "mode": "run",
+      "source": "tests/fixtures/optional_value.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -737,12 +744,13 @@
       "required_instantiations": []
     },
     {
-      "id": "optional.scaffold",
+      "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
-      "status": "scaffold",
-      "operations": ["std::optional public surface"],
-      "reason": "The optional class has an explicit empty unique-owner state, but its value constructor and operation bodies remain scaffolds.",
-      "evidence": ["stdlib/std/optional.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "status": "executable",
+      "operations": ["std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
+      "case_ids": ["optional"],
+      "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>"],
+      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
     },
     {
       "id": "prelude.output",
