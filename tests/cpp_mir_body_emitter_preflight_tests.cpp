@@ -233,7 +233,92 @@ int main() {
       "MIR");
 }
 
+void testOwningPayloadEnumFieldContainmentAdmission() {
+  const lang::FrontendResult frontend =
+      analyze("owning-payload-field-containment.gti", R"(
+class resource {
+public:
+  resource(int32_t value) : value(value) {}
+  ~resource() {}
+private:
+  int32_t value;
+};
+enum class holder { one(resource value), none };
+struct wrapper { holder value = holder::one(resource(7)); };
+int main() { wrapper value = wrapper(); return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "an ordinary direct owning payload-enum field should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirClassInstance *wrapper = nullptr;
+  for (const lang::MirClassInstance &candidate :
+       frontend.mir.classInstances()) {
+    if (candidate.kind == lang::ClassKind::Struct &&
+        candidate.declaredFields.size() == 1 &&
+        candidate.declaredFields.front().type.kind ==
+            lang::SemanticType::Enum &&
+        candidate.declaredFields.front().requiresActiveCleanup) {
+      wrapper = &candidate;
+    }
+  }
+  expect(wrapper != nullptr,
+         "the containing struct should retain its active field lifecycle");
+  if (wrapper == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{
+      .kind = lang::MirBodyKind::FieldInitializers, .owner = wrapper->id};
+  const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(address);
+  if (!analysis.ready()) {
+    for (const lang::CppMirBodyEmissionIssue &issue : analysis.issues) {
+      std::cerr << "owning payload field admission: " << issue.detail << '\n';
+    }
+  }
+  const lang::CppMirInitializerScheduleText schedule =
+      emitter.initializerSchedule(address);
+  expect(analysis.ready() && schedule.supported && schedule.fields.size() == 1,
+         "the exact active field-initializer schedule should admit one native "
+         "field spelling");
+
+  lang::MirProgram forged = frontend.mir;
+  lang::MirBody *forgedBody = lang::findMirBody(forged, address);
+  lang::MirInstruction *publication = nullptr;
+  if (forgedBody != nullptr) {
+    for (lang::MirBlock &block : forgedBody->blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().kind ==
+                lang::MirLifecycleEventKind::Reparent) {
+          publication = &instruction;
+        }
+      }
+    }
+  }
+  expect(publication != nullptr,
+         "the field fixture should contain one explicit reparent publication");
+  if (publication != nullptr) {
+    publication->lifecycle.front().target = 0;
+    const lang::CppMirBodyEmissionAnalysis forgedAnalysis =
+        lang::CppMirBodyEmitter(forged, map).analyze(address);
+    expect(!forgedAnalysis.ready() &&
+               hasIssue(forgedAnalysis,
+                        lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+           "a forged owning-field reparent edge should fail closed before C++ "
+           "text emission");
+  }
+}
+
 void testOwningPayloadEnumTransportAdmissionFailsClosed() {
+  testOwningPayloadEnumFieldContainmentAdmission();
+
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("owning-payload-transport-preflight.gti", R"(
 class resource {

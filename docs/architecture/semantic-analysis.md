@@ -263,13 +263,18 @@ construction, unsupported cleanup carriers, copied-pattern capability,
 duplicate, and missing-variant failures. The bounded owning callable family
 admits a direct enum type at ordinary source-defined free-function,
 non-polymorphic method and ordinary-constructor boundaries and at exact typed
-lambdas. It never grants permission to a containing type. Ordinary call
-analysis selects copy/move from the enum's folded traits, so unavailable copies
-retain the normal ownership diagnostic before HIR. The shared declaration-time
-check continues to reject generic or polymorphic callable families, including
-methods and constructors declared by a generic owner, native/runtime/operator
-boundaries, and wrapper-shaped transport; capture and recursive type-argument
-inspection reject lambda, field, array, and wrapper containment. A top-level
+lambdas. Ordinary call analysis selects copy/move from the enum's folded
+traits, so unavailable copies retain the normal ownership diagnostic before
+HIR.
+
+The same declaration-time analysis admits a direct owning-enum field in an
+ordinary concrete non-generic class or struct with no polymorphism, native
+layout, stored-reference policy, or compiler-private capability. Its
+structurally folded class lifecycle then owns containment transport rather than
+a payload-enum-specific call exception. The shared check continues to reject
+generic or polymorphic callable families, methods and constructors declared by
+a generic owner, native/runtime/operator boundaries, captures, arrays,
+recursive containment, and other wrapper-shaped transport. A top-level
 checked-reference parameter does not contain or transfer the referent and
 remains valid for exhaustive tag inspection.
 

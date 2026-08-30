@@ -40,13 +40,18 @@ and direct by-value transport through ordinary source-defined free functions,
 non-polymorphic methods and constructors, and exact typed lambdas. The
 call/return path retains ordered argument transfer, direct result placement,
 success-only result activation, and defined-failure cleanup in verified MIR.
+An ordinary non-generic, non-polymorphic class or struct may additionally own
+the enum as a direct field. Its existing structural class lifecycle transports
+the field through containing-value moves and calls/returns, while verified
+field publication and construction rollback preserve exactly-once cleanup.
 Generic callable transport (including generic-owner methods and constructors),
-polymorphic callable transport, lambda capture, fields, arrays and other
-wrapper containment, stored borrowed state, active non-class carriers,
-consuming or borrowed patterns, recursive owning payloads, generic payloads,
-and a stable source layout remain outside this decision. The C++ backend may
-use `std::variant` because all language decisions are complete before
-emission; a future backend may choose a different representation.
+polymorphic callable transport, lambda capture, recursive fields, arrays and
+other wrapper containment, stored borrowed state, active non-class carriers,
+consuming or borrowed patterns, generic payloads, and a stable source layout
+remain outside this decision. The C++ backend may use `std::variant` plus a
+private disengaged representation state because all language decisions are
+complete before emission; that state is not a source alternative and a future
+backend may choose a different representation.
 
 Native C interoperation remains separately opt-in through `[[c_abi]]` and the
 generated native header. A source union is not accepted in a C ABI signature in

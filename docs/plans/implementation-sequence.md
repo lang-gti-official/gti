@@ -2740,25 +2740,28 @@ name recognition.
   into a variant-aware enum obligation, whole-enum move construction and
   replacement assignment transfer the active alternative, tag-only exhaustive
   patterns observe move-only payloads, and normal/control-flow/defined-failure
-  exits drop only the active alternative exactly once. This is a direct-local
-  slice with checked-reference parameter observation. Direct owning values now
+  exits drop only the active alternative exactly once. Direct owning values
   also cross ordinary source-defined free functions, non-polymorphic methods
   and ordinary constructors, and exact typed lambdas by value. Ordered
   argument transfer, lexical parameter entry, direct result placement,
   success-only activation, and defined-failure cleanup remain explicit through
-  HIR and verified MIR. Generic/polymorphic callable transport, lambda capture,
-  aggregate/wrapper containment, stored borrowed state, and active
-  non-class/recursive carriers remain diagnosed with `GTI-S2067`.
+  HIR and verified MIR. The first aggregate containment slice is complete:
+  an ordinary non-generic, non-polymorphic class or struct may own the enum in a
+  direct field, initialize it in-class or through a constructor, move it with
+  the containing value, replace a mutable field, and preserve reverse-order
+  rollback after partial construction. Generic/polymorphic callable transport,
+  lambda capture, arrays and indirect/generic/recursive wrapper containment,
+  stored borrowed state, and active non-class/recursive carriers remain
+  diagnosed with `GTI-S2067`.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add lambda capture and aggregate/wrapper lifecycle
-  transport, consuming and borrowed payload bindings, recursive active
-  aggregates/nested payload enums with explicit partial state, generic
-  payloads, deterministic layout, and broader interleaved enum/class
-  definition scheduling in separately proven families.
+- **Remaining scope:** Add lambda capture, consuming and borrowed payload
+  bindings, fixed-array and indirect/generic wrapper transport, recursive
+  active aggregates/nested payload enums with explicit partial state, generic
+  payloads, and deterministic layout in separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
@@ -3638,7 +3641,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return including the bounded repeatable-invoke/final-return combination used by `std::for_each`, one-field generic owner, exact namespace function items for confined generic and managed-thread clients, exact consumed managed-thread `void()` and typed-result tasks, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work | `D-CALL-01`, `C-CALL-01`, and `S-CALL-01` done -> remaining `L-CALL-01` |
 | Allocator/provenance model | **typed public allocation/provenance slice complete; allocator-aware client ready** | `S-ALLOC-01/02` complete through ADR 022 and `<std/memory>`; `S-ALLOC-03` remains |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive payloads plus direct-local concrete owning-class construction, variant-aware exactly-once drop, whole-enum move construction/assignment, checked-reference observation, direct by-value ordinary free-function/non-polymorphic method/constructor/exact-lambda transport, copied bindings, and tag-only exhaustive matching are complete; containment ABI, generic/polymorphic callable transport, capture, consuming/borrowed bindings, recursive owning aggregates, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **in progress:** passive payloads plus concrete owning-class construction, variant-aware exactly-once drop, whole-enum move construction/assignment, checked-reference observation, direct by-value ordinary free-function/non-polymorphic method/constructor/exact-lambda transport, ordinary direct-field containment with construction rollback and containing-value movement, copied bindings, and tag-only exhaustive matching are complete; generic/polymorphic callable transport, capture, arrays/indirect wrappers, consuming/borrowed bindings, recursive owning aggregates, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |

@@ -2610,21 +2610,33 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         "Fixed array '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
             "', but owning payload-enum elements are not supported in this "
-            "local-value slice.");
+            "bounded containment slice.");
     diagnostic.hints.emplace_back(
         "Keep each owning payload enum in its own local binding until "
         "aggregate element lifecycle state is represented explicitly.");
     diagnostics.emplace_back(std::move(diagnostic));
-  } else if (instanceField && containsOwningPayloadEnum(declaredType)) {
+  } else if (instanceField && containsOwningPayloadEnum(declaredType) &&
+             !(declaredType.kind == SemanticType::Enum &&
+               fieldOwner != nullptr &&
+               (fieldOwner->kind == ClassKind::Class ||
+                fieldOwner->kind == ClassKind::Struct) &&
+               fieldOwner->genericParameters.empty() &&
+               fieldOwner->exactSpecializationPrimary == 0 &&
+               !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
+               !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
+               !fieldOwner->compilerPrivate &&
+               fieldOwner->compilerCapability ==
+                   CompilerCapabilityTypeKind::None)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
         "Instance field '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
-            "', which contains owning payload-enum state unsupported in "
-            "this local-value slice.");
+            "', which contains owning payload-enum state unsupported for "
+            "this owner in the bounded direct-field slice.");
     diagnostic.hints.emplace_back(
-        "Keep the owning payload enum in a local binding until aggregate "
-        "field lifecycle state is represented explicitly.");
+        "A direct owning payload-enum field is supported only in an ordinary "
+        "non-generic, non-polymorphic GTI class or struct; keep wrapper, "
+        "layout-constrained, and compiler-owned shapes in separate bindings.");
     diagnostics.emplace_back(std::move(diagnostic));
   } else if (declaredType.kind != SemanticType::Enum &&
              containsOwningPayloadEnum(declaredType)) {
@@ -2633,7 +2645,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         "Binding '" + stmt.name().lexeme + "' has wrapper type '" +
             typeSpelling(declaredType) +
             "', but nesting owning payload-enum state in another value type "
-            "is not supported in this local-value slice.");
+            "is not supported in this bounded containment slice.");
     diagnostic.hints.emplace_back(
         "Keep the owning payload enum as a direct local binding and pass it "
         "by checked reference until wrapper lifecycle state is represented "

@@ -11,6 +11,7 @@
 #include "gti/mir.h"
 
 #include <algorithm>
+#include <functional>
 #include <iomanip>
 #include <iterator>
 #include <limits>
@@ -1813,13 +1814,15 @@ public:
         output << "};\n";
       }
       writeIndent();
-      output << "std::variant<";
+      // The first alternative is a backend-private disengaged state. Source
+      // payload enums still have exactly their declared closed alternatives;
+      // this state exists only so a transformed failure-capable constructor
+      // can default-create its observation-free native shell, publish fields
+      // in verified MIR order, and destroy an unpublished shell safely.
+      output << "std::variant<std::monostate";
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
-        if (index != 0) {
-          output << ", ";
-        }
-        output << "__gti_variant_"
+        output << ", __gti_variant_"
                << enumeration.enumerators[index].variantIndex;
       }
       output << "> __gti_value;\n";
@@ -3383,35 +3386,27 @@ public:
       concreteClassSchedule.emplace(*name, index);
     }
 
-    // A variant alternative embeds its class payloads by value, so an enum
-    // with class payload fields must follow every class definition. Field
-    // embedding of such enums inside classes is semantically rejected until
-    // layout scheduling interleaves enums with the class dependency walk.
-    std::vector<const LoweredDeclaration *> classPayloadEnumerations;
+    std::unordered_map<EnumId, const LoweredDeclaration *>
+        sourceEnumerationSchedule;
     for (const LoweredDeclaration *enumeration : enumerations) {
       const auto *declaration =
           std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
-      const bool classPayload =
-          declaration != nullptr && declaration->payload &&
-          std::any_of(
-              declaration->enumerators.begin(), declaration->enumerators.end(),
-              [](const LoweredEnumerator &enumerator) {
-                return std::any_of(enumerator.payloadTypes.begin(),
-                                   enumerator.payloadTypes.end(),
-                                   [](const SemanticType &type) {
-                                     return type.kind == SemanticType::Class;
-                                   });
-              });
-      if (classPayload) {
-        classPayloadEnumerations.push_back(enumeration);
-        continue;
+      if (declaration == nullptr || declaration->id == 0 ||
+          !sourceEnumerationSchedule.emplace(declaration->id, enumeration)
+               .second) {
+        throw std::logic_error(
+            "lowered enum schedule contains a duplicate or invalid identity");
       }
-      emitLoweredScheduledTypeDefinition(*enumeration);
     }
 
-    const auto collectTypeDependencies =
-        [&](const auto &self, const SemanticType &type,
-            std::vector<std::size_t> &result) -> void {
+    struct TypeDependencies {
+      std::vector<std::size_t> classes;
+      std::vector<EnumId> enumerations;
+    };
+
+    const auto collectTypeDependencies = [&](const auto &self,
+                                             const SemanticType &type,
+                                             TypeDependencies &result) -> void {
       switch (type.kind) {
       case SemanticType::RawPointer:
       case SemanticType::Reference:
@@ -3428,18 +3423,24 @@ public:
             throw std::logic_error(
                 "lowered class layout lost an exact concrete dependency");
           }
-          result.push_back(found->second);
+          result.classes.push_back(found->second);
           return;
         }
         if (const auto found = sourceClassSchedule.find(type.classId);
             found != sourceClassSchedule.end()) {
-          result.push_back(found->second);
+          result.classes.push_back(found->second);
         }
         for (const SemanticType &argument : type.arguments) {
           self(self, argument, result);
         }
         return;
       }
+      case SemanticType::Enum:
+        if (type.enumId != 0 &&
+            sourceEnumerationSchedule.contains(type.enumId)) {
+          result.enumerations.push_back(type.enumId);
+        }
+        return;
       case SemanticType::Array:
       case SemanticType::Expected:
       case SemanticType::Unexpected:
@@ -3453,8 +3454,7 @@ public:
     };
 
     const auto collectInitializerDependencies = [&](const MirBody &body,
-                                                    std::vector<std::size_t>
-                                                        &result) {
+                                                    TypeDependencies &result) {
       for (const MirPlace &place : body.places) {
         collectTypeDependencies(collectTypeDependencies, place.type, result);
       }
@@ -3510,21 +3510,25 @@ public:
       }
     };
 
-    const auto normalizeDependencies = [](std::vector<std::size_t> &result,
-                                          std::size_t current) {
-      std::erase(result, current);
-      std::sort(result.begin(), result.end());
-      result.erase(std::unique(result.begin(), result.end()), result.end());
+    const auto normalizeDependencies = [](TypeDependencies &result) {
+      std::sort(result.classes.begin(), result.classes.end());
+      result.classes.erase(
+          std::unique(result.classes.begin(), result.classes.end()),
+          result.classes.end());
+      std::sort(result.enumerations.begin(), result.enumerations.end());
+      result.enumerations.erase(
+          std::unique(result.enumerations.begin(), result.enumerations.end()),
+          result.enumerations.end());
     };
 
     const auto collectSourceDependencies =
         [&](const LoweredDeclaration &row,
             const LoweredClassDeclaration &declaration,
-            std::vector<std::size_t> &result) {
+            TypeDependencies &result) {
           if (const auto found = sourceClassSchedule.find(
                   declaration.exactSpecializationPrimary);
               found != sourceClassSchedule.end()) {
-            result.push_back(found->second);
+            result.classes.push_back(found->second);
           }
           for (const LoweredClassBase &base : declaration.bases) {
             collectTypeDependencies(collectTypeDependencies, base.type, result);
@@ -3558,12 +3562,11 @@ public:
 
     const auto collectConcreteDependencies =
         [&](const LoweredClassDeclaration &declaration,
-            const MirClassInstance &instance,
-            std::vector<std::size_t> &result) {
+            const MirClassInstance &instance, TypeDependencies &result) {
           if (loweredClassNeedsNativePrimary(declaration)) {
             if (const auto found = sourceClassSchedule.find(declaration.id);
                 found != sourceClassSchedule.end()) {
-              result.push_back(found->second);
+              result.classes.push_back(found->second);
             }
           }
           for (const HirBaseInstance &base : instance.bases) {
@@ -3576,16 +3579,77 @@ public:
           collectInitializerDependencies(instance.fieldInitializers, result);
         };
 
-    std::vector<unsigned char> state(classes.size(), 0);
-    const auto emitClass = [&](const auto &self, std::size_t index) -> void {
-      if (index >= classes.size() || state[index] == 2) {
+    std::vector<unsigned char> classState(classes.size(), 0);
+    std::unordered_map<EnumId, unsigned char> enumerationState;
+    for (const auto &[id, _] : sourceEnumerationSchedule) {
+      enumerationState.emplace(id, 0);
+    }
+
+    std::function<void(std::size_t)> emitClass;
+    std::function<void(EnumId)> emitEnumeration;
+    const auto emitDependencies = [&](TypeDependencies dependencies,
+                                      std::optional<std::size_t> currentClass,
+                                      std::optional<EnumId> currentEnum) {
+      if (currentClass) {
+        std::erase(dependencies.classes, *currentClass);
+      }
+      if (currentEnum) {
+        std::erase(dependencies.enumerations, *currentEnum);
+      }
+      normalizeDependencies(dependencies);
+      for (const std::size_t dependency : dependencies.classes) {
+        emitClass(dependency);
+      }
+      for (const EnumId dependency : dependencies.enumerations) {
+        emitEnumeration(dependency);
+      }
+    };
+
+    emitEnumeration = [&](EnumId id) {
+      const auto scheduled = sourceEnumerationSchedule.find(id);
+      const auto state = enumerationState.find(id);
+      if (scheduled == sourceEnumerationSchedule.end() ||
+          state == enumerationState.end()) {
+        throw std::logic_error("lowered enum dependency is not scheduled");
+      }
+      if (state->second == 2) {
         return;
       }
-      if (state[index] == 1) {
+      if (state->second == 1) {
         throw std::logic_error(
-            "lowered class layout contains a recursive by-value dependency");
+            "lowered type layout contains a recursive by-value enum "
+            "dependency");
       }
-      state[index] = 1;
+      state->second = 1;
+      const LoweredDeclaration &row = *scheduled->second;
+      const auto *declaration =
+          std::get_if<LoweredEnumDeclaration>(&row.payload);
+      if (declaration == nullptr || declaration->id != id) {
+        throw std::logic_error(
+            "lowered enum schedule lost its declaration payload");
+      }
+      TypeDependencies dependencies;
+      for (const LoweredEnumerator &enumerator : declaration->enumerators) {
+        for (const SemanticType &payload : enumerator.payloadTypes) {
+          collectTypeDependencies(collectTypeDependencies, payload,
+                                  dependencies);
+        }
+      }
+      emitDependencies(std::move(dependencies), std::nullopt, id);
+      emitLoweredScheduledTypeDefinition(row);
+      state->second = 2;
+    };
+
+    emitClass = [&](std::size_t index) {
+      if (index >= classes.size() || classState[index] == 2) {
+        return;
+      }
+      if (classState[index] == 1) {
+        throw std::logic_error(
+            "lowered type layout contains a recursive by-value class "
+            "dependency");
+      }
+      classState[index] = 1;
       const ClassEmissionNode &node = classes[index];
       if (node.row == nullptr) {
         throw std::logic_error("lowered class schedule lost its source row");
@@ -3597,16 +3661,13 @@ public:
         throw std::logic_error(
             "lowered class schedule lost its declaration payload");
       }
-      std::vector<std::size_t> dependencies;
+      TypeDependencies dependencies;
       if (node.concrete == nullptr) {
         collectSourceDependencies(row, *declaration, dependencies);
       } else {
         collectConcreteDependencies(*declaration, *node.concrete, dependencies);
       }
-      normalizeDependencies(dependencies, index);
-      for (const std::size_t dependency : dependencies) {
-        self(self, dependency);
-      }
+      emitDependencies(std::move(dependencies), index, std::nullopt);
       const std::size_t firstDeferredMember = loweredDeferredMembers.size();
       const std::size_t firstDeferredLifecycleClass =
           loweredDeferredLifecycleClasses.size();
@@ -3619,7 +3680,7 @@ public:
       const std::size_t lastDeferredMember = loweredDeferredMembers.size();
       const std::size_t lastDeferredLifecycleClass =
           loweredDeferredLifecycleClasses.size();
-      state[index] = 2;
+      classState[index] = 2;
 
       // A retained source-template specialization can instantiate its
       // complete owner. Complete the exact concrete field graph after the
@@ -3627,7 +3688,7 @@ public:
       // back to one class-family node: that invents cycles for finite nests
       // such as box<cell<box<int>>>.
       if (node.concrete == nullptr) {
-        std::vector<std::size_t> specializationDependencies;
+        TypeDependencies specializationDependencies;
         for (const MirClassInstance &instance : mir.classInstances()) {
           if (instance.declaration != declaration->id) {
             continue;
@@ -3643,21 +3704,25 @@ public:
           collectInitializerDependencies(instance.fieldInitializers,
                                          specializationDependencies);
         }
-        normalizeDependencies(specializationDependencies, index);
-        for (const std::size_t dependency : specializationDependencies) {
-          self(self, dependency);
-        }
+        emitDependencies(std::move(specializationDependencies), index,
+                         std::nullopt);
       }
       emitLoweredMemberSpecializationDeclarations(
           firstDeferredMember, lastDeferredMember, firstDeferredLifecycleClass,
           lastDeferredLifecycleClass);
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
-      emitClass(emitClass, index);
+      emitClass(index);
     }
 
-    for (const LoweredDeclaration *enumeration : classPayloadEnumerations) {
-      emitLoweredScheduledTypeDefinition(*enumeration);
+    for (const LoweredDeclaration *enumeration : enumerations) {
+      const auto *declaration =
+          std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
+      if (declaration == nullptr) {
+        throw std::logic_error(
+            "lowered enum schedule lost its declaration payload");
+      }
+      emitEnumeration(declaration->id);
     }
   }
 

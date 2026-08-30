@@ -954,9 +954,15 @@ source obligation. In the bounded callable slice, the same obligation may move
 through ordered argument staging into an ordinary callable's lexical parameter
 slot and from its return into a caller-owned result slot. The result obligation
 is inactive until successful publication, so failure cleans parameters without
-dropping an uninitialized result. Generic or polymorphic callable transport,
-lambda capture, fields, arrays, and wrapper containment remain diagnosed rather
-than inventing indirect cleanup state.
+dropping an uninitialized result. An ordinary non-generic, non-polymorphic
+class or struct may also own the enum directly in a field. Construction
+rollback arms that field only after successful publication, generated movement
+transfers its obligation with the containing value, and replacement of a
+mutable field drops the old active alternative before accepting the new one.
+Generic or polymorphic callable transport, lambda capture, recursive fields,
+arrays, generic wrappers, stored-reference owners, compiler-private or native
+layout records, and polymorphic bases remain diagnosed rather than inventing
+indirect cleanup state.
 
 The semantic `GTI-S2061` check implements the recursive active-cleanup
 restriction after the more-specific unique-owner, private-storage, and

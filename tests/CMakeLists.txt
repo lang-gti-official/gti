@@ -1133,6 +1133,14 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(class_payload_enum_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME payload_enum_containment_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/payload_enum_containment_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(payload_enum_containment_runtime
+                         PROPERTIES TIMEOUT 240)
+    add_test(
       NAME argument_reference_return_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/argument_reference_return_runtime_test.py"
@@ -1466,6 +1474,7 @@ if(Python3_Interpreter_FOUND)
         mutable_temporary_receiver_runtime
         nested_reference_return_runtime
         class_payload_enum_runtime
+        payload_enum_containment_runtime
         argument_reference_return_runtime
         temporary_argument_borrow_runtime
         field_subscript_store_runtime

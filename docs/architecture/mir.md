@@ -743,6 +743,18 @@ preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture
 a payload-enum call boundary.
 
+For an admitted ordinary direct field, MIR retains the existing class
+initializer and lifecycle schedule. A payload construction's value-rooted enum
+obligation is reparented into the field's `ConstructionRollback` obligation at
+the exact `This.field` initialization. Normal constructor completion transfers
+that rollback obligation into the class field schedule; a failure preserves
+the reverse-order rollback edge. Generated containing-value movement uses the
+ordinary class schedule, while direct mutable-field replacement requires the
+verified Move -> Replace -> Drop chain and leaves the class field schedule as
+the sole eventual cleanup authority. The verifier rejects a missing,
+duplicated, reordered, or retargeted publication; no backend field spelling can
+create this permission.
+
 Valid passive unions retain their checked size, ABI alignment, and ordered
 field layout on semantic, HIR, and MIR class records. MIR does not infer an
 active field or add a union operation: member access remains an ordinary place
