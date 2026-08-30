@@ -2277,6 +2277,12 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
           !visiting.insert(instance->id).second) {
         return false;
       }
+      if (instance->compilerCapability ==
+          CompilerCapabilityTypeKind::OptionalStorage) {
+        visiting.erase(instance->id);
+        return candidate.arguments.size() == 1 &&
+               self(self, candidate.arguments.front());
+      }
       const bool fields = std::all_of(instance->declaredFields.begin(),
                                       instance->declaredFields.end(),
                                       [&](const MirClassFieldInfo &field) {

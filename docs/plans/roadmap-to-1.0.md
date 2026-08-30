@@ -742,10 +742,13 @@ implemented portably and remain behind source-defined GTI wrappers.
 | math | portable primitive math functions, constants, integer utilities, and checked edge behavior |
 | diagnostics | implement Execution §4.10's stable runtime failure records and source-facing messages |
 
-`std::optional<T>` should be an ordinary class over private checked storage,
-not a new nullable reference rule. `std::variant` and arbitrary tuple packs can
-wait until independent pack element access and visitation are justified by
-real uses.
+`std::optional<T>` is now an ordinary move-only class over private checked
+inline storage, not a nullable reference rule. Its first production slice
+supports empty/engaged construction, checked access, reset/emplace, move-only
+payload transfer, and exactly-once cleanup without allocation. Conditional
+copy and assignment remain later `L-VALUE-01` breadth. `std::variant` and
+arbitrary tuple packs can wait until independent pack element access and
+visitation are justified by real uses.
 
 ### Host-service modules
 

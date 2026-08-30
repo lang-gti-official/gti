@@ -1,0 +1,8 @@
+#include <std/optional>
+
+int main() {
+  mut std::optional<int32_t> value{int32_t(7)};
+  mut int32_t& borrowed = value.value();
+  value.reset();
+  return borrowed;
+}

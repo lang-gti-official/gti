@@ -69,8 +69,10 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     const SemanticType &type, ActiveCleanupQuery &query) const -> bool {
   if (type.kind == SemanticType::Class) {
     const ClassInfo *owner = classInfo(type);
-    if (owner != nullptr &&
-        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+    if (owner != nullptr && (owner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexStorage ||
+                             owner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::OptionalStorage)) {
       return type.arguments.size() == 1 &&
              requiresActiveCleanup(type.arguments.front(), query);
     }
@@ -351,6 +353,13 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::FunctionItem:
     return {.transferCapable = true, .shareCapable = true};
   case SemanticType::Class:
+    if (const ClassInfo *owner = classInfo(type);
+        owner != nullptr &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::OptionalStorage &&
+        type.arguments.size() == 1) {
+      return typeCapabilities(type.arguments.front(), visiting);
+    }
     break;
   case SemanticType::Unknown:
   case SemanticType::Void:
@@ -598,6 +607,16 @@ auto SemanticVisitor::Impl::typeTraits(
                               .containsBorrowedState = false,
                               .transferCapable = false,
                               .shareCapable = true};
+  }
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Lexical,
+                              .copyable = false,
+                              .movable = true,
+                              .copyAssignable = false,
+                              .moveAssignable = false,
+                              .containsBorrowedState = false};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
     visiting.pop_back();
@@ -1372,6 +1391,27 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "storage_shift_left") {
       return IntrinsicKind::StorageShiftLeft;
+    }
+    return IntrinsicKind::None;
+  }
+  if (isOptionalLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "optional_storage_has_value") {
+      return IntrinsicKind::OptionalStorageHasValue;
+    }
+    if (name == "optional_storage_construct") {
+      return IntrinsicKind::OptionalStorageConstruct;
+    }
+    if (name == "optional_storage_read") {
+      return IntrinsicKind::OptionalStorageRead;
+    }
+    if (name == "optional_storage_read_mut") {
+      return IntrinsicKind::OptionalStorageReadMut;
+    }
+    if (name == "optional_storage_reset") {
+      return IntrinsicKind::OptionalStorageReset;
     }
     return IntrinsicKind::None;
   }
@@ -4637,6 +4677,15 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::OptionalStorageHasValue ||
+      intrinsic == IntrinsicKind::OptionalStorageConstruct ||
+      intrinsic == IntrinsicKind::OptionalStorageRead ||
+      intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+      intrinsic == IntrinsicKind::OptionalStorageReset) {
+    analyzeOptionalStorageIntrinsicCall(expr, intrinsic);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic != IntrinsicKind::Move) {
     analyzeStorageIntrinsicCall(expr, intrinsic);
     bindIntrinsicCallDeclaration(expr, declaration);
@@ -5370,6 +5419,115 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
           .borrowAccess = intrinsic == IntrinsicKind::PrefixStorageReadMut
                               ? AccessMode::Mutable
                               : AccessMode::ReadOnly});
+}
+
+auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
+    const Call &expr, IntrinsicKind intrinsic) -> void {
+  std::vector<SemanticType> argumentTypes;
+  argumentTypes.reserve(expr.arguments().size());
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.emplace_back(analyze(argument));
+  }
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+  }
+  if (!expr.typeArguments().empty()) {
+    report(expr.paren(),
+           "Optional storage operations infer their element type from the "
+           "storage argument and do not take explicit type arguments.",
+           "GTI-S2019");
+  }
+
+  const bool constructing =
+      intrinsic == IntrinsicKind::OptionalStorageConstruct;
+  if ((constructing && argumentTypes.empty()) ||
+      (!constructing && argumentTypes.size() != 1)) {
+    report(expr.paren(),
+           constructing ? "optional_storage_construct expects mutable optional "
+                          "storage and zero or more constructor arguments."
+                        : "This optional storage operation expects exactly one "
+                          "storage argument.",
+           "GTI-S2019");
+  }
+  if (argumentTypes.empty()) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  const SemanticType storageType = argumentTypes.front();
+  const ClassInfo *storageInfo = classInfo(storageType);
+  if (storageType.kind != SemanticType::Class || storageInfo == nullptr ||
+      storageInfo->compilerCapability !=
+          CompilerCapabilityTypeKind::OptionalStorage ||
+      storageType.arguments.size() != 1) {
+    if (storageType != SemanticType::Unknown) {
+      report(expressionToken(expr.arguments().front()),
+             "Optional storage operations require the exact trusted "
+             "gti_internal::optional_storage<T> capability.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  const SemanticType elementType = storageType.arguments.front();
+  const bool mutates = constructing ||
+                       intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+                       intrinsic == IntrinsicKind::OptionalStorageReset;
+  if (mutates) {
+    requireMutableStorage(expr.arguments().front(),
+                          "optional storage operation");
+  }
+
+  if (constructing) {
+    std::vector<AnalyzedCallArgument> constructorArguments;
+    bool concreteArguments = true;
+    for (std::size_t index = 1; index < argumentTypes.size(); ++index) {
+      if (!appendConcreteCallArgument(argumentTypes[index],
+                                      expr.arguments()[index],
+                                      constructorArguments)) {
+        concreteArguments = false;
+        break;
+      }
+    }
+    if (concreteArguments) {
+      if (elementType.kind == SemanticType::Class) {
+        analyzeConstructorCallArguments(
+            expr, elementType.classId, elementType.arguments,
+            elementType.valueArguments, constructorArguments, expr.paren());
+      } else if (elementType != SemanticType::Unknown &&
+                 elementType.kind != SemanticType::TypeParameter) {
+        validateStorageValueConstruction(expr, elementType,
+                                         constructorArguments);
+      }
+    }
+    currentType = SemanticType::Void;
+  } else if (intrinsic == IntrinsicKind::OptionalStorageHasValue) {
+    currentType = SemanticType::Bool;
+  } else if (intrinsic == IntrinsicKind::OptionalStorageRead ||
+             intrinsic == IntrinsicKind::OptionalStorageReadMut) {
+    currentType = elementType;
+  } else {
+    currentType = SemanticType::Void;
+  }
+
+  const bool borrows = intrinsic == IntrinsicKind::OptionalStorageRead ||
+                       intrinsic == IntrinsicKind::OptionalStorageReadMut;
+  const AccessMode borrowAccess =
+      intrinsic == IntrinsicKind::OptionalStorageReadMut ? AccessMode::Mutable
+                                                         : AccessMode::ReadOnly;
+  semanticModel.record(
+      expr,
+      ResolvedCallInfo{.returnType = borrows ? SemanticType::referenceTo(
+                                                   elementType, borrowAccess)
+                                             : currentType,
+                       .parameterTypes = std::move(argumentTypes),
+                       .typeArguments = {elementType},
+                       .intrinsic = intrinsic,
+                       .borrowOrigin = borrows ? BorrowOriginKind::Argument
+                                               : BorrowOriginKind::None,
+                       .borrowArgument = 0,
+                       .borrowAccess = borrowAccess});
 }
 
 auto SemanticVisitor::Impl::analyzeStorageBoundsCheckCall(const Call &expr)

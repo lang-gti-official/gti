@@ -1924,6 +1924,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedMemoryCapabilityScope =
           isMemoryLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedOptionalCapabilityScope =
+          isOptionalLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
       if (trustedMemoryCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
           !classDecl->genericParameters().front().valueType &&
@@ -1939,6 +1942,12 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  !classDecl->genericParameters().front().pack &&
                  classDecl->name().lexeme == "prefix_storage") {
         compilerCapability = CompilerCapabilityTypeKind::PrefixStorage;
+      } else if (trustedOptionalCapabilityScope &&
+                 classDecl->genericParameters().size() == 1 &&
+                 !classDecl->genericParameters().front().valueType &&
+                 !classDecl->genericParameters().front().pack &&
+                 classDecl->name().lexeme == "optional_storage") {
+        compilerCapability = CompilerCapabilityTypeKind::OptionalStorage;
       } else if (trustedPreludeCapabilityScope &&
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "text_view") {
@@ -4755,7 +4764,42 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
     if (owner.declaration == nullptr) {
       continue;
     }
-    const SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
+    SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
+    // The declaration-bound optional slot is a single ownership state. Copy
+    // assignment is intentionally unavailable even though its source class
+    // has no fields for structural analysis to reject: duplicating an engaged
+    // backend slot would copy a live T outside the public optional policy.
+    if (owner.compilerCapability ==
+        CompilerCapabilityTypeKind::OptionalStorage) {
+      traits.copyable = false;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+    }
+    // A class that owns the exact optional slot may transfer that slot only
+    // through construction. GTI has no source-level custom special-member
+    // assignment body with which the public policy class could uphold the
+    // slot's engaged/empty transition and checked cleanup contract, so both
+    // assignment shapes fail closed while reset/emplace remain available.
+    const bool ownsOptionalStorage = std::any_of(
+        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
+          if (field.declaration == nullptr) {
+            return false;
+          }
+          const auto member =
+              owner.members.find(field.declaration->name().lexeme);
+          if (member == owner.members.end()) {
+            return false;
+          }
+          const SemanticType &fieldType = member->second.symbol.type;
+          return fieldType.kind == SemanticType::Class &&
+                 fieldType.classId != 0 &&
+                 classInfo(fieldType.classId).compilerCapability ==
+                     CompilerCapabilityTypeKind::OptionalStorage;
+        });
+    if (ownsOptionalStorage) {
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+    }
     const ConstructorInfo *declaredDefault = defaultConstructor(owner);
     SpecialMemberStatus defaultStatus = SpecialMemberStatus::Deleted;
     if (declaredDefault != nullptr &&

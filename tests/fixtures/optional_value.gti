@@ -1,0 +1,49 @@
+#include <std/optional>
+
+class move_only {
+  mut int32_t value_data;
+
+public:
+  move_only(int32_t value) : value_data(value) {}
+  move_only(move_only& other) = delete;
+  move_only(move_only&& other) = default;
+
+  int32_t value() { return this.value_data; }
+  void set(int32_t value) mut { this.value_data = value; }
+};
+
+int main() {
+  mut std::optional<int32_t> number{};
+  if (number.has_value()) {
+    return 1;
+  }
+  [[discard]] number.emplace(int32_t(41));
+  mut int32_t& number_value = number.value();
+  number_value += int32_t(1);
+  if (!number || *number != int32_t(42)) {
+    return 2;
+  }
+  if (number.value_or(int32_t(9)) != int32_t(42)) {
+    return 3;
+  }
+  number.reset();
+  if (number.has_value() || number.value_or(int32_t(8)) != int32_t(8)) {
+    return 4;
+  }
+
+  mut std::optional<move_only> source{move_only(int32_t(7))};
+  mut std::optional<move_only> destination{std::move(source)};
+  if (!destination.has_value() || destination->value() != int32_t(7)) {
+    return 5;
+  }
+  destination.value().set(int32_t(9));
+  if (destination.value().value() != int32_t(9)) {
+    return 6;
+  }
+  [[discard]] destination.emplace(int32_t(11));
+  if (destination.value().value() != int32_t(11)) {
+    return 7;
+  }
+  destination.reset();
+  return destination.has_value() ? 8 : 0;
+}

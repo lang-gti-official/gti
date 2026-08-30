@@ -493,6 +493,14 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::OptionalStorage) {
+      if (type.arguments.size() != 1) {
+        return "void";
+      }
+      return "::gti_internal::backend::optional_storage<" +
+             spell(type.arguments.front()) + ">";
+    }
+    if (classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexStorage ||
         classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexLockToken) {

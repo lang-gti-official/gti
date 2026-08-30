@@ -312,6 +312,19 @@ MIR failure boundary.
 The public types are ordinary GTI wrappers: neither compiler nor backend
 recognizes their names, and no raw address or manual deallocation is exposed.
 
+`<std/optional>` provides a production move-only `std::optional<T>` over one
+declaration-bound inline slot. It supports empty and engaged construction,
+checked read-only and mutable access, `has_value`, contextual `bool`,
+dereference/arrow, `value_or`, reset, emplacement, move-only payloads, and move
+construction. Empty access reports the stable checked owner failure after
+ordinary cleanup. The representation performs no allocation for absence and
+drops every engaged payload exactly once. Allocation-free describes the slot,
+not construction of `T`: payload construction can report its ordinary
+`allocation_failure` / `element_construction` outcome, and failed emplacement
+leaves the slot empty. Copy construction and both assignment forms are
+deliberately unavailable; replace a value through `reset` or `emplace` until
+GTI can express a source-defined conditional special-member assignment body.
+
 Intrinsic behavior is restricted to exact compiler-trusted declaration
 identities. Shared prefix-storage, text, and core constraints remain
 prelude-owned. Unique-owner and sparse-storage identities belong to
@@ -364,7 +377,6 @@ is recognized by the backend.
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
-| `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
 | `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |
 

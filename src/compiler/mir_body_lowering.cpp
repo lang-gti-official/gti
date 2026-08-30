@@ -3753,9 +3753,11 @@ private:
               input->info.type == parameter &&
               (value.intrinsic == IntrinsicKind::StorageConstruct ||
                value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-               value.intrinsic == IntrinsicKind::PrefixStorageInsert) &&
+               value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+               value.intrinsic == IntrinsicKind::OptionalStorageConstruct) &&
               (parameter.kind == SemanticType::Storage ||
-               parameter.kind == SemanticType::PrefixStorage);
+               parameter.kind == SemanticType::PrefixStorage ||
+               parameter.kind == SemanticType::Class);
           const std::optional<HirCallInputKind> kind =
               mutableStorageInput
                   ? std::optional<

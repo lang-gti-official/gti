@@ -43,7 +43,7 @@ The current end-to-end coverage includes complete member-page families for
 `std::array`, `std::string`, and `std::vector`, plus compiler-bound implemented
 surface pages for algorithms, numeric and iterator utilities, memory policies,
 views, I/O, filesystem paths, formatting, randomness, threading, TCP, and
-utility types. Every constructor or member shown on the detailed type pages
+utility and optional-value types. Every constructor or member shown on the detailed type pages
 has one canonical child route. A detail route renders its exact compiler
 signature, authored operation-specific guidance, an availability tag drawn
 from repository history, and a dedicated example where the operation is

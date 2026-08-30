@@ -202,6 +202,14 @@ private:
                  CompilerCapabilityTypeKind::MutexStorage;
     }();
     const HirClassInstanceId id = output.program.classes.size() + 1;
+    SemanticTypeTraits instanceTraits =
+        instanceProvider->traitsFor(resolvedType);
+    if (declaration->compilerCapability ==
+        CompilerCapabilityTypeKind::OptionalStorage) {
+      instanceTraits.copyable = false;
+      instanceTraits.copyAssignable = false;
+      instanceTraits.moveAssignable = false;
+    }
     output.program.classes.push_back(
         {.id = id,
          .sourceUnit = declaration->sourceUnit,
@@ -211,7 +219,7 @@ private:
          .valueArguments = resolvedType.valueArguments,
          .instantiationSite = std::move(site),
          .type = resolvedType,
-         .traits = instanceProvider->traitsFor(resolvedType),
+         .traits = instanceTraits,
          .compilerCapability = declaration->compilerCapability,
          .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
@@ -3873,7 +3881,8 @@ private:
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::StorageConstruct ||
           value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-          value.intrinsic == IntrinsicKind::PrefixStorageInsert;
+          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+          value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
       if (!inPlaceStorageConstruction) {
         value.parameterTypes = construction->parameterTypes;
       }

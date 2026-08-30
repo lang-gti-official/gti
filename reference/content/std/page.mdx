@@ -25,6 +25,8 @@ capabilities directly.
   mutation, explicit cloning, and iteration.
 - [`std::vector<T>`](/std/vector/vector/) — dynamic contiguous ownership,
   capacity management, mutation, and iteration.
+- [`std::optional<T>`](/std/optional/) — inline move-only optional ownership,
+  checked access, reset, and emplacement.
 
 Every member shown on these type pages links to an operation-specific page.
 Examples are compiled against the current toolchain; declaration-only members
@@ -55,7 +57,7 @@ future implementation and must not be assumed to link.
 | `<std/list>` | API shape only. | Scaffold |
 | [`<std/memory>`](/std/memory/) | Unique ownership, recoverable typed storage, and fixed-capacity arena and pool policies. | Partial; shared/weak ownership are scaffolds |
 | [`<std/numeric>`](/std/numeric/) | Checked, wrapping and saturating arithmetic, integral utilities, and bounded reductions. | Partial |
-| `<std/optional>` | API shape only. | Scaffold |
+| [`<std/optional>`](/std/optional/) | Inline empty/engaged ownership, checked access, reset, emplacement, and move transfer. | Bounded implementation |
 | [`<std/random>`](/std/random/) | Deterministic seeded engine and fallible host entropy. | Bounded implementation |
 | [`<std/span>`](/std/span/) | Checked read-only contiguous views tied to source owners. | Bounded implementation |
 | [`<std/string>`](/std/string/) | Owning strings, output overloads, integer conversion, and hashing. | Implemented except `swap` |
