@@ -68,5 +68,5 @@ matrix in
 [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
 For implementation work, use `$finish-release` after local validation to
 commit and initiate any required version/tag/release path. Do not publish a
-review-only report, and do not wait for asynchronous GitHub CI/CD after a
+review-only report, and do not wait for asynchronous Gitea CI/CD after a
 successful dispatch.

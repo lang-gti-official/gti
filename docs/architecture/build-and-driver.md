@@ -119,17 +119,23 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Stable and rolling-nightly toolchains are published for Linux x64, Linux
-arm64, and macOS arm64. Version `v0.299.0` is the final published macOS x64
-toolchain; source compilation can still target or run on Intel macOS when its
-prerequisites are supplied locally.
+Gitea is the Git, tag, workflow, and release authority. Release archive shapes
+exist for Linux x64, Linux arm64, and macOS arm64, but an archive is published
+only by a configured native runner job. The current workflow packages the
+native platform of the runner claiming `ubuntu-latest`; adding another
+advertised binary platform requires a statically labelled native package job.
+Version `v0.299.0` is the final historical macOS x64 toolchain; source
+compilation can still target or run on Intel macOS when its prerequisites are
+supplied locally.
 
-The stable release owns immutable, versioned archives. The `nightly` release is
-one mutable channel whose tag and `BUILD_ID` advance to each admitted `main`
-commit. Its publication step uploads the complete current asset set before
-removing any asset not produced by that build. This exact synchronization keeps
-retired platform archives from surviving a successful rolling publication
-while preserving the current archives if pruning is interrupted.
+A `VERSION` change on Gitea `main` dispatches the stable workflow, which owns
+the matching immutable tag and versioned release. The `nightly` release is one
+mutable channel whose tag and `BUILD_ID` advance to each admitted Gitea `main`
+commit. Its publication step uploads the complete current asset set before a
+Gitea API pass removes any asset not produced by that build. This exact
+synchronization keeps retired platform archives from surviving a successful
+rolling publication while preserving current archives if upload is
+interrupted.
 
 ## Direct Mode
 

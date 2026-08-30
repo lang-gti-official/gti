@@ -48,4 +48,4 @@ the current architecture doc when behavior lands.
 
 After local validation, use `$finish-release` when the completed LSP/editor
 change is ready to commit or release. Finish after the push or workflow
-dispatch succeeds; do not wait for asynchronous GitHub CI/CD.
+dispatch succeeds; do not wait for asynchronous Gitea CI/CD.

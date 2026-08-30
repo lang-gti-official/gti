@@ -1,12 +1,14 @@
 name: Release
 
-# The Gitea repository is a pull mirror, so GitHub owns stable tags. Building
-# only after a v* tag is mirrored avoids duplicate VERSION-triggered releases
-# and avoids trying to create Git data in a read-only mirror.
+# A VERSION change on authoritative Gitea main owns creation of the matching
+# immutable tag and stable release. Manual dispatch safely rebuilds that same
+# release when its tag already names the selected commit.
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - VERSION
   workflow_dispatch:
 
 permissions:
@@ -14,7 +16,7 @@ permissions:
 
 jobs:
   metadata:
-    name: Resolve mirrored release
+    name: Resolve release source
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.release.outputs.sha }}
@@ -23,29 +25,35 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+          ref: ${{ gitea.sha }}
 
-      - name: Validate mirrored release version
+      - name: Validate release version
         id: release
         shell: bash
+        env:
+          GTI_EVENT_SHA: ${{ gitea.sha }}
         run: |
+          sha="$(git rev-parse HEAD)"
+          if [[ "${sha}" != "${GTI_EVENT_SHA}" ]]; then
+            echo "Checked-out commit does not match the triggering Gitea revision" >&2
+            exit 1
+          fi
           version="$(tr -d '[:space:]' < VERSION)"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "VERSION must contain a semantic version" >&2
             exit 1
           fi
           tag="v${version}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
-            echo "Release tag ${GITHUB_REF_NAME} does not match VERSION ${version}" >&2
-            exit 1
+          if git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" >/dev/null; then
+            current="$(git rev-parse "refs/tags/${tag}^{commit}")"
+            if [[ "${current}" != "${sha}" ]]; then
+              echo "Release tag ${tag} already names ${current}, not ${sha}" >&2
+              exit 1
+            fi
           fi
-          if ! git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" >/dev/null; then
-            echo "Mirrored release tag ${tag} does not exist" >&2
-            exit 1
-          fi
-          sha="$(git rev-parse "refs/tags/${tag}^{commit}")"
           echo "sha=${sha}" >> "${GITEA_OUTPUT}"
           echo "version=${version}" >> "${GITEA_OUTPUT}"
           echo "tag=${tag}" >> "${GITEA_OUTPUT}"
@@ -57,7 +65,7 @@ jobs:
 
     steps:
       - name: Check out exact release commit
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ needs.metadata.outputs.sha }}
 
@@ -141,6 +149,13 @@ jobs:
           python3 "${{ gitea.workspace }}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${{ gitea.workspace }}/tests/cli_smoke_test.py" gti
           python3 "${{ gitea.workspace }}/tests/project_cli_smoke_test.py" gti
+          python3 "${{ gitea.workspace }}/tests/managed_thread_runtime_test.py" gti
+          python3 "${{ gitea.workspace }}/tests/atomic_runtime_test.py" gti \
+            "${{ gitea.workspace }}/tests/fixtures/atomic_scalar.gti" \
+            "${{ gitea.workspace }}/tests/fixtures/atomic_concurrent.gti" \
+            "${{ gitea.workspace }}/tests/fixtures/atomic_orders.gti" \
+            "${{ gitea.workspace }}/tests/fixtures/atomic_fetch.gti" \
+            "${{ gitea.workspace }}/tests/fixtures/atomic_fetch_overflow.gti"
           cmake \
             -S "${{ gitea.workspace }}/tests/installed_library_smoke" \
             -B "${{ runner.temp }}/gti-installed-library-smoke" \
@@ -165,7 +180,7 @@ jobs:
           -P cmake/PackageRelease.cmake
 
       - name: Upload release archive
-        uses: https://gitea.com/actions/upload-artifact@v3
+        uses: https://gitea.com/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: gti-release-package
           path: dist/*
@@ -179,31 +194,33 @@ jobs:
       - package
     runs-on: ubuntu-latest
     permissions:
-      code: read
+      code: write
       releases: write
 
     steps:
       - name: Check out packaged commit
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           ref: ${{ needs.metadata.outputs.sha }}
 
-      - name: Verify mirrored release tag
+      - name: Refuse a conflicting release tag
         shell: bash
         env:
           GTI_RELEASE_SHA: ${{ needs.metadata.outputs.sha }}
           GTI_RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
-          git fetch --force origin "+refs/tags/${GTI_RELEASE_TAG}:refs/tags/${GTI_RELEASE_TAG}"
-          current="$(git rev-parse "refs/tags/${GTI_RELEASE_TAG}^{commit}")"
-          if [[ "${current}" != "${GTI_RELEASE_SHA}" ]]; then
-            echo "${GTI_RELEASE_TAG} moved to ${current}; refusing mismatched artifacts" >&2
-            exit 1
+          if git ls-remote --exit-code --tags origin "refs/tags/${GTI_RELEASE_TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "+refs/tags/${GTI_RELEASE_TAG}:refs/tags/${GTI_RELEASE_TAG}"
+            current="$(git rev-parse "refs/tags/${GTI_RELEASE_TAG}^{commit}")"
+            if [[ "${current}" != "${GTI_RELEASE_SHA}" ]]; then
+              echo "${GTI_RELEASE_TAG} names ${current}; refusing mismatched artifacts" >&2
+              exit 1
+            fi
           fi
 
       - name: Download release archive
-        uses: https://gitea.com/actions/download-artifact@v3
+        uses: https://gitea.com/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: gti-release-package
           path: dist
@@ -219,7 +236,7 @@ jobs:
           fi
 
       - name: Publish release
-        uses: https://gitea.com/actions/gitea-release-action@v1
+        uses: https://gitea.com/actions/gitea-release-action@5a83c90484ef4355121df5eb60558c8ce66e81ac # v1
         with:
           server_url: ${{ gitea.server_url }}
           repository: ${{ gitea.repository }}
@@ -228,5 +245,9 @@ jobs:
           target_commitish: ${{ needs.metadata.outputs.sha }}
           name: GTI ${{ needs.metadata.outputs.tag }}
           prerelease: false
+          body: |
+            Stable GTI toolchain built from `${{ needs.metadata.outputs.sha }}`.
+
+            This immutable release is published by the authoritative Gitea workflow.
           files: |
             dist/*

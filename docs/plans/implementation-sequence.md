@@ -3061,7 +3061,7 @@ complete.
 
 ### O-MIR-04: Proof-Carrying Safety Optimization
 
-Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
+Historical tracking ID: issue #36.
 
 - **State/role:** first production slice complete. O2/O3 run separate bounds,
   initialized-storage-state, and arithmetic-overflow discharge passes over one
@@ -3570,8 +3570,7 @@ it is not a competing active queue.
 
 ### P-MEASURE: Performance And Representation
 
-Prefix-storage execution tracking:
-[issue #37](https://github.com/LukeHHA/gti/issues/37).
+Prefix-storage historical tracking ID: issue #37.
 
 | ID | State | Scope and gate |
 | --- | --- | --- |

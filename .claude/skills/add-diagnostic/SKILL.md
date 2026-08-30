@@ -38,7 +38,7 @@ earliest phase that knows the rule.
 
 After local validation, use the `finish-release` skill when the completed
 diagnostic change is ready to commit or changes shipped behavior. Do not wait
-for GitHub CI/CD after the release push or workflow dispatch succeeds.
+for Gitea CI/CD after the release push or workflow dispatch succeeds.
 
 Do not use `GTI-B0001` for invalid user source; it is the internal MIR/backend
 integrity diagnostic.
