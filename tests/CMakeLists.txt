@@ -538,10 +538,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/check_release_version.py"
   )
   add_test(
-    NAME nightly_asset_sync
+    NAME repository_hosting
     COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/nightly_asset_sync_test.py"
-            "${PROJECT_SOURCE_DIR}/scripts/sync_nightly_assets.py"
+            "${PROJECT_SOURCE_DIR}/tests/repository_hosting_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
+    NAME gitea_release_asset_sync
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/gitea_release_asset_sync_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/sync_gitea_release_assets.py"
   )
   add_test(
     NAME mir_census_regression

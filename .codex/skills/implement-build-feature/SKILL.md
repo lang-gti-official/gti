@@ -38,7 +38,7 @@ compiler path.
    when shipped CLI/driver/project behavior changes.
 
 After local validation, use `$finish-release` to commit completed work and
-initiate the required version/tag/release path. Finish after GitHub accepts the
+initiate the required version/tag/release path. Finish after Gitea accepts the
 push or workflow dispatch; do not poll or wait for asynchronous CI/CD.
 
 Use `$implement-language-feature` as well only when the build change modifies
