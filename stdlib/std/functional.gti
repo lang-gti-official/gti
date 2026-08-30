@@ -11,6 +11,8 @@ namespace gti_internal {
 @compiler_constraint("once_action") concept once_action_capability<Callable>;
 @compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
 @compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
+@compiler_constraint("range_predicate") concept range_predicate_capability<Callable, Range>;
+@compiler_constraint("range_operation") concept range_operation_capability<Callable, Range, Result>;
 }
 
 namespace std {
@@ -55,6 +57,10 @@ namespace std {
       gti_internal::indirect_predicate_capability<Predicate, Iterator>;
   concept indirect_operation<Operation, Iterator, Result> =
       gti_internal::indirect_operation_capability<Operation, Iterator, Result>;
+  concept range_predicate<Predicate, Range> =
+      gti_internal::range_predicate_capability<Predicate, Range>;
+  concept range_operation<Operation, Range, Result> =
+      gti_internal::range_operation_capability<Operation, Range, Result>;
 
   /// Consume one exact no-argument action. A reusable target is valid because
   /// a once-only use site may invoke it through owned access; a consuming

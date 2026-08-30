@@ -402,8 +402,8 @@ The following component families remain planned or incomplete:
 - mutable, nested, reseatable, and multi-owner borrowed views;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
-- the remaining callable, complete-range, heterogeneous accumulation, and hash
-  generic-capability families;
+- the remaining callable, output/random-access complete-range, heterogeneous
+  accumulation, and hash generic-capability families;
 - indexed/named/specifier-based and floating-point formatting, formatter
   customization, buffered streams, explicit text decoding, and structured I/O;
 - general filesystem operations, time, random distributions and engine

@@ -1775,6 +1775,14 @@ private:
   structuralConstraintSatisfied(StructuralConstraintKind kind,
                                 std::span<const SemanticType> arguments) const;
 
+  // A constrained generic range is analysed before its concrete begin/end
+  // carrier types exist. Generated range-for endpoints receive private
+  // symbolic iterator/sentinel types; concrete instance reanalysis replaces
+  // them with the selected source declarations before HIR lowering.
+  [[nodiscard]] std::optional<SemanticType>
+  symbolicRangeMemberReturnType(const SemanticType &rangeType,
+                                std::string_view member) const;
+
   [[nodiscard]] std::vector<CallableCandidate> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const;

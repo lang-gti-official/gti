@@ -7443,6 +7443,296 @@ int main() {
          "instantiate against a user cursor and reach valid MIR");
 }
 
+void testCompleteRangeConceptsAndAlgorithms() {
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "complete-range-concepts.gti", R"(
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+class number_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+
+public:
+  number_range() = default;
+  std::detail::vector_iterator<int32_t> begin() {
+    return this.values.begin();
+  }
+  std::detail::vector_mut_iterator<int32_t> begin_mut() mut {
+    return this.values.begin_mut();
+  }
+  std::detail::vector_sentinel end() { return this.values.end(); }
+  std::size_t size() { return this.values.size(); }
+  int32_t at(std::size_t index) { return this.values[index]; }
+};
+
+class positive {
+public:
+  bool operator()(int32_t& value) { return value > 0; }
+};
+
+std::size_t measured_size<Range>(Range& values)
+  requires std::sized_range<Range> {
+  return values.size();
+}
+
+int main() {
+  mut number_range values{};
+  mut int32_t[3] fixed = {1, 2, 3};
+  if (!std::all_of(values, positive()) ||
+      !std::all_of(fixed, positive())) {
+    return 1;
+  }
+  int32_t replacement = 4;
+  std::fill(values, replacement);
+  std::fill(fixed, replacement);
+  return (values.at(std::size_t(1)) == 4 && fixed[1] == 4 &&
+          measured_size(values) == std::size_t(3) &&
+          measured_size(fixed) == std::size_t(3))
+             ? 0
+             : 2;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected complete-range diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.mir.valid() &&
+             lang::verifyHirProgramPlans(valid.semantics, valid.hir).valid() &&
+             lang::verifyMirProgram(valid.mir).valid(),
+         "complete-range concepts should instantiate read-only, mutable, and "
+         "sized generic bodies for nominal ranges and fixed arrays");
+
+  std::size_t structuralRanges = 0;
+  std::size_t fixedRanges = 0;
+  bool exactConcreteProtocol = true;
+  bool fixedInstancesUseConcreteArithmetic = true;
+  bool fixedSizedRangeUsesArrayIntrinsic = false;
+  for (const lang::HirFunctionInstance &hir : valid.hir.functionInstances()) {
+    bool fixedAlgorithmInstance = false;
+    const bool fixedSizedRangeInstance =
+        hir.source != nullptr && hir.source->name().lexeme == "measured_size" &&
+        std::any_of(hir.typeArguments.begin(), hir.typeArguments.end(),
+                    [](const lang::SemanticType &type) {
+                      return type.kind == lang::SemanticType::Array;
+                    });
+    for (const lang::HirStatement &statement : hir.body.statements) {
+      if (!statement.rangeIteration) {
+        continue;
+      }
+      const lang::HirRangeIteration &range = *statement.rangeIteration;
+      if (range.strategy == lang::RangeIterationStrategy::Structural) {
+        ++structuralRanges;
+        exactConcreteProtocol =
+            exactConcreteProtocol && range.beginFunction != 0 &&
+            range.endFunction != 0 && range.compareFunction != 0 &&
+            range.dereferenceFunction != 0 && range.incrementFunction != 0;
+      } else {
+        ++fixedRanges;
+        fixedAlgorithmInstance = true;
+        exactConcreteProtocol =
+            exactConcreteProtocol && range.arrayLength == 3 &&
+            range.beginFunction == 0 && range.endFunction == 0 &&
+            range.compareFunction == 0 && range.dereferenceFunction == 0 &&
+            range.incrementFunction == 0;
+      }
+    }
+    const lang::MirFunctionInstance *mir =
+        fixedAlgorithmInstance || fixedSizedRangeInstance
+            ? valid.mir.findFunctionInstance(hir.id)
+            : nullptr;
+    if (mir == nullptr && fixedAlgorithmInstance) {
+      fixedInstancesUseConcreteArithmetic = false;
+      continue;
+    }
+    if (mir == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : mir->body.blocks) {
+      fixedSizedRangeUsesArrayIntrinsic =
+          fixedSizedRangeUsesArrayIntrinsic ||
+          (fixedSizedRangeInstance &&
+           std::any_of(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                    lang::MirInstructionKind::Call &&
+                                instruction.intrinsic ==
+                                    lang::IntrinsicKind::ArraySize;
+                       }));
+      fixedInstancesUseConcreteArithmetic =
+          fixedInstancesUseConcreteArithmetic &&
+          std::none_of(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                lang::MirInstructionKind::Modify;
+                       });
+    }
+  }
+  expect(structuralRanges == 2 && fixedRanges == 2 && exactConcreteProtocol,
+         "concrete HIR should replace symbolic range carriers with exact "
+         "nominal protocol identities or the fixed-array strategy");
+  expect(fixedInstancesUseConcreteArithmetic,
+         "fixed-array generic instances should suppress symbolic iterator "
+         "operators and retain checked concrete index arithmetic in MIR");
+  expect(fixedSizedRangeUsesArrayIntrinsic,
+         "fixed-array sized_range instances should retain the verified "
+         "ArraySize intrinsic instead of relying on backend member lookup");
+
+  if (valid.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(valid.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
+    expect(!artifact.contents.empty(),
+           "the backend should consume verified complete-range MIR without "
+           "reconstructing the structural concept proof");
+  }
+
+  const lang::FrontendResult missingRange = lang::Frontend().analyze(
+      "complete-range-missing-endpoints.gti", R"(
+#include <std/iterator>
+class not_a_range {};
+bool accepts<Range>(Range& values) requires std::input_range<Range> {
+  for (auto& value : values) {}
+  return true;
+}
+int main() {
+  not_a_range values{};
+  return accepts(values) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingRange.canGenerateCode() &&
+             hasDiagnosticCode(missingRange.diagnostics, "GTI-S2029") &&
+             hasDiagnosticHint(missingRange.diagnostics, "begin()/end()"),
+         "input_range should reject a type without the exact complete-range "
+         "protocol and explain the missing endpoints");
+
+  const lang::FrontendResult wrongElement = lang::Frontend().analyze(
+      "complete-range-wrong-element.gti", R"(
+#include <std/iterator>
+bool accepts<Range>(Range& values) requires std::range_of<Range, int16_t> {
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !wrongElement.canGenerateCode() &&
+          hasDiagnosticCode(wrongElement.diagnostics, "GTI-S2029") &&
+          hasDiagnosticHint(wrongElement.diagnostics,
+                            "exactly the required element type"),
+      "range_of should reject a complete range whose exact referent differs");
+
+  const lang::FrontendResult missingMutable = lang::Frontend().analyze(
+      "complete-range-missing-mutable.gti", R"(
+#include <std/iterator>
+#include <std/vector>
+class read_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+public:
+  std::detail::vector_iterator<int32_t> begin() {
+    return this.values.begin();
+  }
+  std::detail::vector_sentinel end() { return this.values.end(); }
+};
+bool accepts<Range>(mut Range& values)
+  requires std::mutable_range_of<Range, int32_t> {
+  return true;
+}
+int main() {
+  mut read_range values{};
+  return accepts(values) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingMutable.canGenerateCode() &&
+             hasDiagnosticCode(missingMutable.diagnostics, "GTI-S2029") &&
+             hasDiagnosticHint(missingMutable.diagnostics, "begin_mut()/end()"),
+         "mutable_range_of should reject a read-only complete range and "
+         "explain its exact mutable endpoint contract");
+
+  const lang::FrontendResult wrongSize = lang::Frontend().analyze(
+      "complete-range-wrong-size.gti", R"(
+#include <std/iterator>
+#include <std/vector>
+class wrong_size_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+public:
+  std::detail::vector_iterator<int32_t> begin() {
+    return this.values.begin();
+  }
+  std::detail::vector_sentinel end() { return this.values.end(); }
+  int32_t size() { return 1; }
+};
+bool accepts<Range>(Range& values) requires std::sized_range<Range> {
+  return values.size() == std::size_t(1);
+}
+int main() {
+  wrong_size_range values{};
+  return accepts(values) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!wrongSize.canGenerateCode() &&
+             hasDiagnosticCode(wrongSize.diagnostics, "GTI-S2029") &&
+             hasDiagnosticHint(wrongSize.diagnostics,
+                               "size() returning std::size_t"),
+         "sized_range should reject a range with a non-size_t observer");
+
+  const lang::FrontendResult wrongPredicate = lang::Frontend().analyze(
+      "complete-range-wrong-predicate.gti", R"(
+#include <std/functional>
+#include <std/iterator>
+class wrong_predicate {
+public:
+  bool operator()(int16_t& value) { return value > 0; }
+};
+bool accepts<Range, Predicate>(Range& values, Predicate predicate)
+  requires std::range_predicate<Predicate, Range> {
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values, wrong_predicate()) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!wrongPredicate.canGenerateCode() &&
+             hasDiagnosticCode(wrongPredicate.diagnostics, "GTI-S2029") &&
+             hasDiagnosticHint(wrongPredicate.diagnostics,
+                               "range's read-only element"),
+         "range_predicate should derive and enforce the exact range element");
+
+  const lang::FrontendResult directEndpoint = lang::Frontend().analyze(
+      "complete-range-direct-endpoint.gti", R"(
+#include <std/iterator>
+bool accepts<Range>(Range& values) requires std::input_range<Range> {
+  auto iterator = values.begin();
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!directEndpoint.canGenerateCode() &&
+             hasDiagnosticCode(directEndpoint.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(directEndpoint.diagnostics,
+                           "Direct structural range endpoint"),
+         "complete-range proof carriers should remain private to generated "
+         "range iteration until public endpoint extraction has a complete "
+         "owner-dependent iterator contract");
+}
+
 void testGeneralOwnerDependentReturns() {
   const lang::FrontendResult valid =
       analyzeWithMemory("owner-dependent-returns.gti", R"(
@@ -17794,6 +18084,8 @@ constexpr NamedTest kTests[] = {
      testForwardIteratorContractsAndBinarySearch},
     {"testWritableAndMovementIteratorCapabilities",
      testWritableAndMovementIteratorCapabilities},
+    {"testCompleteRangeConceptsAndAlgorithms",
+     testCompleteRangeConceptsAndAlgorithms},
     {"testGeneralOwnerDependentReturns", testGeneralOwnerDependentReturns},
     {"testSwitchAndBreakLoanFlow", testSwitchAndBreakLoanFlow},
     {"testSharedReadOnlyLoanAliases", testSharedReadOnlyLoanAliases},

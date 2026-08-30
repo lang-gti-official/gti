@@ -778,14 +778,24 @@ final return of the repeatedly invoked parameter is implemented, but arbitrary
 owned escape and storage remain unavailable. No algorithm may force a callable
 into storage merely to traverse a range.
 
+The complete-range slice is now implemented without a source-visible
+associated-type system. `std::input_range`, `std::range_of`,
+`std::mutable_range_of`, and `std::sized_range` derive exact endpoint,
+dereference, and size facts from a nominal owner or fixed array.
+`std::range_predicate` and `std::range_operation` derive the readable element
+for a repeatable callable. The generic whole-range predicate family,
+`for_each`, and `fill` use these concepts; concrete reanalysis replaces private
+symbolic endpoint carriers before HIR/MIR.
+
 ### Current public blocker matrix
 
 | Module | Public function family | Status | True blocker category |
 | --- | --- | --- | --- |
 | `<std/algorithm>` | `find`, `count` | Implemented | Exact iterator/sentinel/dereference/equality contracts plus declaration-linked `first` return ownership now suffice. |
 | `<std/algorithm>` | `for_each` | Implemented | Repeated exact `void(T&)` invocation now composes with one exact moved callable return. |
+| `<std/algorithm>` | complete-range `all_of`, `any_of`, `none_of`, `count_if`, `for_each` | Implemented | Structural read endpoints plus exact range-predicate/operation relations accept nominal ranges and fixed arrays without public-name recognition. |
 | `<std/algorithm>` | `copy` | Implemented | `std::output_iterator` (mut dereference plus increment) drives the destination; the advanced mutable cursor is not returned because mutable owner-tied cursors cannot escape returns. |
-| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | Implemented (whole-container forms) | The `std::vector<T>` forms name the element type and hold one exclusive borrow. Iterator-pair in-place forms remain blocked: `begin_mut()` plus `end()` in one call is an ownership conflict, read-receiver methods on parameter-held mutable cursors are miscounted against the carrier's own loan, and elements rewrite by copy because indexed move-out awaits place-aware initialization tracking. |
+| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | `fill` is generic complete-range; the others have vector whole-owner forms | The exact mutable-range relation gives `fill` its element type and one exclusive borrow. Iterator-pair in-place forms remain blocked because `begin_mut()` plus `end()` in one call is an ownership conflict. The other rewrites still copy elements because indexed move-out awaits place-aware initialization tracking. |
 | `<std/algorithm>` | `sort(compare)` | Deferred | The default-`<` partition sort landed first; the comparator overload follows once a confined two-reference-argument comparator client is proven. |
 | `<std/utility>` | `swap`, `exchange` | Declaration only | Moving a value out through `mut T&`, then restoring that place on all paths, is not expressible. |
 | `<std/iterator>` | signed `advance`, signed `next`, `prev` | Implemented | `std::bidirectional_iterator` steps `advance` in both directions for value-state cursors (owner-tied cursors cannot pass through `mut Iterator&`), and `std::random_access_iterator` jumps the by-value `next`. |

@@ -1,0 +1,62 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+class readings {
+  mut std::vector<int32_t> values = std::vector<int32_t>({2, 4, 6});
+
+public:
+  readings() = default;
+
+  std::detail::vector_iterator<int32_t> begin() {
+    return this.values.begin();
+  }
+
+  std::detail::vector_mut_iterator<int32_t> begin_mut() mut {
+    return this.values.begin_mut();
+  }
+
+  std::detail::vector_sentinel end() {
+    return this.values.end();
+  }
+
+  std::size_t size() {
+    return this.values.size();
+  }
+
+  int32_t at(std::size_t index) {
+    return this.values[index];
+  }
+};
+
+class positive {
+public:
+  bool operator()(int32_t& value) {
+    return value > 0;
+  }
+};
+
+std::size_t measured_size<Range>(Range& range)
+  requires std::sized_range<Range> {
+  return range.size();
+}
+
+int main() {
+  mut readings samples{};
+  mut int32_t[3] fixed = {1, 3, 5};
+
+  if (!std::all_of(samples, positive()) ||
+      !std::all_of(fixed, positive())) {
+    return 1;
+  }
+
+  int32_t replacement = 7;
+  std::fill(samples, replacement);
+  std::fill(fixed, replacement);
+
+  return (samples.at(std::size_t(1)) == 7 && fixed[1] == 7 &&
+          measured_size(samples) == std::size_t(3) &&
+          measured_size(fixed) == std::size_t(3))
+             ? 0
+             : 2;
+}

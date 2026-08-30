@@ -2014,6 +2014,9 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr) -> SemanticType {
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles)
     -> SemanticType {
+  if (instanceAnalysisActive) {
+    semanticModel.suppressInheritedOperator(expr);
+  }
   expr.accept(*this);
   SemanticType result = currentType;
   ExpressionInfo info = classifyExpression(expr, result);

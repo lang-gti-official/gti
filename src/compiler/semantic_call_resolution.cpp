@@ -2,6 +2,38 @@
 
 namespace lang {
 
+namespace {
+
+enum class SymbolicRangeCarrier : ClassId {
+  None = 0,
+  ReadIterator = 1,
+  MutableIterator = 2,
+  Sentinel = 3,
+};
+
+[[nodiscard]] SemanticType
+symbolicRangeCarrierType(const SemanticType &range,
+                         SymbolicRangeCarrier carrier) {
+  SemanticType result = SemanticType::typeParameter(range.genericParameterId);
+  result.classId = static_cast<ClassId>(carrier);
+  result.arguments = {range};
+  return result;
+}
+
+[[nodiscard]] std::optional<std::pair<SemanticType, SymbolicRangeCarrier>>
+symbolicRangeCarrier(const SemanticType &type) {
+  if (type.kind != SemanticType::TypeParameter || type.arguments.size() != 1 ||
+      type.arguments.front().kind != SemanticType::TypeParameter ||
+      type.classId < static_cast<ClassId>(SymbolicRangeCarrier::ReadIterator) ||
+      type.classId > static_cast<ClassId>(SymbolicRangeCarrier::Sentinel)) {
+    return std::nullopt;
+  }
+  return std::pair{type.arguments.front(),
+                   static_cast<SymbolicRangeCarrier>(type.classId)};
+}
+
+} // namespace
+
 auto SemanticVisitor::Impl::validateStorageValueConstruction(
     const Call &expr, const SemanticType &elementType,
     const std::vector<AnalyzedCallArgument> &arguments) -> void {
@@ -3524,6 +3556,59 @@ auto SemanticVisitor::Impl::selectStructuralOperator(
   return candidates.front();
 }
 
+auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
+    const SemanticType &rangeType, std::string_view member) const
+    -> std::optional<SemanticType> {
+  if (rangeType.kind != SemanticType::TypeParameter || rangeType.classId != 0 ||
+      !rangeType.arguments.empty()) {
+    return std::nullopt;
+  }
+
+  bool readable = false;
+  bool writable = false;
+  bool sized = false;
+  for (const ExpandedStructuralRequirement &requirement :
+       activeStructuralRequirements()) {
+    if (requirement.arguments.empty() ||
+        requirement.arguments.front() != rangeType) {
+      continue;
+    }
+    switch (requirement.kind) {
+    case StructuralConstraintKind::InputRange:
+    case StructuralConstraintKind::RangeOf:
+    case StructuralConstraintKind::RangePredicate:
+    case StructuralConstraintKind::RangeOperation:
+      readable = true;
+      break;
+    case StructuralConstraintKind::MutableRangeOf:
+      readable = true;
+      writable = true;
+      break;
+    case StructuralConstraintKind::SizedRange:
+      sized = true;
+      break;
+    default:
+      break;
+    }
+  }
+
+  if (member == "begin" && readable) {
+    return symbolicRangeCarrierType(rangeType,
+                                    SymbolicRangeCarrier::ReadIterator);
+  }
+  if (member == "begin_mut" && writable) {
+    return symbolicRangeCarrierType(rangeType,
+                                    SymbolicRangeCarrier::MutableIterator);
+  }
+  if (member == "end" && readable) {
+    return symbolicRangeCarrierType(rangeType, SymbolicRangeCarrier::Sentinel);
+  }
+  if (member == "size" && sized) {
+    return SemanticType::UInt64;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     StructuralConstraintKind kind,
     std::span<const SemanticType> arguments) const -> bool {
@@ -3580,6 +3665,67 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         selectStructuralOperator(iterator, mutation, parameters, true);
     return candidate && candidate->returnType == SemanticType::Void &&
            candidate->receiverMutability == ReceiverMutability::Mutable;
+  };
+  const auto selectedRangeMember =
+      [&](const SemanticType &range, std::string_view name,
+          ReceiverMutability receiver) -> std::optional<CallableCandidate> {
+    const ClassInfo *owner = classInfo(range);
+    if (owner == nullptr) {
+      return std::nullopt;
+    }
+    const auto found = owner->members.find(std::string(name));
+    if (found == owner->members.end() ||
+        found->second.symbol.type != SemanticType::Function) {
+      return std::nullopt;
+    }
+    const Symbol overloadSet = substituteSymbol(found->second.symbol, range);
+    std::vector<CallableCandidate> candidates;
+    for (const CallableCandidate &candidate : overloadSet.overloads) {
+      if (!candidate.staticMember &&
+          candidate.access == AccessModifier::Public &&
+          !candidate.compilerPrivate && candidate.requirements.empty() &&
+          candidate.parameterTypes.empty() &&
+          candidate.receiverMutability == receiver) {
+        candidates.emplace_back(candidate);
+      }
+    }
+    return candidates.size() == 1
+               ? std::optional<CallableCandidate>{candidates.front()}
+               : std::nullopt;
+  };
+  struct ReadRangeShape {
+    SemanticType iterator;
+    SemanticType sentinel;
+  };
+  const auto readRangeShape =
+      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
+    const std::optional<CallableCandidate> begin =
+        selectedRangeMember(range, "begin", ReceiverMutability::ReadOnly);
+    const std::optional<CallableCandidate> end =
+        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
+    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
+        end->returnType.kind == SemanticType::Reference ||
+        begin->returnType == SemanticType::Void ||
+        end->returnType == SemanticType::Void) {
+      return std::nullopt;
+    }
+    return ReadRangeShape{.iterator = begin->returnType,
+                          .sentinel = end->returnType};
+  };
+  const auto mutableRangeShape =
+      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
+    const std::optional<CallableCandidate> begin =
+        selectedRangeMember(range, "begin_mut", ReceiverMutability::Mutable);
+    const std::optional<CallableCandidate> end =
+        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
+    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
+        end->returnType.kind == SemanticType::Reference ||
+        begin->returnType == SemanticType::Void ||
+        end->returnType == SemanticType::Void) {
+      return std::nullopt;
+    }
+    return ReadRangeShape{.iterator = begin->returnType,
+                          .sentinel = end->returnType};
   };
 
   // A domain value operator is an exact read-only member returning an owned
@@ -3720,6 +3866,34 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            callableSatisfies(arguments[0], arguments.subspan(1, 2),
                              arguments[3], capability);
   };
+  const auto readableRangeElement =
+      [&](const SemanticType &range) -> std::optional<SemanticType> {
+    if (range.kind == SemanticType::Array && range.arguments.size() == 1) {
+      return range.arguments.front();
+    }
+    const std::optional<ReadRangeShape> shape = readRangeShape(range);
+    if (!shape) {
+      return std::nullopt;
+    }
+    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
+    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
+                                                        shape->iterator};
+    if (!structuralConstraintSatisfied(StructuralConstraintKind::InputIterator,
+                                       iteratorArguments) ||
+        !structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
+                                       sentinelArguments)) {
+      return std::nullopt;
+    }
+    const std::optional<CallableCandidate> dereference =
+        selectedDereference(shape->iterator);
+    if (!dereference ||
+        dereference->returnType.kind != SemanticType::Reference ||
+        dereference->returnType.arguments.size() != 1 ||
+        dereference->returnType.referenceAccess != AccessMode::ReadOnly) {
+      return std::nullopt;
+    }
+    return dereference->returnType.arguments.front();
+  };
 
   switch (kind) {
   case StructuralConstraintKind::InputIterator: {
@@ -3800,6 +3974,53 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return difference && difference->returnType == SemanticType::Int64 &&
            difference->receiverMutability == ReceiverMutability::ReadOnly;
   }
+  case StructuralConstraintKind::InputRange:
+    return arguments.size() == 1 &&
+           readableRangeElement(arguments.front()).has_value();
+  case StructuralConstraintKind::RangeOf: {
+    if (arguments.size() != 2) {
+      return false;
+    }
+    const std::optional<SemanticType> element =
+        readableRangeElement(arguments[0]);
+    return element && *element == arguments[1];
+  }
+  case StructuralConstraintKind::MutableRangeOf: {
+    if (arguments.size() != 2) {
+      return false;
+    }
+    if (arguments[0].kind == SemanticType::Array &&
+        arguments[0].arguments.size() == 1) {
+      return arguments[0].arguments.front() == arguments[1];
+    }
+    const std::optional<ReadRangeShape> shape = mutableRangeShape(arguments[0]);
+    if (!shape) {
+      return false;
+    }
+    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
+    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
+                                                        shape->iterator};
+    const std::array<SemanticType, 2> writeArguments{shape->iterator,
+                                                     arguments[1]};
+    return structuralConstraintSatisfied(
+               StructuralConstraintKind::WritableIterator, iteratorArguments) &&
+           structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
+                                         sentinelArguments) &&
+           structuralConstraintSatisfied(StructuralConstraintKind::WritesTo,
+                                         writeArguments);
+  }
+  case StructuralConstraintKind::SizedRange: {
+    if (arguments.size() != 1) {
+      return false;
+    }
+    if (arguments.front().kind == SemanticType::Array &&
+        arguments.front().arguments.size() == 1) {
+      return true;
+    }
+    const std::optional<CallableCandidate> size = selectedRangeMember(
+        arguments.front(), "size", ReceiverMutability::ReadOnly);
+    return size && size->returnType == SemanticType::UInt64;
+  }
   // The domain family is deliberately member-only, matching the language's
   // member-only user-operator rule. A built-in numeric keeps its own
   // checked arithmetic and its `std::numeric` contract: admitting one here
@@ -3865,6 +4086,24 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                              std::span<const SemanticType>(&element, 1), result,
                              CallableInvocationCapability::Mutable);
   }
+  case StructuralConstraintKind::RangePredicate:
+  case StructuralConstraintKind::RangeOperation: {
+    if (arguments.size() !=
+        (kind == StructuralConstraintKind::RangePredicate ? 2 : 3)) {
+      return false;
+    }
+    const std::optional<SemanticType> element =
+        readableRangeElement(arguments[1]);
+    if (!element) {
+      return false;
+    }
+    const SemanticType &result =
+        kind == StructuralConstraintKind::RangePredicate ? SemanticType::Bool
+                                                         : arguments[2];
+    return callableSatisfies(arguments[0],
+                             std::span<const SemanticType>(&*element, 1),
+                             result, CallableInvocationCapability::Mutable);
+  }
   case StructuralConstraintKind::None:
     return true;
   }
@@ -3876,6 +4115,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     std::span<const SemanticType> argumentTypes) const
     -> std::vector<CallableCandidate> {
   std::vector<CallableCandidate> result;
+  const auto rangeCarrier = symbolicRangeCarrier(receiverType);
   for (const ExpandedStructuralRequirement &requirement :
        activeStructuralRequirements()) {
     CallableCandidate candidate;
@@ -4002,6 +4242,55 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         matches = true;
       }
       break;
+    case StructuralConstraintKind::InputRange:
+    case StructuralConstraintKind::RangeOf:
+    case StructuralConstraintKind::MutableRangeOf: {
+      if (!rangeCarrier || requirement.arguments.empty() ||
+          requirement.arguments.front() != rangeCarrier->first) {
+        break;
+      }
+      const bool mutableRange =
+          requirement.kind == StructuralConstraintKind::MutableRangeOf;
+      const SymbolicRangeCarrier expectedCarrier =
+          mutableRange ? SymbolicRangeCarrier::MutableIterator
+                       : SymbolicRangeCarrier::ReadIterator;
+      if (rangeCarrier->second != expectedCarrier) {
+        break;
+      }
+      const SemanticType sentinel = symbolicRangeCarrierType(
+          rangeCarrier->first, SymbolicRangeCarrier::Sentinel);
+      if (kind == OverloadedOperator::PreIncrement && argumentTypes.empty()) {
+        candidate.returnType = SemanticType::Void;
+        candidate.receiverMutability = ReceiverMutability::Mutable;
+        matches = true;
+      } else if (kind == OverloadedOperator::Dereference &&
+                 argumentTypes.empty()) {
+        const SemanticType element = requirement.arguments.size() == 2
+                                         ? requirement.arguments[1]
+                                         : SemanticType::Unknown;
+        candidate.returnType = SemanticType::referenceTo(
+            element, mutableRange ? AccessMode::Mutable : AccessMode::ReadOnly);
+        candidate.receiverMutability = mutableRange
+                                           ? ReceiverMutability::Mutable
+                                           : ReceiverMutability::ReadOnly;
+        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
+        candidate.returnBorrowAccess =
+            mutableRange ? AccessMode::Mutable : AccessMode::ReadOnly;
+        matches = true;
+      } else if (kind == OverloadedOperator::NotEqual &&
+                 argumentTypes.size() == 1 &&
+                 argumentTypes.front() == sentinel) {
+        candidate.returnType = SemanticType::Bool;
+        candidate.parameterTypes = {
+            SemanticType::referenceTo(sentinel, AccessMode::ReadOnly)};
+        candidate.receiverMutability = ReceiverMutability::ReadOnly;
+        matches = true;
+      }
+      break;
+    }
+    case StructuralConstraintKind::SizedRange:
+      // size() is a generated member-call fact rather than an operator.
+      break;
 
     // A domain operator produces an owned value of the receiver's own type.
     // The operand is named by reference so the concrete member may take it
@@ -4053,6 +4342,8 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     case StructuralConstraintKind::OnceAction:
     case StructuralConstraintKind::IndirectPredicate:
     case StructuralConstraintKind::IndirectOperation:
+    case StructuralConstraintKind::RangePredicate:
+    case StructuralConstraintKind::RangeOperation:
       // Callable requirements constrain ordinary invocation rather than a
       // member operator expression synthesized by this table.
       break;

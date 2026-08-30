@@ -294,6 +294,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testCompleteRangeConceptsAndAlgorithms",
+      "suite": "ownership"
+    },
+    {
       "name": "testGeneralOwnerDependentReturns",
       "suite": "ownership"
     },

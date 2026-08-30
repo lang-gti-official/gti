@@ -384,6 +384,18 @@ updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
 unchanged from the previous whole-model-copy design.
 
+A complete-range requirement is checked symbolically before its concrete
+iterator and sentinel types exist. The primary analysis therefore uses private
+range-derived carrier types for generated `begin`/`begin_mut`/`end`,
+dereference, comparison, and increment operations, and records `size()` as the
+exact `std::size_t` fact supplied by `sized_range`. These carrier types never
+become public associated types. Concrete instance analysis selects ordinary
+source members or the fixed-array strategy, and the instance delta suppresses
+any inherited symbolic operator row that the concrete body replaces with a
+built-in operation. HIR accepts a generic-primary range plan only as a shape
+proof; every emitted concrete plan still contains exact protocol identities,
+loan shape, and checked fixed-array operations.
+
 A generic primary may contain an inferred local whose symbolic initializer is
 valid under the active requirements but has no one declaration-wide concrete
 type. The canonical example is `auto value = *first` under

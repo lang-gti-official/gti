@@ -1,8 +1,8 @@
 # Ranges and iterators
 
 Status: current through the bounded L-RANGE-03 single-owner view release,
-M-OWN-04 named Expected-payload range loans, and the iterator/sentinel
-algorithm cluster
+M-OWN-04 named Expected-payload range loans, and the L-RANGE-04
+iterator/sentinel plus complete-range algorithm cluster
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -187,6 +187,52 @@ ordinary ownership rules.
 mutable endpoint. Ordinary retained-loan diagnostics diagnose overlapping
 access and invalidation attempts.
 
+## Complete-range concepts
+
+`<std/iterator>` exposes bounded structural concepts for generic code that
+wants the complete owner rather than an iterator/sentinel pair:
+
+- `std::input_range<Range>` proves the exact public read-only `begin()` and
+  `end()` protocol plus input iteration and sentinel comparison;
+- `std::range_of<Range, T>` additionally proves that read-only dereference
+  returns exactly `T&`;
+- `std::mutable_range_of<Range, T>` proves the exact mutable `begin_mut()`
+  endpoint and `mut T&` dereference; and
+- `std::sized_range<Range>` proves one exact public read-only `size()` returning
+  `std::size_t`.
+
+Fixed arrays satisfy these concepts through their checked indexed range plan;
+they do not acquire members or decay to pointers. A nominal range satisfies
+them only through one exact accessible non-static overload for each required
+member and iterator operation. Return conversions, native lookup, ambiguous
+overloads, private/compiler-private members, and generic endpoint methods do
+not satisfy the first bounded contract.
+
+The constrained generic body may iterate `Range&`, `mut Range&`, or call the
+proven zero-argument `size()` member directly. Symbolic analysis uses private
+iterator and sentinel carriers only to prove that body. Concrete instance
+analysis replaces them with the selected source declarations or fixed-array
+strategy before HIR; HIR/MIR never carry an unresolved public associated type
+or delegate range selection to C++.
+
+`<std/functional>` similarly provides `std::range_predicate<Predicate, Range>`
+and `std::range_operation<Operation, Range, Result>`. They derive the exact
+read-only element from the complete range and require one repeatable exact
+callable. `<std/algorithm>` uses these facts for generic whole-range `all_of`,
+`any_of`, `none_of`, `count_if`, and `for_each`; generic `fill` uses
+`mutable_range_of`. The same source implementations accept application-defined
+nominal ranges, standard-library ranges, and fixed arrays. No algorithm or
+public range name is compiler-known. See
+[`examples/83-complete-ranges.gti`](../../examples/83-complete-ranges.gti).
+
+The bounded concepts intentionally expose no iterator associated-type syntax,
+direct symbolic `begin()`/`begin_mut()`/`end()` extraction, range adaptor,
+borrowed-range trait, implicit conversion, or invalidation customization.
+Generic code should use range-based `for`, or accept already-formed endpoints
+under the iterator concepts. Iterator-pair APIs remain available when a client
+already owns non-overlapping endpoints; forming `begin_mut()` and `end()`
+independently from one owner is still rejected because their loans overlap.
+
 ## Single-owner spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
@@ -295,16 +341,17 @@ sized-sentinel operator sets, so `std::prev`, signed `std::next`, in-place
 `+=`/`-=` movement, and `cursor - sentinel` distances are ordinary generic
 code over it.
 
-`std::fill`, `std::transform`, `std::reverse`, and `std::sort` take the owning
-`std::vector<T>` directly. The whole-container forms exist because the
+`std::fill` accepts any exact `mutable_range_of<Range, T>`.
+`std::transform`, `std::reverse`, and `std::sort` still take the owning
+`std::vector<T>` directly. These whole-owner forms exist because the
 iterator-pair spelling would either need a read borrow of the owner while its
 exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
-one call) or retainable mutable cursors in ordinary bodies; the container form
-keeps one exclusive borrow for the whole rewrite and names the element type
-for locals. In-place element rewrites copy the element out and assign it back,
-so their element types require `std::copyable` until moving out of an indexed
-element is representable. `std::sort` orders by `operator<` through a
-partition exchange whose recursion always descends into the smaller side.
+one call) or retainable mutable cursors in ordinary bodies. Each form keeps one
+exclusive borrow for the whole rewrite and names the element type for locals.
+In-place element rewrites copy the element out and assign it back, so their
+element types require `std::copyable` until moving out of an indexed element is
+representable. `std::sort` orders by `operator<` through a partition exchange
+whose recursion always descends into the smaller side.
 
 `for_each` invokes its by-value callable zero or more times with the exact
 checked-reference type produced by dereference, then returns that same callable
@@ -384,12 +431,10 @@ It makes one counting pass, then copies and advances cursors to select
 midpoints. A possibly distinct `last` remains an immutable sentinel; no
 iterator subtraction or numeric iterator operation is required. The algorithm
 performs logarithmic comparisons and linear iterator increments, and requires
-the input to already be sorted according to `operator<`. Whole-vector
-`all_of`, `any_of`, `none_of`, `count_if`, `for_each`, `transform`, and
-comparator `sort` provide the first complete-container clients through ordinary
-overloads and public callable concepts. They do not establish a structural
-range concept: complete-range, readable/writable element, sized-range,
-random-access, and public invalidation capabilities remain missing. A public
-range-first form over arbitrary structural ranges should wait for those
-capabilities instead of teaching the compiler a public container or algorithm
-name.
+the input to already be sorted according to `operator<`. Whole-range `all_of`,
+`any_of`, `none_of`, `count_if`, `for_each`, and `fill` use the structural
+complete-range concepts above. `transform`, `reverse`, and comparator `sort`
+remain bounded to `std::vector` while their additional output, movement, and
+random-access complete-range relationships are not yet public. Public
+invalidation capabilities also remain absent; ownership conservatively
+protects the whole owner during iteration.

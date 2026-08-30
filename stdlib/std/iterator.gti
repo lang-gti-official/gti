@@ -12,6 +12,10 @@ namespace gti_internal {
 @compiler_constraint("random_access_iterator") concept random_access_iterator_capability<I>;
 @compiler_constraint("subscripts_to_mut") concept subscripts_to_mut_capability<I, T>;
 @compiler_constraint("sized_sentinel_for") concept sized_sentinel_for_capability<S, I>;
+@compiler_constraint("input_range") concept input_range_capability<R>;
+@compiler_constraint("range_of") concept range_of_capability<R, T>;
+@compiler_constraint("mutable_range_of") concept mutable_range_of_capability<R, T>;
+@compiler_constraint("sized_range") concept sized_range_capability<R>;
 }
 
 namespace std {
@@ -58,6 +62,22 @@ concept subscripts_to_mut<Iterator, T> =
 concept sized_sentinel_for<Sentinel, Iterator> =
     std::sentinel_for<Sentinel, Iterator> &&
     gti_internal::sized_sentinel_for_capability<Sentinel, Iterator>;
+
+// Complete-range concepts derive the private iterator and sentinel selected by
+// a range's exact begin/end protocol. They intentionally expose no associated
+// iterator type: range-first generic code iterates the owner directly, and
+// concrete reanalysis retains the selected source declarations.
+concept input_range<Range> =
+    gti_internal::input_range_capability<Range>;
+concept range_of<Range, T> =
+    std::input_range<Range> &&
+    gti_internal::range_of_capability<Range, T>;
+concept mutable_range_of<Range, T> =
+    std::range_of<Range, T> &&
+    gti_internal::mutable_range_of_capability<Range, T>;
+concept sized_range<Range> =
+    std::input_range<Range> &&
+    gti_internal::sized_range_capability<Range>;
 
 struct input_iterator_tag {};
 struct output_iterator_tag {};

@@ -275,6 +275,12 @@ confined generic callables and standard algorithms. Function items are
 zero-state GTI callable identities; they are not native function pointers and
 cannot be stored as ordinary values.
 
+`83-complete-ranges.gti` defines an application-owned range with the exact
+read-only, mutable, and sized structural protocol. The same source-defined
+`std::all_of` and `std::fill` implementations accept that nominal range and a
+fixed array; `std::sized_range` also proves a generic `size()` call without
+compiler recognition of either the range or algorithm name.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

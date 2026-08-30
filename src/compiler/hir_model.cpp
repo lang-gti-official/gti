@@ -490,7 +490,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             range->elementLoan == semantic->elementLoan));
       const bool exactSemantic =
           semantic != nullptr && range != nullptr && exactConcreteTypes &&
-          range->strategy == semantic->strategy &&
+          (genericSemantic || range->strategy == semantic->strategy) &&
           (genericSemantic || (range->rangeType == semantic->rangeType &&
                                range->iteratorType == semantic->iteratorType &&
                                range->sentinelType == semantic->sentinelType &&
@@ -498,11 +498,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                range->arrayLength == semantic->arrayLength)) &&
           range->elementAccess == semantic->elementAccess &&
           exactLoanProvenance &&
-          range->beginFunction == semantic->beginFunction &&
-          range->endFunction == semantic->endFunction &&
-          range->compareFunction == semantic->compareFunction &&
-          range->dereferenceFunction == semantic->dereferenceFunction &&
-          range->incrementFunction == semantic->incrementFunction &&
+          (genericSemantic ||
+           (range->beginFunction == semantic->beginFunction &&
+            range->endFunction == semantic->endFunction &&
+            range->compareFunction == semantic->compareFunction &&
+            range->dereferenceFunction == semantic->dereferenceFunction &&
+            range->incrementFunction == semantic->incrementFunction)) &&
           range->ownsRangeTemporary == semantic->ownsRangeTemporary &&
           range->expectedPayloadProjection ==
               semantic->expectedPayloadProjection;
