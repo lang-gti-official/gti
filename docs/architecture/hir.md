@@ -47,10 +47,14 @@ that policy from a backend representation or alternative name.
 For the admitted direct by-value callable family, HIR uses the ordinary
 ordered-input schedule rather than a payload-specific call node. A direct
 active enum selects `CopyValue` only when its folded traits permit copying and
-otherwise requires an explicit or fresh move path; wrappers containing the
-enum never inherit that permission. Results retain the exact enum type and
-ordinary callable identity. This keeps callable selection and copy/move policy
-in the frontend while leaving concrete parameter and result lifetimes to MIR.
+otherwise requires an explicit or fresh move path. Results retain the exact
+enum type and ordinary callable identity. An admitted ordinary class or struct
+field retains that enum type in its existing initializer and lifecycle rows;
+the containing class's folded move/drop policy is the transport authority, not
+a new payload-specific HIR operation. Other wrappers do not inherit this
+permission. This keeps callable selection, containment eligibility, and
+copy/move policy in the frontend while leaving concrete field publication and
+result lifetimes to MIR.
 
 The execution profile is immutable program metadata, not a body operation.
 HIR preserves it for later concurrency boundaries but does not repeat the

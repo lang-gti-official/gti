@@ -583,11 +583,22 @@ call's success edge; defined failure cleans active arguments but never cleans
 an unpublished result. These rules preserve one active variant and
 exactly-once cleanup across the boundary.
 
+An ordinary non-generic, non-polymorphic class or struct may own the same
+obligation in a direct field. In-class and constructor initializers publish
+the field only after its enum construction succeeds. A later constructor
+failure drops exactly the already-published fields in reverse declaration
+order; an unpublished field has no obligation. Generated movement transfers
+the field obligation with its containing value, and direct mutable-field
+replacement drops the old alternative before publishing the explicitly moved
+replacement. Normal scope exit, `return`, `break`, `continue`, partial
+construction, and defined runtime failure therefore retain exactly one owner
+and one eventual drop.
+
 Generic callable families, polymorphic dispatch, lambda capture of an owning
-payload enum, aggregate or generic-wrapper containment, stored borrowed state,
-recursive active carriers, and consuming or borrowed match bindings remain
-diagnosed before execution lowering. No native C ABI or implicit wrapper
-cleanup is inferred.
+payload enum, recursive containment, fixed arrays and other generic-wrapper
+containment, stored borrowed state, and consuming or borrowed match bindings
+remain diagnosed before execution lowering. No native C ABI, stable layout,
+or implicit cleanup for an unsupported wrapper is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the

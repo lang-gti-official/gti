@@ -20,6 +20,9 @@ struct MirProgramTestAccess {
   static std::vector<MirPayloadEnum> &payloadEnums(MirProgram &program) {
     return program.payloadEnums_;
   }
+  static std::vector<MirClassInstance> &classInstances(MirProgram &program) {
+    return program.classes;
+  }
 };
 
 } // namespace lang
@@ -48,11 +51,30 @@ bool hasCode(const lang::FrontendResult &result, std::string_view code) {
                      });
 }
 
+std::size_t countCode(const lang::FrontendResult &result,
+                      std::string_view code) {
+  return std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.code == code;
+                       });
+}
+
 bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
   return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                      [&](const lang::Diagnostic &diagnostic) {
                        return diagnostic.message.find(text) !=
                               std::string::npos;
+                     });
+}
+
+bool hasHint(const lang::FrontendResult &result, std::string_view text) {
+  return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const lang::Diagnostic &diagnostic) {
+                       return std::any_of(
+                           diagnostic.hints.begin(), diagnostic.hints.end(),
+                           [&](const std::string &hint) {
+                             return hint.find(text) != std::string::npos;
+                           });
                      });
 }
 
@@ -222,9 +244,10 @@ void testSemanticAndIrModel() {
       gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&
-          artifact.contents.find("std::variant<") != std::string::npos &&
+          artifact.contents.find("std::variant<std::monostate") !=
+              std::string::npos &&
           artifact.contents.find(".__gti_value.index()") != std::string::npos &&
-          artifact.contents.find("std::get<1>(") != std::string::npos &&
+          artifact.contents.find("std::get<2>(") != std::string::npos &&
           artifact.contents.find("std::is_union_v<Bits>") != std::string::npos,
       "the C++ backend should use native unions and tagged variant storage");
 }
@@ -732,20 +755,127 @@ public:
 };
 enum class holder { one(resource value), none };
 class wrapper {
-private:
-  holder value;
+public:
+  holder value = holder::one(resource());
 };
+struct default_wrapper {
+  holder value = holder::one(resource());
+};
+int main() {
+  wrapper first = wrapper();
+  default_wrapper second = default_wrapper();
+  return 0;
+}
+)");
+  if (!aggregateContainment.canGenerateCode()) {
+    printDiagnostics(aggregateContainment);
+  }
+  std::size_t activeOwners = 0;
+  bool exactActiveFieldRows = true;
+  for (const lang::MirClassInstance &owner :
+       aggregateContainment.mir.classInstances()) {
+    const bool ownsPayload =
+        std::any_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                    [](const lang::MirClassFieldInfo &field) {
+                      return field.type.kind == lang::SemanticType::Enum &&
+                             field.requiresActiveCleanup;
+                    });
+    if (!ownsPayload) {
+      continue;
+    }
+    ++activeOwners;
+    exactActiveFieldRows =
+        exactActiveFieldRows && owner.requiresActiveCleanup &&
+        owner.traits.drop == lang::DropKind::Lexical &&
+        owner.declaredFields.size() == 1 && owner.fields.size() == 1 &&
+        owner.fieldDropOrder.size() == 1 &&
+        owner.declaredFields.front().requiresActiveCleanup &&
+        owner.fields.front().requiresActiveCleanup &&
+        owner.fieldDropOrder.front().requiresActiveCleanup;
+  }
+  expect(aggregateContainment.canGenerateCode() &&
+             lang::verifyMirProgram(aggregateContainment.mir).valid() &&
+             activeOwners == 2 && exactActiveFieldRows,
+         "ordinary class and struct fields should retain one exact active "
+         "payload-enum cleanup row through verified MIR");
+
+  const lang::BackendArtifact containmentArtifact =
+      gti_test::emitCpp(aggregateContainment);
+  const std::size_t enumDefinition =
+      containmentArtifact.contents.find("struct holder {");
+  const std::size_t wrapperDefinition =
+      containmentArtifact.contents.find("class wrapper {");
+  expect(enumDefinition != std::string::npos &&
+             wrapperDefinition != std::string::npos &&
+             enumDefinition < wrapperDefinition &&
+             containmentArtifact.contents.find("std::variant<std::monostate") !=
+                 std::string::npos,
+         "the C++ type schedule should define an embedded payload enum before "
+         "its owning class and retain the private disengaged shell");
+
+  lang::MirProgram forgedContainment = aggregateContainment.mir;
+  auto &forgedClasses =
+      lang::MirProgramTestAccess::classInstances(forgedContainment);
+  const auto forgedOwner =
+      std::find_if(forgedClasses.begin(), forgedClasses.end(),
+                   [](const lang::MirClassInstance &owner) {
+                     return !owner.declaredFields.empty() &&
+                            owner.declaredFields.front().type.kind ==
+                                lang::SemanticType::Enum &&
+                            owner.declaredFields.front().requiresActiveCleanup;
+                   });
+  if (forgedOwner != forgedClasses.end()) {
+    forgedOwner->declaredFields.front().requiresActiveCleanup = false;
+    const lang::MirVerificationResult forgedResult =
+        lang::verifyMirProgram(forgedContainment);
+    expect(!forgedResult.valid() && (hasMirMessage(forgedResult, "field") ||
+                                     hasMirMessage(forgedResult, "cleanup")),
+           "a forged container field cleanup row should fail MIR "
+           "verification");
+  }
+
+  const lang::FrontendResult arrayContainment =
+      analyze("owning-payload-array-containment.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
 int main() {
   holder values[2] = {holder::one(resource()), holder::none};
   return 0;
 }
 )");
-  expect(hasCode(aggregateContainment, "GTI-S2067") &&
-             hasMessage(aggregateContainment, "Instance field 'value'") &&
-             hasMessage(aggregateContainment, "Fixed array 'values'") &&
-             hasMessage(aggregateContainment, "local-value slice"),
-         "class-field and fixed-array containment should reject owning "
-         "payload enums before aggregate lowering");
+  expect(hasCode(arrayContainment, "GTI-S2067") &&
+             hasMessage(arrayContainment, "Fixed array 'values'") &&
+             hasMessage(arrayContainment, "bounded containment slice"),
+         "fixed arrays should retain the stable owning payload-enum "
+         "containment diagnostic");
+
+  const lang::FrontendResult unsupportedFieldOwners =
+      analyze("owning-payload-unsupported-field-owners.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class generic_wrapper<T> { holder value; };
+class polymorphic_wrapper {
+private:
+  holder value;
+public:
+  virtual int32_t marker() { return 0; }
+};
+int main() { return 0; }
+)");
+  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 2 &&
+             hasHint(unsupportedFieldOwners,
+                     "direct owning payload-enum field is supported only") &&
+             hasMessage(unsupportedFieldOwners, "Instance field 'value'"),
+         "generic and polymorphic owners should retain a precise direct-field "
+         "containment diagnostic");
 
   const lang::FrontendResult wrapperContainment =
       analyze("owning-payload-wrapper-containment.gti", R"(

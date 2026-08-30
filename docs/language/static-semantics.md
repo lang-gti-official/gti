@@ -698,19 +698,30 @@ leaves the moved-from source without the transferred cleanup obligation.
 The bounded owning family admits direct local values and top-level read-only
 checked-reference observation. It also admits the enum itself by value across
 an ordinary source-defined free function, non-polymorphic method or ordinary
-constructor, and an exact typed lambda. The parameter and return types must be
-the direct enum rather than a containing wrapper. Ordinary argument analysis
-selects copy only when the enum's folded traits permit it; otherwise an
-explicit move or fresh value is required. Generic callable families, including
-methods and constructors declared on a generic owner, polymorphic dispatch,
-native/runtime declarations, operators, and lambda captures retain `GTI-S2067`
-at their declaration or capture boundary. An
-owning enum also cannot be nested inside a class field, fixed array,
-`expected`, owner/container, or any other wrapper value. These structural
-restrictions prevent an unsupported callable or aggregate ABI from reaching
-HIR/MIR/backend emission. A direct checked reference or raw pointer to the enum
-does not itself contain the referent's ownership state; indirection to a
-generic wrapper still instantiates that unsupported nested value type.
+constructor, and an exact typed lambda. Ordinary argument analysis selects
+copy only when the enum's folded traits permit it; otherwise an explicit move
+or fresh value is required.
+
+An ordinary non-generic, non-polymorphic class or struct may contain an owning
+payload enum as a direct field. The field may be initialized by an in-class
+initializer or an ordinary constructor initializer. Its containing value
+inherits the enum's structural copy, move, assignment, and cleanup traits and
+may use the existing direct class-value call and return transport. A mutable
+direct field may be replaced from an explicit move; the old active alternative
+is dropped before the replacement obligation is published. This permission is
+not recursive and does not extend through a fixed array, `expected`,
+owner/container, another payload enum, generic wrapper, stored-reference
+class, compiler-private capability, polymorphic base, or native-layout
+declaration.
+
+Generic callable families, including methods and constructors declared on a
+generic owner, polymorphic dispatch, native/runtime declarations, operators,
+and lambda captures retain `GTI-S2067` at their declaration or capture
+boundary. Unsupported containment retains `GTI-S2067` at the field or
+aggregate boundary, before HIR/MIR/backend emission. A direct checked
+reference or raw pointer to the enum does not itself contain the referent's
+ownership state; indirection to a generic wrapper still instantiates that
+unsupported nested value type.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.

@@ -526,9 +526,18 @@ in the caller's value-rooted slot. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
 Constructor arguments use the same proof, including fresh unit variants.
-Aggregate or wrapper representation, generic callables (including methods and
-constructors declared on generic owners), polymorphic dispatch, and captures
-remain outside backend vocabulary and are rejected semantically before MIR.
+
+An admitted direct class/struct field uses the class initializer schedule's
+exact payload construction, `This.field` publication, value-rooted reparenting,
+full-expression endpoint, and construction-rollback row. A transformed
+failure-capable constructor may require a temporarily disengaged native shell;
+the C++ representation therefore reserves a private `std::monostate`
+alternative. It is neither a source variant nor observable tag state. The
+joint class/enum definition scheduler emits every payload class before its enum
+and that enum before a class embedding it, rejecting a recursive by-value
+cycle. Generic owners, recursive or indirect wrappers, polymorphic dispatch,
+native layout, and captures remain outside backend vocabulary and are rejected
+semantically before MIR.
 
 A class-typed fixed-array field uses that schedule only when MIR proves every
 element construction, aggregate transfer, array-result obligation, and
