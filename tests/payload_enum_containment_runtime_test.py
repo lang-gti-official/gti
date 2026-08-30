@@ -47,17 +47,9 @@ struct defaulted_wrapper {
 
 wrapper relay(wrapper value) { return std::move(value); }
 
-void move_pass_return_and_replace() {
-  wrapper first = wrapper(holder::one(resource(1)));
-  wrapper second = std::move(first);
-  mut wrapper third = relay(std::move(second));
-  mut wrapper destination = wrapper(holder::one(resource(2)));
-  destination = std::move(third);
-
-  defaulted_wrapper defaulted = defaulted_wrapper();
-
-  mut wrapper direct = wrapper(holder::one(resource(5)));
-  direct.replace(holder::one(resource(6)));
+void pass_and_return() {
+  wrapper first = wrapper(holder::one(resource(5)));
+  wrapper second = relay(std::move(first));
 }
 
 int32_t return_early() {
@@ -78,12 +70,23 @@ void loop_edges() {
 }
 
 int main() {
-  move_pass_return_and_replace();
-  if (drops != 5 || return_early() != 9 || drops != 6) {
+  {
+    wrapper first = wrapper(holder::one(resource(1)));
+    wrapper second = std::move(first);
+    mut wrapper destination = wrapper(holder::one(resource(2)));
+    destination = std::move(second);
+    destination.replace(holder::one(resource(3)));
+    defaulted_wrapper defaulted = defaulted_wrapper();
+  }
+  if (drops != 4) {
     return 1;
   }
+  pass_and_return();
+  if (drops != 5 || return_early() != 9 || drops != 6) {
+    return 2;
+  }
   loop_edges();
-  return drops == 8 ? 0 : 2;
+  return drops == 8 ? 0 : 3;
 }
 """
 
