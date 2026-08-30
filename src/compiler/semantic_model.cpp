@@ -1008,6 +1008,9 @@ SemanticModel::findOperator(const Expr &expression) const {
   if (found != operators.end()) {
     return &found->second;
   }
+  if (suppressedInheritedOperators.contains(&expression)) {
+    return nullptr;
+  }
   return base == nullptr ? nullptr : base->findOperator(expression);
 }
 
@@ -1239,6 +1242,7 @@ void SemanticModel::clear() {
   deferredCallableCalls.clear();
   pendingCallableForwardings.clear();
   operators.clear();
+  suppressedInheritedOperators.clear();
   projectionOperators.clear();
   contextualConversions.clear();
   contextualIntegerOperands.clear();
@@ -1811,7 +1815,13 @@ void SemanticModel::recordCallableForwarding(
 
 void SemanticModel::recordOperator(const Expr &expression,
                                    ResolvedOperatorInfo info) {
+  suppressedInheritedOperators.erase(&expression);
   operators.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::suppressInheritedOperator(const Expr &expression) {
+  operators.erase(&expression);
+  suppressedInheritedOperators.insert(&expression);
 }
 
 void SemanticModel::recordProjectionOperator(const Expr &expression,

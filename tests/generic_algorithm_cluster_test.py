@@ -85,6 +85,7 @@ def main() -> int:
     fixtures = repository / "tests/fixtures"
     find_count = fixtures / "generic_algorithm_find_count.gti"
     for_each = fixtures / "generic_algorithm_for_each.gti"
+    complete_range = fixtures / "complete_range_probe.gti"
     blocker = repository / "tests/fixtures/generic_algorithm_for_each_blocked.gti"
     environment = os.environ.copy()
     environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
@@ -92,7 +93,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-generic-algorithm-") as temporary:
         root = pathlib.Path(temporary)
         artifacts: dict[str, tuple[str, str]] = {}
-        for label, source in (("find-count", find_count), ("for-each", for_each)):
+        for label, source in (
+            ("find-count", find_count),
+            ("for-each", for_each),
+            ("complete-range", complete_range),
+        ):
             mir_path = root / f"{label}.mir"
             emitted_mir = emit_artifact(
                 compiler, source, "--emit-mir", mir_path, environment
@@ -213,7 +218,46 @@ def main() -> int:
                     "backend identity", f"missing specialization matching {pattern!r}"
                 )
 
-        for label, source in (("find-count", find_count), ("for-each", for_each)):
+        complete_mir, complete_generated = artifacts["complete-range"]
+        expected_complete_instances = {
+            "all_of": 2,
+            "fill": 2,
+            "for_each": 1,
+            "measured_size": 2,
+        }
+        for name, expected_count in expected_complete_instances.items():
+            rows = concrete_instances(complete_generated, name)
+            declarations = {
+                instance_declaration(complete_mir, instance)
+                for _, instance in rows
+            }
+            if (
+                len(rows) != expected_count
+                or None in declarations
+                or len(declarations) != 1
+            ):
+                return fail_text(
+                    "complete-range identity",
+                    f"expected {expected_count} concrete {name} definitions "
+                    f"with one MIR declaration, got rows={len(rows)}/"
+                    f"declarations={declarations}",
+                )
+        if complete_mir.count("range-iterations 1") != 5:
+            return fail_text(
+                "complete-range MIR",
+                "expected exactly five verified concrete range plans",
+            )
+        if " modify " in complete_mir:
+            return fail_text(
+                "complete-range MIR",
+                "symbolic iterator modification leaked into a concrete instance",
+            )
+
+        for label, source in (
+            ("find-count", find_count),
+            ("for-each", for_each),
+            ("complete-range", complete_range),
+        ):
             for standard in ("c++20", "c++23"):
                 for optimization in ("O0", "O3"):
                     executable = root / f"{label}-{standard}-{optimization}"

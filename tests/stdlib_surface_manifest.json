@@ -2,7 +2,7 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "ca7e8829b48da291e23b56f8c23baabbf3483ebb5f45f82b19cd95d6411a0eff",
-    "stdlib/std/algorithm.gti": "bfc75d270ea682075d88bbdf50f9d5afe22f68806c877331936ea83b22f10186",
+    "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
@@ -10,8 +10,8 @@
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
     "stdlib/std/forward_list.gti": "935c5d80a864386e7ef7c58f42afe5b8bcd5434b25f0570082b029d39b3fbac1",
-    "stdlib/std/functional.gti": "3a9adc4ad2a9f41533e5252960a3a1852da4834d069e4c967da87dbae99fdf24",
-    "stdlib/std/iterator.gti": "72a49b4d6fea7f96ecd0ab452cc04c8c7e6c427d0de423e06a2f59b0726b7b9b",
+    "stdlib/std/functional.gti": "1fb8339bb43551750c4199280f8680a56ccde35646f5ad55a27d8d0eb3fb3faf",
+    "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "b1b7cd67371d764d584c250b6638a2e1ec8c579d2e1a0992a2130ada75a99fe4",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
@@ -307,8 +307,8 @@
         "std::transform"
       ],
       "case_ids": ["algorithm"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "std::vector<int32_t>/predicate/operation/comparator complete-range clients"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/algorithm.gti"]
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "array.executable",
@@ -538,10 +538,10 @@
       "id": "functional.executable",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::binary_operation", "std::binary_predicate", "std::comparator", "std::equal_to::operator()", "std::greater::operator()", "std::indirect_operation", "std::indirect_predicate", "std::invoke_once", "std::less::operator()", "std::mut_binary_callable", "std::mut_callable", "std::not_equal_to::operator()", "std::once_action", "std::once_binary_callable", "std::once_callable", "std::operation", "std::predicate", "std::read_binary_callable", "std::read_callable"],
+      "operations": ["std::binary_operation", "std::binary_predicate", "std::comparator", "std::equal_to::operator()", "std::greater::operator()", "std::indirect_operation", "std::indirect_predicate", "std::invoke_once", "std::less::operator()", "std::mut_binary_callable", "std::mut_callable", "std::not_equal_to::operator()", "std::once_action", "std::once_binary_callable", "std::once_callable", "std::operation", "std::predicate", "std::range_operation", "std::range_predicate", "std::read_binary_callable", "std::read_callable"],
       "case_ids": ["functional"],
-      "required_instantiations": ["comparison function objects<int32_t>", "read/mut/once void() actions"],
-      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/functional.gti"]
+      "required_instantiations": ["comparison function objects<int32_t>", "read/mut/once void() actions", "range-derived predicate and operation over application-defined and fixed-array ranges"],
+      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
     },
     {
       "id": "functional.scaffold",
@@ -555,10 +555,10 @@
       "id": "iterator.executable",
       "source": "stdlib/std/iterator.gti",
       "status": "executable",
-      "operations": ["std::advance(Iterator&,size_t)", "std::distance", "std::next(Iterator)", "std::next(Iterator,size_t)"],
+      "operations": ["std::advance(Iterator&,size_t)", "std::distance", "std::input_range", "std::mutable_range_of", "std::next(Iterator)", "std::next(Iterator,size_t)", "std::range_of", "std::sized_range"],
       "case_ids": ["iterator"],
-      "required_instantiations": ["audit_iterator/audit_iterator", "std::vector<int32_t>::iterator/sentinel"],
-      "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "stdlib/std/iterator.gti"]
+      "required_instantiations": ["audit_iterator/audit_iterator", "std::vector<int32_t>::iterator/sentinel", "application-defined and fixed-array read/mutable/sized complete ranges"],
+      "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/iterator.gti"]
     },
     {
       "id": "iterator.scaffold",

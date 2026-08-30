@@ -176,14 +176,13 @@ void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
   }
 }
 
-// Whole-container fill takes the owner directly: spelling the C++-familiar
-// `fill(values.begin_mut(), values.end(), value)` would need a read borrow
-// of the vector while its exclusive mutable cursor is still live, which
-// ownership correctly rejects. An iterator-pair fill additionally waits on
-// read-receiver loan modeling for parameter-held mutable cursors.
-void fill<std::copyable T>(mut std::vector<T>& values, T& value) {
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    values[index] = value;
+// Whole-range fill keeps one exclusive range loan and one iteration-bounded
+// mutable element loan. The exact element relation prevents a backend-selected
+// conversion; fixed-array and nominal ranges use the same concrete range plan.
+void fill<Range, std::copyable T>(mut Range& values, T& value)
+  requires std::mutable_range_of<Range, T> {
+  for (mut T& element : values) {
+    element = value;
   }
 }
 
@@ -290,59 +289,61 @@ void sort<std::copyable T, Compare>(mut std::vector<T>& values,
   }
 }
 
-// Whole-vector predicate clients avoid manufacturing iterator pairs when the
-// complete range is already the user's intent. They remain ordinary generic
-// source: no vector or algorithm spelling is compiler-known.
-bool all_of<std::movable T, Predicate>(std::vector<T>& values,
-                                       mut Predicate predicate)
-  requires std::predicate<Predicate, T> {
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    if (!predicate(values[index])) {
+// Complete-range predicate and operation clients derive the element type from
+// the exact structural begin/end protocol. The compiler recognizes neither a
+// public range nor an algorithm name; concrete reanalysis selects every
+// endpoint, iterator operator, and callable target before HIR/MIR lowering.
+bool all_of<Range, Predicate>(Range& values, mut Predicate predicate)
+  requires std::input_range<Range> &&
+           std::range_predicate<Predicate, Range> {
+  for (auto& element : values) {
+    if (!predicate(element)) {
       return false;
     }
   }
   return true;
 }
 
-bool any_of<std::movable T, Predicate>(std::vector<T>& values,
-                                      mut Predicate predicate)
-  requires std::predicate<Predicate, T> {
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    if (predicate(values[index])) {
+bool any_of<Range, Predicate>(Range& values, mut Predicate predicate)
+  requires std::input_range<Range> &&
+           std::range_predicate<Predicate, Range> {
+  for (auto& element : values) {
+    if (predicate(element)) {
       return true;
     }
   }
   return false;
 }
 
-bool none_of<std::movable T, Predicate>(std::vector<T>& values,
-                                        mut Predicate predicate)
-  requires std::predicate<Predicate, T> {
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    if (predicate(values[index])) {
+bool none_of<Range, Predicate>(Range& values, mut Predicate predicate)
+  requires std::input_range<Range> &&
+           std::range_predicate<Predicate, Range> {
+  for (auto& element : values) {
+    if (predicate(element)) {
       return false;
     }
   }
   return true;
 }
 
-ptrdiff_t count_if<std::movable T, Predicate>(std::vector<T>& values,
-                                              mut Predicate predicate)
-  requires std::predicate<Predicate, T> {
+ptrdiff_t count_if<Range, Predicate>(Range& values,
+                                    mut Predicate predicate)
+  requires std::input_range<Range> &&
+           std::range_predicate<Predicate, Range> {
   mut ptrdiff_t result = 0;
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    if (predicate(values[index])) {
+  for (auto& element : values) {
+    if (predicate(element)) {
       result++;
     }
   }
   return result;
 }
 
-Function for_each<std::movable T, Function>(std::vector<T>& values,
-                                            mut Function function)
-  requires std::operation<Function, T, void> {
-  for (mut size_t index = size_t(0); index < values.size(); index++) {
-    function(values[index]);
+Function for_each<Range, Function>(Range& values, mut Function function)
+  requires std::input_range<Range> &&
+           std::range_operation<Function, Range, void> {
+  for (auto& element : values) {
+    function(element);
   }
   return std::move(function);
 }

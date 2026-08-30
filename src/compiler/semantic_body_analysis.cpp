@@ -1362,9 +1362,13 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     SemanticType referent = rangeType.arguments.front();
     rangeType = std::move(referent);
   }
+  const bool symbolicReadRange =
+      symbolicRangeMemberReturnType(rangeType, "begin").has_value();
+  const bool symbolicMutableRange =
+      symbolicRangeMemberReturnType(rangeType, "begin_mut").has_value();
   if (rangeType != SemanticType::Unknown &&
       rangeType.kind != SemanticType::Array &&
-      rangeType.kind != SemanticType::Class) {
+      rangeType.kind != SemanticType::Class && !symbolicReadRange) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
         std::string(mutableElementRequested ? "Mutable" : "Read-only") +
@@ -1421,7 +1425,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
   const FunctionId incrementFunction =
       core == nullptr ? 0 : selectedOperator(core->increment());
   const bool mutableProtocolAvailable =
-      rangeType.kind == SemanticType::Array ||
+      rangeType.kind == SemanticType::Array || symbolicMutableRange ||
       (beginFunction != 0 && endFunction != 0 && compareFunction != 0 &&
        dereferenceFunction != 0 && incrementFunction != 0 &&
        elementAccess == AccessMode::Mutable);
@@ -3677,6 +3681,43 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
     const SemanticType *objectType = semanticModel.findType(*member->object());
+    if (objectType != nullptr &&
+        objectType->kind == SemanticType::TypeParameter) {
+      const bool generatedRangeEndpoint =
+          member->name().generated && (member->name().lexeme == "begin" ||
+                                       member->name().lexeme == "begin_mut" ||
+                                       member->name().lexeme == "end");
+      const std::optional<SemanticType> result =
+          symbolicRangeMemberReturnType(*objectType, member->name().lexeme);
+      if (result &&
+          (member->name().lexeme == "size" || generatedRangeEndpoint)) {
+        if (hasExplicitGenericArguments) {
+          report(expr.paren(),
+                 "Structural range members do not take generic arguments.",
+                 "GTI-S2029");
+        }
+        if (!argumentTypes.empty()) {
+          report(expr.paren(), "Structural range members take no arguments.",
+                 "GTI-S2029");
+        }
+        const bool borrowedEndpoint = member->name().lexeme == "begin" ||
+                                      member->name().lexeme == "begin_mut";
+        const bool mutableEndpoint = member->name().lexeme == "begin_mut";
+        semanticModel.record(
+            expr,
+            ResolvedCallInfo{
+                .returnType = *result,
+                .borrowOrigin = borrowedEndpoint ? BorrowOriginKind::Receiver
+                                                 : BorrowOriginKind::None,
+                .borrowAccess = mutableEndpoint ? AccessMode::Mutable
+                                                : AccessMode::ReadOnly,
+                .receiverMode = mutableEndpoint
+                                    ? CallReceiverMode::MutablePlace
+                                    : CallReceiverMode::ReadOnlyPlace});
+        currentType = *result;
+        return;
+      }
+    }
     if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
       if (hasExplicitGenericArguments) {
         report(expr.paren(),
@@ -4505,6 +4546,31 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
                                  receiver->access == AccessMode::Mutable;
     captureMemberCompletion(expr.name(), objectType, mutableReceiver);
     currentType = SemanticType::Unknown;
+    return;
+  }
+  const bool generatedRangeEndpoint =
+      expr.name().generated &&
+      (expr.name().lexeme == "begin" || expr.name().lexeme == "begin_mut" ||
+       expr.name().lexeme == "end");
+  const std::optional<SemanticType> symbolicRangeMember =
+      objectType.kind == SemanticType::TypeParameter
+          ? symbolicRangeMemberReturnType(objectType, expr.name().lexeme)
+          : std::nullopt;
+  if (symbolicRangeMember && expr.name().lexeme != "size" &&
+      !generatedRangeEndpoint) {
+    report(expr.name(),
+           "Direct structural range endpoint extraction is not supported "
+           "yet. Use range-based for iteration.",
+           "GTI-S2029");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (symbolicRangeMember) {
+    if (!analyzingCallCallee) {
+      report(expr.name(),
+             "Structural range member names must be called immediately.");
+    }
+    currentType = SemanticType::Function;
     return;
   }
   if (objectType.kind == SemanticType::Array) {
@@ -9140,8 +9206,20 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       !type.reference && !rangeOwnerReference &&
       (typeTraits(inferredType).containsBorrowedState ||
        ownerDependentStringView);
+  const auto *rangeIteratorCall =
+      declaration.isRangeIterator() && declaration.initializer()
+          ? exprAs<Call>(declaration.initializer().get())
+          : nullptr;
+  const ResolvedCallInfo *rangeIteratorResolution =
+      rangeIteratorCall == nullptr ? nullptr
+                                   : semanticModel.findCall(*rangeIteratorCall);
+  const bool retainedSymbolicRangeIterator =
+      inferredType.kind == SemanticType::TypeParameter &&
+      rangeIteratorResolution != nullptr &&
+      rangeIteratorResolution->borrowOrigin != BorrowOriginKind::None;
   if (local && declaration.initializer() &&
-      (retainedReference || retainedStoredValue)) {
+      (retainedReference || retainedStoredValue ||
+       retainedSymbolicRangeIterator)) {
     recordRetainedBorrow(declaration, declaration.initializer());
   }
 }

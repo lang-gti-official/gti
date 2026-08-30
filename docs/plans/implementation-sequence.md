@@ -2675,9 +2675,16 @@ name recognition.
   source-defined `std::copy`, whole-container `std::fill`/`std::transform`/
   `std::reverse`/ordered and comparator `std::sort`, whole-vector predicate
   clients, signed `std::advance`/`std::next`, and `std::prev` clients.
-- **Remaining scope:** structural complete-range concepts extending the
-  whole-container generic algorithms beyond `std::vector`; indexed
-  element move-out; and further iterator/sentinel overloads behind a
+- **Implemented complete-range slice:** exact structural `input_range`,
+  `range_of`, `mutable_range_of`, and `sized_range` concepts cover nominal
+  ranges and fixed arrays without associated types or public-name recognition.
+  Exact range predicate/operation relations now drive generic whole-range
+  `all_of`, `any_of`, `none_of`, `count_if`, and `for_each`; `fill` uses the
+  mutable exact-element relation. Symbolic range carriers are replaced by
+  concrete protocol identities or fixed-array plans before HIR/MIR.
+- **Remaining scope:** indexed element move-out; structural complete-range
+  relations for `transform`, `reverse`, and `sort`; and further
+  iterator/sentinel overloads behind a
   demonstrated subrange client. Iterator-pair in-place spellings remain
   excluded because `begin_mut()` and `end()` from one container overlap by
   design; semantics now diagnoses that conflict before MIR, while read-only

@@ -182,6 +182,13 @@ The current structural capability set is intentionally small:
 - `sized_sentinel_for<S, I>` requires public read-only
   `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
   the sentinel;
+- `input_range<R>` derives exact public read-only `begin()`/`end()` endpoints
+  and requires their iterator/sentinel pair to satisfy the input protocol;
+- `range_of<R, T>` refines that range to an exact read-only `T&` dereference,
+  while `mutable_range_of<R, T>` requires exact mutable `begin_mut()` and
+  `mut T&` dereference;
+- `sized_range<R>` requires exact public read-only
+  `std::size_t R::size()`; fixed arrays satisfy it from their exact extent;
 - `forward_iterator<I>` is the source-defined conjunction of input iteration,
   copy construction, and use of `I` as its own sentinel; the public
   bidirectional and random-access concepts compose their movement facts over
@@ -204,13 +211,23 @@ The current structural capability set is intentionally small:
 - `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
   requires a repeatable `bool` callable for it; and
 - `indirect_operation<F, I, R>` derives the same referent and requires a
-  repeatable exact owned `R` operation.
+  repeatable exact owned `R` operation; and
+- `range_predicate<F, R>` and `range_operation<F, R, Result>` derive the exact
+  read-only element of a complete range and apply the same repeatable callable
+  rules without exposing an associated iterator type.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies
 `cursor[offset] = value`; a mutable receiver prefers the mutable structural
 form when the active requirements prove both a read-only and a mutable one,
 mirroring concrete member selection.
+
+Complete-range requirements additionally supply private symbolic
+iterator/sentinel carriers for a range-based `for`, plus the exact zero-argument
+`size()` result under `sized_range`. These carriers are compiler proof objects,
+not source-visible associated types. Concrete generic reanalysis must replace
+them with the selected nominal endpoint declarations or fixed-array strategy
+before HIR and verified MIR are built.
 
 The four domain-value capabilities are spelled publicly as `std::addable`,
 `std::subtractable`, `std::negatable`, and `std::scalable_by`, and compose into

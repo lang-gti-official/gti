@@ -857,7 +857,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "bidirectional_iterator" ||
          binding.name == "random_access_iterator" ||
          binding.name == "subscripts_to_mut" ||
-         binding.name == "sized_sentinel_for");
+         binding.name == "sized_sentinel_for" ||
+         binding.name == "input_range" || binding.name == "range_of" ||
+         binding.name == "mutable_range_of" || binding.name == "sized_range");
     const bool trustedFunctionalConstraint =
         isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "read_callable" || binding.name == "mut_callable" ||
@@ -867,7 +869,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "once_binary_callable" ||
          binding.name == "once_action" ||
          binding.name == "indirect_predicate" ||
-         binding.name == "indirect_operation");
+         binding.name == "indirect_operation" ||
+         binding.name == "range_predicate" ||
+         binding.name == "range_operation");
     if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedAtomicConstraint &&
          !trustedIteratorConstraint && !trustedFunctionalConstraint) ||
         conceptInfo.namespaceScope !=

@@ -1646,6 +1646,11 @@ private:
 
   void recordOperator(const Expr &expression, ResolvedOperatorInfo info);
 
+  // Concrete instance analysis may replace a declaration-time symbolic
+  // operator with a built-in operation. Prevent that expression from falling
+  // through to the superseded operator row in the base semantic model.
+  void suppressInheritedOperator(const Expr &expression);
+
   void recordProjectionOperator(const Expr &expression,
                                 ResolvedOperatorInfo info);
 
@@ -1770,6 +1775,7 @@ private:
       deferredCallableCalls;
   std::vector<PendingCallableForwarding> pendingCallableForwardings;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
+  std::unordered_set<const Expr *> suppressedInheritedOperators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> projectionOperators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;

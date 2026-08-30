@@ -2980,13 +2980,25 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   }
 
   const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
-  const AccessMode carrierAccess = carrier->type.kind == SemanticType::Reference
-                                       ? carrier->type.referenceAccess
-                                       : borrowAccess(carrier->type);
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
+  const auto *symbolicRangeCall =
+      binding.isRangeIterator() ? exprAs<Call>(expression.get()) : nullptr;
+  const ResolvedCallInfo *symbolicRangeResolution =
+      symbolicRangeCall == nullptr ? nullptr
+                                   : semanticModel.findCall(*symbolicRangeCall);
+  const bool symbolicRangeIterator =
+      carrier->type.kind == SemanticType::TypeParameter &&
+      symbolicRangeResolution != nullptr &&
+      symbolicRangeResolution->borrowOrigin != BorrowOriginKind::None;
+  const AccessMode carrierAccess =
+      symbolicRangeIterator ? symbolicRangeResolution->borrowAccess
+      : carrier->type.kind == SemanticType::Reference
+          ? carrier->type.referenceAccess
+          : borrowAccess(carrier->type);
   const bool retainedStoredBorrow =
-      info != nullptr && info->traits.containsBorrowedState;
+      (info != nullptr && info->traits.containsBorrowedState) ||
+      symbolicRangeIterator;
   const std::optional<TransientBorrowProduction> retainedProduction =
       transientBorrowProduction(expression);
   const bool lexicalGlobalMutableBorrow =

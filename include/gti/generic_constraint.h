@@ -43,6 +43,10 @@ enum class StructuralConstraintKind : std::uint8_t {
   RandomAccessIterator,
   SubscriptsToMut,
   SizedSentinelFor,
+  InputRange,
+  RangeOf,
+  MutableRangeOf,
+  SizedRange,
   Adds,
   Subtracts,
   Negates,
@@ -56,6 +60,8 @@ enum class StructuralConstraintKind : std::uint8_t {
   OnceAction,
   IndirectPredicate,
   IndirectOperation,
+  RangePredicate,
+  RangeOperation,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -110,7 +116,7 @@ inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 22>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -123,6 +129,10 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 22>
          StructuralConstraintKind::RandomAccessIterator, 1},
         {"subscripts_to_mut", StructuralConstraintKind::SubscriptsToMut, 2},
         {"sized_sentinel_for", StructuralConstraintKind::SizedSentinelFor, 2},
+        {"input_range", StructuralConstraintKind::InputRange, 1},
+        {"range_of", StructuralConstraintKind::RangeOf, 2},
+        {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
+        {"sized_range", StructuralConstraintKind::SizedRange, 1},
         {"adds", StructuralConstraintKind::Adds, 1},
         {"subtracts", StructuralConstraintKind::Subtracts, 1},
         {"negates", StructuralConstraintKind::Negates, 1},
@@ -138,6 +148,8 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 22>
         {"once_action", StructuralConstraintKind::OnceAction, 1},
         {"indirect_predicate", StructuralConstraintKind::IndirectPredicate, 2},
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
+        {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
+        {"range_operation", StructuralConstraintKind::RangeOperation, 3},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

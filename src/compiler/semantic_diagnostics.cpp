@@ -226,6 +226,28 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "std::ptrdiff_t operator-(S&) for the exact sentinel type, "
           "returning the signed distance from the iterator to the sentinel.");
       break;
+    case StructuralConstraintKind::InputRange:
+      diagnostic.hints.emplace_back(
+          "The range must provide exact public read-only begin()/end(); its "
+          "returned iterator and sentinel must satisfy the input-iterator "
+          "and exact-sentinel contracts.");
+      break;
+    case StructuralConstraintKind::RangeOf:
+      diagnostic.hints.emplace_back(
+          "The complete read-only range must dereference to a checked "
+          "reference whose referent is exactly the required element type.");
+      break;
+    case StructuralConstraintKind::MutableRangeOf:
+      diagnostic.hints.emplace_back(
+          "The mutable range must provide exact public begin_mut()/end(); "
+          "mutable dereference must return the required exact element "
+          "reference and prefix increment must return void.");
+      break;
+    case StructuralConstraintKind::SizedRange:
+      diagnostic.hints.emplace_back(
+          "The range must provide one exact public read-only size() returning "
+          "std::size_t.");
+      break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(
           "The domain type must provide a public read-only "
@@ -280,6 +302,17 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.emplace_back(
           "The iterator's read-only dereference result must be accepted by "
           "one exact repeatable public callable returning the required owned "
+          "result type.");
+      break;
+    case StructuralConstraintKind::RangePredicate:
+      diagnostic.hints.emplace_back(
+          "The complete range's read-only element must be accepted by one "
+          "exact repeatable public callable returning bool.");
+      break;
+    case StructuralConstraintKind::RangeOperation:
+      diagnostic.hints.emplace_back(
+          "The complete range's read-only element must be accepted by one "
+          "exact repeatable public callable returning the required owned "
           "result type.");
       break;
     case StructuralConstraintKind::None:
