@@ -105,8 +105,8 @@ def main() -> int:
             ),
             (
                 "generic_callable_consuming_predicate.gti",
-                "std::predicate",
-                "receiver capability",
+                "std::range_predicate",
+                "repeatable public callable",
             ),
             (
                 "generic_callable_bad_action.gti",

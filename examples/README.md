@@ -82,6 +82,13 @@ own `main` function.
 | `74-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
 | `75-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
 | `76-scalar-atomics.gti` | share-safe integer fetch operations with explicit relaxed, acquire, and acquire-release orders across managed threads |
+| `77-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
+| `78-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
+| `79-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
+| `80-function-items.gti` | exact namespace free functions passed to confined generic callables |
+| `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
+| `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
+| `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
 
 Build and run an example from the repository root:
 
@@ -280,6 +287,17 @@ read-only, mutable, and sized structural protocol. The same source-defined
 `std::all_of` and `std::fill` implementations accept that nominal range and a
 fixed array; `std::sized_range` also proves a generic `size()` call without
 compiler recognition of either the range or algorithm name.
+
+`84-optional-values.gti` uses the bounded move-only `std::optional<T>` surface.
+The optional slot stores `T` inline, destroys only an engaged value, and checks
+`value`, dereference, and arrow access. Moving the optional consumes the source
+binding; it does not create a reusable moved-from source value.
+
+`85-payload-enum-fields.gti` places a cleanup-owning closed payload enum
+directly inside an ordinary class and struct. Moving the containing object,
+replacing its active field, and leaving scope each destroy exactly the active
+payload. Generic, polymorphic, recursive, array, and public native-layout
+owners remain outside this bounded slice.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

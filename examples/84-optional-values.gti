@@ -1,0 +1,40 @@
+#include <std/optional>
+
+class token {
+  mut int32_t value_;
+
+public:
+  token(int32_t value) : value_(value) {}
+  token(token& other) = delete;
+  token(token&& other) = default;
+
+  int32_t value() { return this.value_; }
+};
+
+int main() {
+  mut std::optional<int32_t> count{};
+  if (count.has_value()) {
+    return 1;
+  }
+
+  [[discard]] count.emplace(int32_t(41));
+  mut int32_t& live_count = count.value();
+  live_count += int32_t(1);
+  if (!count || *count != int32_t(42)) {
+    return 2;
+  }
+
+  count.reset();
+  if (count.has_value() || count.value_or(int32_t(7)) != int32_t(7)) {
+    return 3;
+  }
+
+  std::optional<token> source{token(int32_t(9))};
+  mut std::optional<token> destination{std::move(source)};
+  if (!destination.has_value() || destination->value() != int32_t(9)) {
+    return 4;
+  }
+
+  destination.reset();
+  return destination.has_value() ? 5 : 0;
+}

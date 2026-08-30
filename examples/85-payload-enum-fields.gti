@@ -1,0 +1,48 @@
+mut int32_t drops = 0;
+
+class resource {
+public:
+  resource(int32_t identifier) : identifier(identifier) {}
+  resource(resource&& other) = default;
+  ~resource() { drops++; }
+
+private:
+  int32_t identifier;
+};
+
+enum class holder {
+  occupied(resource value),
+  empty,
+};
+
+class package {
+public:
+  package(holder value) : content(std::move(value)) {}
+
+  void replace(holder value) mut {
+    this.content = std::move(value);
+  }
+
+private:
+  mut holder content;
+};
+
+struct default_package {
+  holder content = holder::occupied(resource(4));
+};
+
+int main() {
+  {
+    package first = package(holder::occupied(resource(1)));
+    package second = std::move(first);
+    mut package destination = package(holder::occupied(resource(2)));
+    destination = std::move(second);
+    destination.replace(holder::occupied(resource(3)));
+
+    default_package defaulted = default_package();
+  }
+
+  // Replacement destroys resources 2 and 1. Scope exit then destroys
+  // resources 3 and 4 from their active aggregate fields.
+  return drops == 4 ? 0 : 1;
+}
