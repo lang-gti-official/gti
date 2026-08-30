@@ -233,6 +233,39 @@ int main() {
       "MIR");
 }
 
+lang::MirInstructionId immutableClassMoveAssignment(const lang::MirBody &body) {
+  lang::MirInstructionId found = 0;
+  for (const lang::MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index + 2 < block.instructions.size();
+         ++index) {
+      const lang::MirInstruction &move = block.instructions[index];
+      const lang::MirInstruction &assign = block.instructions[index + 1];
+      const lang::MirInstruction &destroy = block.instructions[index + 2];
+      const lang::MirPlace *source =
+          move.operands.size() == 1
+              ? body.findPlace(move.operands.front().place)
+              : nullptr;
+      if (move.kind != lang::MirInstructionKind::Move || !move.result ||
+          move.info.type.kind != lang::SemanticType::Class ||
+          move.lifecycle.size() != 1 || source == nullptr ||
+          source->access != lang::AccessMode::ReadOnly ||
+          assign.kind != lang::MirInstructionKind::Assign ||
+          assign.operands.size() != 1 || assign.lifecycle.size() != 1 ||
+          assign.operands.front().kind != lang::MirOperandKind::Value ||
+          assign.operands.front().value != *move.result ||
+          destroy.kind != lang::MirInstructionKind::Drop ||
+          destroy.lifecycle.size() != 1) {
+        continue;
+      }
+      if (found != 0) {
+        return 0;
+      }
+      found = move.id;
+    }
+  }
+  return found;
+}
+
 void testOwningPayloadEnumFieldContainmentAdmission() {
   const lang::FrontendResult frontend =
       analyze("owning-payload-field-containment.gti", R"(
@@ -313,6 +346,166 @@ int main() { wrapper value = wrapper(); return 0; }
                         lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
            "a forged owning-field reparent edge should fail closed before C++ "
            "text emission");
+  }
+
+  const lang::FrontendResult immutableClass = analyzeWithStandardLibrary(
+      "immutable-generated-class-move-assignment.gti", R"(
+mut int32_t drops = 0;
+class resource {
+public:
+  resource(int32_t identity) : identity(identity) {}
+  resource(resource&& other) = default;
+  ~resource() { drops = drops + 1; }
+private:
+  int32_t identity;
+};
+int main() {
+  resource source = resource(1);
+  mut resource destination = resource(2);
+  destination = std::move(source);
+  return 0;
+}
+)");
+  expect(immutableClass.canGenerateCode(),
+         "an immutable cleanup-owning class binding should remain a valid "
+         "explicit move source");
+  const lang::MirFunctionInstance *immutableClassEntry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       immutableClass.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None) {
+      immutableClassEntry = &candidate;
+    }
+  }
+  expect(immutableClassEntry != nullptr,
+         "the immutable class move fixture should retain its entry identity");
+  if (immutableClass.canGenerateCode() && immutableClassEntry != nullptr) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = immutableClassEntry->id};
+    expect(immutableClassMoveAssignment(immutableClassEntry->body) != 0,
+           "the unrelated class fixture should retain one immutable-source "
+           "Move/Assign/Drop schedule without payload-enum state");
+    for (const lang::CppStandard standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const lang::CppMirBodyEmissionMap map(
+          buildRows(immutableClass, immutableClass.mir, standard));
+      const lang::CppMirBodyEmitter immutableMoveEmitter(immutableClass.mir,
+                                                         map);
+      expect(immutableMoveEmitter.analyze(address).ready() &&
+                 immutableMoveEmitter.supportsFailureBodyText(address),
+             "verified immutable generated-class movement should retain its "
+             "C++20/C++23 failure-body representation");
+    }
+  }
+
+  const lang::FrontendResult nestedEntry =
+      analyzeWithStandardLibrary("owning-payload-field-nested-entry.gti", R"(
+mut int32_t drops = 0;
+class resource {
+public:
+  resource(int32_t identity) : identity(identity) {}
+  resource(resource&& other) = default;
+  ~resource() { drops = drops + 1; }
+private:
+  int32_t identity;
+};
+enum class holder { occupied(resource value), empty };
+class package {
+public:
+  package(holder content) : content(std::move(content)) {}
+  void replace(holder replacement) mut {
+    this.content = std::move(replacement);
+  }
+private:
+  mut holder content;
+};
+struct default_package {
+  holder content = holder::occupied(resource(4));
+};
+int main() {
+  {
+    package first = package(holder::occupied(resource(1)));
+    package second = std::move(first);
+    mut package destination = package(holder::occupied(resource(2)));
+    destination = std::move(second);
+    destination.replace(holder::occupied(resource(3)));
+    default_package defaulted = default_package();
+  }
+  return drops == 4 ? 0 : 1;
+}
+)");
+  expect(nestedEntry.canGenerateCode(),
+         "nested entry aggregate payload-enum containment should pass the "
+         "frontend");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       nestedEntry.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None) {
+      entry = &candidate;
+    }
+  }
+  expect(entry != nullptr,
+         "the nested aggregate payload-enum fixture should retain its entry "
+         "body identity");
+  if (nestedEntry.canGenerateCode() && entry != nullptr) {
+    const lang::MirBodyAddress entryAddress{.kind = lang::MirBodyKind::Function,
+                                            .owner = entry->id};
+    const lang::MirInstructionId immutableAggregateMove =
+        immutableClassMoveAssignment(entry->body);
+    expect(immutableAggregateMove != 0,
+           "the entry fixture should retain an immutable aggregate move, "
+           "adjacent replacement, and moved-shell drop");
+
+    for (const lang::CppStandard standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const lang::CppMirBodyEmissionMap entryMap(
+          buildRows(nestedEntry, nestedEntry.mir, standard));
+      const lang::CppMirBodyEmissionAnalysis entryAnalysis =
+          lang::CppMirBodyEmitter(nestedEntry.mir, entryMap)
+              .analyze(entryAddress);
+      if (!entryAnalysis.ready()) {
+        for (const lang::CppMirBodyEmissionIssue &issue :
+             entryAnalysis.issues) {
+          std::cerr << "nested owning payload entry admission: " << issue.detail
+                    << '\n';
+        }
+      }
+      expect(entryAnalysis.ready() &&
+                 lang::CppMirBodyEmitter(nestedEntry.mir, entryMap)
+                     .supportsFailureBodyText(entryAddress),
+             "an entry body should admit and spell the exact nested aggregate "
+             "payload-enum lifecycle schedule under both C++ standards");
+
+      if (immutableAggregateMove != 0) {
+        lang::MirProgram forged = nestedEntry.mir;
+        lang::MirBody *forgedEntry = lang::findMirBody(forged, entryAddress);
+        lang::MirInstruction *forgedMove = nullptr;
+        if (forgedEntry != nullptr) {
+          for (lang::MirBlock &block : forgedEntry->blocks) {
+            for (lang::MirInstruction &instruction : block.instructions) {
+              if (instruction.id == immutableAggregateMove) {
+                forgedMove = &instruction;
+              }
+            }
+          }
+        }
+        expect(forgedMove != nullptr && forgedMove->lifecycle.size() == 1,
+               "the aggregate move should retain its unique transfer event");
+        if (forgedMove != nullptr && forgedMove->lifecycle.size() == 1) {
+          forgedMove->lifecycle.front().target = 0;
+          const lang::CppMirBodyEmitter forgedEmitter(forged, entryMap);
+          const lang::CppMirBodyEmissionAnalysis forgedAnalysis =
+              forgedEmitter.analyze(entryAddress);
+          expect(
+              !forgedAnalysis.ready() &&
+                  hasIssue(
+                      forgedAnalysis,
+                      lang::CppMirBodyEmissionIssueKind::InvalidMirProgram) &&
+                  !forgedEmitter.supportsFailureBodyText(entryAddress),
+              "a forged immutable aggregate move without its staging "
+              "obligation must fail closed before C++ text emission");
+        }
+      }
+    }
   }
 }
 

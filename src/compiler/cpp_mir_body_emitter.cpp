@@ -17570,6 +17570,34 @@ valueRootedClassMoveFieldSlot(const MirProgram &program,
 // class's verified reverse-field schedule remains its cleanup authority. All
 // other projections, aliases, failure edges, non-adjacent publications, or
 // extra lifecycle events fail closed.
+// GTI permits consuming an immutable binding but does not permit restoring it.
+// Native text therefore needs the same non-const storage route as a mutable
+// source. Keep that representation fact bounded to the exact class family for
+// which the generated native move constructor and assignment are both the
+// verified structural operations; custom, deleted, layout-constrained, and
+// mismatched class records continue to fail closed here.
+[[nodiscard]] const MirClassInstance *
+immutableGeneratedMoveClassSource(const MirProgram &program,
+                                  const SemanticType &type,
+                                  const SemanticTypeTraits &traits) {
+  const MirClassInstance *owner =
+      type.kind == SemanticType::Class
+          ? uniqueClassInstanceForType(program, type)
+          : nullptr;
+  return owner != nullptr && owner->type == type && owner->traits == traits &&
+                 (owner->kind == ClassKind::Class ||
+                  owner->kind == ClassKind::Struct) &&
+                 !owner->abstract && !owner->cAbiRecord &&
+                 !owner->unionLayout && owner->requiresActiveCleanup &&
+                 owner->traits.drop == DropKind::Lexical &&
+                 owner->traits.movable && owner->traits.moveAssignable &&
+                 owner->moveConstructor == SpecialMemberStatus::Generated &&
+                 owner->moveAssignment == SpecialMemberStatus::Generated &&
+                 owner->destructorStatus != SpecialMemberStatus::Deleted
+             ? owner
+             : nullptr;
+}
+
 [[nodiscard]] ValueRootedMoveAssignmentSlot
 valueRootedMoveAssignmentSlot(const MirProgram &program,
                               const CppMirBodyEmissionMap &representations,
@@ -17614,7 +17642,9 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
       source->binding == 0 || !source->projections.empty() ||
       source->type != value->info.type ||
       (source->access != AccessMode::Mutable &&
-       value->info.type.kind != SemanticType::Enum) ||
+       value->info.type.kind != SemanticType::Enum &&
+       immutableGeneratedMoveClassSource(program, value->info.type,
+                                         value->info.traits) == nullptr) ||
       drop == nullptr || drop->initiallyActive ||
       drop->dropType.type != value->info.type ||
       !drop->dropType.requiresActiveCleanup || slot == nullptr ||
@@ -17624,6 +17654,12 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
     return {};
   }
 
+  // Semantic analysis and verified MIR own whether this exact binding may be
+  // consumed. AccessMode is not physical C++ const; the structural guard above
+  // only proves that an immutable class source has the same native generated
+  // move representation. The exact ownership transition and lifecycle edge
+  // below remain the complete one-shot consumption proof.
+  //
   // The Move transfers cleanup from the source binding's obligation to the
   // staging slot; the moved-from source shell keeps its own explicit drops.
   const MirLifecycleEvent &activation = producer->lifecycle.front();

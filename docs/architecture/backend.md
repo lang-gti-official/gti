@@ -657,17 +657,22 @@ does not recognize the owning wrapper or container name; projected
 destinations, conditional lifecycle events, incomplete borrow endings, or
 additional consumers fail closed.
 
-Move-assignment between two existing mutable class bindings has its own exact
-representation. MIR stages the moved value in a value-rooted obligation, so
-the backend constructs that staging slot from the source binding, move-assigns
-the destination binding from the slot, and then drops only the moved-from
-staging shell. The route requires an adjacent `Move`/`Assign`/`Drop` triple in
-one block, a `Move` lifecycle event transferring the source binding obligation
-into the staging drop, an unconditional `Replace` from that drop into the
-destination binding's own obligation, and a single unconditional `Drop` of the
-slot. Aliased source and destination bindings, projected or non-binding places,
-failure sites on either instruction, extra uses, and any additional lifecycle
-event on the staging obligation fail closed.
+Move-assignment from an existing class binding into a mutable class binding has
+its own exact representation. The source may be immutable because GTI
+immutability prevents restoration rather than consumption; the backend does
+not spell such storage as physical C++ `const`. For an immutable class source,
+the representation additionally requires the exact generated move constructor
+and assignment recorded by the concrete MIR class row. MIR stages the moved
+value in a value-rooted obligation, so the backend constructs that staging slot
+from the source binding, move-assigns the destination binding from the slot,
+and then drops only the moved-from staging shell. The route requires an
+adjacent `Move`/`Assign`/`Drop` triple in one block, a `Move` lifecycle event
+transferring the source binding obligation into the staging drop, an
+unconditional `Replace` from that drop into the destination binding's own
+obligation, and a single unconditional `Drop` of the slot. Aliased source and
+destination bindings, projected or non-binding places, failure sites on either
+instruction, extra uses, custom or incoherent immutable-source class rows, and
+any additional lifecycle event on the staging obligation fail closed.
 
 Assigning a freshly constructed class prvalue into an existing mutable binding
 has its own exact representation, and MIR represents it in two shapes rather
