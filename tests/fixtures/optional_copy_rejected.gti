@@ -1,0 +1,7 @@
+#include <std/optional>
+
+int main() {
+  std::optional<int32_t> source{1};
+  std::optional<int32_t> copied = source;
+  return copied.value();
+}

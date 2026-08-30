@@ -270,6 +270,21 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // PrefixStorageTextView: a read-only owner-dependent view over the live
     // character prefix.
     MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
+    // OptionalStorageHasValue: a pure read of inline engagement state.
+    MirEffectTraits{
+        .readsPlace = true, .removableWhenUnused = true, .reorderable = true},
+    // OptionalStorageConstruct
+    MirEffectTraits{.writesPlace = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .invokesUserCode = true},
+    // OptionalStorageRead
+    MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    // OptionalStorageReadMut
+    MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    // OptionalStorageReset
+    MirEffectTraits{
+        .writesPlace = true, .dropsValue = true, .invokesUserCode = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty
@@ -478,6 +493,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "prefix-storage-insert",
     "prefix-storage-erase",
     "prefix-storage-text-view",
+    "optional-storage-has-value",
+    "optional-storage-construct",
+    "optional-storage-read",
+    "optional-storage-read-mut",
+    "optional-storage-reset",
     "string-view-size",
     "string-view-empty",
     "expected-value",

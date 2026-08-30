@@ -1,0 +1,16 @@
+#include <std/optional>
+
+class optional_cleanup_marker {
+public:
+  optional_cleanup_marker() {}
+  ~optional_cleanup_marker() {
+    std::println(73);
+  }
+};
+
+int main() {
+  optional_cleanup_marker marker{};
+  std::optional<int32_t> empty{};
+  [[discard]] empty.value();
+  return 0;
+}

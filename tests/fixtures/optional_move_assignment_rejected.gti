@@ -1,0 +1,8 @@
+#include <std/optional>
+
+int main() {
+  mut std::optional<int32_t> destination{1};
+  std::optional<int32_t> source{2};
+  destination = std::move(source);
+  return destination.value();
+}

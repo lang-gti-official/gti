@@ -24,7 +24,8 @@ The implicit prelude is deliberately limited to language-wide vocabulary,
 shared compiler-capability declarations, `std::move`, and the minimal hosted
 output surface. Header-owned policy is not ambient: the `std::unique_ptr`
 family and its private owner/storage capabilities are declared by
-`<std/memory>`, the private file-descriptor bridge is declared by
+`<std/memory>`, checked one-slot optional storage is declared by
+`<std/optional>`, the private file-descriptor bridge is declared by
 `<std/cstdio>`, and defined integer arithmetic intrinsics are declared by
 `<std/numeric>`. Atomic, iterator, and callable compiler constraints likewise
 live with their public header. Optional units do not re-export their own
@@ -85,14 +86,15 @@ identity. The shared private `prefix_storage<T>`, `text_view`, and `c_string`
 type declarations receive compiler-capability identities only when the exact
 trusted prelude declarations are selected. Module-specific capabilities bind
 to one exact installed standard-library unit: `unique_owner<T>` and
-`storage<T>` to `<std/memory>`, managed threads to `<std/thread>`, atomics to
-`<std/atomic>`, mutexes to `<std/mutex>`, and defined integer arithmetic to
-`<std/numeric>`. Iterator and callable structural constraints are similarly
-owned by `<std/iterator>` and `<std/functional>`. Aliases preserve the selected semantic type;
-reusing a declaration or qualified spelling in application source creates no
-capability. HIR/MIR retain selected intrinsic identity, and the backend queries
-semantic capability facts rather than recognizing a source name before choosing
-its representation.
+`storage<T>` to `<std/memory>`, `optional_storage<T>` to `<std/optional>`,
+managed threads to `<std/thread>`, atomics to `<std/atomic>`, mutexes to
+`<std/mutex>`, and defined integer arithmetic to `<std/numeric>`. Iterator and
+callable structural constraints are similarly owned by `<std/iterator>` and
+`<std/functional>`. Aliases preserve the selected semantic type; reusing a
+declaration or qualified spelling in application source creates no capability.
+HIR/MIR retain selected intrinsic identity, and the backend queries semantic
+capability facts rather than recognizing a source name before choosing its
+representation.
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
@@ -133,6 +135,30 @@ destruction. The storage shift capabilities move initialized slots through a
 verified empty slot. Public `std::upcast_unique`, `vector::insert`, and
 `vector::erase` remain ordinary GTI policy; neither public name is recognized
 by the compiler or backend.
+
+`std::optional<T>` is ordinary source-defined policy over the exact trusted
+`gti_internal::optional_storage<T>` capability from `<std/optional>`. The
+private representation contains one correctly aligned inline `T` slot and one
+engagement bit; it performs no allocation merely to represent absence. Its
+five operations observe engagement, construct into an empty slot, borrow a
+live value read-only or exclusively, and reset a live slot. Semantics records
+their selected identities, owner-tied loans, mutations, and defined-failure
+outcomes. HIR and MIR retain those facts, whole-program verification checks the
+exact class shape and each operation's result, loan, lifecycle, and failure
+contract, and the C++ backend selects the inline representation only from that
+verified capability row.
+
+Allocation-free describes the optional slot itself. Constructing `T` may still
+execute user code and report its ordinary `allocation_failure` /
+`element_construction` outcome. A failed emplacement leaves the slot empty.
+
+The public class owns empty/engaged policy, checked access, reset/emplacement,
+and move-only ownership. Moving transfers the live payload and retires the
+source ownership state exactly once. Copy construction and both assignment
+forms fail closed in the current slice; GTI cannot yet provide a source-defined
+special-member assignment body that conditionally destroys or constructs the
+private slot. Applications replace a value through `reset()` or `emplace()`.
+No public `std::optional` name is recognized by semantics or a backend.
 
 The same identity boundary applies to generic constraints. The prelude binds
 private unary and structural concept declarations to compiler facts, and

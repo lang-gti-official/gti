@@ -629,6 +629,44 @@ mir_storage_shift_left_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, typename... Args>
+inline mir_failure_status_v1 mir_optional_construct_v1(
+    ::gti_internal::backend::optional_storage<T> &storage, Args &&...args) {
+  if (storage.has_value()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_DUPLICATE_CONSTRUCTION_V1};
+  }
+  if (!storage.try_construct(std::forward<Args>(args)...)) {
+    return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+            GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_optional_read_v1(
+    const ::gti_internal::backend::optional_storage<T> &storage,
+    const T **result) noexcept {
+  if (!storage.has_value()) {
+    return {GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1,
+            GTI_FAILURE_DETAIL_MEMBER_ACCESS_V1};
+  }
+  *result = &storage.unchecked_read();
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_optional_read_mut_v1(
+    ::gti_internal::backend::optional_storage<T> &storage,
+    T **result) noexcept {
+  if (!storage.has_value()) {
+    return {GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1,
+            GTI_FAILURE_DETAIL_MEMBER_ACCESS_V1};
+  }
+  *result = &storage.unchecked_read_mut();
+  return mir_failure_success_v1;
+}
+
 template <typename T>
 inline mir_failure_status_v1
 mir_prefix_allocate_v1(std::uint64_t count,

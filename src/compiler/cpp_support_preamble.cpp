@@ -125,6 +125,14 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "numeric_conversion_error",
       "once_call",
       "offset",
+      "optional_storage",
+      "optional_storage_construct",
+      "optional_storage_has_value",
+      "optional_storage_read",
+      "optional_storage_read_mut",
+      "optional_storage_read_mut_unchecked",
+      "optional_storage_read_unchecked",
+      "optional_storage_reset",
       "other",
       "outside",
       "overflow",
@@ -188,6 +196,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "to_c_string_view",
       "truncated",
       "try_allocate",
+      "try_construct",
       "unique_owner_is_null",
       "unique_owner_upcast",
       "unsigned_count",
@@ -1015,6 +1024,134 @@ inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
   if (index >= size) {
     storage_error("container index out of logical bounds");
   }
+}
+
+// Inline zero-or-one storage used only by the declaration-bound
+// <std/optional> capability. It has no allocation state: engagement and one
+// correctly aligned T lifetime are carried directly in the containing object.
+template <typename T>
+class optional_storage {
+public:
+  optional_storage() = default;
+  optional_storage(const optional_storage &) = delete;
+  optional_storage &operator=(const optional_storage &) = delete;
+
+  optional_storage(optional_storage &&other) {
+    if (other.engaged_) {
+      std::construct_at(slot(), std::move(*std::launder(other.slot())));
+      engaged_ = true;
+      other.reset();
+    }
+  }
+
+  optional_storage &operator=(optional_storage &&) = delete;
+
+  ~optional_storage() { reset(); }
+
+  [[nodiscard]] bool has_value() const noexcept { return engaged_; }
+
+  template <typename... Args>
+  void construct(Args &&...args) {
+    if (engaged_) {
+      storage_error("constructed an engaged optional storage slot");
+    }
+    try {
+      std::construct_at(slot(), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    engaged_ = true;
+  }
+
+  template <typename... Args>
+  [[nodiscard]] bool try_construct(Args &&...args) {
+    if (engaged_) {
+      return false;
+    }
+    try {
+      std::construct_at(slot(), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      return false;
+    }
+    engaged_ = true;
+    return true;
+  }
+
+  [[nodiscard]] const T &read() const {
+    if (!engaged_) {
+      empty_owner_error();
+    }
+    return *std::launder(slot());
+  }
+
+  [[nodiscard]] T &read_mut() {
+    if (!engaged_) {
+      empty_owner_error();
+    }
+    return *std::launder(slot());
+  }
+
+  [[nodiscard]] const T &unchecked_read() const {
+    return *std::launder(slot());
+  }
+
+  [[nodiscard]] T &unchecked_read_mut() { return *std::launder(slot()); }
+
+  void reset() {
+    if (engaged_) {
+      engaged_ = false;
+      std::destroy_at(std::launder(slot()));
+    }
+  }
+
+private:
+  [[nodiscard]] T *slot() {
+    return reinterpret_cast<T *>(storage_);
+  }
+
+  [[nodiscard]] const T *slot() const {
+    return reinterpret_cast<const T *>(storage_);
+  }
+
+  alignas(T) std::byte storage_[sizeof(T)];
+  bool engaged_ = false;
+};
+
+template <typename T>
+inline bool optional_storage_has_value(const optional_storage<T> &value) {
+  return value.has_value();
+}
+
+template <typename T, typename... Args>
+inline void optional_storage_construct(optional_storage<T> &value,
+                                       Args &&...args) {
+  value.construct(std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline const T &optional_storage_read(const optional_storage<T> &value) {
+  return value.read();
+}
+
+template <typename T>
+inline T &optional_storage_read_mut(optional_storage<T> &value) {
+  return value.read_mut();
+}
+
+template <typename T>
+inline const T &
+optional_storage_read_unchecked(const optional_storage<T> &value) {
+  return value.unchecked_read();
+}
+
+template <typename T>
+inline T &optional_storage_read_mut_unchecked(optional_storage<T> &value) {
+  return value.unchecked_read_mut();
+}
+
+template <typename T>
+inline void optional_storage_reset(optional_storage<T> &value) {
+  value.reset();
 }
 
 // Prefix-initialized storage (P-STORAGE-01): the live elements always form

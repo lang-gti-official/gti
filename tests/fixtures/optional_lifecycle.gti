@@ -1,0 +1,59 @@
+#include <std/optional>
+
+mut int32_t optional_drops = 0;
+mut int32_t optional_drop_sum = 0;
+
+class optional_tracked {
+public:
+  optional_tracked(int32_t value) : value_(value) {}
+
+  ~optional_tracked() {
+    optional_drops = optional_drops + 1;
+    optional_drop_sum = optional_drop_sum + this.value_;
+  }
+
+  int32_t value() {
+    return this.value_;
+  }
+
+private:
+  int32_t value_;
+};
+
+int main() {
+  {
+    mut std::optional<optional_tracked> first =
+        std::optional<optional_tracked>(optional_tracked(1));
+    if (optional_drops != 0 || first.value().value() != 1) {
+      return 1;
+    }
+
+    [[discard]] first.emplace(2);
+    if (optional_drops != 1 || optional_drop_sum != 1 ||
+        first.value().value() != 2) {
+      return 2;
+    }
+
+    mut std::optional<optional_tracked> second{std::move(first)};
+    if (!second.has_value() || second.value().value() != 2 ||
+        optional_drops != 1) {
+      return 3;
+    }
+
+    second.reset();
+    if (second.has_value() || optional_drops != 2 || optional_drop_sum != 3) {
+      return 4;
+    }
+
+    [[discard]] second.emplace(4);
+    if (!second.has_value() || second.value().value() != 4 ||
+        optional_drops != 2) {
+      return 5;
+    }
+  }
+
+  if (optional_drops != 3 || optional_drop_sum != 7) {
+    return 6;
+  }
+  return 0;
+}

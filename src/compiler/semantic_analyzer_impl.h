@@ -1484,6 +1484,8 @@ private:
   // logical prefix.
   void analyzePrefixStorageIntrinsicCall(const Call &expr,
                                          IntrinsicKind intrinsic);
+  void analyzeOptionalStorageIntrinsicCall(const Call &expr,
+                                           IntrinsicKind intrinsic);
 
   // The identity-bound public logical-size check (P-STORAGE-01): two
   // uint64_t scalars — the index and the logical size — with a void
@@ -2925,6 +2927,7 @@ private:
   [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
 

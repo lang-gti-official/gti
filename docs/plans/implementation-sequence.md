@@ -2852,11 +2852,20 @@ name recognition.
 
 ### L-VALUE-01: Optional And Foundational Value Utilities
 
-- **State/role:** blocked on `M-FAIL-01`; `M-LIFE-01` and `I-CAP-01` are
-  done; systems-readiness standard-library work.
+- **State/role:** in progress. The production move-only `std::optional<T>`
+  sub-slice is complete over exact declaration-bound inline one-slot storage;
+  pair breadth, swap/exchange, limits, and broader `expected` observers remain
+  systems-readiness standard-library work.
 - **Scope:** Implement `optional<T>` over checked one-slot storage, then
   complete pair, comparison, swap/exchange, limits, and `expected` observers
   without compiler-recognized public names.
+- **Implemented optional boundary:** empty and engaged construction,
+  observation, checked read-only/exclusive access, reset, variadic emplacement,
+  move-only payload transfer, deterministic wrong-state failure, and
+  exactly-once cleanup are complete. The private representation is inline and
+  allocation-free. Copy construction and both assignment forms fail closed;
+  source-defined conditional special-member assignment remains a later
+  prerequisite, while `reset`/`emplace` provide explicit replacement now.
 - **Exit gate:** empty/engaged construction, move-only values, assignment,
   destruction, failure, generic constraints, and constexpr-safe constants.
 

@@ -1751,11 +1751,26 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                             DefinedFailureDetail::PrivateStorage);
           break;
+        case IntrinsicKind::OptionalStorageConstruct:
+          anchor(token);
+          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
+                            DefinedFailureDetail::DuplicateConstruction);
+          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                            DefinedFailureDetail::ElementConstruction);
+          break;
+        case IntrinsicKind::OptionalStorageRead:
+        case IntrinsicKind::OptionalStorageReadMut:
+          anchor(token);
+          addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
+                            DefinedFailureDetail::MemberAccess);
+          break;
         case IntrinsicKind::StorageTryAllocate:
         case IntrinsicKind::StorageCapacity:
         case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:
         case IntrinsicKind::PrefixStorageTextView:
+        case IntrinsicKind::OptionalStorageHasValue:
+        case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         // The expected extractions' defined-failure outcomes anchor in
@@ -2283,6 +2298,16 @@ auto SemanticVisitor::Impl::isMemoryLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/memory";
+}
+
+auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/optional";
 }
 
 auto SemanticVisitor::Impl::isNumericLibraryUnit(SourceUnitId sourceUnit) const

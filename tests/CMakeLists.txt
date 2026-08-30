@@ -147,6 +147,13 @@ add_executable("gti_source_unit_services_tests"
 target_link_libraries("gti_source_unit_services_tests" PRIVATE gti_compiler)
 add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
+add_executable("gti_optional_compiler_tests"
+               "${PROJECT_SOURCE_DIR}/tests/optional_compiler_tests.cpp")
+target_link_libraries("gti_optional_compiler_tests" PRIVATE gti_cpp_backend)
+target_precompile_headers("gti_optional_compiler_tests"
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME optional_compiler_contract COMMAND gti_optional_compiler_tests)
+
 add_test(
   NAME semantic_header_boundary
   COMMAND "${Python3_EXECUTABLE}"
@@ -728,6 +735,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/expected_wrong_state_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
+  add_test(
+    NAME optional_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/optional_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(optional_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_propagation_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -3992,6 +3992,15 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
             instruction.callInputKind == HirCallInputKind::MoveValue) {
           continue;
         }
+        // The exact optional-storage construct consumes a prepared payload
+        // into an already-live private storage subobject. The surrounding
+        // field obligation was armed by its declaration initializer; this
+        // transfer retires only the payload's call staging obligation and is
+        // not an untracked transfer of a subobject into `this`.
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct) {
+          continue;
+        }
         const MirDropObligation *source = body.findDropObligation(event.source);
         if (source != nullptr &&
             source->kind != MirDropObligationKind::ConstructionRollback) {
@@ -4049,6 +4058,8 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.intrinsic == IntrinsicKind::StorageReadMut ||
        instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
        instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+       instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
+       instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
        instruction.intrinsic == IntrinsicKind::ExpectedValue) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();
@@ -6292,8 +6303,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                   instruction.intrinsic == IntrinsicKind::StorageConstruct ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+                  instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
                   instruction.intrinsic ==
-                      IntrinsicKind::PrefixStorageInsert))))) &&
+                      IntrinsicKind::OptionalStorageConstruct))))) &&
              validCallableInvocation() &&
              (!instruction.callableBoundary ||
               *instruction.callableBoundary == CallableBoundary::Confined) &&
@@ -6301,7 +6313,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                 instruction.intrinsic == IntrinsicKind::StorageConstruct ||
                 instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-                instruction.intrinsic == IntrinsicKind::PrefixStorageInsert) &&
+                instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+                instruction.intrinsic ==
+                    IntrinsicKind::OptionalStorageConstruct) &&
                !instruction.functionTarget && !instruction.lambdaTarget)) &&
              std::all_of(
                  instruction.callableArguments.begin(),
@@ -8695,10 +8709,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             argument != nullptr && index == 0 &&
             argument->callInputKind == HirCallInputKind::MutableBorrow &&
             (parameter.kind == SemanticType::Storage ||
-             parameter.kind == SemanticType::PrefixStorage) &&
+             parameter.kind == SemanticType::PrefixStorage ||
+             parameter.kind == SemanticType::Class) &&
             (invocation.intrinsic == IntrinsicKind::StorageConstruct ||
              invocation.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             invocation.intrinsic == IntrinsicKind::PrefixStorageInsert);
+             invocation.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+             invocation.intrinsic == IntrinsicKind::OptionalStorageConstruct);
         const bool temporaryReadArgument =
             argument != nullptr &&
             invocation.kind == MirInstructionKind::Call &&

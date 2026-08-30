@@ -1,0 +1,5 @@
+{
+  "title": "Replace an optional value",
+  "description": "Constructs empty storage, emplaces and mutates a value, then resets it.",
+  "mode": "run"
+}

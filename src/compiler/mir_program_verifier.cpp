@@ -1382,6 +1382,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             inPlaceArgumentOffset = 2;
             inPlaceStorageKind = SemanticType::PrefixStorage;
             break;
+          case IntrinsicKind::OptionalStorageConstruct:
+            inPlaceArgumentOffset = 1;
+            inPlaceStorageKind = SemanticType::Class;
+            break;
           default:
             break;
           }
@@ -4875,6 +4879,204 @@ exactCapabilityReferenceValue(const MirProgram &program,
 }
 
 [[nodiscard]] bool
+exactOptionalStorageIntrinsicContract(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirInstruction &instruction) {
+  const bool optionalIntrinsic =
+      instruction.intrinsic == IntrinsicKind::OptionalStorageHasValue ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageReset;
+  if (!optionalIntrinsic) {
+    return true;
+  }
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.lambdaTarget ||
+      instruction.bodyTarget || instruction.callableInvocation ||
+      instruction.operands.empty() ||
+      instruction.parameterTypes.size() != instruction.operands.size() ||
+      !std::equal(instruction.parameterTypes.begin(),
+                  instruction.parameterTypes.end(),
+                  instruction.operands.begin(),
+                  [](const SemanticType &parameter, const MirOperand &operand) {
+                    return parameter == operand.type;
+                  }) ||
+      !instruction.callableArguments.empty() ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None) {
+    return false;
+  }
+
+  const MirOperand &storageOperand = instruction.operands.front();
+  const MirClassInstance *storageClass =
+      exactMirCapabilityClass(program, storageOperand.type,
+                              CompilerCapabilityTypeKind::OptionalStorage);
+  if (storageClass == nullptr || storageOperand.kind != MirOperandKind::Value ||
+      storageOperand.value == 0 || storageOperand.place != 0 ||
+      storageOperand.loan != 0 || storageOperand.literal) {
+    return false;
+  }
+  const MirInstruction *stage = definitionFor(body, storageOperand.value);
+  if (stage == nullptr || !stage->result ||
+      *stage->result != storageOperand.value || stage->operands.size() != 1 ||
+      stage->info.type != storageClass->type ||
+      stage->operands.front().place == 0) {
+    return false;
+  }
+  const MirPlace *storagePlace = body.findPlace(stage->operands.front().place);
+  if (storagePlace == nullptr || storagePlace->type != storageClass->type) {
+    return false;
+  }
+  const bool mutates =
+      instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+      instruction.intrinsic == IntrinsicKind::OptionalStorageReset;
+  const bool exactStage =
+      (stage->kind == MirInstructionKind::Load &&
+       stage->operands.front().kind == MirOperandKind::Copy) ||
+      (stage->kind == MirInstructionKind::CallInput &&
+       stage->operands.front().kind == (mutates ? MirOperandKind::BorrowWrite
+                                                : MirOperandKind::BorrowRead));
+  if (!exactStage) {
+    return false;
+  }
+
+  const SemanticType &elementType = storageClass->type.arguments.front();
+  const auto exactResult = [&](const SemanticType &type, ValueCategory category,
+                               AccessMode access) {
+    return instruction.info.type == type &&
+           instruction.info.category == category &&
+           instruction.info.access == access &&
+           (type == SemanticType::Void ? !instruction.result
+                                       : instruction.result.has_value());
+  };
+  const auto noLoanResult = [&] {
+    return !instruction.loan &&
+           instruction.borrowOrigin == BorrowOriginKind::None &&
+           instruction.borrowArgument == 0 &&
+           instruction.borrowAccess == AccessMode::ReadOnly;
+  };
+  const auto noFailure = [&] {
+    return instruction.definedFailure.empty() &&
+           instruction.localFailureSites.empty() &&
+           instruction.safetyDischarges.empty();
+  };
+  const auto exactFailure = [&](std::vector<DefinedFailureOutcome> outcomes) {
+    return instruction.definedFailure.propagation ==
+               FailurePropagationKind::None &&
+           instruction.definedFailure.localOrigins.size() == 1 &&
+           instruction.definedFailure.localOrigins.front().outcomes ==
+               outcomes &&
+           instruction.localFailureSites.size() == 1 &&
+           instruction.localFailureSites.front() != 0;
+  };
+  const auto exactConstructLifecycle = [&] {
+    std::vector<MirDropObligationId> expectedTransfers;
+    for (std::size_t index = 1; index < instruction.operands.size(); ++index) {
+      const MirOperand &operand = instruction.operands[index];
+      if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+          operand.place != 0 || operand.loan != 0 || operand.literal) {
+        return false;
+      }
+      const MirInstruction *producer = definitionFor(body, operand.value);
+      if (producer == nullptr || !producer->result ||
+          *producer->result != operand.value) {
+        return false;
+      }
+
+      const MirDropObligation *transferred = nullptr;
+      if (producer->preparedParameterDrop) {
+        transferred = body.findDropObligation(*producer->preparedParameterDrop);
+      } else {
+        for (const MirDropObligation &candidate : body.dropObligations) {
+          const MirPlace *place = body.findPlace(candidate.place);
+          if (candidate.kind != MirDropObligationKind::Value ||
+              place == nullptr || place->root != MirPlaceRootKind::Value ||
+              place->value != operand.value || !place->projections.empty()) {
+            continue;
+          }
+          if (transferred != nullptr) {
+            return false;
+          }
+          transferred = &candidate;
+        }
+      }
+      if (transferred == nullptr) {
+        continue;
+      }
+      if ((transferred->kind != MirDropObligationKind::Value &&
+           transferred->kind != MirDropObligationKind::PreparedParameter) ||
+          transferred->dropType.type != operand.type) {
+        return false;
+      }
+      expectedTransfers.push_back(transferred->id);
+    }
+    if (instruction.lifecycle.size() != expectedTransfers.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < expectedTransfers.size(); ++index) {
+      const MirLifecycleEvent &event = instruction.lifecycle[index];
+      if (event.kind != MirLifecycleEventKind::TransferOut ||
+          event.source != expectedTransfers[index] || event.target != 0 ||
+          event.conditional || event.failureCleanup) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  switch (instruction.intrinsic) {
+  case IntrinsicKind::OptionalStorageHasValue:
+    return instruction.lifecycle.empty() && instruction.operands.size() == 1 &&
+           !instruction.constructorTarget &&
+           exactResult(SemanticType::Bool, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() && noFailure();
+  case IntrinsicKind::OptionalStorageReset:
+    return instruction.lifecycle.empty() && instruction.operands.size() == 1 &&
+           !instruction.constructorTarget &&
+           exactResult(SemanticType::Void, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() && noFailure();
+  case IntrinsicKind::OptionalStorageConstruct:
+    return exactResult(SemanticType::Void, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult() && exactConstructLifecycle() &&
+           exactFailure(
+               {{.code = DefinedFailureCode::InvalidStorageState,
+                 .detail = DefinedFailureDetail::DuplicateConstruction},
+                {.code = DefinedFailureCode::AllocationFailure,
+                 .detail = DefinedFailureDetail::ElementConstruction}});
+  case IntrinsicKind::OptionalStorageRead:
+  case IntrinsicKind::OptionalStorageReadMut: {
+    if (!instruction.lifecycle.empty() || instruction.operands.size() != 1 ||
+        instruction.constructorTarget) {
+      return false;
+    }
+    const AccessMode access =
+        instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly;
+    const MirLoan *loan =
+        instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+    return exactResult(elementType, ValueCategory::Place, access) &&
+           instruction.borrowOrigin == BorrowOriginKind::Argument &&
+           instruction.borrowArgument == 0 &&
+           instruction.borrowAccess == access && loan != nullptr &&
+           loan->kind == MirLoanKind::CallResult && !loan->lifecycleBound &&
+           !loan->entry && !loan->escapes && loan->parent == 0 &&
+           loan->source == storagePlace->id && loan->access == access &&
+           loan->producedBy == instruction.hirValue &&
+           exactFailure({{.code = DefinedFailureCode::EmptyOwnerAccess,
+                          .detail = DefinedFailureDetail::MemberAccess}});
+  }
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] bool
 exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                             const MirInstruction &instruction) {
   const bool mutexIntrinsic =
@@ -5462,6 +5664,23 @@ verifyMirProgramContracts(const MirProgram &program) {
                           "capability, operand, result, loan, failure, and "
                           "synchronization contract"});
         }
+        const bool optionalStorageIntrinsic =
+            instruction.intrinsic == IntrinsicKind::OptionalStorageHasValue ||
+            instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct ||
+            instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
+            instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+            instruction.intrinsic == IntrinsicKind::OptionalStorageReset;
+        if (optionalStorageIntrinsic && !exactOptionalStorageIntrinsicContract(
+                                            program, body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "optional storage intrinsic does not retain its "
+                          "exact capability, staged place, result, loan, and "
+                          "failure contract"});
+        }
         if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
             !instruction.threadTaskAdapter) {
           result.errors.push_back(
@@ -5880,6 +6099,47 @@ verifyMirProgramContracts(const MirProgram &program) {
                         "retain its exact passive native-storage shape"});
       }
     }
+    if (instance.compilerCapability ==
+        CompilerCapabilityTypeKind::OptionalStorage) {
+      const std::optional<bool> payloadRequiresActiveCleanup =
+          instance.type.arguments.size() == 1
+              ? typeRequiresActiveCleanup(instance.type.arguments.front(),
+                                          typeRequiresActiveCleanup)
+              : std::nullopt;
+      const bool exactOptionalCapability =
+          instance.kind == ClassKind::Class &&
+          instance.type.kind == SemanticType::Class &&
+          instance.type.classId == instance.declaration &&
+          instance.type.arguments.size() == 1 &&
+          instance.type.arguments.front() != SemanticType::Void &&
+          instance.type.arguments.front().kind != SemanticType::Reference &&
+          instance.type.arguments.front().kind != SemanticType::RawPointer &&
+          !instance.lifecycleBoundBorrowCarrier && instance.bases.empty() &&
+          instance.structuralBases.empty() && instance.declaredFields.empty() &&
+          instance.fields.empty() && instance.fieldDropOrder.empty() &&
+          !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
+          !instance.cAbiLayout && !instance.unionLayout &&
+          instance.defaultConstructor == SpecialMemberStatus::Declared &&
+          instance.copyConstructor == SpecialMemberStatus::Deleted &&
+          instance.moveConstructor == SpecialMemberStatus::Generated &&
+          instance.copyAssignment == SpecialMemberStatus::Deleted &&
+          instance.moveAssignment == SpecialMemberStatus::Deleted &&
+          instance.destructorStatus == SpecialMemberStatus::Generated &&
+          !instance.destructor && !instance.requiresActiveDropState &&
+          instance.traits.ownership == OwnershipKind::Value &&
+          instance.traits.drop == DropKind::Lexical &&
+          !instance.traits.copyable && instance.traits.movable &&
+          !instance.traits.copyAssignable && !instance.traits.moveAssignable &&
+          payloadRequiresActiveCleanup &&
+          instance.requiresActiveCleanup == *payloadRequiresActiveCleanup;
+      if (!exactOptionalCapability) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "compiler-owned optional storage capability does not "
+                        "retain its exact move-only inline-slot shape"});
+      }
+    }
     if (instance.lifecycleBoundBorrowCarrier) {
       const MirClassFieldInfo *storageField = nullptr;
       const MirClassFieldInfo *tokenField = nullptr;
@@ -6067,8 +6327,10 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     const bool structurallyRequiresActiveCleanup =
         instance.destructor.has_value() ||
-        (instance.compilerCapability ==
-             CompilerCapabilityTypeKind::MutexStorage &&
+        ((instance.compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage ||
+          instance.compilerCapability ==
+              CompilerCapabilityTypeKind::OptionalStorage) &&
          instance.type.arguments.size() == 1 &&
          typeRequiresActiveCleanup(instance.type.arguments.front(),
                                    typeRequiresActiveCleanup)

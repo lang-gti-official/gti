@@ -25,10 +25,11 @@ identity, never by qualified spelling or a public wrapper name. Shared prefix
 storage, text, and core constraint identities live in the trusted prelude.
 Module-specific identities live only in their exact trusted source units:
 unique ownership and sparse storage in `<std/memory>`, managed threads in
-`<std/thread>`, atomics in `<std/atomic>`, mutexes in `<std/mutex>`, defined
-integer arithmetic in `<std/numeric>`, iterators in `<std/iterator>`, and
-callable relations in `<std/functional>`. Unrelated programs therefore do not
-carry those private declaration inventories. Aliases preserve an identity.
+`<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
+`<std/atomic>`, mutexes in `<std/mutex>`, defined integer arithmetic in
+`<std/numeric>`, iterators in `<std/iterator>`, and callable relations in
+`<std/functional>`. Unrelated programs therefore do not carry those private
+declaration inventories. Aliases preserve an identity.
 Declarations whose exposed semantic type contains a private capability are not
 published to application source, so a trusted unit cannot leak a private
 handle through an otherwise public constructor, function, field, or alias.
@@ -131,6 +132,17 @@ The current implemented foundation includes:
   `expected<T, std::arithmetic_errc>`, plus source-defined integral `gcd` and
   `lcm` and numeric `midpoint`; and
 - `<std/utility>` source-defined `std::pair` and `std::make_pair`; and
+- `<std/optional>` source-defined move-only `std::optional<T>` for
+  `std::movable T`. Empty construction performs no allocation; value
+  construction, `emplace`, `reset`, `has_value`, contextual `bool`, checked
+  `value`, dereference, arrow, and `value_or` are implemented. A move
+  construction transfers an engaged payload and its cleanup obligation.
+  Constructing `T` can still report its ordinary `allocation_failure` /
+  `element_construction` outcome; a failed emplacement leaves the slot empty.
+  An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
+  construction and copy/move assignment are unavailable in this slice;
+  replacement uses `reset()` or `emplace()`, and a moved source cannot be used
+  under GTI's ordinary ownership rules; and
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and
