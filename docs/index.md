@@ -108,6 +108,10 @@ for the current implementation when a document is stale or ambiguous.
   — adopts the direct `std::allocator`/`std::storage<T>` boundary, typed
   provenance and slot lifetimes, recoverable allocation, alignment and
   zero-size rules, and the arena/pool composition boundary.
+- [023: Versioned engine embedding ABI](decisions/023-versioned-engine-embedding-abi.md)
+  — fixes the generated C wrapper, descriptor, context, status, lifecycle,
+  signature, symbol, and unload contract without exposing ordinary GTI or
+  generated C++ layout as an engine ABI.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
