@@ -368,10 +368,15 @@ entry `.gti` source and therefore one existing whole-program source graph. A
 test target differs in project intent and command selection, not in language
 semantics or native representation.
 
-The manifest schema may reserve `library`, but implementation must not claim
-native libraries until the compiler defines their exported surface, linkage,
-lifecycle ABI, generic-instantiation ownership, and cross-package visibility.
-Source dependencies can arrive before compiled-library targets.
+The manifest schema may reserve `library`, but current implementations must not
+claim native libraries. The accepted first implementation is the shared,
+host-embedded gameplay-module campaign in
+[`implementation-sequence.md`](implementation-sequence.md#engine-embedding-delivery-campaign).
+It activates `kind = "library"` only together with explicit `linkage =
+"shared"`, manifest-selected generated C exports, contained lifecycle/failure,
+and a dynamically loaded host gate. It does not add separately compiled GTI
+dependencies or a stable ABI for ordinary GTI values. Source dependencies can
+arrive before compiled-library targets.
 
 ### Profile
 
