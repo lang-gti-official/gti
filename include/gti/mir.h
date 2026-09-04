@@ -1215,6 +1215,30 @@ struct MirLambdaInstance {
                          const MirLambdaInstance &) = default;
 };
 
+// Pointer-free public-root authority for one host embedding export. These
+// rows are selected in semantics and copied through HIR; MIR never reopens
+// source-level name lookup when establishing an ABI root.
+struct MirEmbeddingExport {
+  FunctionId declaration = 0;
+  HirFunctionInstanceId function = 0;
+  std::string qualifiedName;
+  std::string symbol;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  SourceSpan requestSource;
+
+  friend bool operator==(const MirEmbeddingExport &,
+                         const MirEmbeddingExport &) = default;
+};
+
+struct MirEmbeddingPlan {
+  std::uint32_t abiVersion = embeddingAbiVersionV1;
+  std::vector<MirEmbeddingExport> exports;
+
+  friend bool operator==(const MirEmbeddingPlan &,
+                         const MirEmbeddingPlan &) = default;
+};
+
 struct MirProgramInitializationUnit {
   SourceUnitId sourceUnit = 0;
   std::vector<ProgramInitializationStepId> steps;
@@ -1416,7 +1440,12 @@ public:
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
+  [[nodiscard]] ProgramKind programKind() const { return programKind_; }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
+
+  [[nodiscard]] const std::optional<MirEmbeddingPlan> &embeddingPlan() const {
+    return embeddingPlan_;
+  }
 
   [[nodiscard]] const MirProgramInitializationPlan &
   programInitializationPlan() const {
@@ -1527,7 +1556,9 @@ private:
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  ProgramKind programKind_ = ProgramKind::Executable;
   FailureMetadata failureMetadata_;
+  std::optional<MirEmbeddingPlan> embeddingPlan_;
   MirProgramInitializationPlan programInitialization;
   std::optional<MirHostedStartupPlan> hostedStartupPlan_;
   std::optional<MirBody> hostedStartupBody;

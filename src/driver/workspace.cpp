@@ -155,7 +155,8 @@ std::string ProjectWorkspace::modelIdentity() const {
 WorkspaceResolutionResult
 resolveProjectWorkspace(const std::filesystem::path &startDirectory,
                         const std::optional<std::string> &requestedPackage,
-                        const WorkspaceDependencyPolicy &dependencyPolicy) {
+                        const WorkspaceDependencyPolicy &dependencyPolicy,
+                        ManifestFeaturePolicy manifestFeatures) {
   WorkspaceResolutionResult result;
   ManifestDiscoveryResult discovery = discoverProjectManifest(startDirectory);
   if (!discovery.succeeded()) {
@@ -164,7 +165,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     return result;
   }
 
-  ManifestLoadResult nearestLoad = loadProjectManifest(*discovery.path);
+  ManifestLoadResult nearestLoad =
+      loadProjectManifest(*discovery.path, manifestFeatures);
   mergeSources(result.sources, nearestLoad.sources);
   if (!nearestLoad.succeeded()) {
     result.status = WorkspaceResolutionStatus::ManifestFailure;
@@ -180,7 +182,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     const std::filesystem::path candidate = parent / manifestFilename;
     std::error_code error;
     if (std::filesystem::is_regular_file(candidate, error) && !error) {
-      ManifestLoadResult candidateLoad = loadProjectManifest(candidate);
+      ManifestLoadResult candidateLoad =
+          loadProjectManifest(candidate, manifestFeatures);
       if (candidateLoad.succeeded() && candidateLoad.manifest->workspace()) {
         const auto &members = candidateLoad.manifest->workspace()->members;
         if (std::find(members.begin(), members.end(), nearestRoot) !=
@@ -243,7 +246,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
   ManifestLoadResult workspaceLoad =
       workspaceManifest == nearestLoad.manifest->path()
           ? std::move(nearestLoad)
-          : loadProjectManifest(workspaceManifest);
+          : loadProjectManifest(workspaceManifest, manifestFeatures);
   const std::optional<std::size_t> rootIndex = addLoadedManifest(
       std::move(workspaceLoad), ProjectPackageMembership::Root, std::nullopt,
       std::nullopt, "Workspace root");
@@ -261,7 +264,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
         *packages[*rootIndex].manifest.workspace();
     for (std::size_t index = 0; index < workspace.members.size(); ++index) {
       const std::filesystem::path &memberRoot = workspace.members[index];
-      if (!addLoadedManifest(loadProjectManifest(memberRoot / manifestFilename),
+      if (!addLoadedManifest(loadProjectManifest(memberRoot / manifestFilename,
+                                                 manifestFeatures),
                              ProjectPackageMembership::Member, memberRoot,
                              workspace.memberDeclarations[index],
                              "Workspace member")) {
@@ -460,7 +464,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
         dependencyIndex = existing->second;
       } else {
         dependencyIndex = addLoadedManifest(
-            loadProjectManifest(targetRoot / manifestFilename),
+            loadProjectManifest(targetRoot / manifestFilename,
+                                manifestFeatures),
             ProjectPackageMembership::Dependency, targetRoot,
             dependency.pathDeclaration,
             dependency.git ? "Git dependency" : "Path dependency");

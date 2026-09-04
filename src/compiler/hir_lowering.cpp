@@ -15,6 +15,7 @@ public:
     baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
+    output.program.programKind_ = baseModel->programKind();
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
     if (!baseModel->analysisSeal().matchesProgram(source, target)) {
       output.program.valid_ = false;
@@ -38,6 +39,7 @@ public:
     activeDefaultArguments.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
+    lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
     finalizeLifetimes(output.program.moduleBody, *baseModel, false);
@@ -550,6 +552,39 @@ private:
       // plan after declaration seeding. Its order is not the combined AST
       // visitation order, and class statics share the module body with globals.
     }
+  }
+
+  void lowerEmbeddingPlan() {
+    const std::optional<SemanticEmbeddingPlan> &semanticPlan =
+        baseModel->embeddingPlan();
+    if (!semanticPlan) {
+      output.program.embeddingPlan_.reset();
+      return;
+    }
+    HirEmbeddingPlan plan{.abiVersion = semanticPlan->abiVersion};
+    plan.exports.reserve(semanticPlan->exports.size());
+    for (const SemanticEmbeddingExport &selected : semanticPlan->exports) {
+      const FunctionInfo *function = baseModel->findFunction(selected.function);
+      const std::optional<std::size_t> existing =
+          function == nullptr
+              ? std::nullopt
+              : instanceIndex.findFunction(function->id, {}, {}, {}, {});
+      if (function == nullptr || !existing) {
+        lifecycleValid = false;
+        continue;
+      }
+      plan.exports.push_back({.semanticFunction = selected.function,
+                              .function = *existing,
+                              .qualifiedName = selected.qualifiedName,
+                              .symbol = selected.symbol,
+                              .returnType = selected.returnType,
+                              .parameterTypes = selected.parameterTypes,
+                              .requestSource = selected.requestSource});
+    }
+    if (plan.exports.size() != semanticPlan->exports.size()) {
+      lifecycleValid = false;
+    }
+    output.program.embeddingPlan_ = std::move(plan);
   }
 
   void lowerProgramInitializationPlan() {

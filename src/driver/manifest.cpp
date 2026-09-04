@@ -1736,8 +1736,20 @@ std::string_view projectTargetKindName(ProjectTargetKind kind) {
     return "executable";
   case ProjectTargetKind::Test:
     return "test";
+  case ProjectTargetKind::Library:
+    return "library";
   }
   return "executable";
+}
+
+std::string_view projectTargetLinkageName(ProjectTargetLinkage linkage) {
+  switch (linkage) {
+  case ProjectTargetLinkage::None:
+    return "none";
+  case ProjectTargetLinkage::Shared:
+    return "shared";
+  }
+  return "none";
 }
 
 const std::filesystem::path &ProjectManifest::path() const {
@@ -1891,7 +1903,8 @@ discoverProjectManifest(const std::filesystem::path &startDirectory) {
 }
 
 ManifestLoadResult
-loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
+loadProjectManifest(const std::filesystem::path &requestedManifestPath,
+                    ManifestFeaturePolicy features) {
   ManifestLoadResult result;
   std::error_code error;
   std::filesystem::path manifestPath =
@@ -2127,8 +2140,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
               "Target '" + targetName + "' must be a table."));
           continue;
         }
-        validateFields(*targetTable, {"kind", "root", "native"}, "target",
-                       sourceName, source, result.diagnostics);
+        validateFields(*targetTable,
+                       {"kind", "linkage", "root", "exports", "native"},
+                       "target", sourceName, source, result.diagnostics);
         const std::optional<std::string> kind =
             requiredString(*targetTable, "kind", "target", sourceName, source,
                            result.diagnostics);
@@ -2139,12 +2153,101 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
         if (kind) {
           if (*kind == "test") {
             targetKind = ProjectTargetKind::Test;
+          } else if (*kind == "library") {
+            targetKind = ProjectTargetKind::Library;
+            if (!features.dormantLibraryTargets) {
+              Diagnostic diagnostic = buildDiagnostic(
+                  "GTI-B2000",
+                  sourceSpan(sourceName, source, *targetTable->get("kind")),
+                  "Shared-library targets are not enabled in this GTI "
+                  "toolchain yet.");
+              diagnostic.hints.push_back(
+                  "Use an executable or test target until the complete "
+                  "embedding artifact gate is released.");
+              result.diagnostics.push_back(std::move(diagnostic));
+            }
           } else if (*kind != "executable") {
             result.diagnostics.push_back(buildDiagnostic(
                 "GTI-B1005",
                 sourceSpan(sourceName, source, *targetTable->get("kind")),
                 "Target kind must be 'executable' or 'test' in manifest "
                 "version 1."));
+          }
+        }
+
+        ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None;
+        std::vector<ProjectExport> targetExports;
+        const toml::node *linkageNode = targetTable->get("linkage");
+        const toml::node *exportsNode = targetTable->get("exports");
+        if (targetKind == ProjectTargetKind::Library) {
+          const std::optional<std::string> linkage =
+              requiredString(*targetTable, "linkage", "library target",
+                             sourceName, source, result.diagnostics);
+          if (linkage) {
+            if (*linkage == "shared") {
+              targetLinkage = ProjectTargetLinkage::Shared;
+            } else {
+              result.diagnostics.push_back(buildDiagnostic(
+                  "GTI-B2000", sourceSpan(sourceName, source, *linkageNode),
+                  "Library target linkage must be 'shared' in embedding ABI "
+                  "version 1."));
+            }
+          }
+          if (exportsNode == nullptr) {
+            (void)requiredField(*targetTable, "exports", "library target",
+                                sourceName, source, result.diagnostics);
+          } else if (const toml::array *entries = exportsNode->as_array()) {
+            for (const toml::node &element : *entries) {
+              const SourceSpan declaration =
+                  sourceSpan(sourceName, source, element);
+              const toml::table *entry = element.as_table();
+              if (entry == nullptr) {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B1004", declaration,
+                    "Each library export must be a table declaring "
+                    "'function' and 'symbol'."));
+                continue;
+              }
+              validateFields(*entry, {"function", "symbol"}, "library export",
+                             sourceName, source, result.diagnostics);
+              const std::optional<std::string> function =
+                  requiredString(*entry, "function", "library export",
+                                 sourceName, source, result.diagnostics);
+              const std::optional<std::string> symbol =
+                  requiredString(*entry, "symbol", "library export", sourceName,
+                                 source, result.diagnostics);
+              if (!function || !symbol) {
+                continue;
+              }
+              targetExports.push_back(
+                  {.function = *function,
+                   .symbol = *symbol,
+                   .declaration = declaration,
+                   .functionDeclaration =
+                       sourceSpan(sourceName, source, *entry->get("function")),
+                   .symbolDeclaration =
+                       sourceSpan(sourceName, source, *entry->get("symbol"))});
+            }
+            if (entries->empty()) {
+              result.diagnostics.push_back(buildDiagnostic(
+                  "GTI-B2000", sourceSpan(sourceName, source, *exportsNode),
+                  "A library target must declare at least one export."));
+            }
+          } else {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", sourceSpan(sourceName, source, *exportsNode),
+                "Library target field 'exports' must be an array of tables."));
+          }
+        } else {
+          if (linkageNode != nullptr) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1005", sourceSpan(sourceName, source, *linkageNode),
+                "Only a library target may declare 'linkage'."));
+          }
+          if (exportsNode != nullptr) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1005", sourceSpan(sourceName, source, *exportsNode),
+                "Only a library target may declare 'exports'."));
           }
         }
         if (!root) {
@@ -2192,8 +2295,10 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
         targets.push_back(
             {.name = targetName,
              .kind = targetKind,
+             .linkage = targetLinkage,
              .root = resolvedRoot,
              .declaration = sourceSpan(sourceName, source, targetKey),
+             .exports = std::move(targetExports),
              .native =
                  parseOptionalNative(*targetTable, packageRoot, "Target",
                                      sourceName, source, result.diagnostics)});

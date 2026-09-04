@@ -20,6 +20,11 @@ bool SemanticVisitor::check(const Program &program) {
 
 bool SemanticVisitor::check(const Expr &expr) { return impl->check(expr); }
 
+bool SemanticVisitor::applyProgramRequest(const Program &program,
+                                          const ProgramRequest &request) {
+  return impl->applyProgramRequest(program, request);
+}
+
 bool SemanticVisitor::hadError() const { return impl->hadError(); }
 
 const std::vector<SemanticDiagnostic> &SemanticVisitor::errors() const {

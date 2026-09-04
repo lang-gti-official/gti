@@ -1751,7 +1751,7 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
           lang::driver::CompilationRequest(
               plan.entry(), toolchain.standardLibrary, plan.target(),
               plan.optimization(), plan.cppStandard(), plan.packageSources(),
-              plan.configurationFlags()),
+              plan.configurationFlags(), {}, plan.programRequest()),
           toolchain, plan.generatedSource(), plan.output(),
           lang::driver::discoverNativeCompiler(selectedCxx),
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
@@ -2004,7 +2004,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
         lang::driver::compileToMir(lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags()));
+            plan.configurationFlags(), {}, plan.programRequest()));
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
@@ -2036,7 +2036,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
         lang::driver::checkCompilation(lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags()));
+            plan.configurationFlags(), {}, plan.programRequest()));
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
       return exitCode(ExitStatus::Compilation);

@@ -158,6 +158,68 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
   }
+  if (program.programKind() != semantics.programKind()) {
+    result.errors.emplace_back(
+        "HIR program kind differs from the semantic model");
+  }
+  const std::optional<SemanticEmbeddingPlan> &semanticEmbedding =
+      semantics.embeddingPlan();
+  const std::optional<HirEmbeddingPlan> &embedding = program.embeddingPlan();
+  if (semanticEmbedding.has_value() != embedding.has_value()) {
+    result.errors.emplace_back(
+        "embedding plan presence differs from semantics");
+  } else if (semanticEmbedding && embedding) {
+    if (program.programKind() != ProgramKind::Library ||
+        embedding->abiVersion != embeddingAbiVersionV1 ||
+        embedding->abiVersion != semanticEmbedding->abiVersion ||
+        embedding->exports.empty() ||
+        embedding->exports.size() != semanticEmbedding->exports.size()) {
+      result.errors.emplace_back(
+          "embedding HIR plan has invalid program or ABI provenance");
+    }
+    std::string previousSymbol;
+    for (std::size_t index = 0; index < embedding->exports.size() &&
+                                index < semanticEmbedding->exports.size();
+         ++index) {
+      const HirEmbeddingExport &lowered = embedding->exports[index];
+      const SemanticEmbeddingExport &semantic =
+          semanticEmbedding->exports[index];
+      const HirFunctionInstance *instance =
+          program.findFunctionInstance(lowered.function);
+      const FunctionInfo *declaration =
+          semantics.findFunction(lowered.semanticFunction);
+      if ((index != 0 && previousSymbol >= lowered.symbol) ||
+          lowered.semanticFunction != semantic.function ||
+          lowered.qualifiedName != semantic.qualifiedName ||
+          lowered.symbol != semantic.symbol ||
+          lowered.returnType != semantic.returnType ||
+          lowered.parameterTypes != semantic.parameterTypes ||
+          !sameSpan(lowered.requestSource, semantic.requestSource) ||
+          instance == nullptr || declaration == nullptr ||
+          instance->id != lowered.function ||
+          instance->declaration != lowered.semanticFunction ||
+          instance->source != declaration->declaration || instance->owner ||
+          !instance->typeArguments.empty() ||
+          !instance->valueArguments.empty() ||
+          instance->returnType != lowered.returnType ||
+          instance->parameterTypes != lowered.parameterTypes ||
+          instance->entryKind != ProgramEntryKind::None ||
+          instance->linkage != LanguageLinkage::Gti) {
+        result.errors.emplace_back(
+            "embedding HIR export differs from its exact semantic function");
+      }
+      previousSymbol = lowered.symbol;
+    }
+  }
+  if (program.programKind() == ProgramKind::Executable && embedding) {
+    result.errors.emplace_back("executable HIR carries an embedding plan");
+  }
+  if (program.programKind() == ProgramKind::Library &&
+      (!embedding || program.hostedProgramEntryPlan() ||
+       !program.nativeCallbackAdapters().empty())) {
+    result.errors.emplace_back(
+        "library HIR lacks its export plan or retains an unsafe hosted root");
+  }
   for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
        ++index) {
     const HirNativeCallbackAdapter &adapter =

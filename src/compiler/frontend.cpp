@@ -56,6 +56,18 @@ std::string cacheContext(const FrontendOptions &options) {
               std::to_string(layout->abiAlignmentBytes) + ':' +
               std::to_string(layout->preferredAlignmentBytes);
   }
+  result += options.program.kind == ProgramKind::Library
+                ? "\nprogram:library"
+                : "\nprogram:executable";
+  std::vector<std::pair<std::string, std::string>> exports;
+  exports.reserve(options.program.exports.size());
+  for (const EmbeddingExportRequest &exportRequest : options.program.exports) {
+    exports.emplace_back(exportRequest.symbol, exportRequest.function);
+  }
+  std::sort(exports.begin(), exports.end());
+  for (const auto &[symbol, function] : exports) {
+    result += "\nexport:" + symbol + '=' + function;
+  }
   return result;
 }
 
@@ -343,6 +355,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   {
     const PhaseTimeScope timeScope("gti-semantics");
     result.semanticValid = semantic.check(result.program);
+    if (result.semanticValid) {
+      result.semanticValid =
+          semantic.applyProgramRequest(result.program, options.program);
+    }
   }
   if (options.workMetrics != nullptr) {
     options.workMetrics->semanticMicroseconds = static_cast<std::size_t>(

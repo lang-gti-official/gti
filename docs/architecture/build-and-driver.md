@@ -244,6 +244,19 @@ tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
 
+The driver also owns an internal, dormant `library` target model for the
+engine-embedding campaign. Under the non-default `ManifestFeaturePolicy`, a
+target must declare `linkage = "shared"` and at least one
+`[[targets.<name>.exports]]` table mapping an exact qualified GTI function to
+an explicit C symbol. `ProjectTarget`, `ProjectBuildPlan`, `ProjectFacts`, and
+`CompilationRequest` retain that policy and all declaration spans; the build
+plan's model identity canonicalizes export rows by public symbol. Its planned
+output uses the target platform's `.dylib`, `.so`, or `.dll` spelling. The
+ordinary CLI never enables this policy, so released manifests diagnose
+`kind = "library"` as unavailable and no incomplete shared artifact can be
+published. Internal tests may resolve the plan and run the ordinary frontend
+`check` path. Activation and native publication remain owned by `B-LIB-02`.
+
 An optional top-level `[build]` table accepts
 `defines = ["DEBUG", "FEATURE"]`. Names must be ordinary GTI identifiers;
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
@@ -790,6 +803,9 @@ The current key includes:
 - the GTI release and project-manifest model identities, normalized GTI
   configuration flags, backend C++ standard, optimization, execution profile,
   target triple, and complete GTI data layout;
+- for an internally enabled dormant library plan, its library/shared kind and
+  canonical public-symbol-to-qualified-function export rows (ordinary
+  executable/test identities remain byte-compatible);
 - the ordered `SourceGraph::preludeRoots()` logical identities, followed by
   SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
