@@ -43,6 +43,30 @@ target_link_libraries("gti_runtime_failure_header_smoke"
 add_test(NAME runtime_failure_header_coexistence
          COMMAND gti_runtime_failure_header_smoke)
 
+add_executable("gti_embedding_header_c_smoke"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_header_c_smoke.c")
+target_include_directories(
+  "gti_embedding_header_c_smoke"
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/runtime/include"
+)
+target_compile_features("gti_embedding_header_c_smoke" PRIVATE c_std_17)
+add_test(NAME embedding_header_c17_oracle COMMAND gti_embedding_header_c_smoke)
+
+add_executable("gti_embedding_header_cpp_smoke"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_header_cpp_smoke.cpp")
+target_include_directories(
+  "gti_embedding_header_cpp_smoke"
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/runtime/include"
+)
+target_compile_features("gti_embedding_header_cpp_smoke" PRIVATE cxx_std_20)
+add_test(NAME embedding_header_cpp20_oracle
+         COMMAND gti_embedding_header_cpp_smoke)
+
+add_executable("gti_embedding_foundation_tests"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_foundation_tests.cpp")
+target_link_libraries("gti_embedding_foundation_tests" PRIVATE gti_driver)
+add_test(NAME embedding_foundation COMMAND gti_embedding_foundation_tests)
+
 add_executable("gti_runtime_failure_helper"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_helper.cpp")
 target_link_libraries("gti_runtime_failure_helper"

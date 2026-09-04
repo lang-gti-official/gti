@@ -255,7 +255,30 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v54 valid=" << program.valid() << '\n';
+    output << (program.embeddingPlan() ? "mir-v55" : "mir-v54")
+           << " valid=" << program.valid() << '\n';
+    if (const std::optional<MirEmbeddingPlan> &embedding =
+            program.embeddingPlan()) {
+      output << "program-kind library embedding-abi=" << embedding->abiVersion
+             << " exports=" << embedding->exports.size() << '\n';
+      for (const MirEmbeddingExport &selected : embedding->exports) {
+        output << "embedding-export symbol=" << std::quoted(selected.symbol)
+               << " function=" << std::quoted(selected.qualifiedName)
+               << " declaration=" << selected.declaration
+               << " instance=" << selected.function << " return=";
+        type(selected.returnType);
+        output << " parameters=[";
+        for (std::size_t index = 0; index < selected.parameterTypes.size();
+             ++index) {
+          separator(index);
+          type(selected.parameterTypes[index]);
+        }
+        output << "] request=" << std::quoted(selected.requestSource.source)
+               << ':' << selected.requestSource.start << ':'
+               << selected.requestSource.end << ':'
+               << selected.requestSource.line << '\n';
+      }
+    }
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="

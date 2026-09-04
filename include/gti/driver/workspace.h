@@ -60,7 +60,8 @@ struct WorkspaceResolutionResult;
 [[nodiscard]] WorkspaceResolutionResult resolveProjectWorkspace(
     const std::filesystem::path &startDirectory,
     const std::optional<std::string> &requestedPackage = std::nullopt,
-    const WorkspaceDependencyPolicy &dependencyPolicy = {});
+    const WorkspaceDependencyPolicy &dependencyPolicy = {},
+    ManifestFeaturePolicy manifestFeatures = {});
 
 // The lock closure `gti fetch` records: one entry per git-sourced package in
 // the resolved workspace, with its verified checksum and the names of its
@@ -80,10 +81,9 @@ public:
   [[nodiscard]] std::string modelIdentity() const;
 
 private:
-  friend WorkspaceResolutionResult
-  resolveProjectWorkspace(const std::filesystem::path &,
-                          const std::optional<std::string> &,
-                          const WorkspaceDependencyPolicy &);
+  friend WorkspaceResolutionResult resolveProjectWorkspace(
+      const std::filesystem::path &, const std::optional<std::string> &,
+      const WorkspaceDependencyPolicy &, ManifestFeaturePolicy);
 
   ProjectWorkspace(std::filesystem::path root,
                    std::vector<ResolvedProjectPackage> packages,

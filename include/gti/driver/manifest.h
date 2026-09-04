@@ -18,6 +18,13 @@ namespace lang::driver {
 
 inline constexpr int currentManifestVersion = 1;
 
+// Internal-only feature gates for manifest shapes that must be retained and
+// tested before their artifact path is safe to expose through released CLI
+// commands. Production callers use the default, fully disabled policy.
+struct ManifestFeaturePolicy {
+  bool dormantLibraryTargets = false;
+};
+
 [[nodiscard]] bool isPortableProjectName(std::string_view name);
 [[nodiscard]] std::string portableProjectNameKey(std::string_view name);
 
@@ -150,15 +157,34 @@ struct ProjectToolchain {
 enum class ProjectTargetKind {
   Executable,
   Test,
+  Library,
 };
 
 [[nodiscard]] std::string_view projectTargetKindName(ProjectTargetKind kind);
 
+enum class ProjectTargetLinkage {
+  None,
+  Shared,
+};
+
+[[nodiscard]] std::string_view
+projectTargetLinkageName(ProjectTargetLinkage linkage);
+
+struct ProjectExport {
+  std::string function;
+  std::string symbol;
+  SourceSpan declaration;
+  SourceSpan functionDeclaration;
+  SourceSpan symbolDeclaration;
+};
+
 struct ProjectTarget {
   std::string name;
   ProjectTargetKind kind = ProjectTargetKind::Executable;
+  ProjectTargetLinkage linkage = ProjectTargetLinkage::None;
   std::filesystem::path root;
   SourceSpan declaration;
+  std::vector<ProjectExport> exports;
   ProjectNativeSettings native;
 };
 
@@ -258,6 +284,7 @@ struct ManifestLoadResult {
 discoverProjectManifest(const std::filesystem::path &startDirectory);
 
 [[nodiscard]] ManifestLoadResult
-loadProjectManifest(const std::filesystem::path &manifestPath);
+loadProjectManifest(const std::filesystem::path &manifestPath,
+                    ManifestFeaturePolicy features = {});
 
 } // namespace lang::driver

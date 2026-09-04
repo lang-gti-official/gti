@@ -94,7 +94,22 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v54`/`mir-body-v47`.
+It also copies the artifact program kind and a pointer-free
+`MirEmbeddingPlan`. Each canonical row names the exact source
+`MirFunctionInstance`, semantic declaration, signature, public symbol, and
+request span selected by HIR. Program verification requires a non-empty ABI-v1
+plan for a library, no plan for an executable, strict symbol order, unique
+function roots, source definitions with GTI linkage, and no hosted startup or
+process-lifetime callback adapter. Optimization coherence treats the entire
+plan as immutable non-body policy. `LoweredProgramBuilder` exact-compares the
+semantic/HIR/MIR chain and copies the rows into `LoweredEmbeddingPlan`, where
+future wrapper and header backends can consume one sealed source of truth.
+
+Executable deterministic serialization remains byte-compatible at
+`mir-v54`/`mir-body-v47`; a dormant library snapshot uses `mir-v55` and its
+lowered snapshot uses `lowered-program-v6` to serialize the artifact kind, ABI
+version, and canonical export rows. Ordinary lowered snapshots remain at
+`lowered-program-v5`.
 Program v54/body v47 add the nominal function ID to function-item semantic
 types and serialize the new zero-state `FunctionItem` operation with its exact
 concrete namespace target. Program v53 adds the closed payload-enum lifecycle

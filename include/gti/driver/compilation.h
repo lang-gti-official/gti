@@ -7,6 +7,7 @@
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
+#include "gti/program_request.h"
 #include "gti/source_graph.h"
 #include "gti/standard_library.h"
 #include "gti/target.h"
@@ -61,7 +62,8 @@ public:
                      OptimizationLevel optimization, CppStandard cppStandard,
                      std::vector<PackageSourceRoot> packageSourceRoots = {},
                      ConfigurationFlags configurationFlags = {},
-                     OptimizationOutputRequest optimizationOutputs = {});
+                     OptimizationOutputRequest optimizationOutputs = {},
+                     ProgramRequest program = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -71,6 +73,7 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
+  [[nodiscard]] const ProgramRequest &program() const;
 
 private:
   std::filesystem::path entryPath;
@@ -81,6 +84,7 @@ private:
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
+  ProgramRequest requestedProgram;
 };
 
 enum class CompilationStatus {

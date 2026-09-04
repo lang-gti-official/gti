@@ -21,7 +21,9 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  return Frontend({.target = request.target(), .toolingOccurrences = false})
+  return Frontend({.target = request.target(),
+                   .program = request.program(),
+                   .toolingOccurrences = false})
       .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
                      std::move(inputs.sources), std::move(inputs.diagnostics),
                      inputs.sourceValid);
@@ -175,14 +177,15 @@ CompilationRequest::CompilationRequest(
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags,
-    OptimizationOutputRequest optimizationOutputs)
+    OptimizationOutputRequest optimizationOutputs, ProgramRequest program)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard),
       packageSourceRootSet(std::move(packageSourceRoots)),
       configuredFlags(std::move(configurationFlags)),
-      requestedOptimizationOutputs(optimizationOutputs) {
+      requestedOptimizationOutputs(optimizationOutputs),
+      requestedProgram(std::move(program)) {
   normalizeConfigurationFlags(configuredFlags);
 }
 
@@ -214,6 +217,10 @@ const ConfigurationFlags &CompilationRequest::configurationFlags() const {
 const OptimizationOutputRequest &
 CompilationRequest::optimizationOutputs() const {
   return requestedOptimizationOutputs;
+}
+
+const ProgramRequest &CompilationRequest::program() const {
+  return requestedProgram;
 }
 
 CompilationInputs loadCompilationInputs(const CompilationRequest &request) {

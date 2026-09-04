@@ -143,21 +143,27 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
 
   facts.resolvedTargets.reserve(manifest.targets().size());
   for (const ProjectTarget &target : manifest.targets()) {
-    facts.resolvedTargets.push_back(ProjectFactsTarget{
-        .name = target.name, .kind = target.kind, .root = target.root});
+    facts.resolvedTargets.push_back(
+        ProjectFactsTarget{.name = target.name,
+                           .kind = target.kind,
+                           .linkage = target.linkage,
+                           .root = target.root,
+                           .exports = target.exports});
   }
   return facts;
 }
 
 ProjectFactsResult
 resolveProjectFacts(const std::filesystem::path &startDirectory,
-                    const std::optional<std::string> &requestedPackage) {
+                    const std::optional<std::string> &requestedPackage,
+                    ManifestFeaturePolicy manifestFeatures) {
   ProjectFactsResult result;
   // The read-only policy `gti metadata` uses: a stored checkout is still
   // checksum-verified and gti.lock remains the coverage authority, but no git
   // process runs and nothing is acquired.
-  WorkspaceResolutionResult resolved = resolveProjectWorkspace(
-      startDirectory, requestedPackage, {.allowAcquisition = false});
+  WorkspaceResolutionResult resolved =
+      resolveProjectWorkspace(startDirectory, requestedPackage,
+                              {.allowAcquisition = false}, manifestFeatures);
   result.sources = std::move(resolved.sources);
   result.diagnostics = std::move(resolved.diagnostics);
   if (!resolved.succeeded()) {

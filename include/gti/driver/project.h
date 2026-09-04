@@ -73,7 +73,8 @@ public:
                       RuntimeProfile runtimeProfile = RuntimeProfile::None,
                       ToolchainSelectionPolicy toolchainPolicy =
                           ToolchainSelectionPolicy::HostTools,
-                      ProjectToolchainOverrides toolchainOverrides = {});
+                      ProjectToolchainOverrides toolchainOverrides = {},
+                      ManifestFeaturePolicy manifestFeatures = {});
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -85,6 +86,7 @@ public:
   [[nodiscard]] RuntimeProfile runtimeProfile() const;
   [[nodiscard]] ToolchainSelectionPolicy toolchainPolicy() const;
   [[nodiscard]] const ProjectToolchainOverrides &toolchainOverrides() const;
+  [[nodiscard]] ManifestFeaturePolicy manifestFeatures() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -97,6 +99,7 @@ private:
   RuntimeProfile selectedRuntimeProfile;
   ToolchainSelectionPolicy selectedToolchainPolicy;
   ProjectToolchainOverrides nativeToolchainOverrides;
+  ManifestFeaturePolicy enabledManifestFeatures;
 };
 
 // One resolved bindgen import carried by a build plan: every value the
@@ -123,20 +126,21 @@ struct BindgenImportPlan {
 
 class ProjectBuildPlan final {
 public:
-  ProjectBuildPlan(std::filesystem::path manifestPath,
-                   std::filesystem::path packageRoot,
-                   std::filesystem::path workspaceRoot, std::string packageName,
-                   std::string packageVersion, std::string targetName,
-                   ProjectTargetKind targetKind, std::string profileName,
-                   std::filesystem::path entry, std::filesystem::path output,
-                   std::filesystem::path generatedSource, TargetInfo target,
-                   OptimizationLevel optimization, CppStandard cppStandard,
-                   bool keepCpp, NativeInputs nativeInputs,
-                   std::vector<PackageSourceRoot> packageSourceRoots,
-                   ConfigurationFlags configurationFlags,
-                   std::string projectModelIdentity,
-                   std::vector<BindgenImportPlan> bindgenImports = {},
-                   ResolvedProjectToolchain toolchain = {});
+  ProjectBuildPlan(
+      std::filesystem::path manifestPath, std::filesystem::path packageRoot,
+      std::filesystem::path workspaceRoot, std::string packageName,
+      std::string packageVersion, std::string targetName,
+      ProjectTargetKind targetKind, std::string profileName,
+      std::filesystem::path entry, std::filesystem::path output,
+      std::filesystem::path generatedSource, TargetInfo target,
+      OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
+      NativeInputs nativeInputs,
+      std::vector<PackageSourceRoot> packageSourceRoots,
+      ConfigurationFlags configurationFlags, std::string projectModelIdentity,
+      std::vector<BindgenImportPlan> bindgenImports = {},
+      ResolvedProjectToolchain toolchain = {},
+      ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None,
+      std::vector<ProjectExport> exports = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -145,6 +149,9 @@ public:
   [[nodiscard]] const std::string &packageVersion() const;
   [[nodiscard]] const std::string &targetName() const;
   [[nodiscard]] ProjectTargetKind targetKind() const;
+  [[nodiscard]] ProjectTargetLinkage targetLinkage() const;
+  [[nodiscard]] const std::vector<ProjectExport> &exports() const;
+  [[nodiscard]] ProgramRequest programRequest() const;
   [[nodiscard]] const std::string &profileName() const;
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const std::filesystem::path &output() const;
@@ -168,6 +175,7 @@ private:
   std::string projectPackageVersion;
   std::string projectTargetName;
   ProjectTargetKind projectTargetKind;
+  ProjectTargetLinkage projectTargetLinkage;
   std::string buildProfileName;
   std::filesystem::path entryPath;
   std::filesystem::path outputPath;
@@ -182,6 +190,7 @@ private:
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
   ResolvedProjectToolchain resolvedToolchain;
+  std::vector<ProjectExport> resolvedExports;
 };
 
 class ProjectMetadata final {
@@ -344,7 +353,7 @@ resolveProjectBuild(const ProjectBuildRequest &request);
 [[nodiscard]] ProjectTestResolutionResult
 resolveProjectTests(const ProjectBuildRequest &request);
 
-// Resolves one build plan for every declared executable and test target of
+// Resolves one build plan for every enabled declared target of
 // the selected package, in the manifest's deterministic target-name order.
 // The request must not name a single target.
 [[nodiscard]] ProjectTargetSetResolutionResult
@@ -354,7 +363,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request);
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
                        TargetInfo target,
                        std::optional<std::string> packageName = std::nullopt,
-                       RuntimeProfile runtimeProfile = RuntimeProfile::None);
+                       RuntimeProfile runtimeProfile = RuntimeProfile::None,
+                       ManifestFeaturePolicy manifestFeatures = {});
 
 [[nodiscard]] ProjectCleanResult
 cleanProject(const std::filesystem::path &startDirectory);
