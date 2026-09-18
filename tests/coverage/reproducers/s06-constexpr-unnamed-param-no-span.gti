@@ -1,0 +1,3 @@
+class Anchor { public: int32_t id() { return 0; } };
+constexpr int32_t reads(int32_t*) { return 0; }
+int main() { std::println(1); return 0; }

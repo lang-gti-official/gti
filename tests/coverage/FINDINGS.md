@@ -460,24 +460,11 @@ Corpus program: `c52_higher_order_lambdas`.
 
 ## F15 — ICE: calling a method on the result of an overloaded operator
 
-`reproducers/f15-method-on-operator-result.gti`
-
-```gti
-Counter operator+(Counter& o) { return Counter(this.n + o.n); }
-...
-std::println((a + b).value());   // ICE
-```
-
-Emitter-vocabulary ICE. Two neighbouring shapes are both fine:
-
-- `mut Counter c = a + b;` then `c.value()`
-- `a.plus(b).value()`, where `plus` is an ordinary method returning the same
-  temporary
-
-So it is neither the temporary nor the method call on its own. It is a method
-call applied to the result of an *operator* invocation.
-
-Corpus program: `c53_operator_breadth`.
+**Superseded and mischaracterized — see S01.** The reproducer was written
+`(a + b).value()`, and later work established that the *parentheses* are the
+defect, not the method call. `a.plus(b).get()` and
+`mut Val c = a + b; c.get();` both compile and run. Keeping the entry so the
+correction is on the record rather than silently edited away.
 
 ## F16 — The canonical C++ iterator loop does not compile over `std::vector`
 
@@ -635,6 +622,24 @@ whitespace-only shape tested is stable — a single newline, spaces only, a tab,
 a comment followed by blank lines. It is specifically a token-free file with
 two or more newlines.
 
+A longer run on 0.329.0 produced 35 artifacts across **two** properties: 32
+non-idempotence, and 3 where **formatting changes the significant token
+stream**. `stress/formatter-token-resplit.gti`:
+
+| Input | Formatted | Tokens |
+| --- | --- | --- |
+| `a<<<=b;` | `a << <= b;` | `[<<=][<]` → `[<<][<=]` |
+| `a>>>=b;` | `a >> >= b;` | `[>>=][>]` → `[>>][>=]` |
+
+Maximal munch lexes `<<<=` as `<<=` then `<`; the formatter re-splits it as `<<`
+then `<=`. Every valid operator sequence probed is clean, so this arises only on
+ill-formed input — but the formatter's reachable path is format-on-save, which
+runs on mid-edit buffers by definition.
+
+All three symptoms — blank-file erosion, angle-bracket drift, and this
+re-splitting — are consistent with the formatter re-deriving token boundaries
+from its own spacing decisions rather than preserving the ones the lexer found.
+
 Three further non-idempotent inputs turned up on lexically invalid bytes,
 where the divergence is angle-bracket spacing: the first pass emits
 `std::name < int32_t >` and the second collapses it to `std::name<int32_t>`.
@@ -649,6 +654,270 @@ content.
 
 ---
 
+# Stabilization pass (0.329.0)
+
+A second campaign against `main` at 0.329.0, aimed at v1.0 readiness. Seven
+of the findings above were fixed in the interim — F1, F2, F3, F4, F5, F6 and
+F9 all compile now, and the corpus sweep went from 50 to 56 passing.
+
+The defects below were found with combination matrices
+(`matrices/`), the sanitizer harnesses, and structural stress inputs.
+
+## S01 — ICE: parenthesizing a constructor call or operator result
+
+`reproducers/s01-parenthesized-constructor.gti`
+
+```gti
+mut Val c = Val(4);     // ok, prints 4
+mut Val c = (Val(4));   // ICE
+```
+
+One redundant bracket pair. It is fatal only around expressions that
+*materialize* a class value — a constructor call or an operator result.
+Parenthesizing a variable, a method call, or a free call is fine, and
+parenthesizing a built-in operator result is fine.
+
+This is what F15 actually was.
+
+## S02 — ICE: a ternary producing a class value
+
+`reproducers/s02-ternary-class-value.gti`
+
+```gti
+mut Val x = flag ? Val(1) : Val(2);   // ICE
+int32_t x = flag ? 1 : 2;             // ok
+```
+
+ICEs in all eight consumer positions tried, so it is the ternary itself and
+not what is done with the result.
+
+## S03 — ICE: a method call directly on `std::move(x)`
+
+`reproducers/s03-method-on-moved-value.gti`
+
+```gti
+std::println(std::move(a).get());        // ICE
+mut Val b = std::move(a); b.get();       // ok
+```
+
+The inconsistency is the interesting part: `std::move(r).value()` is the
+**required** idiom for extracting an owner from an `expected`, and works. The
+same shape on a user class or a `unique_ptr` is an ICE — and the `unique_ptr`
+case fails in MIR construction while the user-class case fails in the emitter,
+so there may be two defects here.
+
+## S04 — ICE: any bodyless declaration with an unnamed parameter
+
+`reproducers/s04-bodyless-decl-unnamed-param.gti`
+
+```gti
+interface I { int32_t f(int32_t); };
+int main() { return 0; }
+```
+
+Two lines. `declaration_matrix.py` puts the whole family on one page: **14 ICE
+cells**, every combination of a bodyless declaration form (free declaration,
+`extern "C"`, class method declaration, interface method) with an unnamed
+parameter of any shape. A *defined* function with an unnamed parameter is fine,
+which is why nothing shipped hits it.
+
+The `extern "C"` row matters most: omitting parameter names is normal C style,
+so hand-transcribing a C API hits this immediately. `gti bindgen` is unaffected
+— it synthesizes `argument0`, `argument1`, and its output compiles.
+
+## S05 — Invalid C++ emitted for an owning payload enum assignment
+
+`reproducers/s05-owning-enum-assign-invalid-cpp.gti`
+
+```gti
+mut slot s = slot::empty;
+s = slot::one(res(1));      // res has a destructor
+```
+
+```
+error: use of undeclared identifier '__gti_mir_v_2'
+```
+
+The front end accepts the program and emits C++ that does not compile. The
+body declares `v_4`, `v_5`, `v_7` — there is no `v_2`. It needs all three of an
+assignment (not an initialization), a payload with a destructor, and a
+construction expression on the right; `examples/78-owning-payload-enums.gti`
+only ever assigns from a named value, which is the gap.
+
+Worth separating from the ICEs: the verified-MIR contract is supposed to
+guarantee the emitter can spell what it accepts, or decline with `GTI-B0001`.
+Here it did neither.
+
+## S06 — A primary diagnostic with no location at all
+
+`reproducers/s06-constexpr-unnamed-param-no-span.gti`
+
+```gti
+constexpr int32_t reads(int32_t*) { return 0; }
+```
+
+```
+<source>:1:1: error[GTI-S2057]: Constexpr function parameters must be
+              non-pack, by-value supported values.
+```
+
+F17 was a related *note* pointing outside the source; this is the **primary
+diagnostic** with no line, column or caret anywhere. Naming the parameter
+restores a correct location.
+
+Both are one root cause: a diagnostic anchored on a parameter's name token,
+which is default-constructed for a legal unnamed parameter. There are **9 uses
+of `tokenSpan(parameter.name)` across 5 files**, so this is a pattern worth
+auditing as a whole.
+
+## S07 — A type alias cannot be used as a scope qualifier
+
+`reproducers/s07-alias-as-scope-qualifier.gti`
+
+```gti
+using Alias = Traits;
+using ViaAlias = Alias::value_type;        // GTI-S2000: Unknown type
+using Direct = Traits::value_type;         // ok
+```
+
+And separately, a class-scoped alias on a *generic* class cannot be named from
+outside the class at all — `Box<int32_t>::value_type` is a parse error in a
+`using`, in a variable declaration, and in a parameter list. The alias works
+inside the class body, which is all
+`examples/79-class-scoped-type-aliases.gti` exercises.
+
+## S08 — Compile time is exponential in method-chain length
+
+`reproducers/s08-exponential-method-chain.gti`
+
+| chain length | compile time |
+| --- | --- |
+| 20 | 0.3s |
+| 30 | 1.7s |
+| 40 | 6.5s |
+| 50 | 21.4s |
+| 60 | 59.7s |
+
+Each ten links multiplies the time by about three. Three variants at length 40
+isolate it: a **reference**-returning `self()` is 0.3s, a free function chained
+by value is 0.3s, and the same 40 calls written as 40 separate statements is
+0.3s. Only a chained expression whose receiver is the by-value result of a
+method call is slow, which points at receiver re-analysis without memoization.
+
+Fluent and builder APIs are mainstream, and the immutable-builder style returns
+by value deliberately.
+
+## S15 — ICE: a payload enum carrying a class without a destructor
+
+`reproducers/s15-payload-enum-plain-class.gti`
+
+```gti
+class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {} };
+enum class E { a(P p), b, };
+mut E e = E::a(P(1));            // ICE
+```
+
+Adding `~P() {}` to the payload class makes the identical program compile and
+run. From `payload_enum_matrix.py`, the destructor-free class payload fails all
+ten operations tried, while tag-only, `int32_t` and two-field payloads all pass
+every one.
+
+`examples/78-owning-payload-enums.gti` is the only shipped file with a class
+payload and its class has a destructor, so the cleanup-free path has no
+coverage. A plain data-carrying class is the simpler case and the more likely
+thing to write first.
+
+Opposite half of S05, which needs a payload *with* a destructor and emits
+invalid C++ rather than an ICE.
+
+## S12 — Implicit integer-to-float conversions silently lose value
+
+`reproducers/s12-lossy-implicit-int-to-float.gti`
+
+```gti
+mut int32_t exact = 16777217;   // 2^24 + 1
+mut float widened = exact;      // accepted implicitly
+int32_t(widened) == 16777216    // the value changed
+```
+
+`conversion_matrix.py` maps the permitted set: 35 implicit conversions, exactly
+the widening ones plus every integer type to `float` and `double` — including
+`int64_t` → `float`, which can lose 40 bits. Meanwhile integer *narrowing* is
+rejected (`GTI-S2003`), as are out-of-range literals.
+
+Not a crash, but the one implicit conversion that can change a value in a
+language that otherwise refuses conversions that might. Cheaper to settle
+before 1.0 than after.
+
+## S13 — The memory exhaustion is reachable through the LSP
+
+Following up F19: `gti_lsp` opening `stress/namespace-depth-63.gti` grows
+without bound and is killed at the cap, while the 62-level control answers
+normally. The compiler is invoked deliberately; the language server runs on
+file open, so this is a path where *looking at* a file exhausts memory.
+
+The input that segfaults the compiler (`operator-chain-500.gti`) is handled
+fine by the LSP, so the two subsystems do not share this failure generally.
+
+## S14 — The `--target` triple parser ignores the environment field
+
+`x86_64-unknown-linux-gnu` and `x86_64-unknown-linux-musl` both resolve to
+`x86_64-unknown-linux`, and arbitrary trailing text is accepted —
+`aarch64-apple-macos-total-nonsense-here` builds as `arm64-apple-macos`.
+Unsupported architectures and operating systems *are* rejected properly, so
+the parser validates the first two fields and then discards the rest.
+
+## S09 — ICE: an uninitialized `mut` scalar local
+
+`reproducers/s09-uninitialized-mut-scalar.gti`
+
+```gti
+int main(){mut int32_t r;}
+```
+
+Twenty-two bytes. GTI already has the right diagnostic for an uninitialized
+declaration and fires it correctly for an uninitialized array (`GTI-S2015`), an
+uninitialized pointer (`GTI-S2056`), an immutable scalar and a class type
+(`GTI-S2000`). The `mut` scalar is the single path that falls through to the
+emitter instead.
+
+`elementary_forms_matrix.py` sweeps 33 basic declaration and statement forms;
+this is the only hard failure in the set. `mut int32_t total;` followed by
+assignment is also one of the first things a C++ programmer types.
+
+## S10 — ICE: passing a named value to a constructor's by-value class parameter
+
+`reproducers/s10-ctor-by-value-copy.gti`
+
+A free function and a constructor with the identical by-value class parameter
+disagree:
+
+| Argument | `take(...)` free function | `Holder(...)` constructor |
+| --- | --- | --- |
+| `named` (a variable) | ok | **ICE** |
+| `named.twin()` (method result) | ok | **ICE** |
+| `Val(9)` (temporary) | ok | ok |
+| `std::move(named)` | ok | ok |
+
+Wrapping a value in a type is most of what constructors do, and `Holder(named)`
+is how anyone writes it. If an implicit copy into a by-value constructor
+parameter should be rejected, the free function needs the same treatment and
+the answer has to be a diagnostic.
+
+## S11 — ICE: a generic instantiated over its own instantiation
+
+`reproducers/s11-nested-generic-class-arg.gti`
+
+`Box<Box<Plain>>` ICEs; `Box<Box<int32_t>>` is fine. From
+`generic_shape_matrix.py`, self-nesting fails for every class-typed argument
+tried and passes for every built-in. Every non-nested shape in the same sweep
+passes for all seven arguments.
+
+This is F11, now filed. The related F5 — the same nesting unwrapped through
+chained accessors — **is fixed on main**.
+
+---
+
 ## What was checked and found sound
 
 Recording the negative results as well, since they bound where the defects
@@ -658,6 +927,36 @@ above are not:
   stdout and exit status at `-O0`, `-O1`, `-O2`, `-O3` and under both C++20 and
   C++23 — 250 configurations. The optimizer does not change observable
   behaviour anywhere this corpus reaches.
+- **No runtime undefined behaviour.** All 56 programs that build on 0.329.0
+  were compiled with ASan and UBSan applied to the *generated C++* and run:
+  zero reports. This covers miscompilation that produces UB, which an output
+  differential cannot see if every optimization level is wrong the same way.
+- **Deterministic output.** Emitted C++ and emitted MIR are byte-identical
+  across repeated compiles of all 57 programs.
+- **The build system is solid.** Twenty malformed manifests — missing and
+  wrong `manifest-version`, absent `[package]`, wrong value types, unknown
+  target kinds, duplicate targets, invalid TOML, absolute and `../` traversal
+  roots, empty and non-ASCII package names — each produce a distinct, specific
+  diagnostic code. Include paths reject traversal, absolute paths, self-include
+  and embedded NUL the same way. Nothing crashed, hung, or escaped the project
+  directory.
+- **Ownership and control flow agree.** `ownership_flow_matrix.py` crosses six
+  ownership operations — moving out, borrowing, reassigning, constructing,
+  pushing into a container, and a nested scope — against ten control-flow
+  contexts including both arms of an `if`, `for`, `while`, `break`,
+  `continue`, nested loops and a `switch` arm. All 60 cells compile and run.
+- **The elementary surface is otherwise sound.** 33 basic declaration and
+  statement forms, of which only S09 fails.
+- **Threading is sound.** Ten constructs — spawn and join, joinable before and
+  after, value capture, two concurrent threads, spawning in a loop, dropping
+  without joining, a thread in a nested scope, moving a thread, and an owner
+  alive across a join — all compile and run under
+  `--execution-profile concurrent`, and all are correctly rejected under the
+  default profile with `GTI-S2084`.
+- **The LSP survives what crashes the compiler.** `operator-chain-500.gti`
+  segfaults `gti` but `gti_lsp` opens it, answers `documentSymbol`, and stays
+  alive. `lsp_probe.py` passes for UTF-16 position encoding across ASCII,
+  Latin-1, CJK and emoji, and for edit staleness.
 - **Arithmetic is correct.** 400 randomly generated, provably-defined integer
   expressions over the full operator set agree exactly between an independent
   evaluator, C++ at `-O0`/`-O2`, and GTI at `-O0`/`-O3`.
