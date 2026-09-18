@@ -2479,8 +2479,32 @@ unmerged merge commits were removed after exact patch-equivalence checks;
 their original tips remain in the backup. Twenty-one additional remote branch
 names were removed after reviewing the integrated/reconciled patches, checking
 their exact tips against the bundle, and publishing the coverage merge below.
-The cumulative cleanup is 35 local and 119 remote branch names. Unresolved
-branches remain to audit.
+Ten further remote names were removed after reviewing their mainline
+replacements, confirming each exact remote tip against the bundle, and
+retaining the one missing conditional-reference-return regression in
+`c321e93c`. That expanded runtime matrix passed all nine cases under C++20
+and C++23 at O0 and O3. The reviewed mappings are:
+
+- Inline capturing-lambda arguments and symbolic `auto` locals: `d3ee9e34`,
+  preserving canonical MIR dominance and per-instance semantic type ownership.
+- Reference-parameter returns: `f2d9d9f0`, with conditional-return coverage in
+  `c321e93c`; MIR publishes a fresh return loan instead of backend repair.
+- Mutable-reference retained chains: `871ecbec`.
+- Nested subscript reference forwarding: `3355ab56` and the mainline
+  call-result-to-return-loan publication path.
+- Prvalue assignment to bindings, array elements, and mutable referents:
+  `56848951`, `be0be7eb`, and `1f485c49`.
+- Public allocator storage: `7f25d552`, preserving the stricter mainline
+  reference-return producer and access checks.
+- Forward iterators and callable/movement iterator capabilities: `39f483fb`
+  and `d59f9c0d`.
+- Owning payload-enum callable transport, its contract, and admission tests:
+  `f7a7085c`, `a3eceb69`, and `7e70e171`.
+
+The cumulative cleanup is 35 local and 129 remote branch names. Nine remote
+topic branches and the local `merge-c04` branch remain to reconcile. The
+repository-wide pointer/reference-formatting branch requires a style decision;
+its different formatting policy is not assumed to be redundant.
 The outstanding tests-only stabilization branch was reviewed and merged into
 `main` as `e9b0848d`. Its opt-in matrices were syntax-checked; the retained
 findings describe the historical compiler they audited, not a current
