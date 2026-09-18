@@ -5,7 +5,7 @@
     "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
-    "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
+    "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
     "stdlib/std/cstdio.gti": "3bc53122406a8e5f22fec798ab82f8701898f36b1229974120dd020bf3e024b3",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
@@ -374,16 +374,8 @@
       "id": "cmath.executable",
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
-      "operations": ["std::abs(float)", "std::isfinite(float)", "std::isinf(float)", "std::isnan(float)"],
-      "case_ids": ["cmath"],
-      "required_instantiations": [],
-      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "stdlib/std/cmath.gti"]
-    },
-    {
-      "id": "cmath.scaffold",
-      "source": "stdlib/std/cmath.gti",
-      "status": "scaffold",
       "operations": [
+        "std::abs(float)",
         "std::acos(float)",
         "std::asin(float)",
         "std::atan(float)",
@@ -394,6 +386,9 @@
         "std::exp(float)",
         "std::floor(float)",
         "std::fmod(float,float)",
+        "std::isfinite(float)",
+        "std::isinf(float)",
+        "std::isnan(float)",
         "std::log(float)",
         "std::log10(float)",
         "std::pow(float,float)",
@@ -403,8 +398,9 @@
         "std::tan(float)",
         "std::trunc(float)"
       ],
-      "reason": "The arithmetic, rounding, power, logarithmic, and trigonometric declarations are bodyless.",
-      "evidence": ["stdlib/std/cmath.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["cmath"],
+      "required_instantiations": ["binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"],
+      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "tests/cmath_runtime_test.py", "stdlib/std/cmath.gti", "runtime/src/math.cpp"]
     },
     {
       "id": "cstdio.executable",

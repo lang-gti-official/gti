@@ -532,6 +532,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_runtime_failure_helper>"
   )
   add_test(
+    NAME cmath_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cmath_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cmath_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME release_version_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/release_version_test.py"

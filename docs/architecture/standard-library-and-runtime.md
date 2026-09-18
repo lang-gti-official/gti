@@ -311,6 +311,17 @@ APIs should prefer ordinary GTI wrappers over the bounded native boundary when
 the existing ABI can express them. Neither mechanism turns a public GTI class
 layout into an ABI.
 
+`<std/cmath>` supplies ordinary GTI wrappers for its complete declared
+binary32 math family. They lower as ordinary verified-MIR native calls to
+version-one `gti_rt_math_*_f32_v1` entries in `runtime/include/gti/math.h`.
+`runtime/src/math.cpp` uses the host's float math implementations; the seam
+passes and returns only scalar `float`, with no class layout, allocation,
+ownership transfer, public-name intrinsic, or alternate backend body path.
+Classification and absolute value remain GTI source. Domain, pole, overflow,
+and underflow results follow the documented floating-point value contract,
+not the defined-integer-failure contract. Host errno and floating exception
+flags are not exposed to applications.
+
 ## Defined-Failure Boundary
 
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns

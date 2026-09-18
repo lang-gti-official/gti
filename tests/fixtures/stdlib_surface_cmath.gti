@@ -1,5 +1,14 @@
 #include <std/cmath>
 
+bool near(float actual, float expected_value) {
+  return std::isfinite(actual) &&
+      std::abs(actual - expected_value) <= 0.000002;
+}
+
+bool negative_zero(float value) {
+  return value == 0.0 && 1.0 / value < 0.0;
+}
+
 int main() {
   float finite = std::abs(-3.5);
   float infinity = 1.0 / 0.0;
@@ -7,6 +16,105 @@ int main() {
   if (finite != 3.5 || !std::isfinite(finite) || std::isinf(finite) ||
       std::isnan(finite) || !std::isinf(infinity) || !std::isnan(nan)) {
     return 1;
+  }
+  // Both signs, halfway rounding, signed zero, and a value beyond int64.
+  if (std::floor(2.75) != 2.0 || std::floor(-2.75) != -3.0 ||
+      std::ceil(2.25) != 3.0 || std::ceil(-2.25) != -2.0 ||
+      std::round(2.5) != 3.0 || std::round(-2.5) != -3.0 ||
+      std::trunc(2.75) != 2.0 || std::trunc(-2.75) != -2.0 ||
+      std::floor(1000000000000000000000000000000.0) !=
+          1000000000000000000000000000000.0 ||
+      std::ceil(-1000000000000000000000000000000.0) !=
+          -1000000000000000000000000000000.0 ||
+      !negative_zero(std::ceil(-0.25)) ||
+      !negative_zero(std::round(-0.25)) ||
+      !negative_zero(std::trunc(-0.25)) ||
+      !negative_zero(std::floor(-0.0))) {
+    return 2;
+  }
+  if (!near(std::sqrt(2.0), 1.4142135623730951) ||
+      !near(std::cbrt(-8.0), -2.0) ||
+      std::pow(-2.0, 3.0) != -8.0 || std::pow(2.0, -3.0) != 0.125 ||
+      std::fmod(5.5, 2.0) != 1.5 || std::fmod(-5.5, 2.0) != -1.5 ||
+      std::fmod(5.5, -2.0) != 1.5 ||
+      !negative_zero(std::sqrt(-0.0)) ||
+      !negative_zero(std::cbrt(-0.0)) ||
+      !negative_zero(std::fmod(-4.0, 2.0))) {
+    return 3;
+  }
+  if (!near(std::exp(1.0), 2.718281828459045) ||
+      !near(std::log(2.0), 0.6931471805599453) ||
+      !near(std::log10(1000.0), 3.0) ||
+      std::exp(0.0) != 1.0 || std::log(1.0) != 0.0 ||
+      !std::isinf(std::exp(1000.0)) || std::exp(-1000.0) != 0.0) {
+    return 4;
+  }
+  if (!near(std::sin(0.5), 0.479425538604203) ||
+      !near(std::cos(0.5), 0.8775825618903728) ||
+      !near(std::tan(0.5), 0.5463024898437905) ||
+      !near(std::asin(0.5), 0.5235987755982989) ||
+      !near(std::acos(0.5), 1.0471975511965979) ||
+      !near(std::atan(1.0), 0.7853981633974483) ||
+      !near(std::atan2(1.0, -1.0), 2.356194490192345) ||
+      !near(std::atan2(-1.0, -1.0), -2.356194490192345)) {
+    return 5;
+  }
+  // Invalid domains return NaN without a GTI checked failure.
+  if (!std::isnan(std::sqrt(-1.0)) ||
+      !std::isnan(std::pow(-2.0, 0.5)) ||
+      !std::isnan(std::fmod(1.0, 0.0)) ||
+      !std::isnan(std::fmod(infinity, 2.0)) ||
+      !std::isnan(std::log(-1.0)) || !std::isnan(std::log10(-1.0)) ||
+      !std::isnan(std::sin(infinity)) || !std::isnan(std::cos(infinity)) ||
+      !std::isnan(std::tan(infinity)) ||
+      !std::isnan(std::asin(2.0)) || !std::isnan(std::acos(-2.0))) {
+    return 6;
+  }
+  if (std::floor(infinity) != infinity ||
+      std::ceil(-infinity) != -infinity ||
+      std::round(infinity) != infinity ||
+      std::trunc(-infinity) != -infinity ||
+      std::sqrt(infinity) != infinity || std::cbrt(-infinity) != -infinity ||
+      std::log(0.0) != -infinity || std::log10(-0.0) != -infinity ||
+      std::log(infinity) != infinity || std::log10(infinity) != infinity ||
+      std::exp(infinity) != infinity || std::exp(-infinity) != 0.0 ||
+      std::pow(0.0, -2.0) != infinity ||
+      std::pow(-0.0, -3.0) != -infinity ||
+      !negative_zero(std::pow(-0.0, 3.0)) ||
+      std::fmod(3.5, infinity) != 3.5 ||
+      !near(std::atan(infinity), 1.5707963267948966) ||
+      !near(std::atan2(infinity, infinity), 0.7853981633974483)) {
+    return 7;
+  }
+  if (!std::isnan(std::floor(nan)) || !std::isnan(std::ceil(nan)) ||
+      !std::isnan(std::round(nan)) || !std::isnan(std::trunc(nan)) ||
+      !std::isnan(std::sqrt(nan)) || !std::isnan(std::cbrt(nan)) ||
+      !std::isnan(std::fmod(nan, 1.0)) ||
+      !std::isnan(std::exp(nan)) || !std::isnan(std::log(nan)) ||
+      !std::isnan(std::log10(nan)) || !std::isnan(std::sin(nan)) ||
+      !std::isnan(std::cos(nan)) || !std::isnan(std::tan(nan)) ||
+      !std::isnan(std::asin(nan)) || !std::isnan(std::acos(nan)) ||
+      !std::isnan(std::atan(nan)) || !std::isnan(std::atan2(nan, 1.0)) ||
+      !std::isnan(std::pow(nan, 2.0)) ||
+      std::pow(nan, 0.0) != 1.0 || std::pow(1.0, nan) != 1.0) {
+    return 8;
+  }
+  if (!negative_zero(std::sin(-0.0)) || !negative_zero(std::tan(-0.0)) ||
+      !negative_zero(std::asin(-0.0)) || !negative_zero(std::atan(-0.0)) ||
+      !negative_zero(std::atan2(-0.0, 1.0)) ||
+      !near(std::atan2(0.0, -0.0), 3.141592653589793) ||
+      !near(std::atan2(-0.0, -0.0), -3.141592653589793)) {
+    return 9;
+  }
+  // Gradual underflow remains available at the native numerical boundary.
+  mut float tiny = 1.0;
+  for (mut int power = 0; power < 149; power++) {
+    tiny = tiny / 2.0;
+  }
+  if (std::fmod(tiny, 1.0) != tiny || std::sin(tiny) != tiny ||
+      std::trunc(tiny) != 0.0 || std::ceil(tiny) != 1.0 ||
+      std::floor(-tiny) != -1.0 || !negative_zero(std::trunc(-tiny))) {
+    return 10;
   }
   return 0;
 }

@@ -4,6 +4,37 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define GTI_CHECK_UNARY_MATH(name)                                             \
+  _Static_assert(                                                              \
+      _Generic(&gti_rt_math_##name##_f32_v1, float (*)(float): 1, default: 0), \
+      "binary32 math must retain its scalar C prototype")
+GTI_CHECK_UNARY_MATH(floor);
+GTI_CHECK_UNARY_MATH(ceil);
+GTI_CHECK_UNARY_MATH(round);
+GTI_CHECK_UNARY_MATH(trunc);
+GTI_CHECK_UNARY_MATH(sqrt);
+GTI_CHECK_UNARY_MATH(cbrt);
+GTI_CHECK_UNARY_MATH(exp);
+GTI_CHECK_UNARY_MATH(log);
+GTI_CHECK_UNARY_MATH(log10);
+GTI_CHECK_UNARY_MATH(sin);
+GTI_CHECK_UNARY_MATH(cos);
+GTI_CHECK_UNARY_MATH(tan);
+GTI_CHECK_UNARY_MATH(asin);
+GTI_CHECK_UNARY_MATH(acos);
+GTI_CHECK_UNARY_MATH(atan);
+#undef GTI_CHECK_UNARY_MATH
+_Static_assert(_Generic(&gti_rt_math_pow_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0) &&
+                   _Generic(&gti_rt_math_fmod_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0) &&
+                   _Generic(&gti_rt_math_atan2_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0),
+               "binary32 two-argument math must retain its scalar C prototype");
+
 _Static_assert(sizeof(((gti_c_string_view *)0)->length) == sizeof(uint64_t),
                "the GTI C ABI string-view length must remain uint64_t");
 _Static_assert(
