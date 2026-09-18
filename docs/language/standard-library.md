@@ -107,8 +107,10 @@ The current implemented foundation includes:
   invocation. Predicate, operation, and comparator clients state public exact
   concepts, accept read-callable or mut-callable targets, and reject consuming
   once-callables; and
-- `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
-  from specified GTI floating-point operations; and
+- `<std/cmath>` binary32 classification, absolute value, rounding, roots,
+  powers, remainder, exponentials, logarithms, and trigonometry. Public
+  functions are ordinary GTI; scalar runtime C calls supply host numerical
+  implementations under the contract in Section 7.3.1 below; and
 - `<std/functional>` public exact `read_callable`, `mut_callable`,
   `once_callable`, unary/binary predicate and operation, comparator,
   iterator-aware indirect predicate/operation, and nullary `once_action`
@@ -213,6 +215,41 @@ public GTI class layout crosses an ABI. The implementation constructs ordinary
 source-defined string and vector values before calling user code; importing
 both optional units is therefore required. See
 [`programs-and-targets.md`](programs-and-targets.md).
+
+### 7.3.1 Binary32 Mathematics
+
+`<std/cmath>` implements every currently declared `float` operation. `abs`
+maps either zero to positive zero; `isfinite`, `isinf`, and `isnan` classify
+the value without an integer conversion. `floor` rounds toward negative
+infinity, `ceil` toward positive infinity, `trunc` toward zero, and `round`
+to nearest with halfway cases away from zero. These operations accept the
+whole binary32 domain, including finite magnitudes outside integer ranges.
+
+`sqrt` and `cbrt` compute square and real cube roots. `pow` computes a power;
+a finite negative base with a finite non-integral exponent produces NaN.
+`fmod(x, y)` is the remainder using a quotient truncated toward zero and
+retains the sign of `x`, including a zero result. `exp`, `log`, and `log10`
+provide the exponential, natural logarithm, and base-ten logarithm. `sin`,
+`cos`, `tan`, `asin`, `acos`, `atan`, and `atan2(y, x)` use radians; `atan2`
+uses both signs to select a quadrant, including signed-zero inputs.
+
+Invalid domains produce NaN rather than a GTI checked failure: these include
+negative nonzero square-root arguments, negative logarithm arguments,
+out-of-range arcsine/arccosine arguments, infinite direct trigonometric
+arguments, and a zero divisor or infinite numerator for `fmod`. Logarithms of
+either zero produce negative infinity. Poles and overflow produce signed
+infinity as appropriate; underflow produces a subnormal or signed zero.
+NaN inputs propagate except for the power identities `pow(NaN, 0) == 1`
+and `pow(1, NaN) == 1`. Zero-preserving operations retain its sign, including
+square/cube root, odd trigonometric operations, and all four rounding operations.
+
+The hosted scalar ABI uses IEEE binary32 with the ordinary round-to-nearest,
+gradual-underflow environment. Native code must not leave that environment
+changed when returning to GTI. Numerical approximations use the host math
+library: finite transcendental results are not promised bit-identical across
+platforms. Native `errno`, floating-point status flags, NaN payloads, and
+signaling-NaN behavior are not public APIs. These functions are runtime
+operations, not `constexpr`; binary64 overloads are not currently declared.
 
 ## 7.4 Allocation And Containers
 

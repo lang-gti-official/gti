@@ -1,20 +1,54 @@
 ---
 title: <std/cmath>
-description: Implemented binary32 absolute-value and classification operations.
+description: Binary32 classification, rounding, powers, logarithms, and trigonometry.
 kind: library-header
 api:
   - std/cmath|function|std::abs
+  - std/cmath|function|std::floor
+  - std/cmath|function|std::ceil
+  - std/cmath|function|std::round
+  - std/cmath|function|std::trunc
+  - std/cmath|function|std::sqrt
+  - std/cmath|function|std::cbrt
+  - std/cmath|function|std::pow
+  - std/cmath|function|std::fmod
+  - std/cmath|function|std::exp
+  - std/cmath|function|std::log
+  - std/cmath|function|std::log10
+  - std/cmath|function|std::sin
+  - std/cmath|function|std::cos
+  - std/cmath|function|std::tan
+  - std/cmath|function|std::asin
+  - std/cmath|function|std::acos
+  - std/cmath|function|std::atan
+  - std/cmath|function|std::atan2
   - std/cmath|function|std::isfinite
   - std/cmath|function|std::isinf
   - std/cmath|function|std::isnan
-examples: []
+examples:
+  - rounding
 ---
 
 ```gti
 #include <std/cmath>
 ```
 
-The current executable surface is deliberately restricted to `float`.
-`abs` preserves ordinary floating-point behavior, while the classification
-functions inspect the binary32 exponent and significand. Other familiar
-`<cmath>` declarations remain bodyless and must not be called yet.
+Every declared operation is implemented for `float` (binary32). `double`
+overloads and compile-time evaluation are not currently provided.
+
+`floor` rounds downward, `ceil` upward, `trunc` toward zero, and `round` to
+nearest with halfway cases away from zero. No integer conversion is involved,
+so finite values outside integer ranges remain valid inputs. `abs` maps
+negative zero to positive zero; the rounding functions preserve zero signs.
+
+`sqrt` and `cbrt` compute roots, `pow` computes a power, and `fmod` returns
+the remainder for a quotient truncated toward zero, with the numerator's sign.
+`exp`, `log`, and `log10` provide exponentials and logarithms. Trigonometric
+arguments and results use radians; `atan2(y, x)` accounts for the quadrant.
+
+Invalid domains return NaN, poles and overflow return infinity, and underflow
+returns a subnormal or signed zero. These are floating-point results, not GTI
+checked failures. Use `isfinite`, `isinf`, and `isnan` to classify them.
+Numerical approximations use the host math library and are not guaranteed
+bit-identical across platforms. Native errno and floating exception flags are
+not part of this API.

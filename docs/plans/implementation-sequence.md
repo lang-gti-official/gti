@@ -2442,6 +2442,56 @@ These rows validate the execution/lifetime foundations in ordinary GTI. Public
 containers and algorithms remain source-defined and must not gain compiler
 name recognition.
 
+### Active Request: Complete The Existing Standard Library
+
+The current user-requested campaign includes **every operation already present
+in the shipped stdlib**, not merely the executable entries in the surface
+manifest. Declaration-only functions, placeholder constructors, and currently
+unsupported compositions remain completion work. The manifest is an evidence
+ledger, not permission to exclude a declared API. Required language capabilities
+must ship through verified MIR with their real library clients.
+
+The initial remaining families are generic swap/exchange and container swaps;
+safe linked-node traversal and the declared forward-list/list operations;
+shared/weak ownership; the remaining iterator/algorithm forms; primitive hash
+implementations; and any incomplete declared string, optional, span, and other
+library operations revealed by source-by-source review. Existing placeholder
+bodies require behavior tests, not just successful linkage. This campaign does
+not claim completion from an include-only or manifest-only pass.
+
+Binary32 mathematics is the first completed slice: all 18 previously
+bodyless `<std/cmath>` functions now have ordinary GTI wrappers over a scalar
+host ABI. Local macOS evidence covers `cmath_runtime` at O0/O1/O3 under
+C++20/C++23 plus ASan/UBSan, all 32 stdlib surface cases, C header compatibility,
+installed-toolchain execution and seven installed-library checks. All 65
+reference examples and the production reference-site build/render checks pass.
+Canonical meaning is in Standard Library §7.3.1. No new public-name intrinsic
+or AST/HIR backend path is introduced; other host math libraries still need
+their platform test runs.
+
+The same request requires reconciliation of outstanding branch work before
+branch cleanup. A verified full-history bundle is retained locally at
+`out/stdlib-branch-history-20260918.bundle`. Thirty-five local branch tips
+already contained in `main`, and 88 remote branches already contained in
+`origin/main`, have been removed. Their commits remain reachable from `main`
+and the backup. Ten more remote branches with zero unique patches and no
+unmerged merge commits were removed after exact patch-equivalence checks;
+their original tips remain in the backup. Twenty-one additional remote branch
+names were removed after reviewing the integrated/reconciled patches, checking
+their exact tips against the bundle, and publishing the coverage merge below.
+The cumulative cleanup is 35 local and 119 remote branch names. Unresolved
+branches remain to audit.
+The outstanding tests-only stabilization branch was reviewed and merged into
+`main` as `e9b0848d`. Its opt-in matrices were syntax-checked; the retained
+findings describe the historical compiler they audited, not a current
+acceptance baseline. Production compiler and runtime code were unchanged by
+that merge.
+
+The temporary-receiver/backend failure reproduced by constructing a path and
+calling an owning-string-returning method in one expression remains a concrete
+compiler regression to repair. Naming the receiver is a diagnostic workaround,
+not completion evidence for the general language operation.
+
 ### L-GEN-01: Production Generic Function System
 
 - **State/role:** done; systems-readiness language and standard-library

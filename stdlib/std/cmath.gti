@@ -1,6 +1,31 @@
-// C++-familiar API scaffold for <std/cmath>. Operations implemented directly
-// below use GTI's specified IEEE binary32 behavior. The remaining declarations
-// still need backend-independent edge contracts and numerical implementations.
+// Binary32 mathematics. Public operations are ordinary GTI functions; the
+// bounded scalar C ABI supplies the host's numerical implementations. Domain
+// and range errors return IEEE values, never an integer-conversion failure.
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+float gti_rt_math_floor_f32_v1(float value);
+float gti_rt_math_ceil_f32_v1(float value);
+float gti_rt_math_round_f32_v1(float value);
+float gti_rt_math_trunc_f32_v1(float value);
+float gti_rt_math_sqrt_f32_v1(float value);
+float gti_rt_math_cbrt_f32_v1(float value);
+float gti_rt_math_pow_f32_v1(float base, float exponent);
+float gti_rt_math_fmod_f32_v1(float numerator, float denominator);
+float gti_rt_math_exp_f32_v1(float value);
+float gti_rt_math_log_f32_v1(float value);
+float gti_rt_math_log10_f32_v1(float value);
+float gti_rt_math_sin_f32_v1(float value);
+float gti_rt_math_cos_f32_v1(float value);
+float gti_rt_math_tan_f32_v1(float value);
+float gti_rt_math_asin_f32_v1(float value);
+float gti_rt_math_acos_f32_v1(float value);
+float gti_rt_math_atan_f32_v1(float value);
+float gti_rt_math_atan2_f32_v1(float y, float x);
+}
+}
+}
 
 namespace std {
 float abs(float value) {
@@ -13,27 +38,81 @@ float abs(float value) {
   return value;
 }
 
-float floor(float value);
-float ceil(float value);
-float round(float value);
-float trunc(float value);
+/// Rounds toward negative infinity; preserves signed zero and infinities.
+float floor(float value) {
+  return gti_internal::runtime::gti_rt_math_floor_f32_v1(value);
+}
+/// Rounds toward positive infinity; preserves signed zero and infinities.
+float ceil(float value) {
+  return gti_internal::runtime::gti_rt_math_ceil_f32_v1(value);
+}
+/// Rounds to the nearest integer, with halfway cases away from zero.
+float round(float value) {
+  return gti_internal::runtime::gti_rt_math_round_f32_v1(value);
+}
+/// Discards the fractional part, preserving the sign of a zero result.
+float trunc(float value) {
+  return gti_internal::runtime::gti_rt_math_trunc_f32_v1(value);
+}
 
-float sqrt(float value);
-float cbrt(float value);
-float pow(float base, float exponent);
-float fmod(float numerator, float denominator);
+/// Returns the nonnegative square root; a negative nonzero input yields NaN.
+float sqrt(float value) {
+  return gti_internal::runtime::gti_rt_math_sqrt_f32_v1(value);
+}
+/// Returns the real cube root, including for negative inputs.
+float cbrt(float value) {
+  return gti_internal::runtime::gti_rt_math_cbrt_f32_v1(value);
+}
+/// Raises base to exponent. Negative finite bases need an integral exponent.
+float pow(float base, float exponent) {
+  return gti_internal::runtime::gti_rt_math_pow_f32_v1(base, exponent);
+}
+/// Returns the remainder with the numerator's sign and truncated quotient.
+float fmod(float numerator, float denominator) {
+  return gti_internal::runtime::gti_rt_math_fmod_f32_v1(numerator, denominator);
+}
 
-float exp(float value);
-float log(float value);
-float log10(float value);
+/// Returns e raised to value; overflow yields positive infinity.
+float exp(float value) {
+  return gti_internal::runtime::gti_rt_math_exp_f32_v1(value);
+}
+/// Returns the natural logarithm; zero yields negative infinity.
+float log(float value) {
+  return gti_internal::runtime::gti_rt_math_log_f32_v1(value);
+}
+/// Returns the base-ten logarithm; negative inputs yield NaN.
+float log10(float value) {
+  return gti_internal::runtime::gti_rt_math_log10_f32_v1(value);
+}
 
-float sin(float value);
-float cos(float value);
-float tan(float value);
-float asin(float value);
-float acos(float value);
-float atan(float value);
-float atan2(float y, float x);
+/// Returns the sine of an angle in radians.
+float sin(float value) {
+  return gti_internal::runtime::gti_rt_math_sin_f32_v1(value);
+}
+/// Returns the cosine of an angle in radians.
+float cos(float value) {
+  return gti_internal::runtime::gti_rt_math_cos_f32_v1(value);
+}
+/// Returns the tangent of an angle in radians.
+float tan(float value) {
+  return gti_internal::runtime::gti_rt_math_tan_f32_v1(value);
+}
+/// Returns arcsine in radians; inputs outside [-1, 1] yield NaN.
+float asin(float value) {
+  return gti_internal::runtime::gti_rt_math_asin_f32_v1(value);
+}
+/// Returns arccosine in radians; inputs outside [-1, 1] yield NaN.
+float acos(float value) {
+  return gti_internal::runtime::gti_rt_math_acos_f32_v1(value);
+}
+/// Returns arctangent in radians, preserving signed zero.
+float atan(float value) {
+  return gti_internal::runtime::gti_rt_math_atan_f32_v1(value);
+}
+/// Returns the angle of (x, y) in radians, retaining quadrant and zero signs.
+float atan2(float y, float x) {
+  return gti_internal::runtime::gti_rt_math_atan2_f32_v1(y, x);
+}
 
 bool isfinite(float value) {
   return value == value && value - value == 0.0;

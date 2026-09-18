@@ -342,6 +342,17 @@ supported boundary. A future explicitly opt-in low-level API may expose
 selected capabilities, but its spelling and manual-lifetime contract remain
 undecided.
 
+## Binary32 mathematics
+
+`<std/cmath>` implements its complete declared `float` surface: `abs`,
+`isfinite`, `isinf`, `isnan`, `floor`, `ceil`, `round`, `trunc`, `sqrt`,
+`cbrt`, `pow`, `fmod`, `exp`, `log`, `log10`, `sin`, `cos`, `tan`, `asin`,
+`acos`, `atan`, and `atan2`. Public wrappers are ordinary GTI; the narrow
+scalar runtime ABI supplies host numerical implementations. Invalid domains
+return NaN and poles/overflow return infinity, not a checked integer failure.
+The exact rounding, signed-zero, and portability contract is in
+[Standard Library §7.3.1](../docs/language/standard-library.md#731-binary32-mathematics).
+
 ## Partial modules and declaration scaffolds
 
 The following optional modules provide C++-familiar names and API shapes as a
@@ -370,7 +381,6 @@ is recognized by the backend.
 | Include | Scaffolded surface |
 | --- | --- |
 | `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, structural complete-range predicate/operation overloads plus generic `fill`, and vector-bounded `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
-| `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
 | `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
 | `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |

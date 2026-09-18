@@ -7,7 +7,7 @@ Next.js site with a compiler-backed content pipeline. An author can add one
 trustworthy language or library page, bind it to current compiler
 declarations, give it dedicated examples, and have CI reject structural,
 semantic-binding, compilation, or rendering drift. The implemented site
-publishes 88 authored pages and verifies 63 displayed programs. Its complete
+publishes 89 authored pages and verifies 65 displayed programs. Its complete
 member-page families cover `std::array`, `std::string`, and `std::vector`,
 including a canonical child route for every constructor/member group shown by
 those type pages. Compiler-bound header pages additionally cover every

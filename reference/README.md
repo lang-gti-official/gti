@@ -55,8 +55,8 @@ scaffolded shipped units. A separate tooling section documents direct
 compilation, project manifests and commands, C bindgen, formatting, and the
 language server. Tooling prose is authored against the canonical driver and
 tooling documentation; source API signatures continue to come only from the
-compiler index. CI currently validates 88 authored pages and compiles or runs
-63 displayed GTI programs.
+compiler index. CI currently validates 89 authored pages and compiles or runs
+65 displayed GTI programs.
 
 ## Local workflow
 
