@@ -256,12 +256,13 @@ allocator customization, and a complete C++ `vector` API remain future work.
 `swap` remains bodyless because the current ownership model deliberately
 forbids moving an owner out through a mutable reference.
 
-`std::forward_list<T>` now has a source-defined recursive
-`std::unique_ptr` node chain. Empty/front, clear, push-front, and pop-front are
-working constant-time operations. Its iterator, emplacement, resize, reverse,
-merge, removal, uniqueness, and sorting declarations remain bodyless: nullable
-owner-tied traversal and the required mutation/invalidation proofs are not yet
-available.
+`std::forward_list<T>` has a source-defined exclusive `std::unique_ptr` node
+chain. Empty/front and front push/pop are constant-time; clear and destruction
+are iterative and linear. Resize, reverse, stable sorted merge, removal,
+adjacent uniqueness, and stable O(n log n) sort transfer node owners without
+copying or moving stored elements. Only growing resize allocates new nodes.
+Merge consumes its other list. Iterators, emplacement, and swap remain
+bodyless pending their lifetime, construction, and replacement capabilities.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -400,7 +401,7 @@ is recognized by the backend.
 | Include | Scaffolded surface |
 | --- | --- |
 | `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, structural complete-range predicate/operation overloads plus generic `fill`, and vector-bounded `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
-| `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
+| `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, and unique; iteration, emplacement, and swap remain declarations |
 | `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |

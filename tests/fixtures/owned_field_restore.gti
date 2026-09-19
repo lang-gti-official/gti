@@ -1,0 +1,47 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class token {
+  int32_t tag;
+public:
+  token(int32_t value) : tag(value) {}
+  ~token() { std::println(this.tag); }
+};
+
+struct box {
+  mut std::unique_ptr<token> value = std::unique_ptr<token>();
+};
+
+class checked_box {
+  mut box payload = box();
+  int32_t divisor;
+public:
+  checked_box(int32_t value) : divisor(value) {}
+  mut box& operator->() mut {
+    int32_t checked = 1 / this.divisor;
+    return this.payload;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut auto owner = std::make_unique<box>();
+  owner->value = std::make_unique<token>(1);
+  auto detached = std::move(owner->value);
+  owner->value = std::unique_ptr<token>();
+  mut auto replacement = std::make_unique<token>(2);
+  owner->value = std::move(replacement);
+  mut box direct = box();
+  direct.value = std::make_unique<token>(3);
+  auto prior = std::move(direct.value);
+  direct.value = std::unique_ptr<token>();
+  auto whole = std::move(direct);
+  if (argc > 1) {
+    mut checked_box checked = checked_box(0);
+    // RHS completes before the checked destination call. Failure must drop
+    // its staged owner as well as every still-active lexical owner.
+    checked->value = std::make_unique<token>(4);
+  }
+  auto transferred = std::move(owner);
+  return 0;
+}

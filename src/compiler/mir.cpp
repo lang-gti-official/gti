@@ -1044,7 +1044,8 @@ joinOwnershipState(const MirOwnershipFlowState &left,
 
 [[nodiscard]] const MirOwnershipPlaceState *
 unavailableOwnershipState(const MirOwnershipFlowState &state,
-                          const PlaceKey &place) {
+                          const PlaceKey &place,
+                          bool includeIndirectDescendants = true) {
   const auto found = std::find_if(
       state.begin(), state.end(), [&](const MirOwnershipPlaceState &candidate) {
         if (candidate.state == OwnershipStateSet::Available) {
@@ -1052,6 +1053,16 @@ unavailableOwnershipState(const MirOwnershipFlowState &state,
         }
         const PlaceRelationResult relation =
             placeRelation(candidate.place, place);
+        // Observing an owner handle does not read its pointee. This matches
+        // semantic projected-place availability and permits checked access to
+        // restore a moved pointee field. Whole-owner movement still includes
+        // those descendants, and accessing the pointee itself does too.
+        if (!includeIndirectDescendants && relation.compatibleDomain &&
+            relation.relation == PlaceRelation::RightStrictPrefix &&
+            candidate.place.projections[place.projections.size()].kind ==
+                PlaceProjectionKind::Dereference) {
+          return false;
+        }
         return !relation.compatibleDomain ||
                relation.relation != PlaceRelation::Disjoint;
       });
@@ -1346,13 +1357,15 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
   const auto requireAvailable =
       [&](const MirOwnershipFlowState &state, MirPlaceId placeId,
           const MirBlock &block, const MirInstruction &instruction,
-          std::string_view operation) -> std::optional<MirVerificationResult> {
+          std::string_view operation,
+          bool includeIndirectDescendants =
+              false) -> std::optional<MirVerificationResult> {
     const std::optional<PlaceKey> place = ownershipPlaceKey(body, placeId);
     if (!place) {
       return std::nullopt;
     }
-    if (const MirOwnershipPlaceState *unavailable =
-            unavailableOwnershipState(state, *place)) {
+    if (const MirOwnershipPlaceState *unavailable = unavailableOwnershipState(
+            state, *place, includeIndirectDescendants)) {
       return failure(body, owner,
                      std::string(operation) +
                          " requires a definitely available place (state " +
@@ -1430,8 +1443,8 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
                          "proof",
                          block->id, instruction.id);
         }
-        if (std::optional<MirVerificationResult> invalid =
-                requireAvailable(state, source, *block, instruction, "move")) {
+        if (std::optional<MirVerificationResult> invalid = requireAvailable(
+                state, source, *block, instruction, "move", true)) {
           return std::move(*invalid);
         }
         if (!instruction.ownership ||
@@ -9398,6 +9411,37 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     return ranges;
   }
   return verifyMirLoanFlow(body, owner);
+}
+
+bool mirDropFollowsDefiniteMove(const MirBlock &block,
+                                MirDropObligationId obligation,
+                                MirInstructionId beforeInstruction) {
+  if (obligation == 0) {
+    return false;
+  }
+  bool moved = false;
+  for (const MirInstruction &instruction : block.instructions) {
+    if (instruction.tombstone) {
+      if (instruction.id == beforeInstruction) {
+        return false;
+      }
+      continue;
+    }
+    if (instruction.id == beforeInstruction) {
+      return moved;
+    }
+    for (const MirLifecycleEvent &event : instruction.lifecycle) {
+      if (event.source == obligation) {
+        moved = !event.conditional &&
+                (event.kind == MirLifecycleEventKind::Move ||
+                 event.kind == MirLifecycleEventKind::Replace);
+      }
+      if (event.target == obligation) {
+        moved = false;
+      }
+    }
+  }
+  return beforeInstruction == 0 && moved;
 }
 
 } // namespace lang

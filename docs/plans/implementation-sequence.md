@@ -2639,6 +2639,42 @@ empty-state owner; an enclosing source destructor plus a moved owning field
 and later constructor failure needs its own coherent extension. These remain
 language-completion work, not reasons to narrow the campaign's scope.
 
+The forward-list checkpoint implements both `resize` overloads, `reverse`,
+stable `merge`/`sort`, `remove`, and adjacent `unique` in ordinary GTI. They
+detach and reattach exclusive nodes without retained traversal aliases;
+clear and ordinary destruction drain iteratively. This also repairs missing
+member-restoration ownership events, checked-arrow store projection, bounded
+local/loan owner-field replacement, and mixed passive/active node-constructor
+publication. MIR itself proves when a moved parameter's explicit shell drop
+cannot invoke its source destructor. Zero-argument class-field construction
+can precede an independently proved generated empty owner default; source
+calls and observable defaults do not gain that representation permission.
+The 23 focused compiler/MIR/optimizer/runtime gates pass locally, including
+scalar, move-only, and destructor-bearing defaults, stable ordering, 30,000-node
+cleanup, and defined-failure cleanup at O0/O1/O3 under C++20/C++23 plus
+ASan/UBSan. The 18 broader stdlib/CLI/constructor/inventory gates pass, including
+all 36 surface cases. The emitter corpus proves 3,907 ready bodies; all 82
+examples also build and run with unchanged MIR ownership at the C++20/O0 and
+C++23/O3 endpoints. Eight clean installed-library consumers and the complete
+installed list runtime matrix pass. All 67 reference examples, 11 content
+tests, type checks, and the single-worker static build/render checks pass.
+The full optional language audit also passes: 24 generated differential
+programs, four generated compositions, 100 malformed-source mutations, 83
+public examples in four configurations, and the paired C++ comparison suite.
+These are local macOS results, not evidence of asynchronous CI or other host
+platforms. No syntax, token, query, or native ABI changed; grammar/editor
+contracts remain on their existing paths. Iteration, emplacement, swap, and
+all other remaining campaign families—including the selected C-style thread
+API—remain open.
+
+`tests/fixtures/unique_ptr_empty_access_cleanup_gap.gti` retains another
+completion gap found while testing owner-field stores. The unique-owner
+borrow intrinsic still uses the backend's terminal `empty_owner_error`
+accessor, which aborts rather than following ordinary MIR cleanup and the
+structured `GTI-R0008` report. The current checked-field-store regression uses
+a user-defined fallible `operator->` to prove staged-RHS cleanup independently;
+that evidence must not be described as fixing empty unique-owner access.
+
 ### L-GEN-01: Production Generic Function System
 
 - **State/role:** done; systems-readiness language and standard-library

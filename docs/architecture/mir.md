@@ -845,6 +845,18 @@ state-set union. A mismatched domain, forged move key, missing restoration, or
 unavailable operand makes the MIR candidate invalid rather than producing a
 late source diagnostic or relying on generated C++ behavior.
 
+Member stores retain their semantic `Reinitialize` event. A checked-arrow
+store lowers its selected access call separately from the field assignment,
+preserving the assignment operation and the exact call-result loan. Reading an
+owner handle does not read its pointee's moved fields; accessing those fields
+or moving the whole owner still requires their availability.
+
+Same-block lifecycle events can prove a drop obligation definitely moved.
+Retiring that shell cannot invoke the source destructor, so lowering omits its
+otherwise conservative destructor-failure edge. Program verification replays
+that proof before accepting the non-failing drop. Cross-block or ambiguous
+state stays conservative; this does not eliminate the shell's explicit drop.
+
 The current `MirPrinter` schema includes each body domain, carried place key,
 constant or dynamic index metadata, ownership event, complete cleanup-relevant
 class lifecycle shape,

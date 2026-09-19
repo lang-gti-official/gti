@@ -610,6 +610,13 @@ drop, construction rollback reparent, field drop, and one unconditional
 transfer-out in the verified constructor prologue. Mixed passive and active
 fields are admitted only when each field independently satisfies its matching
 schedule and no other lifecycle event mentions those obligations.
+Several active fields may share a standalone transfer instruction; the proof
+matches each field's distinct obligation, not the instruction's event count.
+A passive class parameter can retain its lexical shell drop without inventing
+a field activation. The prologue still permits only the recorded field moves
+in declaration order, followed by their exact parameter-cleanup schedule.
+MIR independently proves when a moved parameter's shell retirement cannot
+invoke a source destructor; the backend does not infer this from C++ moves.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
@@ -627,8 +634,8 @@ member-initializer list. C++17 guaranteed elision makes
 `field(Type(arguments...))` the exact representation of MIR's
 construct-then-publish schedule: the field is constructed once, in place, with
 no intermediate object and no invented copy or move. Because C++ initializes
-members in declaration order, the proof is whole-constructor: every declared
-field must have its own explicit initializer in declaration order, each
+members in declaration order, the proof is whole-constructor: normally every
+declared field must have its own explicit initializer in declaration order, each
 construction argument must be either an exact copy-load of one scalar
 constructor parameter or an exact source scalar literal, and the entry block
 must contain nothing but the named instructions and metadata boundaries.
@@ -640,7 +647,15 @@ field additionally requires the produced value's `Value` obligation, its
 unconditional transfer-out at normal completion. A failure-capable target
 constructor is admitted only when its verified MIR body can never report a
 failure status and that ordinary body is itself published by this route, so
-the plain C++ overload exists at the call site. Folded or synthesized literals,
+the plain C++ overload exists at the call site. Zero-argument concrete default
+construction may omit the argument call-plan identity because there are no
+inputs to stage; the selected constructor and exact field type still match.
+A declaration-ordered explicit prefix may leave a trailing generated empty
+owner at its declaration default. That exception requires a targetless,
+argument-free default construction, a passive generated field-initializer
+body, the recursive empty-state lifecycle proof, and the exact initially
+active rollback obligation and normal transfer. Source calls and observable
+defaults fail this proof. Folded or synthesized literals,
 other computations, call results, borrowed sources, concrete generic targets,
 base initializers, and partially claimed schedules stay in the MIR body
 schedule.
@@ -653,7 +668,7 @@ matching concrete type, passive lifecycle, and the recorded full-expression
 boundary. Active cleanup and additional projections stay on their existing
 lifetime-slot paths.
 
-Move-only class replacement of one direct mutable receiver field has three
+Move-only class replacement of one direct mutable owned field has three
 additional exact representations. A transformed source call may initialize one
 value-rooted obligation, publish it through an unconditional `Replace` into
 the field, and then drop only the moved-from slot shell. A move from one field
@@ -665,8 +680,18 @@ same replace/drop schedule when its own unconditional `Initialize` is the
 single activation. Each route requires an exact noncopyable, move-assignable
 class representation and one resolved active-cleanup field row. The emitter
 does not recognize the owning wrapper or container name; projected
-destinations, conditional lifecycle events, incomplete borrow endings, or
-additional consumers fail closed.
+destinations beyond one direct field, conditional lifecycle events, incomplete
+borrow endings, or additional consumers fail closed.
+
+The field may belong to `this`, a mutable local binding, or an exact
+non-escaping mutable call-result loan. The enclosing owner retains cleanup
+responsibility; no independent field drop is invented. A checked destination
+call keeps the staged RHS active until the call succeeds and drops it if the
+call fails. A moved source may additionally be a direct field of `this` or a
+local owner; that field move initializes the staging obligation rather than
+consuming the enclosing object's obligation. These are representation choices
+over MIR's verified ownership events, not permissions to consume arbitrary
+borrowed referents.
 
 Move-assignment from an existing class binding into a mutable class binding has
 its own exact representation. The source may be immutable because GTI
@@ -681,9 +706,10 @@ adjacent `Move`/`Assign`/`Drop` triple in one block, a `Move` lifecycle event
 transferring the source binding obligation into the staging drop, an
 unconditional `Replace` from that drop into the destination binding's own
 obligation, and a single unconditional `Drop` of the slot. Aliased source and
-destination bindings, projected or non-binding places, failure sites on either
-instruction, extra uses, custom or incoherent immutable-source class rows, and
-any additional lifecycle event on the staging obligation fail closed.
+destination bindings, places outside the owned-field families above, failure
+sites on either instruction, extra uses, custom or incoherent immutable-source
+class rows, and any additional lifecycle event on the staging obligation fail
+closed.
 
 Assigning a freshly constructed class prvalue into an existing mutable binding
 has its own exact representation, and MIR represents it in two shapes rather

@@ -713,6 +713,11 @@ recovery and is converted to the shared value before it becomes durable
 semantic data. Raw addresses and opaque results still receive no guessed
 provenance.
 
+Plain member assignment records the same exact `Reinitialize` event as local
+and indexed assignment, including the field's previous availability. Checked
+arrow access retains the owner/dereference/field key; restoring the field can
+therefore make the whole owner movable again in both semantics and MIR.
+
 A resolved non-static instance field always forms a receiver-rooted `PlaceKey`
 with a field projection, whether the source spells `field` or `this.field`.
 Borrow-return validation consumes that resolved identity, so lexical locals and

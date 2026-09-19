@@ -89,8 +89,9 @@ The current implemented foundation includes:
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used; and
-- `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
-  clear, and constant-time front push/pop operations; and
+- `std::forward_list<T>` as a move-only linked owner with constant-time front
+  access/push/pop, iterative clear, resize, reverse, stable merge/sort, removal,
+  and adjacent uniqueness; and
 - `<std/iterator>` public `std::input_iterator<I>`,
   `std::sentinel_for<S, I>`, `std::dereferences_to<I, T>`, and
   `std::forward_iterator<I>` concepts over exact private structural and
@@ -211,7 +212,7 @@ Some implemented units also carry explicitly documented bodyless declarations
 for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
 link until its GTI body is supplied. Array/vector/string swap, forward-list
-iteration and middle-node algorithms, and the list scaffold remain in that
+iteration, emplacement and swap, and the list scaffold remain in that
 category.
 
 The owned program-entry form names the canonical installed
@@ -372,13 +373,23 @@ dynamic storage, or used to construct a nested dependency graph. Mutable,
 multi-owner, nested, and generally reseatable views remain deliberately
 unsupported.
 
-`std::forward_list<T>` implements its front operations as ordinary GTI over a
-recursive `std::unique_ptr` node chain. Its declaration-only iterator uses the
-same exact read-only input-iterator/sentinel shape and is explicitly move-only.
-Returning a nullable owner-tied cursor, mutating through traversal, and proving
-invalidation remain unavailable, so iteration, reverse, resize, merge, remove,
-unique, and sort are still bodyless. The separate list scaffold has no node
-representation because a compliant constant-time back operation requires a
+`std::forward_list<T>` uses an exclusive `std::unique_ptr` node chain. Node
+algorithms detach and reattach owners without retaining traversal borrows.
+`reverse`, `remove`, adjacent `unique`, and sorted `merge` are linear; `sort`
+is stable bottom-up mergesort with O(n log n) comparisons and constant
+auxiliary node ownership. These algorithms allocate no nodes and do not copy
+or move stored elements. `merge` consumes the other list by value and requires
+both inputs sorted; equal elements from the receiving list come first.
+`unique` keeps the first element in each adjacent equal run. `remove` and
+`unique` return the number removed. Resize preserves the existing prefix,
+default-constructs or copies only added elements, and destroys a truncated
+suffix. Clear and ordinary destruction drain the chain iteratively.
+
+The declaration-only iterator is explicitly move-only and read-only.
+Nullable owner-tied traversal and invalidation remain unavailable; iterator
+operations, generic emplacement, and swap are still bodyless. The separate
+list scaffold has no node representation because a compliant constant-time
+back operation requires a
 safe non-owning link that GTI cannot yet retain. The declaration-only span is
 replaced by the executable read-only single-owner `std::span<T>` surface above;
 mutable access and raw address exposure remain absent.

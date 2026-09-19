@@ -647,6 +647,121 @@ int main() {
          "MIR should retain receiver, dereference, and field projections on "
          "moves");
 
+  const lang::FrontendResult restored =
+      analyzeWithMemory("restored-owned-field.gti", R"(
+struct Link {
+  mut std::unique_ptr<int32_t> next = std::unique_ptr<int32_t>();
+};
+std::unique_ptr<Link> detach() {
+  mut auto owner = std::make_unique<Link>();
+  auto previous = std::move(owner->next);
+  owner->next = std::unique_ptr<int32_t>();
+  return std::move(owner);
+}
+Link direct() {
+  mut Link owner = Link();
+  auto previous = std::move(owner.next);
+  owner.next = std::unique_ptr<int32_t>();
+  return std::move(owner);
+}
+int main() {
+  auto indirect = detach();
+  auto value = direct();
+  return 0;
+}
+)");
+  expect(restored.canGenerateCode(),
+         "restoring direct and checked-arrow fields should permit moving the "
+         "whole owner through verified MIR");
+  bool foundRestoration = false;
+  for (const lang::HirFunctionInstance &function :
+       restored.hir.functionInstances()) {
+    if (function.source == nullptr ||
+        function.source->name().lexeme != "detach") {
+      continue;
+    }
+    const lang::MirFunctionInstance *mir =
+        restored.mir.findFunctionInstance(function.id);
+    for (const lang::HirValue &value : function.body.values) {
+      if (!value.ownership ||
+          value.ownership->kind != lang::OwnershipEventKind::Reinitialize ||
+          value.ownership->before != lang::OwnershipStateSet::Moved) {
+        continue;
+      }
+      const lang::OwnershipEvent *semantic =
+          value.source == nullptr
+              ? nullptr
+              : restored.semantics.findOwnershipEvent(*value.source);
+      const lang::HirValue *arrow =
+          value.operands.empty()
+              ? nullptr
+              : function.body.findValue(value.operands.front());
+      expect(semantic != nullptr &&
+                 semantic->kind == lang::OwnershipEventKind::Reinitialize &&
+                 semantic->before == lang::OwnershipStateSet::Moved &&
+                 value.kind == lang::HirValueKind::MemberSet &&
+                 value.operation == lang::TokenKind::EQUAL &&
+                 value.place == value.ownership->place && arrow != nullptr &&
+                 arrow->kind == lang::HirValueKind::Call &&
+                 arrow->functionTarget && arrow->callPlan && mir != nullptr,
+             "HIR must retain the semantic restoration and selected arrow "
+             "call separately from the field assignment");
+      if (mir == nullptr) {
+        continue;
+      }
+      for (const lang::MirBlock &block : mir->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.hirValue != value.id ||
+              instruction.kind != lang::MirInstructionKind::Assign) {
+            continue;
+          }
+          const lang::MirPlace *destination =
+              instruction.destination
+                  ? mir->body.findPlace(*instruction.destination)
+                  : nullptr;
+          expect(instruction.ownership && destination != nullptr &&
+                     destination->key == instruction.ownership->place &&
+                     destination->root == lang::MirPlaceRootKind::Loan &&
+                     instruction.operation == lang::MirOperation::Assign &&
+                     lang::verifyMirBody(mir->body).valid(),
+                 "MIR must store through the checked arrow loan and restore "
+                 "the exact moved ownership key");
+          foundRestoration = true;
+          for (int mutation = 0; mutation < 3; ++mutation) {
+            lang::MirBody forged = mir->body;
+            for (lang::MirBlock &changedBlock : forged.blocks) {
+              for (lang::MirInstruction &changed : changedBlock.instructions) {
+                if (changed.id != instruction.id || !changed.ownership) {
+                  continue;
+                }
+                if (mutation == 0) {
+                  changed.ownership.reset();
+                } else if (mutation == 1) {
+                  changed.ownership->place.root += 10000;
+                } else {
+                  changed.ownership->before =
+                      lang::OwnershipStateSet::Available;
+                }
+              }
+            }
+            expect(!lang::verifyMirBody(forged).valid(),
+                   "missing, retargeted, or wrong-state field restoration "
+                   "must fail MIR verification before whole-owner movement");
+          }
+        }
+      }
+    }
+  }
+  expect(foundRestoration,
+         "checked field restoration must reach an executable MIR assignment");
+  const lang::BackendArtifact restoredArtifact =
+      gti_test::emitCpp(restored, restored.mir, restored.mir,
+                        lang::OptimizationPipeline().run(
+                            restored.hir, lang::OptimizationLevel::O0));
+  expect(restoredArtifact.contents.find("// GTI verified-MIR body:") !=
+             std::string::npos,
+         "checked field restoration must emit from the production MIR path");
+
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-projected-field-moves.gti", R"(
 struct Item {

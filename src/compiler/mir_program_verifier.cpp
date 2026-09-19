@@ -2312,7 +2312,9 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
               ? program.findDestructorInstance(*obligation->dropType.destructor)
               : nullptr;
       const FailurePropagationKind expected =
-          destructor != nullptr && destructor->mayRaiseDefinedFailure
+          destructor != nullptr && destructor->mayRaiseDefinedFailure &&
+                  !mirDropFollowsDefiniteMove(block, obligation->id,
+                                              instruction.id)
               ? FailurePropagationKind::Destructor
               : FailurePropagationKind::None;
       if (obligation == nullptr ||

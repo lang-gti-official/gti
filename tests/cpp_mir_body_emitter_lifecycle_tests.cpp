@@ -750,6 +750,234 @@ int main() {
 }
 
 void testMoveOnlyClassResultReceiverFieldTransfer() {
+  lang::MirBlock proof;
+  lang::MirInstruction move;
+  move.id = 1;
+  move.kind = lang::MirInstructionKind::Move;
+  move.lifecycle.push_back(
+      {.kind = lang::MirLifecycleEventKind::Move, .source = 1, .target = 2});
+  lang::MirInstruction drop;
+  drop.id = 2;
+  drop.kind = lang::MirInstructionKind::Drop;
+  drop.lifecycle.push_back(
+      {.kind = lang::MirLifecycleEventKind::Drop, .source = 1});
+  proof.instructions = {move, drop};
+  expect(lang::mirDropFollowsDefiniteMove(proof, 1, 2) &&
+             !lang::mirDropFollowsDefiniteMove(proof, 2, 2) &&
+             !lang::mirDropFollowsDefiniteMove(proof, 1) &&
+             !lang::mirDropFollowsDefiniteMove(proof, 0, 2) &&
+             !lang::mirDropFollowsDefiniteMove(proof, 1, 99),
+         "moved-shell proof must name the exact still-moved source before "
+         "its retirement");
+  for (int mutation = 0; mutation < 6; ++mutation) {
+    lang::MirBlock changed = proof;
+    auto &instruction = changed.instructions.front();
+    auto &event = instruction.lifecycle.front();
+    switch (mutation) {
+    case 0:
+      event.conditional = true;
+      break;
+    case 1:
+      event.kind = lang::MirLifecycleEventKind::Reparent;
+      break;
+    case 2:
+      event.kind = lang::MirLifecycleEventKind::TransferOut;
+      break;
+    case 3:
+      instruction.tombstone = true;
+      break;
+    case 4:
+      instruction.lifecycle.push_back(
+          {.kind = lang::MirLifecycleEventKind::Initialize, .target = 1});
+      break;
+    case 5:
+      event.kind = lang::MirLifecycleEventKind::Replace;
+      event.target = 1;
+      break;
+    }
+    expect(!lang::mirDropFollowsDefiniteMove(changed, 1, 2),
+           "conditional, retired, tombstoned, or reinitialized owners must "
+           "not acquire a moved-shell proof");
+  }
+
+  const lang::FrontendResult classFields =
+      analyzeWithStandardLibrary("cpp-mir-class-owned-parameter-fields.gti", R"(
+#include <std/memory>
+class Passive {
+public:
+  int32_t value;
+  Passive() : value(0) {}
+  Passive(int32_t initial) : value(initial) {}
+  Passive(Passive& other) = delete;
+  Passive(Passive&& other) = default;
+};
+class Active {
+public:
+  int32_t value;
+  Active() : value(0) {}
+  Active(int32_t initial) : value(initial) {}
+  Active(Active& other) = delete;
+  Active(Active&& other) = default;
+  ~Active() { std::println(this.value); }
+};
+struct Node<T> {
+  mut T value;
+  mut std::unique_ptr<Node<T>> next = std::unique_ptr<Node<T>>();
+  Node() requires std::default_initializable<T> : value(T()) {}
+  Node(T initial, std::unique_ptr<Node<T>> following)
+      : value(std::move(initial)), next(std::move(following)) {}
+};
+int main() {
+  auto passive = std::make_unique<Node<Passive>>(
+      Passive(1), std::unique_ptr<Node<Passive>>());
+  auto active = std::make_unique<Node<Active>>(
+      Active(2), std::unique_ptr<Node<Active>>());
+  auto defaultPassive = std::make_unique<Node<Passive>>();
+  auto defaultActive = std::make_unique<Node<Active>>();
+  return 0;
+}
+)");
+  expect(classFields.canGenerateCode(),
+         "mixed and cleanup-owning node constructors should reach MIR");
+  std::size_t classFieldConstructors = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       classFields.mir.constructorInstances()) {
+    if (constructor.parameterTypes.size() != 2 ||
+        constructor.parameterTypes.front().kind != lang::SemanticType::Class ||
+        constructor.initializers.size() != 2) {
+      continue;
+    }
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(classFields.mir, constructor);
+    expect(bindings && bindings->size() == 2,
+           "the field-order proof must accept passive class moves and a "
+           "shared transfer of two active field obligations");
+    if (!bindings || bindings->size() != 2) {
+      continue;
+    }
+    ++classFieldConstructors;
+    const auto &first = bindings->front();
+    const auto &second = bindings->back();
+    bool sawMovedDrop = false;
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.id == first.dropInstruction && first.fieldDrop != 0) {
+          sawMovedDrop = true;
+          expect(lang::mirDropFollowsDefiniteMove(block, first.parameterDrop,
+                                                  instruction.id) &&
+                     instruction.definedFailure.empty(),
+                 "a definitely moved constructor parameter must retire its "
+                 "shell without a fallible source-destructor edge");
+        }
+      }
+    }
+    if (first.fieldDrop == 0) {
+      expect(first.initializeInstruction == 0 && first.parameterDrop != 0 &&
+                 second.initializeInstruction != 0,
+             "a passive lexical class publishes through initializer metadata "
+             "without inventing an active field obligation");
+    } else {
+      expect(sawMovedDrop,
+             "the active class parameter must retain its shell drop");
+      expect(first.fieldDrop != second.fieldDrop &&
+                 first.fieldTransferInstruction ==
+                     second.fieldTransferInstruction,
+             "distinct active field obligations may share one transfer record");
+    }
+    for (int mutation = 0; mutation < 2; ++mutation) {
+      lang::MirProgram malformed = classFields.mir;
+      auto &constructors =
+          const_cast<std::vector<lang::MirConstructorInstance> &>(
+              malformed.constructorInstances());
+      for (auto &candidate : constructors) {
+        if (candidate.id != constructor.id) {
+          continue;
+        }
+        for (auto &block : candidate.body.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.id != second.fieldTransferInstruction) {
+              continue;
+            }
+            for (auto &event : instruction.lifecycle) {
+              if (event.source != second.fieldDrop) {
+                continue;
+              }
+              if (mutation == 0) {
+                event.conditional = true;
+              } else {
+                event.source = first.parameterDrop;
+              }
+            }
+          }
+        }
+        expect(
+            !lang::cppMirOwnedParameterFieldBindings(malformed, candidate),
+            "conditional or retargeted batch field transfer must fail closed");
+      }
+    }
+  }
+  expect(classFieldConstructors == 2,
+         "both concrete node-constructor families need an exact field proof");
+  std::size_t defaultFieldConstructors = 0;
+  for (const auto &constructor : classFields.mir.constructorInstances()) {
+    if (!constructor.parameterTypes.empty() ||
+        constructor.initializers.size() != 1 ||
+        constructor.initializers.front().targetType.kind !=
+            lang::SemanticType::Class) {
+      continue;
+    }
+    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+        classFields.mir, constructor);
+    expect(bindings.size() == 1,
+           "zero-argument class construction may precede an implicit empty "
+           "owner without losing its exact field publication");
+    if (bindings.size() != 1) {
+      continue;
+    }
+    ++defaultFieldConstructors;
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      lang::MirProgram malformed = classFields.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      auto *owner = const_cast<lang::MirClassInstance *>(
+          malformed.findClassInstance(constructor.owner));
+      if (mutation == 0) {
+        for (auto &block : changed->body.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == bindings.front().constructInstruction) {
+              instruction.callSite = instruction.hirValue + 10000;
+            }
+          }
+        }
+      } else if (mutation == 1) {
+        for (auto &drop : changed->body.dropObligations) {
+          if (drop.initiallyActive) {
+            drop.initiallyActive = false;
+          }
+        }
+      } else {
+        for (auto &block : owner->fieldInitializers.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.kind == lang::MirInstructionKind::Call) {
+              instruction.functionTarget = 1;
+            }
+          }
+        }
+      }
+      expect(
+          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
+              .empty(),
+          "forged constructor identity, inactive default-field cleanup, "
+          "and observable declaration defaults must fail the field proof");
+    }
+  }
+  expect(defaultFieldConstructors == 2,
+         "both passive and destructor-bearing defaults need an exact proof");
+  if (classFieldConstructors == 2) {
+    expect(!gti_test::emitCpp(classFields).contents.empty(),
+           "mixed and active node constructors must have production emission");
+  }
+
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-move-only-result-field-transfer.gti", R"(
 #include <std/memory>
@@ -1028,8 +1256,17 @@ void testMoveOnlyReceiverFieldLifecycleSchedules() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-forward-list-field-lifecycles.gti", R"(
 #include <std/forward_list>
+#include <std/memory>
+
+class ResetOwner {
+  mut std::unique_ptr<int32_t> value = std::unique_ptr<int32_t>();
+public:
+  void reset() mut { this.value = std::unique_ptr<int32_t>(); }
+};
 
 int main() {
+  mut ResetOwner owner = ResetOwner();
+  owner.reset();
   mut std::forward_list<int32_t> values = std::forward_list<int32_t>();
   values.push_front(1);
   values.pop_front();
@@ -1197,7 +1434,7 @@ int main() {
   expect(defaultField.function != nullptr && defaultField.producer != nullptr &&
              defaultField.consumer != nullptr &&
              defaultField.destroy != nullptr && defaultField.slot != nullptr,
-         "clear should expose the exact default-construction, receiver-field "
+         "reset should expose the exact default-construction, receiver-field "
          "replace, and shell-drop schedule");
   if (movedField.function == nullptr || movedField.consumer == nullptr ||
       movedField.slot == nullptr || movedField.successEndBorrow == 0 ||
@@ -1249,7 +1486,7 @@ int main() {
              defaultText.find(destinationMove(defaultField)) !=
                  std::string::npos &&
              defaultText.find(shellDestroy(defaultField)) != std::string::npos,
-         "clear should construct the empty owner in its MIR slot, replace "
+         "reset should construct the empty owner in its MIR slot, replace "
          "the receiver field, and destroy only the moved-from shell");
 
   lang::MirProgram malformedMove = frontend.mir;
