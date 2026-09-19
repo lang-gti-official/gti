@@ -1,0 +1,27 @@
+---
+title: <std/cthread>
+description: C-style thread facilities, beginning with a cooperative scheduling hint.
+kind: library-header
+api:
+  - std/cthread|function|std::thrd_yield
+examples:
+  - yield
+since: 0.333.0
+---
+
+```gti
+#include <std/cthread>
+```
+
+`std::thrd_yield()` offers the host scheduler an opportunity to run another
+thread. It has no parameters or return value and may have no effect. It works
+in either execution profile, including when the initial thread is the only
+GTI execution agent.
+
+Yield creates no synchronization edge and guarantees neither fairness nor a
+minimum delay. Shared-memory polling still needs atomics or another supported
+synchronization operation.
+
+Only yield is implemented. C-style worker creation/join, mutexes, condition
+variables, thread-specific storage, and the other C thread facilities remain
+work in progress. For supported owned workers, use [`<std/thread>`](/std/thread/).

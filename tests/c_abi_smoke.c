@@ -4,6 +4,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+_Static_assert(_Generic(&gti_rt_cthread_yield_v1,
+                   void (*)(void): 1,
+                   default: 0),
+               "the C-style yield entry must retain its void C prototype");
+
 #define GTI_CHECK_UNARY_MATH(name)                                             \
   _Static_assert(                                                              \
       _Generic(&gti_rt_math_##name##_f32_v1, float (*)(float): 1, default: 0), \

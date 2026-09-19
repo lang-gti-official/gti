@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/c_abi.h"
+#include "gti/cthread.h"
 #include "gti/math.h"
 #include "gti/random.h"
 #include "gti/runtime_failure.h"

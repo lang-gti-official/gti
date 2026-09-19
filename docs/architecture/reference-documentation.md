@@ -7,12 +7,12 @@ Next.js site with a compiler-backed content pipeline. An author can add one
 trustworthy language or library page, bind it to current compiler
 declarations, give it dedicated examples, and have CI reject structural,
 semantic-binding, compilation, or rendering drift. The implemented site
-publishes 89 authored pages and verifies 65 displayed programs. Its complete
+publishes 90 authored pages and verifies 66 displayed programs. Its complete
 member-page families cover `std::array`, `std::string`, and `std::vector`,
 including a canonical child route for every constructor/member group shown by
 those type pages. Compiler-bound header pages additionally cover every
-currently implemented slice in `algorithm`, `cmath`, `cstdio`, `filesystem`,
-`format`, `forward_list`, `functional`, `iterator`, `memory`, `numeric`,
+currently implemented slice in `algorithm`, `cmath`, `cstdio`, `cthread`,
+`filesystem`, `format`, `forward_list`, `functional`, `iterator`, `memory`, `numeric`,
 `random`, `span`, `tcp`, `thread`, and `utility`, while explicitly excluding
 bodyless scaffolds. The site also publishes an authored tooling section for
 direct/project compilation, manifests, C bindgen, formatting, and the LSP.

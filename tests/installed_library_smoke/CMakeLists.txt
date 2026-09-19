@@ -9,6 +9,11 @@ project(gti_installed_library_smoke LANGUAGES C CXX)
 include(CTest)
 find_package(GTI CONFIG REQUIRED)
 
+add_executable(gti_installed_cthread_smoke ../cthread_library_smoke.c)
+target_compile_features(gti_installed_cthread_smoke PRIVATE c_std_11)
+target_link_libraries(gti_installed_cthread_smoke PRIVATE GTI::runtime)
+add_test(NAME installed_cthread_library COMMAND gti_installed_cthread_smoke)
+
 add_executable(gti_installed_compiler_smoke ../compiler_library_smoke.cpp)
 target_link_libraries(gti_installed_compiler_smoke PRIVATE GTI::compiler)
 add_test(NAME installed_compiler_library

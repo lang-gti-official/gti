@@ -1,0 +1,19 @@
+// C-style threading facilities. This first executable slice supplies yield;
+// worker creation/join, C mutexes, condition variables, and thread-specific
+// storage remain completion work, not aliases for the managed-thread API.
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+void gti_rt_cthread_yield_v1();
+}
+}
+}
+
+namespace std {
+/// Offers the host scheduler an opportunity to run another thread.
+/// May have no effect. Provides no fairness, delay, or synchronization guarantee.
+/// Available in both execution profiles; it creates no thread or ownership.
+void thrd_yield() {
+  gti_internal::runtime::gti_rt_cthread_yield_v1();
+}
+}

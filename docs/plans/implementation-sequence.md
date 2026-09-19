@@ -2428,6 +2428,40 @@ or MIR prerequisite.
   ordered scalar-atomic/fetch, and mutex surfaces. Timing is never a
   correctness oracle.
 
+### C-CTHREAD-01: C-Style Threading Library Completion
+
+- **State/role:** active; required by the standard-library completion request.
+  This is a separate C-style surface, not a rename of `std::thread` and not
+  completion of a module merely because its include or yield operation works.
+- **First executable slice:** `std::thrd_yield()` permits cooperative backoff
+  on the initial or a managed worker. It uses existing native-call MIR effects
+  and supplies no synchronization edge, resource, failure result, delay, or
+  fairness guarantee. Focused runtime and exact-call-retention tests own it.
+- **Next outcome:** create one C-style worker from a named `int32_t(void*)`
+  callback and join it, observing its integer result. Before exposing that
+  call, extend the accepted native-entry boundary with runtime attachment,
+  concurrent-profile/target checks, exact callback identity, initialized and
+  shutting-down runtime checks, in-flight lifetime, and failure containment.
+  Raw context retention and manual handle lifetime need explicit unsafe
+  obligations; a native thread must not bypass GTI's transfer/share or global
+  policy merely by receiving a function pointer.
+- **Following families:** identity/equality and sleep; C-style mutexes and
+  condition-variable wait/reacquisition; once and thread-specific storage;
+  explicit exit/detach with their adopted ownership and shutdown contracts.
+  `thrd_exit` must not call native termination in a way that bypasses GTI's
+  verified cleanup schedule. Thread-specific destructors and callback failures
+  must not unwind across C or silently discard the original failure.
+- **Authority:** public API policy in ordinary GTI; irreducible attachment,
+  thread exit, synchronization, and lifetime facts selected by semantics,
+  retained through concrete HIR and verified MIR, and consumed by the backend.
+  Host handles stay behind a narrow runtime ABI with no public-name intrinsic.
+- **Exit evidence:** deterministic invalid-profile/lifetime/entry tests,
+  semantic and verifier mutations for every new executable boundary, exact
+  normal/failure cleanup, native create/join and mutex/condition clients at
+  O0/O3 under C++20/C++23, installed headers/stdlib/runtime, and sanitizer
+  coverage where supported. Timing and scheduler fairness are not correctness
+  oracles. `C-CONFORM-01` reopens for the new families as they land.
+
 The following remain blocked beyond the initial concurrency profile: detached
 threads; scoped borrowed captures; recursive/read-write locks; condition
 variables before guard release/reacquisition is modeled; cross-thread shared
@@ -2459,16 +2493,32 @@ library operations revealed by source-by-source review. Existing placeholder
 bodies require behavior tests, not just successful linkage. This campaign does
 not claim completion from an include-only or manifest-only pass.
 
-The user explicitly includes `stdlib/std/cthread.gti` in this campaign. It is
-currently an empty module, not an implemented thread API and not unrelated
-workspace material. The user selected C-style thread creation/join, mutexes,
-condition variables, and thread-specific storage alongside the existing safe
-`std::thread` API. Native thread entry, callbacks, lifetimes, synchronization,
+The user explicitly includes `stdlib/std/cthread.gti` in this campaign. The
+initially empty module is not unrelated workspace material. The user selected
+C-style thread creation/join, mutexes, condition variables, and thread-specific
+storage alongside the existing safe `std::thread` API. Native thread entry,
+callbacks, lifetimes, synchronization,
 failure containment, and execution-profile rules must remain consistent with
 ADR 008 and the concurrency contract. In particular, concurrent GTI callback
 conversion currently rejects with `GTI-S2076`; native attachment and cleanup
 must precede exposing GTI callbacks to C-style workers. An empty include or
 unchecked forwarding to native thread functions is not completion evidence.
+
+The first local executable slice adds `std::thrd_yield()` for cooperative
+scheduling/backoff in ordinary or managed code. It has no resource, failure
+result, synchronization edge, delay, or fairness guarantee. Both execution
+profiles use ordinary verified-MIR native calls over a narrow runtime entry;
+this does not add a thread-creation or callback permission. Its initial and
+managed-thread tests and exact native-call oracle pass C++20/C++23 at
+O0/O1/O3 plus ASan/UBSan, including the complete matrix against a clean installed
+toolchain. The managed fixture also passes ThreadSanitizer. All 35 stdlib
+surface cases, the include sweep, direct CLI workflow, eight installed-library
+consumers, 66 reference examples, content/type checks, and single-worker static
+site build/render checks pass locally on macOS. Other host platforms still
+need their own execution evidence. The rest of the requested
+C-style thread surface remains in this campaign, including sleep/identity,
+once, explicit lifecycle, mutex/condition operations, and thread-specific
+storage; yielding alone is not module completion.
 
 Binary32 mathematics is the first completed slice: all 18 previously
 bodyless `<std/cmath>` functions now have ordinary GTI wrappers over a scalar

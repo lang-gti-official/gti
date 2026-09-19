@@ -112,6 +112,11 @@ The current implemented foundation includes:
   powers, remainder, exponentials, logarithms, and trigonometry. Public
   functions are ordinary GTI; scalar runtime C calls supply host numerical
   implementations under the contract in Section 7.3.1 below; and
+- `<std/cthread>` supplies `std::thrd_yield()`, a host scheduling hint usable
+  from the initial or a managed thread in either execution profile. It creates
+  no synchronization edge and promises neither fairness nor a minimum delay.
+  C-style worker creation/join, mutexes, condition variables, and
+  thread-specific storage remain unimplemented; and
 - `<std/functional>` public exact `read_callable`, `mut_callable`,
   `once_callable`, unary/binary predicate and operation, comparator,
   iterator-aware indirect predicate/operation, and nullary `once_action`
