@@ -1,0 +1,57 @@
+#include <std/string>
+#include <std/vector>
+
+// Known backend gap, not a passing runtime fixture: rollback of a field with
+// a source destructor needs an explicit failure-aware subobject schedule.
+// Keep this reproducer alongside the supported temporary-argument fixture.
+
+void checked(int32_t divisor) {
+  int32_t value = 7 / divisor;
+}
+
+class Owned {
+  int32_t identity;
+public:
+  Owned(int32_t value) : identity(value) { checked(value); }
+  ~Owned() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+class Receiver {
+  Owned owned;
+public:
+  Receiver(Owned value, int32_t divisor) : owned(std::move(value)) {
+    checked(divisor);
+  }
+  ~Receiver() { std::println("receiver"); }
+  int32_t read() { return this.owned.read(); }
+  int32_t add(int32_t value) mut { return this.owned.read() + value; }
+  int32_t fail() { checked(0); return 0; }
+};
+
+class Text {
+  std::string data;
+public:
+  Text(std::string value) : data(value.clone()) {}
+  std::string get() { return this.data.clone(); }
+};
+
+int32_t observe(Receiver& value) { return value.read(); }
+int32_t fail_argument() { checked(0); return 0; }
+int32_t fail_borrowed(Receiver& value) { checked(0); return value.read(); }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) { return Receiver(Owned(0), 1).read(); }
+  if (argc == 3) { return Receiver(Owned(11), 0).read(); }
+  if (argc == 4) { return Receiver(Owned(11), 1).fail(); }
+  if (argc == 5) { return Receiver(Owned(11), 1).add(fail_argument()); }
+  if (argc == 6) { return fail_borrowed(Receiver(Owned(11), 1)); }
+
+  if (Receiver(Owned(11), 1).read() != 11) { return 1; }
+  if ((Receiver(Owned(12), 1)).add(3) != 15) { return 2; }
+  if (observe(Receiver(Owned(13), 1)) != 13) { return 3; }
+  // The original failure: owning constructor argument, temporary receiver,
+  // owning method result, and immediate by-value output in one expression.
+  std::println(Text(std::string("/foo/bar.txt")).get());
+  return 0;
+}

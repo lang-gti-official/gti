@@ -13,5 +13,12 @@ The default constructor creates an empty owner. A `std::string_view` or exact
 `char[N]` value copies its characters. The iterator/sentinel constructor copies
 an exact input range whose dereference type is `char`.
 
+`string(begin, end, other)` copies the code units in `[begin, end)` into
+independent storage. It requires `begin <= end <= other.size()`; equal
+endpoints produce an empty string, including at the end of the source.
+Invalid endpoints raise `GTI-R0007`. Embedded zero bytes are preserved, and
+the indices count code units rather than Unicode characters. The result does
+not retain a borrow of `other`.
+
 Copy construction is deleted. Move construction is defaulted and transfers
 the allocation and cleanup obligation.

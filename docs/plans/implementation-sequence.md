@@ -2459,6 +2459,17 @@ library operations revealed by source-by-source review. Existing placeholder
 bodies require behavior tests, not just successful linkage. This campaign does
 not claim completion from an include-only or manifest-only pass.
 
+The user explicitly includes `stdlib/std/cthread.gti` in this campaign. It is
+currently an empty module, not an implemented thread API and not unrelated
+workspace material. The user selected C-style thread creation/join, mutexes,
+condition variables, and thread-specific storage alongside the existing safe
+`std::thread` API. Native thread entry, callbacks, lifetimes, synchronization,
+failure containment, and execution-profile rules must remain consistent with
+ADR 008 and the concurrency contract. In particular, concurrent GTI callback
+conversion currently rejects with `GTI-S2076`; native attachment and cleanup
+must precede exposing GTI callbacks to C-style workers. An empty include or
+unchecked forwarding to native thread functions is not completion evidence.
+
 Binary32 mathematics is the first completed slice: all 18 previously
 bodyless `<std/cmath>` functions now have ordinary GTI wrappers over a scalar
 host ABI. Local macOS evidence covers `cmath_runtime` at O0/O1/O3 under
@@ -2501,8 +2512,14 @@ and C++23 at O0 and O3. The reviewed mappings are:
 - Owning payload-enum callable transport, its contract, and admission tests:
   `f7a7085c`, `a3eceb69`, and `7e70e171`.
 
-The cumulative cleanup is 35 local and 129 remote branch names. Nine remote
-topic branches and the local `merge-c04` branch remain to reconcile. The
+The local `merge-c04` tip was also removed after proving its tree and both
+parents exactly match the published merge `001ac978`, with no additional
+conflict-resolution changes. Its original `06452d83` tip remains in the bundle.
+The class-scoped alias branch was also removed after matching its handwritten
+implementation, grammar, and tests to `c1fbca4b`; generated parser differences
+belonged to its older grammar baseline. Its `347e2901` tip remains in the bundle.
+The cumulative cleanup is 36 local and 130 remote branch names. Eight remote
+topic branches remain to reconcile; `main` is the only local branch. The
 repository-wide pointer/reference-formatting branch requires a style decision;
 its different formatting policy is not assumed to be redundant.
 The outstanding tests-only stabilization branch was reviewed and merged into
@@ -2512,9 +2529,46 @@ acceptance baseline. Production compiler and runtime code were unchanged by
 that merge.
 
 The temporary-receiver/backend failure reproduced by constructing a path and
-calling an owning-string-returning method in one expression remains a concrete
-compiler regression to repair. Naming the receiver is a diagnostic workaround,
-not completion evidence for the general language operation.
+calling an owning-string-returning method in one expression has a local repair
+admitting the existing MIR constructor-argument transfer when the outer result
+is a verified temporary receiver or read-borrowed argument, not only a named
+binding. The production path remains verified MIR; no source syntax, ownership
+rule, or AST/HIR emission path changes. The focused regression covers original
+owning-string output, read/mutable receiver and read-borrowed argument forms,
+success activation, exact transfer, and normal/failure cleanup. Focused and
+corpus checks pass. The broad CLI workflow timed out twice with the Debug
+compiler, then passed in 92.34 seconds with the optimized compiler; that
+validation blocker is resolved. All 12 selected compiler/MIR/runtime/project
+checks pass with the optimized compiler, including the new sanitizer matrices.
+Isolated C++ emission of the reported path program measured 0.67 seconds with
+a locally optimized compiler versus 6.48 seconds with Debug, with byte-identical
+output. These are single-run local measurements, not a benchmark guarantee or
+evidence of a crash cause. Validation now uses one low-priority job at a time
+and the optimized compiler; broad Debug suites are not being restarted.
+
+The indexed string constructor also had a silent placeholder body. Its local
+source-defined repair copies `[begin, end)` after checking both interval
+ordering and the source extent, and does not retain the source borrow. The
+focused C++20/C++23 O0/O1/O3 and ASan/UBSan matrix passes independent copies,
+empty/end ranges, embedded zero and UTF-8 code units, source-lifetime
+independence, and seven invalid-range cleanup cases. The checked-in surface
+ledger now includes the constructor and its executable fixture. All 33 stdlib
+surface cases pass against the intended-file snapshot; all 65 reference
+examples, 11 content tests, registry type checks, and the single-worker static
+site build/render checks pass. The snapshot does not count the still-empty
+`cthread` module as implemented. These two fixes complete one checkpoint, not
+the full standard-library campaign or the separate constructor rollback work.
+
+The broader failure tests exposed a separate incomplete composition, retained
+as `tests/fixtures/temporary_constructor_argument_user_drop_gap.gti`: a
+fallible constructor owning a field with a user-written destructor. The
+backend's aggregate rollback representation cannot simply admit this shape:
+it needs correct field construction state and explicit failure-aware cleanup
+that retains the original failure if field destruction also fails. The
+body-ordered move-parameter initializer proof also still requires a generated
+empty-state owner; an enclosing source destructor plus a moved owning field
+and later constructor failure needs its own coherent extension. These remain
+language-completion work, not reasons to narrow the campaign's scope.
 
 ### L-GEN-01: Production Generic Function System
 

@@ -76,7 +76,8 @@ The current implemented foundation includes:
   access and copyable-element fill; and
 - `std::string` as a move-only owner over private character storage, including
   construction from an exact input iterator/sentinel pair whose dereference
-  referent is `char`, front/back and mutable checked access, resize,
+  referent is `char`, indexed half-open range copying, front/back and mutable
+  checked access, resize,
   shrink-to-fit, pop-back, and
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
@@ -257,6 +258,16 @@ Public ownership and container classes retain logical state and policy in
 ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, or capacity policy as public language state.
+
+`std::string(begin, end, other)` copies the code units in the half-open interval
+`[begin, end)` into an independent owning string. Its `size_t` endpoints must
+satisfy `begin <= end <= other.size()`. Equal endpoints are valid, including
+`other.size()` and an empty source. Reversed or out-of-bounds intervals raise
+`GTI-R0007` (`index_out_of_bounds` in `string`) after ordinary cleanup; checks
+precede endpoint subtraction, allocation of the copied range, and source reads.
+The source is borrowed only during construction. Later mutations of either
+string do not affect the other, and the result may outlive its source. Indices
+count code units, not Unicode characters, and embedded zero bytes are copied.
 
 `<std/memory>` implements the first public typed allocation slice:
 

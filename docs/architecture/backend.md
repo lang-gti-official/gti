@@ -335,6 +335,17 @@ loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
 eligibility from the generated signature.
 
+Either borrowed temporary may itself consume an owning constructor argument.
+The argument's exact `Construct`, success-only activation, single `MoveValue`
+input and `TransferOut` remain in the caller's value-rooted slot until the
+outer constructor consumes it. The outer result may publish into a named
+binding or directly into its verified temporary-borrow slot; the latter has
+no binding `Initialize`. Its borrow stage must be on the construction's
+success successor, with the existing materialization and cleanup proof.
+The backend then ends only the inner argument's moved-from representation.
+Missing activation, transfer, materialization, or scheduled cleanup rejects
+emission. This does not widen the separate constructor-field rollback proof.
+
 For a loan-carrying reference argument, the operand may name both a loan and
 an exact referent-typed runtime place. The place is the argument lvalue and
 the loan is provenance: a borrow-carrying local (an owner-tied iterator, for

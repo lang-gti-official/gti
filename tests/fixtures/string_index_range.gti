@@ -1,0 +1,70 @@
+#include <std/string>
+#include <std/vector>
+
+class CleanupTrace {
+public:
+  CleanupTrace() {}
+  ~CleanupTrace() { std::println(99); }
+};
+
+std::string independent_result() {
+  std::string owner = std::string("owner");
+  return std::string(std::size_t(1), std::size_t(4), owner);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::string source = std::string("abcde");
+  if (argc > 1) {
+    CleanupTrace trace = CleanupTrace();
+    mut std::size_t first = 0;
+    mut std::size_t last = source.size();
+    if (argc == 2) { first = 4; last = 2; }
+    if (argc == 3) { last = 6; }
+    if (argc == 4) { first = 6; last = 6; }
+    if (argc == 5) { first = std::size_t(1) << 63; last = first; }
+    if (argc == 6) { last = std::size_t(1) << 63; }
+    if (argc == 7) { source.clear(); last = 1; }
+    if (argc == 8) { first = 5; last = 4; }
+    std::string invalid = std::string(first, last, source);
+    return int(invalid.size());
+  }
+
+  mut std::string middle = std::string(std::size_t(1), std::size_t(4), source);
+  std::string whole = std::string(std::size_t(0), source.size(), source);
+  std::string prefix = std::string(std::size_t(0), std::size_t(2), source);
+  std::string suffix = std::string(std::size_t(3), source.size(), source);
+  if (middle != "bcd" || whole != "abcde" || prefix != "ab" || suffix != "de") {
+    return 1;
+  }
+  for (mut std::size_t index = 0; index <= source.size(); index++) {
+    std::string empty = std::string(index, index, source);
+    if (!empty.empty()) { return 2; }
+  }
+  source[std::size_t(1)] = 'x';
+  if (middle != "bcd" || whole != "abcde") { return 3; }
+  middle[std::size_t(0)] = 'z';
+  if (source != "axcde" || middle != "zcd") { return 4; }
+
+  std::string empty_source = std::string("");
+  std::string empty_copy = std::string(std::size_t(0), std::size_t(0), empty_source);
+  if (!empty_copy.empty()) { return 5; }
+
+  // Copy code units, including embedded zero bytes, without C-string semantics.
+  char bytes[3] = {'a', '\0', 'b'};
+  std::string binary = std::string(bytes);
+  std::string binary_tail = std::string(std::size_t(1), std::size_t(3), binary);
+  if (binary_tail.size() != std::size_t(2) ||
+      binary_tail[std::size_t(0)] != '\0' || binary_tail[std::size_t(1)] != 'b') {
+    return 6;
+  }
+  std::string encoded = std::string("café");
+  std::string encoded_tail = std::string(std::size_t(3), encoded.size(), encoded);
+  if (encoded_tail != "é" || encoded_tail.size() != std::size_t(2)) { return 7; }
+
+  // The result owns its data and may outlive the source borrowed by construction.
+  if (independent_result() != "wne") { return 8; }
+  mut std::string moved = std::move(middle);
+  moved.push_back('!');
+  if (moved != "zcd!") { return 9; }
+  return 0;
+}
