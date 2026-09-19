@@ -6180,6 +6180,14 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
       resolvedMember.assignable && mutableReceiver && targetStateValid &&
       !directSelfMove &&
       isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
+    if (targetPlace.root != nullptr) {
+      semanticModel.recordOwnershipEvent(
+          expr, {.kind = OwnershipEventKind::Reinitialize,
+                 .place = placeKey(targetPlace),
+                 .before = projectedValueState(*targetPlace.root,
+                                               targetPlace.projections),
+                 .after = ValueState::Available});
+    }
     reinitializePlace(targetPlace);
   }
   currentType = resolvedMember.type;

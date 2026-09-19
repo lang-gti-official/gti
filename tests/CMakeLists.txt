@@ -553,6 +553,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(string_index_range_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME forward_list_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/forward_list_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(forward_list_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME release_version_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/release_version_test.py"
@@ -1539,7 +1546,8 @@ if(Python3_Interpreter_FOUND)
         mir_backend_scalar_failure_callgraph_runtime_3of3
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
-      string_owned_output_runtime string_index_range_runtime managed_thread_end_to_end
+      string_owned_output_runtime string_index_range_runtime forward_list_runtime
+      managed_thread_end_to_end
       managed_thread_tsan cthread_runtime atomic_end_to_end atomic_tsan mutex_end_to_end
       mutex_tsan
       domain_operator_runtime

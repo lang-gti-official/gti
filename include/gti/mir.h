@@ -1553,4 +1553,11 @@ enumerateMirBodyAddresses(const MirProgram &program);
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
 
+// Conservative same-block lifecycle proof. A moved-from shell still needs
+// retirement, but cannot invoke its source destructor. Zero means block end.
+[[nodiscard]] bool
+mirDropFollowsDefiniteMove(const MirBlock &block,
+                           MirDropObligationId obligation,
+                           MirInstructionId beforeInstruction = 0);
+
 } // namespace lang

@@ -69,7 +69,11 @@ mutations. The checked-in manifest exhaustively classifies every shipped
 standard-library source unit and its executable, diagnostic, or scaffold
 evidence, including managed-thread construction and join, concrete `std::pair`
 construction/field access, and the
-`std::forward_list` empty, front, push, pop, and clear operations.
+`std::forward_list` front operations and exclusive-node algorithms. Reverse,
+resize, merge, remove, unique, and sort are ordinary GTI; they transfer node
+owners instead of requiring a retained nullable traversal borrow. Clear and
+destruction drain nodes iteratively. No public container name has compiler
+recognition.
 
 ## Compiler-Private Capabilities
 

@@ -1,0 +1,16 @@
+#include <std/forward_list>
+
+int main() {
+  mut std::forward_list<int32_t> values = std::forward_list<int32_t>();
+  values.push_front(3);
+  values.push_front(1);
+  values.push_front(2);
+  values.push_front(1);
+  values.sort();
+  if (values.unique() != 1) { return 1; }
+  for (mut int32_t wanted = 1; wanted <= 3; wanted++) {
+    if (values.empty() || values.front() != wanted) { return 2; }
+    values.pop_front();
+  }
+  return values.empty() ? 0 : 3;
+}

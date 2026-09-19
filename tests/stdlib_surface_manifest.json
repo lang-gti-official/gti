@@ -10,7 +10,7 @@
     "stdlib/std/cthread.gti": "e06e8a0260bf4495c0d2c7e14f1974e22e9b02e57f0a2efa1f35bbc7fe791377",
     "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
     "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
-    "stdlib/std/forward_list.gti": "935c5d80a864386e7ef7c58f42afe5b8bcd5434b25f0570082b029d39b3fbac1",
+    "stdlib/std/forward_list.gti": "4f99a002246fc225c0679b9d8377253abcc2c5727f790b6fbabae7a005ded65a",
     "stdlib/std/functional.gti": "1fb8339bb43551750c4199280f8680a56ccde35646f5ad55a27d8d0eb3fb3faf",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
@@ -145,6 +145,13 @@
         "stdout": "value=7 ok=1\ndone\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "forward-list-algorithms",
+      "mode": "run",
+      "source": "tests/fixtures/forward_list_algorithms.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "forward-list-empty",
@@ -551,6 +558,22 @@
       "required_instantiations": ["std::forward_list<int32_t>"]
     },
     {
+      "id": "forward-list.node-algorithms",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": [
+        "std::forward_list::merge",
+        "std::forward_list::remove",
+        "std::forward_list::resize",
+        "std::forward_list::reverse",
+        "std::forward_list::sort",
+        "std::forward_list::unique"
+      ],
+      "case_ids": ["forward-list-algorithms"],
+      "evidence": ["tests/fixtures/forward_list_algorithms.gti", "tests/forward_list_runtime_test.py", "stdlib/std/forward_list.gti"],
+      "required_instantiations": ["std::forward_list<int32_t>", "std::forward_list<entry>"]
+    },
+    {
       "id": "forward-list.scaffold",
       "source": "stdlib/std/forward_list.gti",
       "status": "scaffold",
@@ -558,15 +581,9 @@
         "std::forward_list::begin",
         "std::forward_list::emplace_front",
         "std::forward_list::end",
-        "std::forward_list::merge",
-        "std::forward_list::remove",
-        "std::forward_list::resize",
-        "std::forward_list::reverse",
-        "std::forward_list::sort",
-        "std::forward_list::swap",
-        "std::forward_list::unique"
+        "std::forward_list::swap"
       ],
-      "reason": "These declarations are bodyless pending nullable owner-tied traversal and mutation/invalidation proofs.",
+      "reason": "Iteration needs nullable owner-tied traversal; emplacement needs generic in-place construction; swap needs safe replacement through mutable references.",
       "evidence": ["stdlib/std/forward_list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
     },
     {

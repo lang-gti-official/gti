@@ -1,0 +1,128 @@
+#include <std/forward_list>
+
+int32_t take(mut std::forward_list<int32_t>& values) {
+  int32_t value = values.front();
+  values.pop_front();
+  return value;
+}
+
+class entry {
+public:
+  int32_t key;
+  int32_t identity;
+
+  entry() : key(0), identity(0) {}
+  entry(int32_t k, int32_t id) : key(k), identity(id) {}
+  entry(entry& other) = delete;
+  entry(entry&& other) = default;
+
+  bool operator==(entry& other) { return this.key == other.key; }
+  bool operator!=(entry& other) { return this.key != other.key; }
+  bool operator<(entry& other) { return this.key < other.key; }
+  bool operator<=(entry& other) { return this.key <= other.key; }
+  bool operator>(entry& other) { return this.key > other.key; }
+  bool operator>=(entry& other) { return this.key >= other.key; }
+};
+
+int32_t take_identity(mut std::forward_list<entry>& values) {
+  int32_t identity = values.front().identity;
+  values.pop_front();
+  return identity;
+}
+
+int main() {
+  mut std::forward_list<int32_t> values = std::forward_list<int32_t>();
+  int32_t two = 2;
+  int32_t five = 5;
+  int32_t seven = 7;
+  int32_t eight = 8;
+  values.reverse();
+  values.sort();
+  if (values.unique() != 0 || values.remove(seven) != 0) { return 1; }
+  values.resize(std::size_t(0));
+  values.merge(std::forward_list<int32_t>());
+  if (!values.empty()) { return 2; }
+
+  int32_t input[6] = {9, 1, 2, 2, 3, 1};
+  for (auto& value : input) { values.push_front(value); }
+  values.sort();
+  if (values.unique() != 2 || values.unique() != 0) { return 3; }
+  if (values.remove(two) != 1 || values.remove(eight) != 0) { return 4; }
+  values.reverse();
+  if (take(values) != 9 || take(values) != 3 || take(values) != 1 ||
+      !values.empty()) { return 5; }
+
+  values.resize(std::size_t(3));
+  if (take(values) != 0 || take(values) != 0 || take(values) != 0) { return 6; }
+  values.push_front(1);
+  values.push_front(2);
+  values.resize(std::size_t(4), 7);
+  values.resize(std::size_t(4), 8);
+  values.resize(std::size_t(3));
+  if (take(values) != 2 || take(values) != 1 || take(values) != 7 ||
+      !values.empty()) { return 7; }
+  values.resize(std::size_t(4), 5);
+  if (values.remove(five) != 4 || !values.empty()) { return 8; }
+  values.resize(std::size_t(7));
+  values.resize(std::size_t(0));
+  if (!values.empty()) { return 9; }
+
+  mut std::forward_list<entry> stable = std::forward_list<entry>();
+  stable.push_front(entry(2, 5));
+  stable.push_front(entry(1, 4));
+  stable.push_front(entry(2, 3));
+  stable.push_front(entry(1, 2));
+  stable.push_front(entry(2, 1));
+  stable.sort();
+  if (take_identity(stable) != 2 || take_identity(stable) != 4 ||
+      take_identity(stable) != 1 || take_identity(stable) != 3 ||
+      take_identity(stable) != 5 || !stable.empty()) { return 10; }
+
+  mut std::forward_list<entry> left = std::forward_list<entry>();
+  left.push_front(entry(3, 3));
+  left.push_front(entry(2, 2));
+  left.push_front(entry(1, 1));
+  mut std::forward_list<entry> right = std::forward_list<entry>();
+  right.push_front(entry(4, 6));
+  right.push_front(entry(2, 5));
+  right.push_front(entry(1, 4));
+  left.merge(std::move(right));
+  if (take_identity(left) != 1 || take_identity(left) != 4 ||
+      take_identity(left) != 2 || take_identity(left) != 5 ||
+      take_identity(left) != 3 || take_identity(left) != 6 ||
+      !left.empty()) { return 11; }
+
+  // Odd lengths, descending input, and equal keys exercise multiple merge
+  // passes without copying or moving any already-constructed element.
+  for (mut int32_t count = 0; count < 65; count++) {
+    for (mut int32_t value = 0; value < count; value++) {
+      values.push_front(value);
+    }
+    values.sort();
+    for (mut int32_t wanted = 0; wanted < count; wanted++) {
+      if (take(values) != wanted) { return 12; }
+    }
+    if (!values.empty()) { return 13; }
+  }
+  stable.push_front(entry(1, 3));
+  stable.push_front(entry(2, 2));
+  stable.push_front(entry(2, 1));
+  if (stable.unique() != 1 || take_identity(stable) != 1 ||
+      take_identity(stable) != 3 || !stable.empty()) { return 14; }
+  stable.resize(std::size_t(3));
+  stable.resize(std::size_t(2));
+  if (take_identity(stable) != 0 || take_identity(stable) != 0 ||
+      !stable.empty()) { return 16; }
+
+  // This chain is long enough to expose recursive destruction under ASan.
+  // Both explicit clear and ordinary scope exit must drain iteratively.
+  for (mut int32_t index = 0; index < 30000; index++) {
+    values.push_front(index);
+  }
+  values.clear();
+  if (!values.empty()) { return 15; }
+  for (mut int32_t index = 0; index < 30000; index++) {
+    values.push_front(index);
+  }
+  return 0;
+}

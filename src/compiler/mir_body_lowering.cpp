@@ -560,6 +560,10 @@ private:
 
   [[nodiscard]] FailurePropagationKind
   normalizedDestructorPropagation(MirDropObligationId obligation) const {
+    const MirBlock *block = output.findBlock(current);
+    if (block != nullptr && mirDropFollowsDefiniteMove(*block, obligation)) {
+      return FailurePropagationKind::None;
+    }
     const MirDropObligation *drop = output.findDropObligation(obligation);
     if (drop == nullptr || !drop->dropType.destructor ||
         *drop->dropType.destructor == 0) {
@@ -1081,11 +1085,11 @@ private:
                                        .failureCleanup = true}}};
     drop.definedFailure.propagation =
         normalizedDestructorPropagation(obligation);
+    const bool mayRaise =
+        drop.definedFailure.propagation == FailurePropagationKind::Destructor;
     const MirInstructionId instruction =
         appendInstruction(std::move(drop), true, false);
-    if (instruction != 0 && routeFailureEdgesHere() &&
-        normalizedDestructorPropagation(obligation) ==
-            FailurePropagationKind::Destructor) {
+    if (instruction != 0 && routeFailureEdgesHere() && mayRaise) {
       const MirBlock *block = currentBlock();
       appendCleanupFailureControlFlow(
           instruction, block == nullptr ? 0 : block->activeFailure);
@@ -1431,11 +1435,11 @@ private:
                         .lifecycle = std::move(lifecycle)};
     drop.definedFailure.propagation =
         normalizedDestructorPropagation(obligation);
+    const bool mayRaise =
+        drop.definedFailure.propagation == FailurePropagationKind::Destructor;
     const MirInstructionId instruction =
         appendInstruction(std::move(drop), true, false);
-    if (instruction != 0 && routeFailureEdgesHere() &&
-        normalizedDestructorPropagation(obligation) ==
-            FailurePropagationKind::Destructor) {
+    if (instruction != 0 && routeFailureEdgesHere() && mayRaise) {
       appendFailureControlFlow(instruction, 0, consumedDrops, endedLoans,
                                producerEndedLoan == 0
                                    ? std::vector<MirLoanId>{}

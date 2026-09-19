@@ -2819,6 +2819,12 @@ private:
         .functionTarget = value.functionTarget,
         .callableBoundary = value.callableBoundary,
     };
+    // For a store the source expression's failure facts describe assignment,
+    // not the separately selected checked-access call.
+    arrowCall.definedFailure.propagation =
+        resolved.dispatch == CallDispatch::Virtual
+            ? FailurePropagationKind::VirtualCall
+            : FailurePropagationKind::DirectCall;
     if (const std::optional<HirCallReceiver> planned =
             orderedReceiver(receiver, resolved.receiverMutability,
                             resolved.receiverMode, body)) {
@@ -2831,7 +2837,11 @@ private:
     const HirValueId arrowId = arrowCall.id;
     value.id = nextValueId++;
     value.operands.front() = arrowId;
-    value.operation = TokenKind::DOT;
+    // A read carries its access token; a store carries its assignment token.
+    // Both project from the selected arrow call, but a store must retain '='.
+    if (value.kind == HirValueKind::MemberAccess) {
+      value.operation = TokenKind::DOT;
+    }
     value.parameterTypes.clear();
     value.intrinsic = IntrinsicKind::None;
     value.synchronization = {};
@@ -4152,10 +4162,10 @@ private:
         }
       }
     }
-    if ((value.kind == HirValueKind::MemberAccess ||
+    if (((value.kind == HirValueKind::MemberAccess &&
+          value.operation == TokenKind::ARROW) ||
          value.kind == HirValueKind::MemberSet) &&
-        value.operation == TokenKind::ARROW && value.functionTarget &&
-        !value.operands.empty()) {
+        value.functionTarget && !value.operands.empty()) {
       if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
           resolved != nullptr && resolved->kind == OverloadedOperator::Arrow) {
         return splitOverloadedArrowProjection(std::move(value), *resolved,
