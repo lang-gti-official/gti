@@ -2594,7 +2594,8 @@ and zero unmerged merge commits. All 31 exact tips are retained in the verified
 complete-history backup `out/stdlib-gitea-history.OFwGKI/branches.bundle`.
 Publication pairs their deletion with the checkpoint in one atomic push,
 guarding each deletion against its reviewed tip; the remaining 32 topic refs
-still require individual reconciliation. `main` is the only local branch.
+required the individual reconciliation recorded below. `main` is the only
+local branch.
 The hosting, release-asset synchronization, release-version policy, CMake test
 ownership, C ABI, and stdlib manifest gates pass. Workflow YAML and embedded
 shell syntax checks pass, as does the complete Neovim installer/editor smoke
@@ -2603,6 +2604,73 @@ a test setup assumption: regex highlighting must be explicitly enabled while
 checking the fallback after Tree-sitter has disabled it. Both highlighting
 assertion sets remain intact. Remote Actions and other native runner platforms
 are not local validation evidence, and publication does not wait for them.
+
+The second Gitea audit reconciles 31 of those 32 remaining topic refs against
+`f26f304b`. All of their unmatched commits are accounted for below, their
+mainline replacements are ancestors of `main`, and none contains an unreviewed
+merge commit. Every exact topic tip is present in the same verified
+complete-history bundle. The table records original branch tips, not new
+cherry-picks: restoring their old `VERSION`, generated-parser baseline, corpus
+counts, or superseded lowering would regress the reconciled mainline.
+
+| Gitea branch | Reviewed tip | Mainline disposition |
+| --- | --- | --- |
+| `claude/callable-range-capabilities` | `5e571602` | `d59f9c0d`, following the iterator foundation in `39f483fb`; current corpus baselines retain subsequent features |
+| `claude/fix-class-move-assignment-emission` | `619f0a49` | `90f604d9` |
+| `claude/fix-cross-argument-borrow-conflict-ice` | `b4973a56` | `b4331a04` |
+| `claude/fix-disjoint-field-projection-emission` | `6ff0c62c` | `e697f71e` |
+| `claude/fix-field-through-subscript-store` | `0c8180a5` | `634e5181` |
+| `claude/fix-implicit-destructor-field-drop` | `13100a1a` | `98fe9258` |
+| `claude/fix-inline-capturing-lambda-argument-ice` | `16542303` | `d3ee9e34`; uses canonical dominance/loop analysis rather than a separate reachability implementation |
+| `claude/fix-mixed-capture-template-representation` | `143047d8` | `870ffd80`; differing aggregate test-count comments are historical |
+| `claude/fix-moved-loop-local-lifetime-rearm` | `6b894d9f` | `a160fcef` |
+| `claude/fix-multidimensional-dynamic-index` | `68050e9d` | `ba09844b` |
+| `claude/fix-mut-cursor-read-receiver-loans` | `29b3f857` | `9e02ffd7` |
+| `claude/fix-mut-reference-retained-chain` | `9caac444` | `871ecbec`; preserves the exact returned address and parent-loan lifetime |
+| `claude/fix-nested-borrow-argument-loan-ordering` | `4adfa833` | `b8d7f5b0` |
+| `claude/fix-nested-subscript-loan-emission` | `000192dd` | `3355ab56` plus the existing MIR-owned call-result/return-loan transfer |
+| `claude/fix-owner-tied-local-by-value-argument` | `9ff1b05b` | `95d86778` |
+| `claude/fix-owner-tied-reference-argument-loan-emission` | `4e983389` | `388b50ca` |
+| `claude/fix-prvalue-assign-into-projection` | `7582c5e3` | `1f485c49`; predecessor fixes `92536d53` and `e673b595` are retained by `be0be7eb` and `56848951` |
+| `claude/fix-prvalue-assignment-into-binding` | `dfd28067` | `56848951`; this older Gitea mirror tip lacks the later checked-array/same-block refinements |
+| `claude/fix-readonly-reference-binding-argument-return` | `1c966f1f` | `f2d9d9f0` |
+| `claude/fix-reference-parameter-return-loan` | `3b6c202a` | Superseded by fresh MIR return-loan publication in `f2d9d9f0`; conditional-return regression retained in `c321e93c` |
+| `claude/fix-retained-borrow-result-place-typing` | `f7a4e4ba` | `5ff8bbf5` |
+| `claude/fix-silent-fixed-array-oob-write` | `e477e7b3` | `1b9795f4`; MIR schema advanced over intervening changes instead of restoring the branch's old version |
+| `claude/fix-symbolic-auto-local-ice` | `b40308a6` | `d3ee9e34`; concrete generic types remain instance-owned, not written into shared declaration symbols |
+| `claude/l-op-01-domain-operators` | `e9933beb` | `e56abf6b`; preserves the already-expanded iterator constraint inventory |
+| `claude/payload-enum-ownership` | `d09e1035` | `1df1f893` |
+| `claude/pr-queue-merge-order` | `9713f1db` | Historical ordering for the old 0.321.0 PR queue; retained in the bundle, not imported as a current implementation plan |
+| `codex/class-scoped-using` | `347e2901` | `c1fbca4b`; handwritten implementation, grammar, and tests retained against the current generated-parser baseline |
+| `codex/fix-gitea-actions-deps` | `c245b488` | `4ceaca7d` and subsequent canonical-Gitea workflow changes retain Clang and sanitizer runtime packages |
+| `codex/owning-payload-enums` | `e92a82ff` | `87e1d602`, followed by field containment in `3325d94d` |
+| `codex/payload-enum-transport` | `8420baa5` | `7e70e171`; predecessors `a1d93c26` and `ee378508` retained by `a3eceb69` and `f7a7085c`, including the existing function-item exemption |
+| `codex/public-allocator-storage` | `431d1cd7` | `7f25d552`; retains stricter return-loan producer, access, and carrier checks |
+
+The old queue's verifier warning remains relevant: a builder and verifier
+sharing a predicate can agree on an incorrect rule. Independent malformed-IR
+mutations and observable runtime results remain required evidence; structural
+assertions alone previously preserved the invalid entry/return-loan shape.
+
+Local validation passes all 37 selected CTest gates: the 141-case compiler
+aggregate, optimizer and MIR emitter contracts, the affected ownership,
+reference, assignment, iterator, allocator, domain-operator, and payload-enum
+runtime matrices, LSP, query consistency, and hosting/release policy checks.
+Native regressions cover C++20/C++23 at O0/O3. The focused Tree-sitter
+class-scoped alias corpus case also passes against the current parser. Checks
+run serially at low priority. This is a documentation-and-ref cleanup: the
+compiler corpus, installed toolchain, and reference-site matrices from the
+0.335.0 checkpoint are not repeated, and no other-platform or CI result is
+claimed.
+
+Publication pairs these 31 deletions with this audit record in one atomic push,
+with an exact expected-tip lease for each deletion. No compiler behavior changes
+in this checkpoint, so `VERSION` remains 0.335.0. The sole retained Gitea topic
+is `codex/engine-embedding-sequence` at `827fe75b`: it contains genuinely new
+engine ABI design and dormant compiler/driver roots, not redundant stdlib work.
+It remains intact pending the user's integration decision and its own review
+and validation. This cleanup does not complete that integration or the stdlib
+campaign, including the explicitly requested full C-style thread API.
 
 The temporary-receiver/backend failure reproduced by constructing a path and
 calling an owning-string-returning method in one expression has a local repair
