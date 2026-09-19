@@ -1,0 +1,6 @@
+#include <std/cthread>
+
+int main() {
+  std::thrd_yield();
+  return 0;
+}

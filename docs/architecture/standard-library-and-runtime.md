@@ -322,6 +322,17 @@ and underflow results follow the documented floating-point value contract,
 not the defined-integer-failure contract. Host errno and floating exception
 flags are not exposed to applications.
 
+`<std/cthread>` begins with ordinary GTI `std::thrd_yield()` over the
+version-one `gti_rt_cthread_yield_v1(void)` C entry in `gti/cthread.h`.
+`runtime/src/cthread.cpp` implements the host scheduling hint. The operation
+is thread-safe, non-owning, allocation-free, and has no failure result or
+GTI synchronization edge. It is legal in either execution profile because it
+creates no execution agent and accesses no application memory. The existing
+conservative native-call effects and verified-MIR emission own execution;
+no public-name recognition, concurrency intrinsic, or AST/HIR fallback is
+introduced. The module's remaining C-style families require their own
+attachment, ownership, synchronization, and failure contracts.
+
 ## Defined-Failure Boundary
 
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns

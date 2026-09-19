@@ -35,6 +35,7 @@ assertions.
 | `runtime_failure_boundary` | C++ ABI shape, allocation-free partial/`EINTR` writer, per-site outcome rejection, runtime-sentinel rules, and every boundary of the generated Unicode 15.1 allowlist |
 | `runtime_io_boundary` | version-one file mode/seek behavior, create/truncate/append/read reopening, embedded-zero preservation, bounded reads, empty-buffer rules, exact offsets, invalid descriptors/origins, embedded-NUL path rejection, deterministic cleanup, and file/stdout broken-pipe failure without `SIGPIPE` escape |
 | `cmath_runtime` | every declared binary32 math operation at O0/O1/O3 under C++20/C++23; independent known results, rounding directions and ties, domains, poles, signed zero, infinities, NaN, overflow and gradual underflow; scalar ABI and verified-MIR witnesses; plus generated-boundary ASan/UBSan execution |
+| `cthread_runtime` | real C-style yield on initial and managed threads, both execution profiles, atomic/join composition, exact native-call retention through a separate boundary oracle, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; no timing or fairness oracle |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
@@ -224,6 +225,9 @@ The installed compiler-library consumer additionally runs
 `installed_layout_query_native_boundary`, so a packaged frontend must derive
 the same supported host layout facts without inheriting its answer from the
 GTI backend.
+`installed_cthread_library` compiles a C11 consumer of `gti/cthread.h`, links
+through the exported `GTI::runtime`, and calls the actual yield entry. It checks
+that the new runtime symbol and header are both present in a clean stage.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 

@@ -359,6 +359,19 @@ return NaN and poles/overflow return infinity, not a checked integer failure.
 The exact rounding, signed-zero, and portability contract is in
 [Standard Library §7.3.1](../docs/language/standard-library.md#731-binary32-mathematics).
 
+## C-style threading
+
+`<std/cthread>` currently implements `std::thrd_yield()`: a scheduling hint
+that may let another thread run. It is usable from the initial or a managed
+thread in either execution profile and grants no synchronization, fairness,
+or minimum-delay guarantee. It has no parameters or result and raises no
+defined failure. Use atomics or locks, not yield, to order shared accesses.
+
+Only yield is implemented. C-style worker creation/join, identity, sleep,
+detach/exit, once, mutexes, condition variables, and thread-specific storage
+remain in the stdlib-completion campaign. `std::thread` remains the distinct
+safe managed-thread owner; this module is not an alias for it.
+
 ## Partial modules and declaration scaffolds
 
 The following optional modules provide C++-familiar names and API shapes as a

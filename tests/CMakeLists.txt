@@ -539,6 +539,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cmath_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME cthread_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cthread_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cthread_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME string_index_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/string_index_range_runtime_test.py"
@@ -1527,7 +1534,7 @@ if(Python3_Interpreter_FOUND)
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime string_index_range_runtime managed_thread_end_to_end
-      managed_thread_tsan atomic_end_to_end atomic_tsan mutex_end_to_end
+      managed_thread_tsan cthread_runtime atomic_end_to_end atomic_tsan mutex_end_to_end
       mutex_tsan
       domain_operator_runtime
       PROPERTIES ENVIRONMENT

@@ -49,6 +49,29 @@ not turn a race into a defined nondeterministic result.
 transfer-capable, or share-capable. Safe shared mutation requires an approved
 interior-synchronization type.
 
+## C-Style Scheduling Hint
+
+`<std/cthread>` currently implements `void std::thrd_yield()`. It offers the
+host scheduler an opportunity to run another thread and may have no effect.
+The call returns no value, owns no resource, and raises no defined failure.
+It is valid in both execution profiles, including on the initial thread:
+yielding does not create a second GTI execution agent.
+
+Yield does not establish a synchronizes-with edge, publish memory, release a
+lock, guarantee progress or fairness, or impose a minimum delay. A polling
+algorithm still needs atomics or another supported synchronization contract.
+The ordinary native-call effects prevent GTI optimizations from deleting or
+reordering the host operation; they do not constitute synchronization proof.
+Its scheduling-hint meaning follows
+[C11 §7.26.5.8](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf),
+not C handle ABI parity.
+
+This is the first executable part of the C-style threading module, not a
+completed `<threads.h>` equivalent. C-style create/join, identity, detach,
+exit, sleep, once, mutex, condition-variable, and thread-specific-storage
+families remain implementation work. The safe managed owners below retain
+their separate lifetime and failure contract.
+
 ## Managed Threads
 
 `<std/thread>` provides the move-only `std::thread` and
