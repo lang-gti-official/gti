@@ -29,6 +29,15 @@ target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
 
+add_executable("gti_runtime_cthread_tests"
+               "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_tests.cpp")
+target_include_directories("gti_runtime_cthread_tests"
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features("gti_runtime_cthread_tests" PRIVATE cxx_std_20)
+target_link_libraries("gti_runtime_cthread_tests" PRIVATE gti_runtime)
+add_test(NAME cthread_runtime_boundary COMMAND gti_runtime_cthread_tests)
+set_tests_properties(cthread_runtime_boundary PROPERTIES TIMEOUT 60)
+
 add_executable("gti_runtime_io_tests"
                "${PROJECT_SOURCE_DIR}/tests/runtime_io_tests.cpp")
 target_compile_features("gti_runtime_io_tests" PRIVATE cxx_std_23)
@@ -493,6 +502,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/cmake_test_ownership_test.py"
             "${PROJECT_SOURCE_DIR}"
   )
+  add_test(
+    NAME cthread_runtime_firewall
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_boundary_test.py"
+            "$<TARGET_FILE:gti_runtime_cthread_tests>"
+  )
+  set_tests_properties(cthread_runtime_firewall PROPERTIES TIMEOUT 60)
   add_test(
     NAME cpp_mir_body_emitter_corpus
     COMMAND "${Python3_EXECUTABLE}"
