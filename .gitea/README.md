@@ -1,61 +1,75 @@
 # GTI on Gitea Actions
 
-These workflows are the local-Gitea counterparts to `.github/workflows/`.
-GitHub remains the source of truth for Git data; the Gitea repository is a
-pull mirror used for additional high-capacity builds, tests, and local release
-assets.
+The repository at
+`https://git2.internal.howetotech.dev/lukeh/gti-internal` is GTI's canonical
+Git host. Gitea owns branches, pull requests, CI, tags, nightly builds, stable
+releases, and release assets. The workflows in `.gitea/workflows/` do not rely
+on a GitHub mirror or on GitHub-created tags.
 
-## One-time setup
+## Repository setup
 
-1. Use Gitea 1.26 or newer (prefer the current patched release), then enable
-   Actions for the mirrored repository. Gitea does not enable the
-   Actions repository unit on mirrors by default.
-2. Verify that the instance keeps `.gitea/workflows` before
-   `.github/workflows` in `app.ini` (this is the current default):
-
-   ```ini
-   [actions]
-   WORKFLOW_DIRS = .gitea/workflows,.github/workflows
-   ```
-
-   Gitea loads workflows from the first directory that exists. This ordering
-   selects these Gitea-specific files while still letting repositories without
-   a `.gitea/workflows` directory fall back to their GitHub workflows. Restart
-   Gitea after changing `app.ini`.
+1. Use Gitea 1.26 or newer and enable the Actions repository unit.
+2. Keep `.gitea/workflows` in the instance's configured workflow directories.
+   GTI intentionally ships no alternative-host workflow fallback.
 3. Register a trusted repository runner whose `ubuntu-latest` label maps to
-   the desired host or container, for example `ubuntu-latest:host` or
-   `ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest`.
-   The static label is intentional: Gitea 1.26 and 1.27 do not support
-   expressions in `runs-on`.
-4. Optionally set `GTI_JOBS` to a positive integer in
-   **Repository settings -> Actions -> Variables**. If it is unset or invalid,
-   each build detects the runner's available processor count. A preinstalled
-   `sccache` is used automatically, including the Gitea Actions cache backend
-   when the runner exposes it.
-5. Allow the workflow token to write releases in the repository's Actions
-   token-permission settings. Build and test jobs remain read-only; only the
-   publish jobs request release write access.
+   the intended host or container. Gitea requires static runner labels for the
+   versions used by this repository.
+4. Optionally set `GTI_JOBS` to a positive integer in **Repository settings ->
+   Actions -> Variables**. Otherwise each build detects the runner's available
+   processors. A preinstalled `sccache` is used automatically, including the
+   Actions cache backend when the runner exposes it.
+5. In **Repository settings -> Actions -> General**, allow the workflow token
+   a maximum of `code: write` and `releases: write`. Ordinary CI requests only
+   read access; the two publication jobs explicitly request the write scopes.
 
-The runner environment needs Bash, Git, Python 3 with `venv` and `pip`, and
-Node.js/npm. Linux jobs install CMake 3.20 or newer, a C++20 compiler, and a
-supported LLVM where needed. macOS runners need a C++20 compiler and Homebrew;
-the workflows install CMake and LLVM there where needed. Release builds
-download GTI's pinned LLVM source and therefore also need outbound access to
-GitHub release assets. An Ubuntu runner should be based on Ubuntu 24.04 so
-`llvm-18-dev` is available.
+The runner needs Bash, Git, Python 3 with `venv` and `pip`, and Node.js 20.9 or
+newer with npm.
+Linux jobs install CMake 3.20 or newer, Ninja, a C++20 compiler, and supported
+LLVM packages where needed. Release builds download GTI's pinned upstream LLVM
+source and therefore require outbound access to that upstream release host.
+An Ubuntu runner should be based on Ubuntu 24.04 so `llvm-18-dev` is available.
 
-## Mirror-aware triggers
+The current publication jobs create one archive for the native OS and
+architecture of the runner claiming `ubuntu-latest`. Before advertising
+additional binary platforms from Gitea, register those native runners and add
+statically labelled package jobs for them; source support for a target is not
+evidence that a binary archive was published for it.
 
-- `ci.yml` runs when mirror synchronization updates `main` (and can be run
-  manually).
-- `nightly.yml` runs when the upstream GitHub nightly workflow moves the
-  mirrored `nightly` tag. It never force-pushes into the read-only mirror.
-- `release.yml` runs when a stable `vX.Y.Z` tag arrives from GitHub. It does not
-  run merely because `VERSION` changed, which avoids a duplicate build before
-  the upstream tag exists. Existing mirrored release notes and assets for other
-  platforms are preserved; files with the same native-platform names are
-  replaced by the locally built copies.
+## Workflow authority
 
-Manual nightly and stable runs consume the already-mirrored tag. They fail
-clearly if that tag is missing or moves while packaging, so stale artifacts are
-not published.
+- `ci.yml` runs for every push to `main`, every pull request, and manual
+  dispatch. It is the canonical remote CI signal.
+- `nightly.yml` runs for every `main` commit. It packages and tests the exact
+  triggering revision, refuses publication if that revision was superseded,
+  then advances the mutable `nightly` tag and Gitea release. Current assets are
+  uploaded before assets outside the new build are pruned.
+- `release.yml` runs when `VERSION` changes on `main`, or by manual dispatch.
+  It packages and tests the exact commit, rejects a conflicting existing tag,
+  and lets Gitea create or update the matching `v<VERSION>` release.
+
+Both release workflows use Gitea's repository token and publish only after the
+build-tree and installed-toolchain gates pass. A successful push merely starts
+that asynchronous work; local validation remains the pre-push authority.
+
+## GitHub decommission boundary
+
+The tracked code can operate without GitHub, but deleting the old GitHub
+repository is a separate, destructive administration step. Before deletion,
+make an explicit retain-or-discard decision for data that `git push` does not
+copy:
+
+- issues, pull requests, discussions, labels, milestones, and attachments;
+- wiki pages and wiki history;
+- release notes and historical release assets;
+- repository settings, secrets, branch protection, webhooks, and deploy keys;
+- every historical tag not already present in Gitea.
+
+Bulk-pushing historical tags can execute workflow files stored in those old
+tagged commits. Import tags while Actions is temporarily disabled, or use an
+instance-level migration path that suppresses workflow dispatch. Verify the
+Gitea clone, wiki, issue history, tags, latest stable archive, nightly archive,
+and installer before deleting GitHub.
+
+Links to third-party projects hosted on GitHub, including LLVM and vendored
+upstream attribution, are external dependencies rather than GTI repository
+authority and may remain.

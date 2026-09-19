@@ -194,7 +194,7 @@ optimizer.
 A program that fails to build is `skipped` — some want a package or a target,
 and some fixtures are negative tests — except that `GTI-B0001` is reported as
 `ICE` and `GTI-B0003` as `unsupported`. Folding internal errors into a skip
-count is how [#112](https://github.com/LukeHHA/gti/issues/112) nearly went
+count is how issue #112 nearly went
 unnoticed. A specifically classified, bounded backend capability gap may use
 `GTI-B0003`; an unclassified rejection remains a compiler defect and therefore
 stays visible as `ICE`.
@@ -211,7 +211,7 @@ python3 scripts/debug/stdlib_include_sweep.py
 
 That shape had never been tested. Every case in the surface manifest *uses*
 the module it covers, while an unused generic declaration legitimately has no
-concrete MIR lifecycle instance. [#116](https://github.com/LukeHHA/gti/issues/116)
+concrete MIR lifecycle instance. Issue #116
 made that absence an internal backend error. The sweep is now a primary CTest
 gate and all 19 shipped modules independently reach C++ emission.
 
@@ -294,35 +294,35 @@ reproducers were removed from this directory.
 
 | Issue | Fixed by | Regression coverage |
 | --- | --- | --- |
-| [#92](https://github.com/LukeHHA/gti/issues/92) nested read-only range-`for` | `5d26719` | `tests/compiler_tests.cpp` |
-| [#93](https://github.com/LukeHHA/gti/issues/93) parser stack overflow | `5d26719` | `tests/compiler_tests.cpp` — deep nesting is now `GTI-P0005`, a diagnostic rather than a crash |
-| [#95](https://github.com/LukeHHA/gti/issues/95) global with no `main` | `5d26719` | `tests/cpp_mir_representation_snapshot_tests.cpp` |
-| [#96](https://github.com/LukeHHA/gti/issues/96) formatter not idempotent | `5d26719` | `tests/lsp_smoke_test.py` |
-| [#100](https://github.com/LukeHHA/gti/issues/100) global class member access | `ca18fac` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
-| [#103](https://github.com/LukeHHA/gti/issues/103) projected lambda capture | `v0.306.1` | `tests/mir_class_value_lifecycle_runtime_test.py` |
-| [#104](https://github.com/LukeHHA/gti/issues/104) global fixed-array indexing | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
-| [#106](https://github.com/LukeHHA/gti/issues/106) fixed arrays of class values | `v0.306.1` | `tests/fixtures/fixed_array_class_lifecycle.gti`, `tests/fixed_array_class_lifecycle_runtime_test.py` |
-| [#107](https://github.com/LukeHHA/gti/issues/107) assignment in a logical operand | `v0.306.1` | `tests/compiler_tests.cpp` |
-| [#108](https://github.com/LukeHHA/gti/issues/108) nested capture of an enclosing capture | `v0.306.1` | `tests/compiler_tests.cpp` |
-| [#109](https://github.com/LukeHHA/gti/issues/109) payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
-| [#110](https://github.com/LukeHHA/gti/issues/110) self-nested generic identity | `v0.306.1` | `tests/returned_class_field_runtime_test.py` |
-| [#111](https://github.com/LukeHHA/gti/issues/111) grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
-| [#113](https://github.com/LukeHHA/gti/issues/113) virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
-| [#114](https://github.com/LukeHHA/gti/issues/114) concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
-| [#115](https://github.com/LukeHHA/gti/issues/115) global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
-| [#116](https://github.com/LukeHHA/gti/issues/116) include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
-| [#117](https://github.com/LukeHHA/gti/issues/117) adjacent place, lambda, generic, aggregate-cleanup, and assignment-recovery shapes | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `place_shape_matrix.py`, ASan compiler run |
-| [#118](https://github.com/LukeHHA/gti/issues/118) lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
-| [#119](https://github.com/LukeHHA/gti/issues/119) compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
-| [#120](https://github.com/LukeHHA/gti/issues/120) generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
-| [#121](https://github.com/LukeHHA/gti/issues/121) direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `reference_parameter_range_runtime` |
-| [#122](https://github.com/LukeHHA/gti/issues/122) grouped and converted field initializers | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
-| [#123](https://github.com/LukeHHA/gti/issues/123) cleanup-owning class temporaries passed directly by value | `v0.312.7` | `compiler_pipeline cleanup-temporary-arguments`, `cpp_mir_body_emitter_1of4`..`4of4`, `issue_123_cleanup_temporary_argument_runtime` |
-| [#124](https://github.com/LukeHHA/gti/issues/124) payload-enum class fields | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
-| [#126](https://github.com/LukeHHA/gti/issues/126) fixed-array class element copy and fresh-value assignment | `v0.312.5` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_126_array_element_assignment_runtime` |
-| [#127](https://github.com/LukeHHA/gti/issues/127) cleanup-free direct-constructor temporary field reads | `v0.312.6` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_127_constructor_temporary_field_runtime` |
-| [#129](https://github.com/LukeHHA/gti/issues/129) passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
-| [#137](https://github.com/LukeHHA/gti/issues/137) passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
+| #92 nested read-only range-`for` | `5d26719` | `tests/compiler_tests.cpp` |
+| #93 parser stack overflow | `5d26719` | `tests/compiler_tests.cpp` — deep nesting is now `GTI-P0005`, a diagnostic rather than a crash |
+| #95 global with no `main` | `5d26719` | `tests/cpp_mir_representation_snapshot_tests.cpp` |
+| #96 formatter not idempotent | `5d26719` | `tests/lsp_smoke_test.py` |
+| #100 global class member access | `ca18fac` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| #103 projected lambda capture | `v0.306.1` | `tests/mir_class_value_lifecycle_runtime_test.py` |
+| #104 global fixed-array indexing | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| #106 fixed arrays of class values | `v0.306.1` | `tests/fixtures/fixed_array_class_lifecycle.gti`, `tests/fixed_array_class_lifecycle_runtime_test.py` |
+| #107 assignment in a logical operand | `v0.306.1` | `tests/compiler_tests.cpp` |
+| #108 nested capture of an enclosing capture | `v0.306.1` | `tests/compiler_tests.cpp` |
+| #109 payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
+| #110 self-nested generic identity | `v0.306.1` | `tests/returned_class_field_runtime_test.py` |
+| #111 grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
+| #113 virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| #114 concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| #115 global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| #116 include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
+| #117 adjacent place, lambda, generic, aggregate-cleanup, and assignment-recovery shapes | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `place_shape_matrix.py`, ASan compiler run |
+| #118 lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
+| #119 compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
+| #120 generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
+| #121 direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `reference_parameter_range_runtime` |
+| #122 grouped and converted field initializers | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
+| #123 cleanup-owning class temporaries passed directly by value | `v0.312.7` | `compiler_pipeline cleanup-temporary-arguments`, `cpp_mir_body_emitter_1of4`..`4of4`, `issue_123_cleanup_temporary_argument_runtime` |
+| #124 payload-enum class fields | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
+| #126 fixed-array class element copy and fresh-value assignment | `v0.312.5` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_126_array_element_assignment_runtime` |
+| #127 cleanup-free direct-constructor temporary field reads | `v0.312.6` | `cpp_mir_body_emitter_1of4`..`4of4`, `issue_127_constructor_temporary_field_runtime` |
+| #129 passive native-record copy initialization | `v0.312.2` | `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
+| #137 passive native-record parameter and direct-call return shapes | `v0.312.2` | `mir_backend_scalar_direct_call`, `native_record_c_oracle`, `cpp_mir_body_emitter_1of4`..`4of4` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

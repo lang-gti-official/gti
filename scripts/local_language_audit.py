@@ -721,8 +721,8 @@ def verify_workflow_isolation() -> None:
     )
     checked = [
         REPOSITORY_ROOT / "CMakeLists.txt",
-        REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml",
-        REPOSITORY_ROOT / ".github" / "workflows" / "release.yml",
+        REPOSITORY_ROOT / ".gitea" / "workflows" / "ci.yml",
+        REPOSITORY_ROOT / ".gitea" / "workflows" / "release.yml",
     ]
     for path in checked:
         text = path.read_text(encoding="utf-8")

@@ -13,7 +13,9 @@ vim.fn.mkdir(temporary, "p")
 
 local ok, problem = xpcall(function()
   local lazy_spec = dofile(vim.fs.joinpath(repository, "lazy.lua"))
-  if lazy_spec[1] ~= "LukeHHA/gti"
+  if lazy_spec[1]
+      ~= "https://git2.internal.howetotech.dev/lukeh/gti-internal.git"
+    or lazy_spec.name ~= "gti"
     or lazy_spec.lazy ~= false
     or lazy_spec.build ~= "build.lua"
   then
@@ -21,6 +23,11 @@ local ok, problem = xpcall(function()
   end
 
   local installer = dofile(vim.fs.joinpath(repository, "lua", "gti", "installer.lua"))
+  local expected_release_url =
+    "https://git2.internal.howetotech.dev/lukeh/gti-internal/releases/download/nightly/BUILD_ID"
+  if installer.release_url("nightly", "BUILD_ID") ~= expected_release_url then
+    fail("installer does not resolve release assets from canonical Gitea")
+  end
   local installed = installer.install({
     root = temporary,
     version = version,
@@ -214,6 +221,11 @@ local ok, problem = xpcall(function()
     fail("could not locate fallback syntax fixture line: " .. line_text)
   end
 
+  -- Tree-sitter deliberately clears 'syntax' when its highlighter starts.
+  -- Activate the independent regex fallback for these assertions, then restore
+  -- the normal highlighting state; synID does not inspect Tree-sitter captures.
+  local active_syntax = vim.bo.syntax
+  vim.bo.syntax = "gti"
   require_fallback_syntax(
     "  requires pairwise<Left, Right> { return left; }",
     "requires",
@@ -224,6 +236,7 @@ local ok, problem = xpcall(function()
     "sizeof",
     "gtiOperator"
   )
+  vim.bo.syntax = active_syntax
 
   local function require_capture(line_text, token, capture)
     for row, line in ipairs(source_lines) do
