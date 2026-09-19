@@ -2774,9 +2774,10 @@ inputs retain their passive native signature through HIR/MIR. C++ representation
 also preserves distinct `char`/`uint8_t` generic arguments instead of emitting
 colliding native member specializations. Focused verifier mutations, exact
 semantic diagnostics, and injected-allocation runtime tests own this boundary.
-Class allocation still uses a terminal helper; exhaustion cleanup and fallible
-class-constructor rollback remain open. This does not close the broader stdlib
-campaign, including full C-style threads and remaining list operations.
+At that checkpoint, class allocation still used a terminal helper; exhaustion
+cleanup and fallible class-constructor rollback remained open. This did not
+close the broader stdlib campaign, including full C-style threads and remaining
+list operations.
 
 All 45 selected compiler/MIR/optimizer, runtime/stdlib, native ABI, CLI, LSP,
 and inventory gates pass after the focused regression reruns. The scalar
@@ -2791,6 +2792,38 @@ type checks, and the single-worker static build/render checks pass. The optional
 audit's 23 contract cases pass; its broader generated and mutation searches
 were not repeated. These are local macOS results, not CI or cross-host evidence.
 No syntax, token, query, or public native ABI changed.
+
+The 0.335.1 selected class `make_unique` checkpoint separates allocation from
+ordinary constructor entry in verified MIR. It fixes the missing native
+constructor call for a fallible pointee and preserves caller cleanup on
+allocation exhaustion. Copied and moved class arguments occupy prepared slots
+before allocation; constructor entry transfers them only after allocation
+succeeds. Raw storage has its own failure cleanup and cannot be borrowed,
+aliased, or published as an owner before construction succeeds. Constructor
+failure preserves the original record, and allocation failure during cleanup
+preserves the primary failure under `GTI-R0014`.
+
+All 65 selected CTest gates pass, including the compiler aggregate, 14 malformed
+allocation-protocol mutations, optimizer/backend contracts, all 36 stdlib
+surface cases, standalone includes, constructor and owner regressions, CLI,
+LSP, and managed threads. The new failure matrix performs 14 builds and 56 runs
+across C++20/C++23 at O0/O1/O3 plus ASan/UBSan, using both the build-tree and a
+fresh installed compiler. Eight external installed-library consumers pass.
+The emitter corpus retains 3,907 ready bodies; all 82 examples build and run at
+both native endpoints with unchanged MIR ownership. All 68 reference examples,
+11 content tests, type checks, and the single-worker static build/render checks
+pass. All compilation and test coordinators ran serially at low priority. The
+unrelated project-CLI aggregate was not rerun because it hard-codes parallel
+four-target builds; the optional
+full language audit was not repeated. These are local macOS results, not CI or
+cross-host evidence. Syntax, tokens, language queries, and the public native ABI
+are unchanged, so editor grammar regeneration is not part of this slice.
+
+The existing bounded constructor rollback proof remains unchanged. This does
+not admit arbitrary user-destructor/subobject rollback, migrate targetless
+generated default/copy/move allocation, or complete the full C-style thread API
+and remaining standard-library campaign. The separate engine-embedding branch
+remains preserved pending the user's scope decision.
 
 ### L-GEN-01: Production Generic Function System
 

@@ -65,6 +65,12 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{
         .movesValue = true, .initializesValue = true, .dropsValue = true},
     unknownEffects(), // CallBody invokes the exact target MIR body.
+    MirEffectTraits{.writesPlace = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .initializesValue = true}, // AllocateObject.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -392,6 +398,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "end-borrow",
     "lifecycle",
     "call-body",
+    "allocate-object",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({

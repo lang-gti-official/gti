@@ -481,6 +481,42 @@ inline mir_failure_status_v1 mir_checked_array_write_v1(
   return mir_failure_success_v1;
 }
 
+// A MIR allocation resource owns bytes, never a live T. Its destruction is an
+// integrity check; only a verified Drop or ownership publication releases it.
+template <typename T> class mir_object_allocation_v1 final {
+  void *storage_ = nullptr;
+public:
+  mir_object_allocation_v1() = default;
+  mir_object_allocation_v1(const mir_object_allocation_v1 &) = delete;
+  mir_object_allocation_v1 &operator=(const mir_object_allocation_v1 &) = delete;
+  ~mir_object_allocation_v1() { if (storage_ != nullptr) std::abort(); }
+  mir_failure_status_v1 allocate() noexcept {
+    if (storage_ != nullptr) std::abort();
+    if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+      storage_ = ::operator new(sizeof(T), std::align_val_t(alignof(T)), std::nothrow);
+    } else {
+      storage_ = ::operator new(sizeof(T), std::nothrow);
+    }
+    return storage_ != nullptr ? mir_failure_success_v1
+        : mir_failure_status_v1{GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+                               GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1};
+  }
+  T *address() noexcept { return static_cast<T *>(storage_); }
+  T *release() noexcept {
+    T *result = address();
+    storage_ = nullptr;
+    return result;
+  }
+  void reset() noexcept {
+    if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+      ::operator delete(storage_, std::align_val_t(alignof(T)));
+    } else {
+      ::operator delete(storage_);
+    }
+    storage_ = nullptr;
+  }
+};
+
 // Scalar initialization cannot execute user code. Allocation is the sole
 // detector here; the caller's MIR owns its record, cleanup, and publication.
 template <typename T, typename... Args>

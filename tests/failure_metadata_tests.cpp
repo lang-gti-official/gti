@@ -253,7 +253,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v54 ") &&
+      snapshot.starts_with("mir-v55 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -2219,6 +2219,126 @@ int main() {
   }
 }
 
+void testClassUniqueAllocationContracts() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-class-allocation/main.gti", R"(
+#include <std/memory>
+class Value {
+  int32_t result;
+public:
+  Value(int32_t divisor) : result(9 / divisor) {}
+};
+int main() { auto owner = std::make_unique<Value>(0); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "class unique allocation needs verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  std::size_t allocations = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &allocate : block.instructions) {
+        if (allocate.kind != lang::MirInstructionKind::AllocateObject)
+          continue;
+        ++allocations;
+        const auto *raw =
+            function.body.findDropObligation(allocate.objectAllocation);
+        const auto &construction =
+            function.body.blocks[block.terminator.target - 1];
+        const auto &call = construction.instructions.front();
+        expect(
+            raw && raw->kind == lang::MirDropObligationKind::ObjectAllocation &&
+                !allocate.result && allocate.successResultDrop == raw->id &&
+                call.objectAllocation == raw->id &&
+                call.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
+                call.definedFailure.localOrigins.empty() &&
+                call.definedFailure.propagation ==
+                    lang::FailurePropagationKind::Constructor &&
+                construction.terminator.kind == lang::MirTerminatorKind::Invoke,
+            "raw allocation and exact constructor require separate failure "
+            "edges");
+        for (int mutation = 0; mutation < 14; ++mutation) {
+          auto forged = frontend.mir;
+          auto *body = functionBody(forged, function.id);
+          auto &allocationBlock = body->blocks[block.id - 1];
+          auto &changed = *std::find_if(
+              allocationBlock.instructions.begin(),
+              allocationBlock.instructions.end(),
+              [&](const auto &value) { return value.id == allocate.id; });
+          auto &constructorBlock = body->blocks[construction.id - 1];
+          auto &constructor = constructorBlock.instructions.front();
+          auto &retirement = body->blocks[construction.terminator.target - 1]
+                                 .instructions.front();
+          switch (mutation) {
+          case 0:
+            changed.objectAllocation = 0;
+            break;
+          case 1:
+            changed.definedFailure.localOrigins.front()
+                .outcomes.front()
+                .detail = lang::DefinedFailureDetail::PrivateStorage;
+            break;
+          case 2:
+            changed.successResultDrop.reset();
+            break;
+          case 3:
+            constructor.objectAllocation = 0;
+            break;
+          case 4:
+            constructor.constructorTarget.reset();
+            break;
+          case 5:
+            constructor.definedFailure.propagation =
+                lang::FailurePropagationKind::None;
+            break;
+          case 6:
+            retirement.objectAllocation = 0;
+            break;
+          case 7:
+            retirement.lifecycle.front().conditional = true;
+            break;
+          case 8:
+            allocationBlock.terminator.target = construction.terminator.target;
+            break;
+          case 9:
+            body->places[*changed.destination - 1].initiallyAvailable = true;
+            break;
+          case 10:
+            body->dropObligations[changed.objectAllocation - 1]
+                .initiallyActive = true;
+            break;
+          case 11:
+            for (const auto &target : frontend.mir.constructorInstances()) {
+              if (target.id != constructor.constructorTarget) {
+                constructor.constructorTarget = target.id;
+                break;
+              }
+            }
+            break;
+          case 12:
+            allocationBlock.instructions.front().objectAllocation = raw->id;
+            break;
+          case 13: {
+            auto alias = body->places[raw->place - 1];
+            alias.id = body->places.size() + 1;
+            body->places.push_back(std::move(alias));
+            break;
+          }
+          }
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "forged class allocation protocol must fail independent "
+                 "verification");
+        }
+      }
+    }
+  }
+  expect(allocations == 1,
+         "one class allocation requires one raw-storage resource");
+}
+
 } // namespace
 
 int main() {
@@ -2231,5 +2351,6 @@ int main() {
   testCheckedIntegerOperationVerifierContracts();
   testUniqueOwnerBorrowFailureEdges();
   testScalarUniqueAllocationContracts();
+  testClassUniqueAllocationContracts();
   return passed ? 0 : 1;
 }

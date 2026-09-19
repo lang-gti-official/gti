@@ -366,6 +366,11 @@ enum class MirDropObligationKind {
   // Constructor bodies use the exact This-rooted field place; the owning
   // field-initializer schedule uses that field's exact binding-rooted place.
   ConstructionRollback,
+  // Storage for one not-yet-constructed unique-owner pointee. This generated
+  // obligation only deallocates bytes: it never invokes the pointee's cleanup.
+  // AllocateObject arms it, construction failure drops it, and successful
+  // construction transfers it into the ordinary owning result.
+  ObjectAllocation,
 };
 
 // A homogeneous fixed-array drop walks these extents in reverse lexicographic
@@ -447,6 +452,7 @@ enum class MirInstructionKind {
   EndBorrow,
   Lifecycle,
   CallBody,
+  AllocateObject,
   Count,
 };
 
@@ -602,6 +608,9 @@ struct MirInstruction {
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  // Body-local ObjectAllocation obligation consumed by unique construction,
+  // or established by AllocateObject. It is not a source-visible owner value.
+  MirDropObligationId objectAllocation = 0;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;

@@ -1099,6 +1099,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::EndBorrow:
         case MirInstructionKind::Modify:
         case MirInstructionKind::CallBody:
+        case MirInstructionKind::AllocateObject:
         case MirInstructionKind::Count:
           valid = false;
           break;
@@ -1699,6 +1700,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::ActivateBorrow:
       case MirInstructionKind::EndBorrow:
       case MirInstructionKind::CallBody:
+      case MirInstructionKind::AllocateObject:
       case MirInstructionKind::Count:
         return false;
       }

@@ -33,9 +33,15 @@ selected from the verified MIR instruction. It performs the exact zero/one
 scalar initialization, publishes only on success, and routes exhaustion through
 the instruction's failure edge. A direct allocation-function call prevents
 C++ new-expression allocation elision from deleting this observable detector.
-The helper contains no constructor dispatch or source-level type selection;
-class allocation's terminal helper and constructor rollback remain separate
-migration work.
+The helper contains no constructor dispatch or source-level type selection.
+Selected ordinary class construction uses MIR's separate `AllocateObject`
+resource and exact constructor call. Raw storage has no live pointee cleanup;
+its MIR failure Drop only frees bytes. Prepared owning class arguments occupy
+lifetime slots before allocation, so exhaustion can destroy them. A successful
+constructor publishes the owner, while a failed constructor retains its
+original record and follows the explicit raw-storage cleanup edge. The
+existing bounded constructor rollback proof remains mandatory; targetless
+generated construction and broader subobject rollback remain migration work.
 
 ## Backend Contract
 

@@ -3807,6 +3807,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
       instruction.kind != MirInstructionKind::Borrow &&
       instruction.kind != MirInstructionKind::CallInput &&
       instruction.kind != MirInstructionKind::Call &&
+      instruction.kind != MirInstructionKind::AllocateObject &&
       instruction.kind != MirInstructionKind::Construct) {
     return false;
   }
@@ -3822,7 +3823,10 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.dispatch == CallDispatch::Virtual &&
            instruction.functionTarget.has_value();
   case FailurePropagationKind::Constructor:
-    return instruction.kind == MirInstructionKind::Construct &&
+    return (instruction.kind == MirInstructionKind::Construct ||
+            (instruction.kind == MirInstructionKind::Call &&
+             instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+             instruction.objectAllocation != 0)) &&
            instruction.constructorTarget.has_value();
   case FailurePropagationKind::Callable:
     return instruction.kind == MirInstructionKind::Call &&
@@ -4015,6 +4019,15 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
           continue;
         }
         const MirDropObligation *source = body.findDropObligation(event.source);
+        // This retirement publishes the allocation into its ordinary owner,
+        // not into `this`. The independent allocation protocol and lifecycle
+        // dataflow prove its unique construction-success continuation.
+        if (source != nullptr &&
+            source->kind == MirDropObligationKind::ObjectAllocation &&
+            instruction.kind == MirInstructionKind::Lifecycle &&
+            instruction.objectAllocation == source->id) {
+          continue;
+        }
         if (source != nullptr &&
             source->kind != MirDropObligationKind::ConstructionRollback) {
           return false;
@@ -4027,6 +4040,11 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
+  if (instruction.kind == MirInstructionKind::AllocateObject) {
+    return instruction.objectAllocation != 0 &&
+           instruction.successResultDrop == instruction.objectAllocation &&
+           !instruction.definedFailure.localOrigins.empty();
+  }
   if (instruction.kind == MirInstructionKind::Drop &&
       instruction.definedFailure.localOrigins.empty() &&
       instruction.definedFailure.propagation ==
@@ -4442,6 +4460,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
           (instruction.successResultDrop &&
            !validDrop(*instruction.successResultDrop)) ||
           instruction.successResultDestination ||
+          instruction.objectAllocation != 0 ||
           instruction.localFailureSites.size() !=
               instruction.definedFailure.localOrigins.size() ||
           !validFailureInstructionShape(instruction)) {
@@ -5270,6 +5289,259 @@ bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
 
 } // namespace mir_detail
 
+// Raw object storage is not an owning T value. Freeze its complete, closed
+// protocol independently of the general lifecycle dataflow verifier: allocate,
+// construct on the allocation-success edge, then retire storage only on the
+// construction-success edge. The dataflow verifier additionally proves that
+// every failure path drains the still-armed resource exactly once.
+static MirVerificationResult verifyObjectAllocations(const MirBody &body,
+                                                     std::size_t owner) {
+  struct Protocol {
+    const MirInstruction *allocate = nullptr;
+    const MirBlock *allocationBlock = nullptr;
+    const MirInstruction *construct = nullptr;
+    const MirBlock *constructionBlock = nullptr;
+    const MirInstruction *retire = nullptr;
+  };
+  std::vector<Protocol> protocols(body.dropObligations.size());
+  std::unordered_map<MirPlaceId, MirDropObligationId> rawPlaces;
+  for (const auto &drop : body.dropObligations) {
+    if (drop.kind != MirDropObligationKind::ObjectAllocation) {
+      continue;
+    }
+    const MirPlace *place = body.findPlace(drop.place);
+    if (place == nullptr || !place->projections.empty() || place->binding ||
+        place->symbol || place->value || place->loan || place->capture ||
+        place->key || place->initiallyAvailable || drop.generatedValue ||
+        drop.initiallyActive ||
+        !rawPlaces.emplace(drop.place, drop.id).second) {
+      return failure(body, owner, "object allocation has an invalid raw place");
+    }
+    for (const auto &candidate : body.places) {
+      if (candidate.id != place->id &&
+          candidate.root == MirPlaceRootKind::Temporary &&
+          candidate.temporary == place->temporary) {
+        return failure(body, owner, "object allocation raw place is aliased");
+      }
+    }
+  }
+  const auto rawOperand = [&](const MirOperand &operand) {
+    return rawPlaces.contains(operand.place);
+  };
+  const auto rawEvent = [&](const MirLifecycleEvent &event) {
+    const auto *source = body.findDropObligation(event.source);
+    const auto *target = body.findDropObligation(event.target);
+    return (source &&
+            source->kind == MirDropObligationKind::ObjectAllocation) ||
+           (target && target->kind == MirDropObligationKind::ObjectAllocation);
+  };
+  for (const auto &loan : body.loans) {
+    if (rawPlaces.contains(loan.source)) {
+      return failure(body, owner, "object allocation cannot be borrowed");
+    }
+  }
+  for (const auto &block : body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      const bool construction =
+          instruction.kind == MirInstructionKind::Call &&
+          instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+          instruction.constructorKind == ConstructorKind::Ordinary &&
+          instruction.constructorTarget &&
+          instruction.info.type.kind == SemanticType::UniqueOwner &&
+          instruction.info.type.arguments.size() == 1 &&
+          instruction.info.type.arguments.front().kind == SemanticType::Class;
+      if ((construction ||
+           instruction.kind == MirInstructionKind::AllocateObject) &&
+          instruction.objectAllocation == 0) {
+        return failure(body, owner, "object allocation protocol is missing",
+                       block.id, instruction.id);
+      }
+      if (instruction.objectAllocation != 0) {
+        const auto *drop =
+            body.findDropObligation(instruction.objectAllocation);
+        if (!drop || drop->kind != MirDropObligationKind::ObjectAllocation ||
+            instruction.hirValue != body.findPlace(drop->place)->sourceValue) {
+          return failure(body, owner, "object allocation identity is invalid",
+                         block.id, instruction.id);
+        }
+        auto &protocol = protocols[drop->id - 1];
+        bool valid = false;
+        if (instruction.kind == MirInstructionKind::AllocateObject) {
+          const std::vector<DefinedFailureOutcome> outcomes{
+              {DefinedFailureCode::AllocationFailure,
+               DefinedFailureDetail::UniqueOwner}};
+          valid = !protocol.allocate &&
+                  instruction.definedFailure.propagation ==
+                      FailurePropagationKind::None &&
+                  instruction.definedFailure.localOrigins.size() == 1 &&
+                  instruction.definedFailure.localOrigins.front().outcomes ==
+                      outcomes &&
+                  instruction.safetyDischarges.empty();
+          protocol.allocate = &instruction;
+          protocol.allocationBlock = &block;
+        } else if (construction) {
+          valid = !protocol.construct && !instruction.receiver &&
+                  !instruction.destination && !instruction.loan &&
+                  !instruction.functionTarget && !instruction.lambdaTarget &&
+                  instruction.info.type == drop->dropType.type &&
+                  instruction.definedFailure.localOrigins.empty() &&
+                  instruction.safetyDischarges.empty();
+          protocol.construct = &instruction;
+          protocol.constructionBlock = &block;
+        } else if (instruction.kind == MirInstructionKind::Lifecycle) {
+          valid = !protocol.retire &&
+                  instruction.lifecycle ==
+                      std::vector<MirLifecycleEvent>{
+                          {.kind = MirLifecycleEventKind::TransferOut,
+                           .source = drop->id}};
+          protocol.retire = &instruction;
+        }
+        if (!valid) {
+          return failure(body, owner,
+                         "object allocation protocol instruction is invalid",
+                         block.id, instruction.id);
+        }
+      }
+      if ((instruction.receiver && rawOperand(*instruction.receiver)) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      rawOperand)) {
+        return failure(body, owner,
+                       "object allocation cannot be used as a live object",
+                       block.id, instruction.id);
+      }
+      if (instruction.destination &&
+          rawPlaces.contains(*instruction.destination)) {
+        const auto id = rawPlaces.at(*instruction.destination);
+        const bool allocation =
+            instruction.kind == MirInstructionKind::AllocateObject &&
+            instruction.objectAllocation == id;
+        const bool cleanup =
+            instruction.kind == MirInstructionKind::Drop &&
+            instruction.definedFailure.empty() &&
+            !instruction.constructorTarget && !instruction.functionTarget &&
+            instruction.lifecycle == std::vector<MirLifecycleEvent>{
+                                         {.kind = MirLifecycleEventKind::Drop,
+                                          .source = id,
+                                          .failureCleanup = true}};
+        if (!allocation && !cleanup) {
+          return failure(body, owner,
+                         "object allocation has an invalid storage use",
+                         block.id, instruction.id);
+        }
+      }
+      for (const auto &event : instruction.lifecycle) {
+        if (rawEvent(event) &&
+            !((instruction.kind == MirInstructionKind::Lifecycle &&
+               instruction.objectAllocation == event.source &&
+               event.kind == MirLifecycleEventKind::TransferOut) ||
+              (instruction.kind == MirInstructionKind::Drop &&
+               instruction.destination &&
+               rawPlaces.contains(*instruction.destination) &&
+               rawPlaces.at(*instruction.destination) == event.source))) {
+          return failure(body, owner,
+                         "object allocation has a foreign lifecycle event",
+                         block.id, instruction.id);
+        }
+      }
+    }
+    const auto &edge = block.terminator;
+    if ((edge.value && rawOperand(*edge.value)) ||
+        std::any_of(edge.targetArguments.begin(), edge.targetArguments.end(),
+                    rawOperand) ||
+        std::any_of(edge.elseArguments.begin(), edge.elseArguments.end(),
+                    rawOperand)) {
+      return failure(body, owner,
+                     "object allocation cannot escape its protocol", block.id);
+    }
+    for (const auto &target : edge.switchTargets) {
+      if (std::any_of(target.arguments.begin(), target.arguments.end(),
+                      rawOperand)) {
+        return failure(body, owner,
+                       "object allocation cannot escape through a switch",
+                       block.id);
+      }
+    }
+    for (const auto &event : edge.successLifecycle) {
+      if (rawEvent(event)) {
+        const auto *drop = body.findDropObligation(event.target);
+        const auto &protocol = drop ? protocols[drop->id - 1] : Protocol{};
+        if (!drop || protocol.allocationBlock != &block ||
+            event !=
+                MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                                  .target = drop->id}) {
+          return failure(body, owner,
+                         "object allocation has a foreign success event",
+                         block.id);
+        }
+      }
+    }
+  }
+  const auto firstLive = [](const MirBlock *block) -> const MirInstruction * {
+    if (block) {
+      for (const auto &instruction : block->instructions) {
+        if (!instruction.tombstone)
+          return &instruction;
+      }
+    }
+    return nullptr;
+  };
+  for (const auto &drop : body.dropObligations) {
+    if (drop.kind != MirDropObligationKind::ObjectAllocation)
+      continue;
+    const auto &protocol = protocols[drop.id - 1];
+    if (!protocol.allocate || !protocol.construct || !protocol.retire ||
+        protocol.allocationBlock->terminator.kind !=
+            MirTerminatorKind::Invoke ||
+        protocol.allocationBlock->terminator.invokeInstruction !=
+            protocol.allocate->id ||
+        firstLive(
+            body.findBlock(protocol.allocationBlock->terminator.target)) !=
+            protocol.construct) {
+      return failure(
+          body, owner,
+          "object allocation must construct only on allocation success");
+    }
+    const auto ownerResult =
+        std::find_if(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &candidate) {
+                       return candidate.kind == MirDropObligationKind::Value &&
+                              candidate.value == protocol.construct->hirValue &&
+                              candidate.dropType.type == drop.dropType.type;
+                     });
+    if (ownerResult == body.dropObligations.end() ||
+        ownerResult->fullExpression != drop.fullExpression) {
+      return failure(
+          body, owner,
+          "object allocation and owner must share one full expression");
+    }
+    const MirInstruction *success = nullptr;
+    if (protocol.construct->definedFailure.empty()) {
+      bool found = false;
+      for (const auto &instruction : protocol.constructionBlock->instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (found) {
+          success = &instruction;
+          break;
+        }
+        found = &instruction == protocol.construct;
+      }
+    } else if (protocol.constructionBlock->terminator.kind ==
+                   MirTerminatorKind::Invoke &&
+               protocol.constructionBlock->terminator.invokeInstruction ==
+                   protocol.construct->id) {
+      success = firstLive(
+          body.findBlock(protocol.constructionBlock->terminator.target));
+    }
+    if (success != protocol.retire) {
+      return failure(
+          body, owner,
+          "object allocation must transfer only on construction success");
+    }
+  }
+  return {};
+}
+
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (body.entry == 0 || body.entry > body.blocks.size()) {
     return failure(body, owner, "entry block is outside the body");
@@ -5703,6 +5975,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (!callInput && instruction.preparedParameterDrop) ||
         (instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct &&
+         instruction.kind != MirInstructionKind::AllocateObject &&
          instruction.successResultDrop) ||
         (instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct &&
@@ -6396,6 +6669,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              !instruction.functionTarget && !instruction.constructorTarget &&
              instruction.bodyTarget.has_value() && !instruction.lambdaTarget &&
              instruction.info.type == SemanticType::Void;
+    case MirInstructionKind::AllocateObject: {
+      const MirDropObligation *allocation =
+          body.findDropObligation(instruction.objectAllocation);
+      return noOperation && !hasResult && instruction.destination &&
+             !instruction.receiver && instruction.operands.empty() &&
+             instruction.parameterTypes.empty() && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
+             !instruction.bodyTarget && !instruction.lambdaTarget &&
+             instruction.intrinsic == IntrinsicKind::None &&
+             instruction.lifecycle.empty() && allocation != nullptr &&
+             allocation->kind == MirDropObligationKind::ObjectAllocation &&
+             allocation->place == *instruction.destination &&
+             instruction.successResultDrop == allocation->id &&
+             allocation->dropType.type == instruction.info.type;
+    }
     case MirInstructionKind::Count:
       return false;
     }
@@ -6628,13 +6916,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     const bool valueKind = obligation.kind == MirDropObligationKind::Value;
     const bool preparedKind =
         obligation.kind == MirDropObligationKind::PreparedParameter;
+    const bool allocationKind =
+        obligation.kind == MirDropObligationKind::ObjectAllocation;
     // Compiler-generated for one completed constructor subobject: no HIR
     // obligation or full-expression identity, and the place is the exact
     // This-rooted field place of its stage.
     const bool rollbackKind =
         obligation.kind == MirDropObligationKind::ConstructionRollback;
     const bool validHirIdentity =
-        preparedKind || rollbackKind
+        preparedKind || rollbackKind || allocationKind
             ? obligation.hirObligation == 0
             : obligation.hirObligation != 0 &&
                   hirDropObligations.insert(obligation.hirObligation).second;
@@ -6666,8 +6956,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !place->projections.empty())) ||
         (rollbackKind && body.kind != MirBodyKind::Constructor &&
          body.kind != MirBodyKind::FieldInitializers) ||
-        (preparedKind && (place->root != MirPlaceRootKind::Temporary ||
-                          place->temporary == 0 || place->sourceValue == 0)) ||
+        ((preparedKind || allocationKind) &&
+         (place->root != MirPlaceRootKind::Temporary || place->temporary == 0 ||
+          place->sourceValue == 0)) ||
+        (allocationKind &&
+         (obligation.dropType.type.kind != SemanticType::UniqueOwner ||
+          obligation.dropType.type.arguments.size() != 1 ||
+          obligation.dropType.type.arguments.front().kind !=
+              SemanticType::Class ||
+          obligation.dropType.destructor || obligation.dropType.fixedArray ||
+          !obligation.dropType.requiresActiveCleanup)) ||
         (obligation.dropType.type.kind == SemanticType::Class &&
          !obligation.dropType.classInstance) ||
         (obligation.dropType.classInstance &&
@@ -6735,6 +7033,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto instructionConsumesObligation =
       [&](const MirInstruction &instruction,
           const MirDropObligation &obligation) {
+        if (obligation.kind == MirDropObligationKind::ObjectAllocation) {
+          return instruction.kind == MirInstructionKind::Lifecycle &&
+                 instruction.objectAllocation == obligation.id;
+        }
         if (obligation.kind == MirDropObligationKind::PreparedParameter &&
             instruction.kind == MirInstructionKind::Call &&
             instruction.receiver &&
@@ -6792,6 +7094,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto instructionProducesObligation =
       [&](const MirInstruction &instruction,
           const MirDropObligation &obligation) {
+        if (obligation.kind == MirDropObligationKind::ObjectAllocation) {
+          return instruction.kind == MirInstructionKind::AllocateObject &&
+                 instruction.objectAllocation == obligation.id &&
+                 instruction.destination == obligation.place &&
+                 instruction.info.type == obligation.dropType.type;
+        }
         const MirPlace *place = body.findPlace(obligation.place);
         const MirValue *result =
             instruction.result ? body.findValue(*instruction.result) : nullptr;
@@ -7250,6 +7558,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                 source->kind == MirDropObligationKind::ConstructionRollback &&
                 (body.kind == MirBodyKind::Constructor ||
                  body.kind == MirBodyKind::FieldInitializers)) ||
+               (instruction.kind == MirInstructionKind::Lifecycle &&
+                source->kind == MirDropObligationKind::ObjectAllocation &&
+                instruction.objectAllocation == source->id) ||
                ((instruction.kind == MirInstructionKind::Compute ||
                  instruction.kind == MirInstructionKind::Initialize ||
                  instruction.kind == MirInstructionKind::CallInput ||
@@ -7751,7 +8062,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (!exactSuccessLifecycle || !exactSuccessDestination ||
           (successResultDrop &&
            (successResult == nullptr ||
-            successResult->kind != MirDropObligationKind::Value ||
+            (successResult->kind != MirDropObligationKind::Value &&
+             successResult->kind != MirDropObligationKind::ObjectAllocation) ||
             !instructionProducesObligation(*invocation->second,
                                            *successResult)))) {
         return failure(body, owner,
@@ -9398,6 +9710,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return std::move(*invalid);
       }
     }
+  }
+  if (MirVerificationResult allocations = verifyObjectAllocations(body, owner);
+      !allocations.valid()) {
+    return allocations;
   }
   if (MirVerificationResult lifecycle = verifyMirLifecycleFlow(body, owner);
       !lifecycle.valid()) {

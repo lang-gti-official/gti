@@ -796,6 +796,44 @@ private:
   }
 
   [[nodiscard]] MirDropObligationId
+  appendObjectAllocation(const HirValue &call) {
+    if (call.fullExpression == 0 ||
+        call.info.type.kind != SemanticType::UniqueOwner ||
+        call.info.type.arguments.size() != 1 ||
+        call.info.type.arguments.front().kind != SemanticType::Class) {
+      valid = false;
+      return 0;
+    }
+    const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Temporary,
+                                          .temporary = nextTemporary++,
+                                          .type = call.info.type,
+                                          .access = AccessMode::Mutable,
+                                          .traits = call.info.traits,
+                                          .sourceValue = call.id});
+    const MirDropObligationId id = output.dropObligations.size() + 1;
+    output.dropObligations.push_back(
+        {.id = id,
+         .constructionOrder = id,
+         .kind = MirDropObligationKind::ObjectAllocation,
+         .place = place,
+         .hirFullExpression = call.fullExpression,
+         .fullExpression = fullExpressionIds.contains(call.fullExpression)
+                               ? fullExpressionIds.at(call.fullExpression)
+                               : 0,
+         .dropType = {.type = call.info.type, .requiresActiveCleanup = true}});
+    DefinedFailureOperation failure = call.definedFailure;
+    failure.propagation = FailurePropagationKind::None;
+    (void)appendInstruction({.kind = MirInstructionKind::AllocateObject,
+                             .hirValue = call.id,
+                             .successResultDrop = id,
+                             .destination = place,
+                             .definedFailure = std::move(failure),
+                             .objectAllocation = id,
+                             .info = call.info});
+    return id;
+  }
+
+  [[nodiscard]] MirDropObligationId
   exactBindingDropObligation(HirValueId valueId) {
     const HirValue *value = findValue(valueId);
     if (value == nullptr) {
@@ -3994,6 +4032,20 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
+    if (value.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+        value.info.type.kind == SemanticType::UniqueOwner &&
+        value.info.type.arguments.size() == 1 &&
+        value.info.type.arguments.front().kind == SemanticType::Class &&
+        value.constructorTarget &&
+        value.constructorKind == ConstructorKind::Ordinary) {
+      // Prepared parameters remain caller-owned until allocation succeeds.
+      // The second instruction transfers them into the selected constructor;
+      // its failure path owns only the unconstructed allocation, not T.
+      call.objectAllocation = appendObjectAllocation(value);
+      call.definedFailure.localOrigins.clear();
+      call.definedFailure.propagation = normalizedConstructorPropagation(
+          FailurePropagationKind::Constructor, value.constructorTarget);
+    }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType parameter =
@@ -4036,7 +4088,21 @@ private:
     } else if (!detachedBorrowResult) {
       (void)initializeValueLifecycle(call, value);
     }
+    const MirDropObligationId allocation = call.objectAllocation;
     (void)appendInstruction(std::move(call));
+    if (allocation != 0) {
+      // appendInstruction leaves us on the construction-success continuation.
+      // No failure edge may relinquish unconstructed storage to the result.
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Lifecycle,
+           .hirValue = value.id,
+           .objectAllocation = allocation,
+           .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
+                          .source = allocation}}});
+      if (!removeTemporary(allocation)) {
+        valid = false;
+      }
+    }
     for (auto loan = temporaryArgumentLoans.rbegin();
          loan != temporaryArgumentLoans.rend(); ++loan) {
       (void)appendInstruction(

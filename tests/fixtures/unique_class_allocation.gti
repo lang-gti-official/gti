@@ -1,0 +1,51 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class Marker {
+  int32_t identity;
+public:
+  Marker(int32_t value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+struct Copyable { int32_t number = 12; };
+
+class Value {
+  std::string text;
+  int32_t result;
+public:
+  Value(std::string input, Marker argument, Copyable copied, int32_t divisor)
+      : text(std::move(input)), result(9 / divisor + copied.number) {}
+  int32_t read() { return this.result; }
+};
+
+class FailingDrop {
+public:
+  FailingDrop() {}
+  ~FailingDrop() {
+    std::println("cleanup");
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    auto owner = std::make_unique<Marker>(4);
+  }
+};
+
+int32_t fail_cleanup(int32_t divisor) {
+  FailingDrop local = FailingDrop();
+  return 7 / divisor;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 4) { return fail_cleanup(0); }
+  Marker outer = Marker(1);
+  auto previously = std::make_unique<Marker>(3);
+  if (argc == 2) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+  }
+  int32_t divisor = argc == 3 ? 0 : 3;
+  Copyable copied = Copyable();
+  auto owner = std::make_unique<Value>(std::string("value"), Marker(2), copied, divisor);
+  return copied.number == 12 && owner->read() == 15 ? 0 : 1;
+}

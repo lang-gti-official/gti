@@ -1443,6 +1443,25 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             constructorTarget->mayRaiseDefinedFailure
                 ? FailurePropagationKind::Constructor
                 : FailurePropagationKind::None;
+        if (instruction.objectAllocation != 0) {
+          const MirClassInstance *constructorOwner =
+              program.findClassInstance(constructorTarget->owner);
+          if (instruction.kind != MirInstructionKind::Call ||
+              instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||
+              constructorOwner == nullptr ||
+              instruction.info.type.kind != SemanticType::UniqueOwner ||
+              instruction.info.type.arguments !=
+                  std::vector<SemanticType>{constructorOwner->type} ||
+              !exactParameterRoles(instruction.parameterTypes,
+                                   constructorTarget->parameterTypes) ||
+              instruction.definedFailure.propagation != expectedPropagation) {
+            return verificationFailure(
+                body, owner,
+                "object allocation construction does not match its exact "
+                "constructor target, parameters, or failure effect",
+                block.id, instruction.id);
+          }
+        }
         if (instruction.kind == MirInstructionKind::Construct &&
             instruction.definedFailure.propagation != expectedPropagation) {
           return verificationFailure(

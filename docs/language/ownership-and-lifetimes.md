@@ -884,9 +884,16 @@ status to the verified MIR `Invoke`: the owner becomes live only on success,
 and exhaustion runs caller cleanup before the original allocation record is
 reported. Allocation failure during failure cleanup preserves the primary
 record and reports `GTI-R0014`. Native allocator exceptions are not exposed to
-source. Class/struct allocation still uses a terminal allocation boundary;
-its allocation-failure cleanup and fallible-constructor rollback are remaining
-implementation gaps, not guarantees established by the scalar path.
+source. Class/struct allocation with a selected ordinary constructor now
+separates allocation from construction. Prepared arguments are cleaned on
+exhaustion; once construction begins its parameters belong to the constructor.
+Failure frees unconstructed storage, never publishes an owner, and preserves
+the constructor's original failure record. This includes the currently proved
+constructor rollback family, including generated-cleanup owning fields such
+as strings. It does not establish arbitrary subobject rollback: combinations
+outside that existing constructor proof still fail closed. Targetless
+generated default/copy/move allocation retains the terminal compatibility
+boundary and remains an implementation gap.
 
 ## Destruction
 
