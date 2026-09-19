@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import argparse
 import re
 import subprocess
@@ -64,25 +66,62 @@ def is_release_file(path: str) -> bool:
     return path in RELEASE_FILES or path.startswith(RELEASE_PREFIXES)
 
 
+def changed_paths(base: str, head: str) -> list[str]:
+    # Deleting or moving a shipped file out of a shipped directory can change
+    # the toolchain just as much as adding it. Disable rename folding so both
+    # sides of a move participate in the classification.
+    return [path for path in git(
+        "diff", "--no-renames", "--name-only", "-z", base, head
+    ).split("\0") if path]
+
+
+def internal_change_reason(revision: str) -> str | None:
+    impact = git(
+        "show", "-s", "--format=%(trailers:key=Release-Impact,valueonly,unfold)",
+        revision,
+    ).strip()
+    reasons = git(
+        "show", "-s", "--format=%(trailers:key=Release-Reason,valueonly,unfold)",
+        revision,
+    ).strip().splitlines()
+    if impact != "internal" or len(reasons) != 1 or not reasons[0].strip():
+        return None
+    return reasons[0].strip()
+
+
+def unclassified_changes(base: str, head: str) -> list[str]:
+    # Check each delivered first-parent change, not only the final message:
+    # a later documentation commit cannot excuse an earlier shipped change.
+    # A merge is judged by its full delta from the destination parent.
+    revisions = git("rev-list", "--reverse", "--first-parent", f"{base}..{head}")
+    missing = []
+    for revision in revisions.splitlines():
+        parents = git("rev-list", "--parents", "-n", "1", revision).split()[1:]
+        if not parents:
+            raise ValueError("the checked range unexpectedly includes a root commit")
+        paths = changed_paths(parents[0], revision)
+        if not any(is_release_file(path) for path in paths):
+            continue
+        # An internal-only assertion cannot authorize version churn or undo a
+        # stable-version change within the delivered range.
+        if "VERSION" in paths or internal_change_reason(revision) is None:
+            missing.append(revision)
+    return missing
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Require shipped GTI changes to advance VERSION."
+        description="Validate stable versions and explicit internal-only GTI changes."
     )
     parser.add_argument("base", help="base Git revision")
     parser.add_argument("head", nargs="?", default="HEAD", help="head Git revision")
     arguments = parser.parse_args()
 
-    changed = [
-        path
-        for path in git(
-            "diff",
-            "--name-only",
-            "--diff-filter=ACMR",
-            arguments.base,
-            arguments.head,
-        ).splitlines()
-        if path
-    ]
+    if git("merge-base", arguments.base, arguments.head).strip() != git(
+        "rev-parse", f"{arguments.base}^{{commit}}"
+    ).strip():
+        raise ValueError("base must be an ancestor of head")
+    changed = changed_paths(arguments.base, arguments.head)
     shipped = [path for path in changed if is_release_file(path)]
     if not shipped:
         print("No shipped compiler or editor tooling changed.")
@@ -90,7 +129,17 @@ def main() -> int:
 
     base_text, base_version = version_at(arguments.base)
     head_text, head_version = version_at(arguments.head)
-    if head_version <= base_version:
+    if head_version < base_version:
+        print(f"VERSION cannot decrease from {base_text} to {head_text}.", file=sys.stderr)
+        return 1
+    if head_version == base_version:
+        missing = unclassified_changes(arguments.base, arguments.head)
+        if not missing:
+            print(
+                f"Internal-only changes retain VERSION {head_text}; nightly "
+                "publishes them without a stable release."
+            )
+            return 0
         print(
             "Release-sensitive files changed without advancing VERSION ",
             f"beyond {base_text}:",
@@ -99,9 +148,14 @@ def main() -> int:
         )
         for path in shipped:
             print(f"  {path}", file=sys.stderr)
+        print("Commits without an internal-only declaration:", file=sys.stderr)
+        for revision in missing:
+            print(f"  {revision}", file=sys.stderr)
         print(
-            "Update VERSION to a greater semantic version. A main-branch VERSION "
-            "change publishes the matching release automatically.",
+            "User-visible changes must advance VERSION. For internal-only work, "
+            "each relevant commit instead needs 'Release-Impact: internal' and "
+            "a nonempty 'Release-Reason:' Git trailer. This is a reviewed impact "
+            "declaration, not permission to omit a user-visible version change.",
             file=sys.stderr,
         )
         return 1
