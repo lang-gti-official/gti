@@ -1,0 +1,32 @@
+#include <std/string>
+#include <std/vector>
+
+class Trace {
+public:
+  Trace() {}
+  ~Trace() { std::println("cleanup"); }
+};
+
+namespace raw {
+// Caller guarantees that pointer addresses a live initialized int32_t.
+[[unsafe]] int32_t read(const int32_t* pointer) {
+  unsafe { return *pointer; }
+}
+
+[[unsafe]] T relay<T>(T value) { return value; }
+
+[[unsafe]] int32_t divide(int32_t numerator, int32_t divisor) {
+  Trace inner = Trace();
+  return numerator / divisor;
+}
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace outer = Trace();
+  int32_t value = 42;
+  unsafe {
+    if (raw::relay(raw::read(&value)) != 42) { return 1; }
+    int32_t divisor = argc > 1 ? 0 : 2;
+    return raw::divide(value, divisor) == 21 ? 0 : 2;
+  }
+}

@@ -3224,6 +3224,9 @@ auto SemanticVisitor::Impl::functionSignatureSpelling(
                            ? std::string(operatorSourceSpelling(
                                  declaration.operatorName()->kind))
                            : declaration.name().lexeme;
+  if (function.record().requiresUnsafe) {
+    result = "[[unsafe]] " + result;
+  }
   if (!declaration.genericParameters().empty()) {
     result += '<';
     for (std::size_t index = 0; index < declaration.genericParameters().size();
@@ -5097,6 +5100,18 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                      return containsCAbiRawPointer(parameter);
                    }));
   const bool missingUnsafe = pointerBearingCFunction && unsafeDepth == 0;
+  if (function.record().requiresUnsafe) {
+    const bool missing = unsafeDepth == 0;
+    requireUnsafe(call, UnsafeOperationKind::DeclaredUnsafeCall, call.paren(),
+                  "Calling an [[unsafe]] function");
+    if (missing && !diagnostics.empty() && function.declaration != nullptr &&
+        function.declaration->unsafeAttribute()) {
+      diagnostics.back().related.push_back(
+          {tokenSpan(*function.declaration->unsafeAttribute()),
+           "This declaration requires the caller to uphold its unsafe "
+           "contract."});
+    }
+  }
   if (pointerBearingCFunction) {
     requireUnsafe(call, UnsafeOperationKind::ForeignPointerCall, call.paren(),
                   "Calling pointer-bearing extern \"C\" function");

@@ -15,7 +15,8 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
       candidate.record().parameterPack || !candidate.requirements.empty() ||
       candidate.virtualMethod || candidate.pureVirtual ||
       candidate.overrideMethod ||
-      candidate.record().intrinsic != IntrinsicKind::None) {
+      candidate.record().intrinsic != IntrinsicKind::None ||
+      candidate.record().requiresUnsafe) {
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
@@ -30,7 +31,8 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
       candidate.record().parameterPack || !candidate.requirements.empty() ||
       candidate.virtualMethod || candidate.pureVirtual ||
       candidate.overrideMethod || candidate.compilerPrivate ||
-      candidate.record().intrinsic != IntrinsicKind::None) {
+      candidate.record().intrinsic != IntrinsicKind::None ||
+      candidate.record().requiresUnsafe) {
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
@@ -106,7 +108,7 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
     diagnostic.hints.emplace_back(
         "Callback targets must be non-generic namespace-scope GTI "
         "functions with bodies and an exact parameter and return type "
-        "match.");
+        "match. An [[unsafe]] function cannot become a safe callback.");
     for (const CallableCandidate &candidate : symbol.overloads) {
       if (candidate.declaration != nullptr) {
         diagnostic.related.push_back(
@@ -153,7 +155,8 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
         "eligible namespace-scope GTI function.");
     diagnostic.hints.emplace_back(
         "Function items require a non-generic namespace-scope GTI function "
-        "with a body and an exact callable signature.");
+        "with a body and an exact callable signature, without an [[unsafe]] "
+        "caller contract.");
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
@@ -458,7 +461,8 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
                       "signature.");
         diagnostic.hints.emplace_back(
             "Use one non-generic namespace-scope GTI function whose exact "
-            "parameters and result match the selected callable contract.");
+            "parameters and result match the selected callable contract. "
+            "An [[unsafe]] function cannot become a safe function item.");
         if (source) {
           for (const CallableCandidate &candidate : source->overloads) {
             if (candidate.declaration != nullptr) {

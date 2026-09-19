@@ -298,3 +298,5 @@ uint64_t default_extent_highlight<uint64_t N = 3,
                                   uint64_t M = N + 2>() {
   return M;
 }
+
+[[unsafe]] void retain_context_highlight(void* context) {}

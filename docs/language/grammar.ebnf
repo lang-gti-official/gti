@@ -74,12 +74,19 @@ declaration            = conditional-declaration
                        | type-alias-declaration
                        | extern-c-declaration
                        | native-c-array-attribute function-declaration
+                       | unsafe-function-attribute function-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
                        | variable-declaration
                        | empty-declaration ;
 
 empty-declaration      = ";" ;
+
+unsafe-function-attribute = "[[" "unsafe" "]]" ;
+(* Namespace-scope GTI free functions only; not methods, operators, runtime
+   bindings, extern-C declarations or hosted main. Every call requires a
+   lexical unsafe block. The attribute grants no unsafe permission to the body
+   and cannot be erased by callback or safe function-item conversion. *)
 
 conditional-declaration
                        = conditional-start { declaration }

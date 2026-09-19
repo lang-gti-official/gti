@@ -2285,6 +2285,10 @@
           {
             "type": "native_c_array_attribute",
             "named": true
+          },
+          {
+            "type": "unsafe_function_attribute",
+            "named": true
           }
         ]
       },
@@ -4639,6 +4643,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "unsafe_function_attribute",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "unsafe_statement",

@@ -308,6 +308,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
                  ? std::nullopt
                  : std::optional{instance.source->operatorName()->kind},
          .constexprFunction = instance.constexprFunction,
+         .requiresUnsafe = instance.requiresUnsafe,
          .returnBorrowOrigin = instance.returnBorrowOrigin,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,

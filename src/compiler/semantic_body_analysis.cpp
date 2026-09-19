@@ -1511,6 +1511,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                        : functionInfo->returnType,
        .function = &stmt});
   const bool isEntryPoint = functionInfo != nullptr && functionInfo->entryPoint;
+  if (isEntryPoint && stmt.unsafeAttribute()) {
+    report(*stmt.unsafeAttribute(),
+           "The hosted entry point cannot require an unsafe caller.",
+           "GTI-S2055");
+  }
   const bool intrinsicDeclaration =
       functionInfo != nullptr && functionInfo->intrinsic != IntrinsicKind::None;
   if (sourceGraph != nullptr && currentSourceUnit != 0 &&

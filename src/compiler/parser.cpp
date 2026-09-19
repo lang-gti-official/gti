@@ -374,6 +374,18 @@ private:
             "Expect '[[' before declaration attributes.");
     consume(TokenKind::LEFT_BRACKET,
             "Expect '[[' before declaration attributes.");
+    if (match({TokenKind::UNSAFE})) {
+      Token attribute = previous();
+      consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after unsafe attribute.");
+      consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after unsafe attribute.");
+      if (linkage != LanguageLinkage::Gti || currentClassName ||
+          !isTypedDeclaration()) {
+        throw error(attribute,
+                    "[[unsafe]] requires a namespace-scope GTI function.");
+      }
+      return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                              std::nullopt, std::move(attribute));
+    }
     Token first =
         consume(TokenKind::IDENTIFIER, "Expect an attribute name after '[['.");
     if (match({TokenKind::LEFT_PAREN})) {
@@ -530,7 +542,8 @@ private:
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false, bool allowOperators = false,
       bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<Token> unsafeAttribute = std::nullopt) {
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -597,7 +610,7 @@ private:
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(unsafeAttribute));
     }
 
     if (operatorName) {
@@ -615,6 +628,10 @@ private:
     if (nativeCArray) {
       throw error(nativeCArray->attribute,
                   "[[c_array(...)]] must annotate a function declaration.");
+    }
+    if (unsafeAttribute) {
+      throw error(*unsafeAttribute,
+                  "[[unsafe]] must annotate a function declaration.");
     }
     if (virtualKeyword) {
       throw error(*virtualKeyword,
@@ -638,7 +655,8 @@ private:
       std::optional<Token> virtualKeyword = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<Token> unsafeAttribute = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {
@@ -718,7 +736,7 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(unsafeAttribute));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -729,7 +747,7 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::nullopt, linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(unsafeAttribute));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -741,7 +759,7 @@ private:
         std::move(staticKeyword), std::move(virtualKeyword),
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
-        std::move(nativeCArray));
+        std::move(nativeCArray), std::move(unsafeAttribute));
   }
 
   StmtPtr conversionOperatorDeclaration(

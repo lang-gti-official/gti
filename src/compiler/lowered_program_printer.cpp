@@ -657,7 +657,7 @@ private:
            << ':' << value.internalLinkage << ':' << value.constexprFunction
            << ':' << value.virtualMethod << ':' << value.pureVirtual << ':'
            << value.overrideMethod << ':' << value.hasRequiresClause << ':'
-           << value.compilerPrivate << ')';
+           << value.compilerPrivate << ':' << value.requiresUnsafe << ')';
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -754,7 +754,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v5\n";
+  output << "lowered-program-v6\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

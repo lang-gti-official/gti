@@ -654,7 +654,12 @@ module.exports = grammar({
 
     function_declaration: ($) =>
       seq(
-        optional(field("attribute", $.native_c_array_attribute)),
+        optional(
+          field(
+            "attribute",
+            choice($.native_c_array_attribute, $.unsafe_function_attribute),
+          ),
+        ),
         optional(field("binding", $.runtime_binding)),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
@@ -662,6 +667,8 @@ module.exports = grammar({
         optional(field("return_mutable", "mut")),
         $._function_declaration_body,
       ),
+
+    unsafe_function_attribute: () => seq("[[", "unsafe", "]]"),
 
     _function_declaration_body: ($) =>
       seq(

@@ -812,11 +812,19 @@ verifyLoweredProgram(const LoweredProgram &program) {
        ++index) {
     const LoweredFunctionInstance &instance = program.functionInstances_[index];
     const MirFunctionInstance &mir = program.mir_.functionInstances()[index];
+    const auto identity = functionDeclarations.find(mir.declaration);
+    const auto *row = identity == functionDeclarations.end()
+                          ? nullptr
+                          : program.findDeclaration(identity->second);
+    const auto *declaration =
+        row == nullptr ? nullptr
+                       : std::get_if<LoweredFunctionDeclaration>(&row->payload);
     const bool ownerValid =
         !instance.owner || (*instance.owner != 0 &&
                             *instance.owner <= program.classInstances_.size());
     if (instance.id != index + 1 || instance.id != mir.id ||
-        instance.declaration != mir.declaration ||
+        instance.declaration != mir.declaration || declaration == nullptr ||
+        declaration->requiresUnsafe != mir.requiresUnsafe ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments ||

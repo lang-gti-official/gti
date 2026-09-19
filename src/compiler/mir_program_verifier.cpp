@@ -1305,6 +1305,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
 
       const MirFunctionInstance *target = nullptr;
+      if (instruction.unsafeOperation ==
+              UnsafeOperationKind::DeclaredUnsafeCall &&
+          (instruction.kind != MirInstructionKind::Call ||
+           !instruction.functionTarget)) {
+        return verificationFailure(body, owner,
+                                   "unsafe call lacks an exact function target",
+                                   block.id, instruction.id);
+      }
       if (instruction.functionTarget) {
         target = program.findFunctionInstance(*instruction.functionTarget);
         if (target == nullptr) {
@@ -1312,6 +1320,13 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               body, owner,
               "call borrow contract references an invalid function "
               "target",
+              block.id, instruction.id);
+        }
+        if (target->requiresUnsafe !=
+            (instruction.unsafeOperation ==
+             UnsafeOperationKind::DeclaredUnsafeCall)) {
+          return verificationFailure(
+              body, owner, "call does not retain its target's unsafe contract",
               block.id, instruction.id);
         }
         if (instruction.borrowOrigin != target->returnBorrowOrigin ||
@@ -5905,7 +5920,7 @@ verifyMirProgramContracts(const MirProgram &program) {
               instruction.info.type.functionItemReturnType();
           const std::span<const SemanticType> parameters =
               instruction.info.type.functionItemParameterTypes();
-          if (target == nullptr || target->owner ||
+          if (target == nullptr || target->owner || target->requiresUnsafe ||
               target->definitionKind != MirDefinitionKind::Source ||
               target->linkage != LanguageLinkage::Gti ||
               instruction.info.type.functionId != target->declaration ||
@@ -6021,6 +6036,7 @@ verifyMirProgramContracts(const MirProgram &program) {
     const std::span<const SemanticType> parameters =
         adapter.type.nativeFunctionParameterTypes();
     if (adapter.id != index + 1 || target == nullptr || target->owner ||
+        target->requiresUnsafe ||
         target->definitionKind != MirDefinitionKind::Source ||
         target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
         target->returnType != *returnType ||
@@ -6083,7 +6099,7 @@ verifyMirProgramContracts(const MirProgram &program) {
               : program.findClassInstance(*target->owner);
       const bool functionItemEntry = adapter.taskType.hasFunctionItemShape();
       exactEntry =
-          exactEntry && target != nullptr &&
+          exactEntry && target != nullptr && !target->requiresUnsafe &&
           target->definitionKind == MirDefinitionKind::Source &&
           target->linkage == LanguageLinkage::Gti &&
           target->returnType == adapter.resultType &&
@@ -6656,6 +6672,16 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (std::size_t index = 0; index < program.functionInstances().size();
        ++index) {
     const MirFunctionInstance &instance = program.functionInstances()[index];
+    if (instance.requiresUnsafe &&
+        (instance.owner || instance.entryKind != ProgramEntryKind::None ||
+         instance.linkage != LanguageLinkage::Gti ||
+         instance.definitionKind == MirDefinitionKind::RuntimeBinding)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message =
+               "unsafe function contract has an invalid declaration kind"});
+    }
     if (instance.id != index + 1 || instance.declaration == 0) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Function,

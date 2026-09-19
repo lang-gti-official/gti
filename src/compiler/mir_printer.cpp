@@ -255,7 +255,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v55 valid=" << program.valid() << '\n';
+    output << "mir-v56 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -508,8 +508,8 @@ public:
         output << "declaration";
         break;
       }
-      output << " may-raise-defined-failure="
-             << instance.mayRaiseDefinedFailure;
+      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
+             << " requires-unsafe=" << instance.requiresUnsafe;
       effectSummary(instance.effectSummary);
       output << " roots=[";
       list(instance.virtualRoots);
@@ -651,7 +651,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v48\n";
+    output << "mir-body-v49\n";
     body(value, 0);
     return output.str();
   }

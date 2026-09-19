@@ -54,3 +54,8 @@ target_link_libraries(gti_installed_native_header_smoke
                       PRIVATE GTI::cpp_backend)
 add_test(NAME installed_native_header_pipeline
          COMMAND gti_installed_native_header_smoke)
+
+add_executable(gti_installed_unsafe_function_smoke ../unsafe_function_tests.cpp)
+target_link_libraries(gti_installed_unsafe_function_smoke PRIVATE GTI::cpp_backend)
+add_test(NAME installed_unsafe_function_contract
+         COMMAND gti_installed_unsafe_function_smoke)

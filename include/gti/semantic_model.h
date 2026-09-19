@@ -26,6 +26,7 @@ enum class UnsafeOperationKind {
   UnionMember,
   PointerArithmetic,
   ForeignPointerCall,
+  DeclaredUnsafeCall,
 };
 
 struct SemanticLoanEndpoint {
@@ -444,6 +445,7 @@ struct FunctionInfo {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;

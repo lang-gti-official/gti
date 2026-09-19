@@ -1090,6 +1090,7 @@ struct MirFunctionInstance {
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
   std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;

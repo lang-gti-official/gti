@@ -1995,7 +1995,8 @@ public:
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<RequiresClause> requiresClause = std::nullopt,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt)
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<Token> unsafeAttribute = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2009,7 +2010,8 @@ public:
         pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage),
         constexprKeyword_(std::move(constexprKeyword)),
         requiresClause_(std::move(requiresClause)),
-        nativeCArray_(std::move(nativeCArray)) {}
+        nativeCArray_(std::move(nativeCArray)),
+        unsafeAttribute_(std::move(unsafeAttribute)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -2069,6 +2071,9 @@ public:
   nativeCArray() const {
     return nativeCArray_;
   }
+  [[nodiscard]] const std::optional<Token> &unsafeAttribute() const {
+    return unsafeAttribute_;
+  }
 
 private:
   TypeRef returnType_;
@@ -2088,6 +2093,7 @@ private:
   std::optional<Token> constexprKeyword_;
   std::optional<RequiresClause> requiresClause_;
   std::optional<NativeCArrayAttribute> nativeCArray_;
+  std::optional<Token> unsafeAttribute_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

@@ -285,6 +285,7 @@ struct LoweredFunctionDeclaration {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;

@@ -5899,8 +5899,12 @@ auto SemanticVisitor::Impl::requireUnsafe(const Expr &expression,
       makeDiagnostic("GTI-S2055", DiagnosticPhase::Semantics, token,
                      std::string(description) + " requires an unsafe block.");
   diagnostic.hints.emplace_back(
-      "Wrap only the operation whose pointer validity you have established "
-      "in 'unsafe { ... }'.");
+      operation == UnsafeOperationKind::DeclaredUnsafeCall
+          ? "Establish the function's documented caller obligations before "
+            "calling it inside 'unsafe { ... }'."
+          : "Wrap only the operation whose pointer validity you have "
+            "established "
+            "in 'unsafe { ... }'.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 

@@ -216,6 +216,10 @@ diagnostics or letting a backend message choose either identity.
   adding one of the supported definition sources, and continue compilation
   with the flag false. A later or inactive source declaration counts as known;
   `#undef` of an absent flag remains a silent no-op.
+- `GTI-S2055` also owns calls to `[[unsafe]]` GTI functions outside lexical
+  unsafe context. Point at the call's closing parenthesis and relate the
+  declaration attribute. Do not offer a fix-it that silently accepts a safety
+  obligation. The same code rejects an unsafe hosted entry point.
 - `GTI-S2076` owns the named native callback boundary. Point at the anonymous
   type spelling, invalid ABI component, missing initializer, inexact function
   item, or concurrent-profile conversion that the user can change. State that

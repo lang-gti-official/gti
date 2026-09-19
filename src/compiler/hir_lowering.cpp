@@ -323,6 +323,7 @@ private:
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
          .constexprFunction = declaration.constexprFunction,
+         .requiresUnsafe = declaration.requiresUnsafe,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
          .cArrayCountParameter = declaration.cArrayCountParameter,
