@@ -20,6 +20,23 @@ concrete instances and typed values, MIR owns executable control flow and
 effects, `LoweredProgram` owns the complete backend-neutral program contract,
 and each backend owns target representation.
 
+The C++ representation preserves GTI's distinct unsigned eight-bit `char` as
+`char8_t`, while `uint8_t` uses `std::uint8_t`. Collapsing both to the latter
+would merge distinct generic-owner member specializations in one translation
+unit. Character literals, checked string-view reads, and character storage use
+the same representation; text views inspect its bytes through C++ `char`.
+This requires no new source meaning or C ABI: GTI already distinguishes these
+types and excludes `char` from the public C ABI.
+
+Scalar unique allocation uses a status-returning native allocation helper
+selected from the verified MIR instruction. It performs the exact zero/one
+scalar initialization, publishes only on success, and routes exhaustion through
+the instruction's failure edge. A direct allocation-function call prevents
+C++ new-expression allocation elision from deleting this observable detector.
+The helper contains no constructor dispatch or source-level type selection;
+class allocation's terminal helper and constructor rollback remain separate
+migration work.
+
 ## Backend Contract
 
 `include/gti/backend.h` defines one executable-backend operation:

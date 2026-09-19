@@ -865,6 +865,16 @@ checks the staged owner, pointee type, result loan/access, and one
 detail. Failure follows ordinary loan ending and reverse owner cleanup;
 callers propagate the original record without re-siting it.
 
+Scalar unique allocation likewise requires a local `allocation_failure` /
+`unique_owner` detector and an `Invoke` before owner activation. Independent
+verification checks its scalar pointee, zero/one exact initializer, result,
+absence of constructor dispatch, and failure metadata. Named native callback
+values are passive ordered by-value inputs, including expanded packs; an
+ordinary callback parameter may also receive the already-admitted null value.
+This does not admit callback invocation or foreign-thread entry. Class unique
+allocation retains its separate construction contract and terminal backend
+boundary pending failure/rollback migration.
+
 The current `MirPrinter` schema includes each body domain, carried place key,
 constant or dynamic index metadata, ownership event, complete cleanup-relevant
 class lifecycle shape,

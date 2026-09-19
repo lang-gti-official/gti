@@ -411,6 +411,10 @@ inline constexpr auto make_unexpected_result(Error error) {
 static_assert(__gti_strict_ieee754 == 1,
               "compile GTI output with strict IEEE-754 flags and "
               "-D__gti_strict_ieee754=1");
+static_assert(std::numeric_limits<char8_t>::digits == 8 &&
+              std::is_unsigned_v<char8_t> &&
+              !std::is_same_v<char8_t, std::uint8_t>,
+              "GTI requires distinct unsigned eight-bit char code units");
 static_assert(sizeof(float) == sizeof(std::uint32_t) &&
               std::numeric_limits<float>::is_iec559 &&
               std::numeric_limits<float>::radix == 2 &&
@@ -1404,7 +1408,7 @@ inline std::uint64_t prefix_storage_length(const prefix_storage<T> &value) {
 }
 
 inline std::string_view
-prefix_storage_text_view(const prefix_storage<std::uint8_t> &value) noexcept {
+prefix_storage_text_view(const prefix_storage<char8_t> &value) noexcept {
   if (value.length() == 0) {
     return {};
   }
@@ -2187,19 +2191,28 @@ inline decltype(auto) array_at(Array &&array, Index index) {
 }
 
 template <typename Index>
-inline std::uint8_t string_view_at(std::string_view value, Index index) {
+inline char8_t string_view_at(std::string_view value, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
   if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
     string_view_bounds_error();
   }
-  return static_cast<std::uint8_t>(static_cast<unsigned char>(
+  return static_cast<char8_t>(static_cast<unsigned char>(
       value[static_cast<std::size_t>(index)]));
 }
 
 template <typename Target, typename Source>
 inline Target numeric_cast(Source value) {
   static_assert(std::is_arithmetic_v<Target> && std::is_arithmetic_v<Source>);
-  if constexpr (std::is_integral_v<Target> &&
+  // Alias/type-parameter calls share this helper with numeric conversions.
+  // GTI's only code-unit conversions are lossless char <-> uint8_t; C++'s
+  // integer comparison utilities do not admit char8_t.
+  if constexpr (std::is_same_v<Target, char8_t> ||
+                std::is_same_v<Source, char8_t>) {
+    static_assert((std::is_same_v<Target, char8_t> &&
+                   std::is_same_v<Source, std::uint8_t>) ||
+                  (std::is_same_v<Target, std::uint8_t> &&
+                   std::is_same_v<Source, char8_t>));
+  } else if constexpr (std::is_integral_v<Target> &&
                 std::is_integral_v<Source>) {
     if (!std::in_range<Target>(value)) {
       numeric_conversion_error();

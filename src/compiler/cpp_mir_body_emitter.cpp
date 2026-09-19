@@ -15557,13 +15557,16 @@ private:
              instruction.definedFailure.propagation ==
                  FailurePropagationKind::Constructor &&
              instruction.definedFailure.localOrigins.empty());
-        // A unique-owner allocation contains its failure terminally
+        // A class unique-owner allocation contains its failure terminally
         // inside the backend helper — the compatibility call site carries
         // no handling either — so no Invoke, record, or cleanup successor
         // exists to demand.
         const bool terminalAllocation =
             instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+            ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+              instruction.info.type.arguments.size() == 1 &&
+              instruction.info.type.arguments.front().kind ==
+                  SemanticType::Class) ||
              // Prefix-storage allocation aborts inside the backend helper
              // on exhaustion, exactly like the compatibility call site.
              instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage);
@@ -16179,6 +16182,14 @@ storageAllocationFailureCall(const MirProgram &program,
   return instruction.kind == MirInstructionKind::Call &&
          (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
           instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
+}
+
+[[nodiscard]] bool scalarUniqueAllocation(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+         instruction.info.type.kind == SemanticType::UniqueOwner &&
+         instruction.info.type.arguments.size() == 1 &&
+         instruction.info.type.arguments.front().kind != SemanticType::Class;
 }
 
 // Semantics selects dereference versus member-access at the trusted lexical
@@ -20643,6 +20654,7 @@ public:
                storageAllocationFailureCall(program, instruction) ||
                mutexLockFailureCall(program, instruction) ||
                uniqueOwnerBorrowCall(instruction) ||
+               scalarUniqueAllocation(instruction) ||
                (storageReadIntrinsic(instruction.intrinsic) &&
                 invokePairedInstruction(facts.body, instruction.id)) ||
                checkedConversionIntrinsicCall(instruction) ||
@@ -21367,7 +21379,7 @@ private:
       return;
     }
     if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
-      output << "std::uint8_t{" << static_cast<unsigned int>(character->value)
+      output << "char8_t{" << static_cast<unsigned int>(character->value)
              << '}';
       return;
     }
@@ -26668,6 +26680,23 @@ private:
         throw std::logic_error(
             "verified MIR unique-owner allocation lost its instance shape");
       }
+      if (scalarUniqueAllocation(instruction)) {
+        if (!failureForm ||
+            !invokePairedInstruction(facts.body, instruction.id)) {
+          throw std::logic_error(
+              "scalar allocation requires the MIR failure ABI");
+        }
+        output << "__gti_mir_failure_status_" << instruction.id
+               << " = ::gti_internal::backend::mir_allocate_unique_scalar_v1<"
+               << typeSpelling(instruction.info.type.arguments.front())
+               << ">(&__gti_mir_v_" << *instruction.result;
+        if (!instruction.operands.empty()) {
+          output << ", ";
+          (void)emitCallOperands(nullptr, false, false);
+        }
+        output << ");\n";
+        return;
+      }
       output << "__gti_mir_v_" << *instruction.result
              << " = ::gti_internal::backend::make_unique<"
              << typeSpelling(instruction.info.type.arguments.front()) << ">(";
@@ -27423,10 +27452,11 @@ private:
                                           *producer) ||
            terminallyContainedPlainConstructor(program, representations,
                                                *producer) ||
-           // The unique-owner allocation contains its failure terminally
+           // Class unique-owner allocation contains its failure terminally
            // inside the backend helper, exactly like the compatibility
            // call site.
-           producer->intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+           (producer->intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+            !scalarUniqueAllocation(*producer)) ||
            // Plain prefix allocation uses the compatibility helper, which
            // terminates on exhaustion before publishing its result.
            (!failureForm &&
@@ -27589,6 +27619,7 @@ private:
           (storageAllocationFailureCall(program, *producer) ||
            mutexLockFailureCall(program, *producer) ||
            uniqueOwnerBorrowCall(*producer) ||
+           scalarUniqueAllocation(*producer) ||
            (storageReadIntrinsic(producer->intrinsic) &&
             !producer->localFailureSites.empty()) ||
            (sparseStorageIntrinsic(producer->intrinsic) &&
@@ -36178,7 +36209,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // Allocation consumes the ordinary explicit input schedule. Each
             // pack element has already become a typed CallInput carrying its
             // exact copy/move policy.
-            if (!instruction.result || instruction.receiver ||
+            if ((scalarUniqueAllocation(instruction) &&
+                 (!failureForm ||
+                  !invokePairedInstruction(body, instruction.id))) ||
+                !instruction.result || instruction.receiver ||
                 instruction.functionTarget ||
                 instruction.info.type.kind != SemanticType::UniqueOwner ||
                 instruction.info.type.arguments.size() != 1 ||
@@ -36623,10 +36657,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->definedFailure.propagation ==
                 FailurePropagationKind::None &&
             producer->localFailureSites.size() == 1) {
-          // The shipped allocation helper reports exhaustion terminally. Its
-          // verified Invoke therefore has an unreachable failure successor in
-          // both text forms, matching emitTerminator's unconditional success
-          // edge until a recoverable try_make_* allocation contract exists.
+          // Scalar allocation reports a status and follows this Invoke in
+          // failure-form emission. Class construction still uses the terminal
+          // compatibility helper; its failure/rollback migration is separate.
           continue;
         }
         const MirFunctionInstance *target =

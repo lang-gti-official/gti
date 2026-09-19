@@ -421,7 +421,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   case SemanticType::Bool:
     return "bool";
   case SemanticType::Char:
-    return "std::uint8_t";
+    // Preserve GTI's distinct code-unit identity in native generic arguments.
+    // uint8_t would alias UInt8 and collide in member specializations.
+    return "char8_t";
   case SemanticType::StringView:
     return "std::string_view";
   case SemanticType::CString:

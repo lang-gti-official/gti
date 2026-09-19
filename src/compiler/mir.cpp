@@ -5799,6 +5799,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return source == SemanticType::StringView ||
                source == SemanticType::NullPtr;
       }
+      if (parameter.kind == SemanticType::NativeFunction) {
+        return parameter.hasNativeFunctionShape() &&
+               source == SemanticType::NullPtr;
+      }
       if (parameter.kind != SemanticType::RawPointer) {
         return false;
       }

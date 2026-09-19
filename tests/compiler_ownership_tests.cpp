@@ -9355,18 +9355,18 @@ int main() {
   const lang::FrontendResult invalidPointee =
       analyzeWithMemory("invalid-unique-pointee.gti", R"(
 int main() {
-  std::unique_ptr<int> primitive = std::make_unique<int>(1);
+  auto unsupported = std::make_unique<std::string_view>("view");
   return 0;
 }
 )");
-  expect(
-      !invalidPointee.canGenerateCode() &&
-          hasDiagnostic(invalidPointee.diagnostics,
-                        "requires a class, struct, or generic object type") &&
-          hasRelatedDiagnostic(invalidPointee.diagnostics,
-                               "Concrete generic instance requested here"),
-      "ordinary stdlib generic factories should diagnose invalid nested "
-      "capability use at their concrete instantiation site");
+  expect(!invalidPointee.canGenerateCode() &&
+             hasDiagnostic(
+                 invalidPointee.diagnostics,
+                 "requires a class, struct, scalar, or generic object type") &&
+             hasRelatedDiagnostic(invalidPointee.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "ordinary stdlib generic factories should diagnose invalid nested "
+         "capability use at their concrete instantiation site");
 
   const lang::FrontendResult invalidConstructor =
       analyzeWithMemory("invalid-unique-constructor.gti", R"(
@@ -9698,7 +9698,7 @@ int main() {
                  "::gti_internal::backend::storage<std::int32_t> data;") !=
                  std::string::npos &&
              artifact.contents.find(
-                 "::gti_internal::backend::storage<std::uint8_t> data;") !=
+                 "::gti_internal::backend::storage<char8_t> data;") !=
                  std::string::npos &&
              artifact.contents.find(
                  "::gti_internal::backend::mir_allocate_storage_v1<"

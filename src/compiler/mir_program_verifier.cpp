@@ -4881,6 +4881,87 @@ exactCapabilityReferenceValue(const MirProgram &program,
 }
 
 [[nodiscard]] bool
+exactScalarUniqueAllocationContract(const MirProgram &program,
+                                    const MirInstruction &instruction) {
+  if (instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1) {
+    return false;
+  }
+  const SemanticType &pointee = instruction.info.type.arguments.front();
+  if (pointee.kind == SemanticType::Class) {
+    return true; // Class construction retains its separate lifecycle contract.
+  }
+  bool defaultInitializable = true;
+  switch (pointee.kind) {
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+  case SemanticType::RawPointer:
+    break;
+  case SemanticType::Enum:
+    if (pointee.enumId == 0 || program.findPayloadEnum(pointee.enumId)) {
+      return false;
+    }
+    [[fallthrough]];
+  case SemanticType::NullPtr:
+    defaultInitializable = false;
+    break;
+  case SemanticType::NativeFunction:
+    if (!pointee.hasNativeFunctionShape()) {
+      return false;
+    }
+    defaultInitializable = false;
+    break;
+  default:
+    return false;
+  }
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || !instruction.result ||
+      instruction.receiver || instruction.functionTarget ||
+      instruction.constructorTarget || instruction.bodyTarget ||
+      instruction.lambdaTarget || instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.lifecycle.empty() ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.traits.drop != DropKind::Lexical ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.localFailureSites.size() != 1 ||
+      instruction.localFailureSites.front() == 0 ||
+      !instruction.safetyDischarges.empty()) {
+    return false;
+  }
+  const std::vector<DefinedFailureOutcome> expected{
+      {DefinedFailureCode::AllocationFailure,
+       DefinedFailureDetail::UniqueOwner}};
+  if (instruction.definedFailure.localOrigins.front().outcomes != expected) {
+    return false;
+  }
+  if (instruction.operands.empty()) {
+    return defaultInitializable && instruction.parameterTypes.empty();
+  }
+  if (instruction.operands.size() != 1 ||
+      instruction.parameterTypes != std::vector<SemanticType>{pointee}) {
+    return false;
+  }
+  const MirOperand &operand = instruction.operands.front();
+  return operand.kind == MirOperandKind::Value && operand.value != 0 &&
+         operand.place == 0 && operand.loan == 0 && !operand.literal &&
+         operand.type == pointee;
+}
+
+[[nodiscard]] bool
 exactUniqueOwnerBorrowContract(const MirBody &body,
                                const MirInstruction &instruction) {
   const AccessMode access =
@@ -5712,6 +5793,17 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "atomic intrinsic does not retain its exact "
                           "operation-specific synchronization contract"});
+        }
+        if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+            !exactScalarUniqueAllocationContract(program, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message =
+                   "scalar unique allocation does not retain its exact "
+                   "pointee, initializer, result, and failure contract"});
         }
         if ((instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&

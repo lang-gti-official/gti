@@ -6760,8 +6760,7 @@ public:
     } else if (const auto *value = std::get_if<BinaryFloat>(&constant)) {
       emitFloat(*value);
     } else if (const auto *value = std::get_if<CharacterLiteral>(&constant)) {
-      output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
-             << '}';
+      output << "char8_t{" << static_cast<unsigned int>(value->value) << '}';
     } else if (const auto *value = std::get_if<std::string>(&constant)) {
       output << cppMirStringViewLiteralSpelling(*value);
     } else if (const auto *value = std::get_if<bool>(&constant)) {
@@ -6892,7 +6891,7 @@ public:
       return;
     }
     if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
-      output << "std::uint8_t{" << static_cast<unsigned int>(character->value)
+      output << "char8_t{" << static_cast<unsigned int>(character->value)
              << '}';
       return;
     }

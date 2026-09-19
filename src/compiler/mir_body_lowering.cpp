@@ -3712,6 +3712,10 @@ private:
         case SemanticType::RawPointer:
         case SemanticType::Enum:
           return HirCallInputKind::Value;
+        case SemanticType::NativeFunction:
+          return parameter.hasNativeFunctionShape()
+                     ? std::optional{HirCallInputKind::Value}
+                     : std::nullopt;
         case SemanticType::Class:
           if (input.info.category == ValueCategory::Place &&
               input.info.traits.copyable) {

@@ -107,6 +107,39 @@ int main() {
          "HIR should verify callback adapter identity and exact target types");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "MIR should verify callback adapter policy and target identity");
+  std::size_t orderedNullCallbacks = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.info.type.kind != lang::SemanticType::NativeFunction ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().type != lang::SemanticType::NullPtr) {
+          continue;
+        }
+        ++orderedNullCallbacks;
+        auto invalid = frontend.mir;
+        auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+            invalid.functionInstances());
+        for (auto &changedFunction : functions) {
+          if (changedFunction.id != function.id) {
+            continue;
+          }
+          for (auto &changedBlock : changedFunction.body.blocks) {
+            for (auto &changed : changedBlock.instructions) {
+              if (changed.id == instruction.id) {
+                changed.operands.front().type = lang::SemanticType::Int32;
+              }
+            }
+          }
+        }
+        expect(!lang::verifyMirProgram(invalid).valid(),
+               "native callback inputs must not admit an integer as null");
+      }
+    }
+  }
+  expect(orderedNullCallbacks == 1,
+         "the native null callback argument must retain an ordered MIR input");
   expect(frontend.hir.nativeCallbackAdapters().size() == 4 &&
              frontend.mir.nativeCallbackAdapters().size() == 4,
          "repeated conversions should deduplicate to one adapter per exact "
