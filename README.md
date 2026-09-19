@@ -1,10 +1,9 @@
 # GTI
 
 <p align="center">
-  <a href="https://github.com/LukeHHA/gti/actions/workflows/ci.yml"><img src="https://github.com/LukeHHA/gti/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://github.com/LukeHHA/gti/actions/workflows/release.yml"><img src="https://github.com/LukeHHA/gti/actions/workflows/release.yml/badge.svg" alt="Release status"></a>
-  <a href="https://github.com/LukeHHA/gti/releases/latest"><img src="https://img.shields.io/github/v/release/LukeHHA/gti?sort=semver" alt="Latest release"></a>
-  <a href="https://github.com/LukeHHA/gti/blob/main/LICENSE"><img src="https://img.shields.io/github/license/LukeHHA/gti" alt="MIT license"></a>
+  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml"><img src="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml"><img src="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -137,7 +136,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://github.com/LukeHHA/gti.git
+git clone https://git2.internal.howetotech.dev/lukeh/gti-internal.git gti
 cd gti
 cmake -S . -B build -G Ninja
 cmake --build build --parallel 4
@@ -241,10 +240,9 @@ Manifest-driven executable and test targets use `gti.toml`; `gti build` builds
 one selected target and `gti test` runs all declared test targets or one named
 test. A project can seed configuration flags with
 `defines = ["FEATURE"]` under `[build]`, and a repeatable `-D NAME` on
-`build`/`check`/`run`/`test` adds invocation-specific flags. The [Build System and
-CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
-documents direct options, project profiles, outputs, and current project-mode
-boundaries.
+`build`/`check`/`run`/`test` adds invocation-specific flags. The [build and
+driver documentation](docs/architecture/build-and-driver.md) covers direct
+options, project profiles, outputs, and current project-mode boundaries.
 
 Local multi-package development is available without a registry or network.
 A workspace root declares `[workspace].members`; packages declare source-only
@@ -358,7 +356,11 @@ language server, standard library, runtime, and native Tree-sitter parser:
 
 ```lua
 return {
-  { "LukeHHA/gti", version = "*" },
+  {
+    "https://git2.internal.howetotech.dev/lukeh/gti-internal.git",
+    name = "gti",
+    version = "*",
+  },
 }
 ```
 
@@ -366,14 +368,13 @@ Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
 toolchain, LSP, and parser versions.
 
-See [Neovim and LSP](https://github.com/LukeHHA/gti/wiki/Neovim-and-LSP) for
-installation details, semantic features, formatting, Tree-sitter,
-rainbow-delimiters support, external toolchains, and troubleshooting.
+See the [LSP architecture](docs/architecture/lsp.md) for the implemented
+semantic, formatting, snapshot, and protocol boundaries.
 
 ## Documentation
 
-- The [GTI Wiki](https://github.com/LukeHHA/gti/wiki) is the user-facing
-  language and toolchain manual.
+- The [documentation map](docs/index.md) indexes the language, architecture,
+  decisions, and active implementation plans.
 - [`examples/`](examples/README.md) contains numbered programs for implemented
   features.
 - [`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md) contains paired,
@@ -404,9 +405,8 @@ inputs, not promises that a feature has shipped.
 
 The current engineering direction is maintained in the
 [`systems-readiness roadmap`](docs/plans/roadmap-to-1.0.md). The
-[Wiki roadmap](https://github.com/LukeHHA/gti/wiki/Current-Limitations-and-Roadmap)
-provides a user-facing summary of released limitations and may be updated on a
-different cadence.
+[language restriction ledger](docs/plans/language-alignment.md) records current
+limitations separately from that outcome roadmap.
 
 Development now prioritizes coherent user-facing systems capabilities over
 expanding restriction machinery in isolation. The `1.0` label is a soft,
@@ -417,8 +417,7 @@ ownership, safety, semantic-authority, and backend-independence work remains
 the foundation for those outcomes.
 
 The project began as a personal compiler-learning experiment and was extended
-substantially with Codex. The longer context is preserved in
-[Project Background](https://github.com/LukeHHA/gti/wiki/Project-Background).
+substantially with Codex.
 
 ## License
 

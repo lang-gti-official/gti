@@ -38,7 +38,7 @@ compiler path.
    when shipped CLI/driver/project behavior changes.
 
 After local validation, use the `finish-release` skill to commit completed
-work and initiate the required version/tag/release path. Finish after GitHub
+work and initiate the required version/tag/release path. Finish after Gitea
 accepts the push or workflow dispatch; do not poll or wait for asynchronous
 CI/CD.
 

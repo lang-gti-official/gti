@@ -37,7 +37,7 @@ earliest phase that knows the rule.
    recovery contract changed. Run focused tests and `git diff --check`.
 
 After local validation, use `$finish-release` when the completed diagnostic
-change is ready to commit or changes shipped behavior. Do not wait for GitHub
+change is ready to commit or changes shipped behavior. Do not wait for Gitea
 CI/CD after the release push or workflow dispatch succeeds.
 
 Do not use `GTI-B0001` for invalid user source; it is the internal MIR/backend

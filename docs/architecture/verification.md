@@ -112,7 +112,8 @@ assertions.
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
-| `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
+| `repository_hosting` | fail-closed Gitea source, workflow, release, installer, Lazy package, issue-template, release-policy, and delivery-instruction authority; tracked first-party GitHub repository dependencies are rejected outside explicit historical evidence |
+| `gitea_release_asset_sync` | post-upload exact Gitea rolling-release asset synchronization, including deterministic retired-platform removal, malformed-identity rejection, and empty-input fail-closed behavior |
 | `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
 | `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
 
@@ -125,6 +126,10 @@ unsubstantiated per-example timing gate.
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.
+The Neovim smoke test checks Tree-sitter captures and the independent regex
+fallback separately: it explicitly enables GTI syntax for `synID` assertions
+and then restores the active highlighting state. Tree-sitter normally clears
+the buffer's regex syntax option; that is not a missing GTI keyword rule.
 
 Defined-failure runtime coverage remains independently tested from generated
 GTI bodies. The bounded `scalar-failure-callgraph-v1` gate now composes that
@@ -715,7 +720,7 @@ without changing its census.
 
 ## Repository Build Generator
 
-First-party developer instructions and GitHub/Gitea automation configure CMake
+First-party developer instructions and Gitea automation configure CMake
 with the Ninja generator. CMake remains the portable configuration and build
 entry point; workflows invoke `cmake --build` rather than calling `ninja`
 directly. Every fresh first-party build tree, including sanitizer, release, and
@@ -732,7 +737,7 @@ but non-Ninja generators are outside the first-party verification path.
 
 ## Platform Signal
 
-Local verification runs on the macOS/AppleClang host. GitHub CI
+Local verification runs on the macOS/AppleClang host. Gitea CI
 (`ubuntu-24.04`) is the accepted first Linux/GCC/libstdc++ signal; there is
 no local Linux gate in the pre-push loop. Two mitigations keep that gap
 narrow. First, all first-party targets compile with `-Wall -Wextra

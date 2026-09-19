@@ -124,7 +124,7 @@ name in the compiler.
    owns production execution. Advance `VERSION` when the repository's shipped
    behavior/version policy requires it.
 7. Use `$finish-release` to commit completed work and initiate the appropriate
-   version/tag/release path. Once GitHub accepts the push or workflow dispatch,
+   version/tag/release path. Once Gitea accepts the push or workflow dispatch,
    finish without polling or waiting for asynchronous CI/CD.
 
 Do not use `1.0` as a reason to postpone a capability needed by the systems-

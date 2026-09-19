@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Install pinned clang-format
         run: |
@@ -39,19 +39,20 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
       - name: Require a version bump for shipped tooling changes
         env:
           GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
+          GTI_HEAD_SHA: ${{ gitea.sha }}
         run: |
           base="${GTI_BASE_SHA}"
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
             base="$(git rev-parse HEAD^)"
           fi
-          python3 scripts/check_release_version.py "${base}" "${GITHUB_SHA}"
+          python3 scripts/check_release_version.py "${base}" "${GTI_HEAD_SHA}"
 
   tree-sitter:
     name: Tree-sitter grammar
@@ -59,7 +60,7 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Install grammar tooling
         run: npm ci
@@ -72,7 +73,66 @@ jobs:
           npm test
           npm run test:highlights
           npm run test:shipped
+          npm run test:source-text
           git diff --exit-code -- src
+
+  reference:
+    name: Reference site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Ninja, LLVM 18, libclang, and Clang
+        shell: bash
+        run: |
+          apt=(apt-get)
+          if command -v sudo >/dev/null 2>&1; then
+            apt=(sudo apt-get)
+          fi
+          "${apt[@]}" update
+          "${apt[@]}" install -y --no-install-recommends \
+            clang cmake libclang-18-dev llvm-18-dev ninja-build
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Configure reference tools
+        run: >-
+          cmake -S . -B build-reference -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_BUILD_LSP=OFF
+          -DBUILD_TESTING=OFF
+
+      - name: Build compiler-backed reference tools
+        run: >-
+          cmake --build build-reference --config Release --parallel 4
+          --target gti_docgen gti
+
+      - name: Install pinned pnpm
+        run: |
+          npm install --global --prefix "${RUNNER_TEMP}/gti-pnpm" pnpm@11.23.0
+          echo "${RUNNER_TEMP}/gti-pnpm/bin" >> "${GITEA_PATH}"
+
+      - name: Install reference dependencies
+        working-directory: reference
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate compiler API index
+        working-directory: reference
+        run: pnpm api:generate -- --docgen ../build-reference/gti_docgen
+
+      - name: Verify content contract and examples
+        working-directory: reference
+        run: |
+          pnpm test
+          pnpm examples:verify -- --gti ../build-reference/gti
+          pnpm examples:contract-smoke -- --gti ../build-reference/gti
+
+      - name: Build static reference
+        working-directory: reference
+        run: |
+          pnpm typecheck
+          pnpm build
 
   build-and-test:
     name: Native toolchain
@@ -80,7 +140,7 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Configure runner resources
         shell: bash
@@ -162,7 +222,7 @@ jobs:
 
     steps:
       - name: Check out GTI
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Configure runner resources
         shell: bash

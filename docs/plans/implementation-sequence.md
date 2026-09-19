@@ -2568,8 +2568,10 @@ conflict-resolution changes. Its original `06452d83` tip remains in the bundle.
 The class-scoped alias branch was also removed after matching its handwritten
 implementation, grammar, and tests to `c1fbca4b`; generated parser differences
 belonged to its older grammar baseline. Its `347e2901` tip remains in the bundle.
-The cumulative cleanup is 36 local and 130 remote branch names. Eight remote
-topic branches remain to reconcile; `main` is the only local branch. The
+At the former GitHub remote, the cumulative cleanup was 36 local and 130
+remote branch names, with eight remote topic branches still to reconcile.
+These are historical counts, not an audit of the subsequently selected Gitea
+remote; `main` remains the only local branch. The
 repository-wide pointer/reference-formatting branch requires a style decision;
 its different formatting policy is not assumed to be redundant.
 The outstanding tests-only stabilization branch was reviewed and merged into
@@ -2577,6 +2579,23 @@ The outstanding tests-only stabilization branch was reviewed and merged into
 findings describe the historical compiler they audited, not a current
 acceptance baseline. Production compiler and runtime code were unchanged by
 that merge.
+
+The canonical remote is now
+`https://git2.internal.howetotech.dev/lukeh/gti-internal.git`. Its prepared
+`codex/gitea-primary-migration` branch is integrated with the newer stdlib
+checkpoints, retaining their changes and advancing the installer/release fix
+to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea owns release
+dispatch; the former GitHub remote is no longer a publication destination.
+The Gitea topic branches require their own reachability and patch review before
+cleanup. Their presence is not evidence that the previous cleanup was undone.
+The hosting, release-asset synchronization, release-version policy, CMake test
+ownership, C ABI, and stdlib manifest gates pass. Workflow YAML and embedded
+shell syntax checks pass, as does the complete Neovim installer/editor smoke
+against a fresh macOS system-LLVM 0.333.1 archive. The latter exposed and fixed
+a test setup assumption: regex highlighting must be explicitly enabled while
+checking the fallback after Tree-sitter has disabled it. Both highlighting
+assertion sets remain intact. Remote Actions and other native runner platforms
+are not local validation evidence, and publication does not wait for them.
 
 The temporary-receiver/backend failure reproduced by constructing a path and
 calling an owning-string-returning method in one expression has a local repair
@@ -2605,7 +2624,7 @@ independence, and seven invalid-range cleanup cases. The checked-in surface
 ledger now includes the constructor and its executable fixture. All 33 stdlib
 surface cases pass against the intended-file snapshot; all 65 reference
 examples, 11 content tests, registry type checks, and the single-worker static
-site build/render checks pass. The snapshot does not count the still-empty
+site build/render checks pass. That snapshot did not count the then-empty
 `cthread` module as implemented. These two fixes complete one checkpoint, not
 the full standard-library campaign or the separate constructor rollback work.
 
@@ -3239,7 +3258,7 @@ complete.
 
 ### O-MIR-04: Proof-Carrying Safety Optimization
 
-Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
+Historical tracking ID: issue #36.
 
 - **State/role:** first production slice complete. O2/O3 run separate bounds,
   initialized-storage-state, and arithmetic-overflow discharge passes over one
@@ -3748,8 +3767,7 @@ it is not a competing active queue.
 
 ### P-MEASURE: Performance And Representation
 
-Prefix-storage execution tracking:
-[issue #37](https://github.com/LukeHHA/gti/issues/37).
+Prefix-storage historical tracking ID: issue #37.
 
 | ID | State | Scope and gate |
 | --- | --- | --- |
