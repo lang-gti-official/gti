@@ -19,7 +19,7 @@
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "a1a20bd2ab4de21a4a44974263079a4da7cf663e7b4f562e33fc9a7834db7882",
+    "stdlib/std/string.gti": "aebb90d59cf28cb2724db461824cd90eed17853eccc60df2063bfbd001929c91",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
@@ -229,6 +229,13 @@
       "id": "string",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_string.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "string-index-range",
+      "mode": "run",
+      "source": "tests/fixtures/string_index_range.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -811,16 +818,17 @@
         "std::string::resize",
         "std::string::shrink_to_fit",
         "std::string::size",
+        "std::string::string(size_t,size_t,string&)",
         "std::string::view",
         "std::to_string",
         "std::to_string(float)"
       ],
-      "case_ids": ["span", "string"],
+      "case_ids": ["span", "string", "string-index-range"],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
       ],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "stdlib/std/string.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "stdlib/std/string.gti"]
     },
     {
       "id": "string.scaffold",

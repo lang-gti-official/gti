@@ -3862,6 +3862,7 @@ struct TransferredConstructorArgument {
   const MirInstruction *producer = nullptr;
   const MirInstruction *stage = nullptr;
   const MirInstruction *consumer = nullptr;
+  // Present for a named binding; a borrowed temporary publishes at Construct.
   const MirInstruction *publication = nullptr;
   const MirPlace *slot = nullptr;
   const MirDropObligation *drop = nullptr;
@@ -3869,8 +3870,7 @@ struct TransferredConstructorArgument {
 
   [[nodiscard]] explicit operator bool() const {
     return source != nullptr && producer != nullptr && stage != nullptr &&
-           consumer != nullptr && publication != nullptr && slot != nullptr &&
-           drop != nullptr;
+           consumer != nullptr && slot != nullptr && drop != nullptr;
   }
 };
 
@@ -4058,20 +4058,34 @@ transferredConstructorArgumentForSource(const MirBody &body,
           : findInstruction(body, publicationUse->instruction);
   if (consumerResult == nullptr ||
       consumerResult->info.type != consumer->info.type ||
-      consumerUses.size() != 2 || consumerResultPlace == nullptr ||
+      consumerResultPlace == nullptr ||
       consumerResultPlace->root != MirPlaceRootKind::Value ||
       consumerResultPlace->value != *consumer->result ||
       !consumerResultPlace->projections.empty() ||
-      consumerResultPlace->type != consumer->info.type ||
-      publication == nullptr ||
-      publication->kind != MirInstructionKind::Initialize ||
-      !publication->destination || publication->receiver ||
-      publication->operands.size() != 1 || publicationUse->operandIndex != 0 ||
-      publication->operands.front().kind != MirOperandKind::Value ||
-      publication->operands.front().value != *consumer->result ||
-      publication->operands.front().type != consumer->info.type ||
-      !publication->localFailureSites.empty() ||
-      !publication->definedFailure.empty()) {
+      consumerResultPlace->type != consumer->info.type) {
+    return {};
+  }
+  const bool bindingPublication =
+      consumerUses.size() == 2 && publication != nullptr &&
+      publication->kind == MirInstructionKind::Initialize &&
+      publication->destination && !publication->receiver &&
+      publication->operands.size() == 1 && publicationUse->operandIndex == 0 &&
+      publication->operands.front().kind == MirOperandKind::Value &&
+      publication->operands.front().value == *consumer->result &&
+      publication->operands.front().type == consumer->info.type &&
+      publication->localFailureSites.empty() &&
+      publication->definedFailure.empty();
+  // The outer construction may instead be the receiver or borrowed argument
+  // of a call. Its exact value-rooted slot is already published by Construct
+  // and activated on success, so there is no binding Initialize instruction.
+  // Reuse the temporary-borrow proof, including its sole root use and drop,
+  // without tying the inner argument's ownership transfer to a source local.
+  const DirectTemporaryBorrow temporary =
+      directTemporaryBorrowForValue(body, *consumer->result);
+  const bool temporaryPublication = consumerUses.size() == 1 &&
+                                    temporary.producer == consumer &&
+                                    temporary.slot == consumerResultPlace;
+  if (!bindingPublication && !temporaryPublication) {
     return {};
   }
 
@@ -4113,8 +4127,19 @@ transferredConstructorArgumentForSource(const MirBody &body,
     }
   }
   if (producerBlock == nullptr || consumerBlock == nullptr ||
-      producerBlock->terminator.target != consumerBlock->id ||
-      consumerBlock->terminator.target != publicationUse->block) {
+      producerBlock->terminator.target != consumerBlock->id) {
+    return {};
+  }
+  const MirBlock *consumerSuccess =
+      body.findBlock(consumerBlock->terminator.target);
+  if (consumerSuccess == nullptr ||
+      (bindingPublication && consumerSuccess->id != publicationUse->block) ||
+      (temporaryPublication &&
+       std::none_of(consumerSuccess->instructions.begin(),
+                    consumerSuccess->instructions.end(),
+                    [&](const MirInstruction &instruction) {
+                      return &instruction == temporary.stage;
+                    }))) {
     return {};
   }
   const MirLifecycleEvent &activation =

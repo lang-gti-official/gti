@@ -1,6 +1,6 @@
 {
   "title": "Construct strings from text and ranges",
-  "description": "Copies a literal view and then copies the resulting exact character range.",
+  "description": "Copies a literal view, the complete iterator range, and an indexed half-open subrange.",
   "mode": "run",
   "stdout": "stdout.txt"
 }

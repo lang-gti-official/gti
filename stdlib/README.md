@@ -176,10 +176,15 @@ mutable parent/element loans without pointer decay. See
 lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
-`gti_internal::storage<char>` and imported with `#include <std/string>`. It is a
+`gti_internal::prefix_storage<char>` and imported with `#include <std/string>`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
-through `clone()`. `std::to_string(integer)` constructs the canonical base-10
+through `clone()` or `std::string(begin, end, other)`. The indexed constructor
+copies `[begin, end)` into independent storage and requires
+`begin <= end <= other.size()`, including empty endpoint ranges. Invalid
+ranges take the checked `GTI-R0007` string-bounds path before range allocation
+or source access. Indices count code units and preserve embedded zero bytes.
+`std::to_string(integer)` constructs the canonical base-10
 owning representation for every fixed-width integer, including signed minima.
 `std::to_string(float)` and the binary32 `std::print`/`std::println` overloads
 render an optional sign, the integer part, a point, and exactly six fractional
@@ -193,8 +198,9 @@ borrow of the backing storage. A read cursor can be copy-constructed into an
 independently positioned cursor; both copies retain the same owner loan and
 remain non-assignable. This avoids hidden allocation on an ordinary string
 copy and prevents mutation or movement while an iterator remains live. Dynamic
-conversion back to `std::string_view` remains unavailable until views can
-retain an owner-tied lifetime. `<std/format>` implements sequential `{}`
+`view()` conversion to `std::string_view` retains an owner-tied lifetime;
+the source cannot be invalidated while that view remains live.
+`<std/format>` implements sequential `{}`
 replacement for heterogeneous fixed-width integral packs, escaped `{{`/`}}`,
 and exact field counts. It builds an owning `std::string`; malformed patterns
 and count mismatches are returned through `std::format_errc` before output.

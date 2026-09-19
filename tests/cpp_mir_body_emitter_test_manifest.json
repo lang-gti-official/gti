@@ -322,6 +322,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConstructedArgumentTemporaryBorrow",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testFailureCapableClassReturnTemporaryReceiver",
       "suite": "lifecycle"
     },

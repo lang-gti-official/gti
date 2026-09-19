@@ -4421,6 +4421,198 @@ int main() {
          "unsupported");
 }
 
+void testConstructedArgumentTemporaryBorrow() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-constructed-argument-temporary-borrow.gti", R"(
+#include <std/string>
+class Text {
+  std::string data;
+public:
+  Text(std::string value) : data(value.clone()) {}
+  std::string get() { return this.data.clone(); }
+  std::string update() mut { return this.data.clone(); }
+};
+int32_t observe(Text& value) { return 1; }
+int32_t main() {
+  std::println(Text(std::string("read")).get());
+  std::println((Text(std::string("mutable"))).update());
+  return observe(Text(std::string("borrow"))) - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "constructed owning arguments of borrowed temporaries should pass "
+         "the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the constructed-argument fixture should lower its entry");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "a moved constructor argument should not require naming the outer "
+         "temporary receiver or read-borrowed argument");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+  const std::string text =
+      emitter.emitFailureBodyText(address, "constructed-argument-test-v0", 1)
+          .text;
+  std::size_t retirements = 0;
+  for (std::size_t at = 0;
+       (at = text.find("end transferred argument representation", at)) !=
+       std::string::npos;
+       ++at) {
+    ++retirements;
+  }
+  expect(retirements == 3 &&
+             text.find(".construction_address()") != std::string::npos &&
+             text.find(".mark_constructed();") != std::string::npos,
+         "each of the three inner owners should publish once and retire its "
+         "moved-from representation after outer construction");
+
+  const lang::MirInstruction *stage = nullptr;
+  const lang::MirInstruction *outer = nullptr;
+  bool readReceiver = false;
+  bool mutableReceiver = false;
+  bool readArgument = false;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::CallInput) {
+        continue;
+      }
+      if (instruction.callInputKind == lang::HirCallInputKind::MoveValue &&
+          instruction.lifecycle.size() == 1 &&
+          instruction.lifecycle.front().kind ==
+              lang::MirLifecycleEventKind::TransferOut) {
+        stage = &instruction;
+      }
+      readReceiver |=
+          instruction.callInputKind ==
+              lang::HirCallInputKind::ReadTemporaryBorrow &&
+          instruction.callInputRole == lang::MirCallInputRole::Receiver;
+      mutableReceiver |=
+          instruction.callInputKind ==
+              lang::HirCallInputKind::MutableTemporaryBorrow &&
+          instruction.callInputRole == lang::MirCallInputRole::Receiver;
+      readArgument |=
+          instruction.callInputKind ==
+              lang::HirCallInputKind::ReadTemporaryBorrow &&
+          instruction.callInputRole == lang::MirCallInputRole::Argument;
+    }
+  }
+  expect(stage != nullptr && readReceiver && mutableReceiver && readArgument,
+         "MIR should retain the exact transfer and all three temporary borrow "
+         "roles");
+  if (stage == nullptr || !stage->result || stage->operands.size() != 1) {
+    return;
+  }
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Construct &&
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const lang::MirOperand &operand) {
+                        return operand.kind == lang::MirOperandKind::Value &&
+                               operand.value == *stage->result;
+                      })) {
+        outer = &instruction;
+      }
+    }
+  }
+  const lang::MirValue *inner =
+      entry->body.findValue(stage->operands.front().value);
+  expect(inner != nullptr && outer != nullptr && outer->successResultDrop,
+         "the transfer should connect one inner producer and one activated "
+         "outer temporary");
+  if (inner == nullptr || outer == nullptr || !outer->successResultDrop) {
+    return;
+  }
+  const auto mutate = [&](const auto &edit, std::string_view message) {
+    lang::MirProgram changed = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        changed.functionInstances());
+    auto function = std::find_if(
+        functions.begin(), functions.end(),
+        [&](const auto &candidate) { return candidate.id == entry->id; });
+    edit(function->body);
+    expect(!lang::verifyMirProgram(changed).valid(), message);
+    // Keep the representation rows from the valid program: lowering an
+    // invalid mutation would reject before this independent backend probe.
+    expect(
+        !lang::CppMirBodyEmitter(changed, map).supportsFailureBodyText(address),
+        message);
+  };
+  mutate(
+      [&](lang::MirBody &body) {
+        for (lang::MirBlock &block : body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.id == stage->id) {
+              instruction.lifecycle.clear();
+            }
+          }
+        }
+      },
+      "an inner argument without its transfer must fail closed");
+  for (lang::MirInstructionId producer : {inner->definition, outer->id}) {
+    mutate(
+        [&](lang::MirBody &body) {
+          for (lang::MirBlock &block : body.blocks) {
+            if (block.terminator.invokeInstruction == producer) {
+              block.terminator.successLifecycle.clear();
+            }
+          }
+        },
+        "an inner or outer owner without success activation must fail closed");
+  }
+  mutate(
+      [&](lang::MirBody &body) {
+        for (lang::MirBlock &block : body.blocks) {
+          for (lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.kind == lang::MirInstructionKind::Drop &&
+                instruction.lifecycle.size() == 1 &&
+                instruction.lifecycle.front().source ==
+                    *outer->successResultDrop) {
+              instruction.lifecycle.clear();
+            }
+          }
+        }
+      },
+      "an outer temporary without scheduled cleanup must fail closed");
+  mutate(
+      [&](lang::MirBody &body) {
+        for (lang::MirPlace &place : body.places) {
+          if (place.root == lang::MirPlaceRootKind::Value &&
+              place.value == *outer->result) {
+            place.access = lang::AccessMode::ReadOnly;
+          }
+        }
+      },
+      "an outer temporary without mutable materialized storage must fail "
+      "closed");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
+                                std::to_string(entry->id) + "\n") !=
+             std::string::npos,
+         "production must emit the complete entry from verified MIR");
+}
+
 void testFailureCapableClassReturnTemporaryReceiver() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-class-return-temporary-receiver.gti", R"(
@@ -4943,6 +5135,8 @@ constexpr NamedTest kTests[] = {
      testExpectedOwningPayloadPublicationAndForwarding},
     {"testCleanupOwningTemporaryArgumentTransfer",
      testCleanupOwningTemporaryArgumentTransfer},
+    {"testConstructedArgumentTemporaryBorrow",
+     testConstructedArgumentTemporaryBorrow},
     {"testFailureCapableClassReturnTemporaryReceiver",
      testFailureCapableClassReturnTemporaryReceiver},
     {"testFailureCapableClassReturnFieldRead",

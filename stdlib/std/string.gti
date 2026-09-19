@@ -102,8 +102,23 @@ namespace std {
       }
     }
 
-  string(std::size_t begin, std::size_t end, std::string& other)
-      : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
+    /// Copies the code units in [begin, end) into an independent owner.
+    /// Requires begin <= end <= other.size(); invalid ranges raise GTI-R0007.
+    string(std::size_t begin, std::size_t end, std::string& other)
+        : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {
+      // Validate the full range before subtraction, allocation, or any read.
+      // Equality is valid at either endpoint, including an empty source.
+      if (begin > end) {
+        gti_internal::index_bounds_check(begin, end);
+      }
+      if (end > other.size()) {
+        gti_internal::index_bounds_check(end, other.size());
+      }
+      this.reserve(end - begin);
+      for (mut size_t index = begin; index < end; index++) {
+        this.push_back(other[index]);
+      }
+    }
 
     string(string& other) = delete;
     string(string&& other) = default;
