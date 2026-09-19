@@ -560,6 +560,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(forward_list_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME unique_owner_access_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/unique_owner_access_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(unique_owner_access_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME release_version_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/release_version_test.py"
@@ -1547,6 +1554,7 @@ if(Python3_Interpreter_FOUND)
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime string_index_range_runtime forward_list_runtime
+      unique_owner_access_runtime
       managed_thread_end_to_end
       managed_thread_tsan cthread_runtime atomic_end_to_end atomic_tsan mutex_end_to_end
       mutex_tsan

@@ -4121,6 +4121,45 @@ int32_t main() {
   }
   const lang::CppMirBodyEmissionText text =
       emitter.emitFailureBodyText(address, "unique-owner-upcast-test-v0", 1);
+  std::size_t checkedBorrows = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerBorrow &&
+            instruction.intrinsic !=
+                lang::IntrinsicKind::UniqueOwnerBorrowMut) {
+          continue;
+        }
+        ++checkedBorrows;
+        const lang::MirBodyAddress borrowAddress{
+            .kind = lang::MirBodyKind::Function, .owner = function.id};
+        expect(
+            emitter.analyze(borrowAddress).ready() &&
+                !emitter.supportsBodyText(borrowAddress) &&
+                emitter.supportsFailureBodyText(borrowAddress),
+            "owner borrowing must require the cleanup-preserving failure ABI");
+        if (!emitter.supportsFailureBodyText(borrowAddress)) {
+          continue;
+        }
+        const auto borrowText = emitter.emitFailureBodyText(
+            borrowAddress, "unique-owner-borrow-test-v0", 1);
+        const auto check =
+            borrowText.text.find("GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1");
+        const auto publication =
+            borrowText.text.find("*__gti_mir_out_result =");
+        expect(check != std::string::npos && publication != std::string::npos &&
+                   check < publication &&
+                   borrowText.text.find(".get();", publication) !=
+                       std::string::npos &&
+                   borrowText.text.find("return false;") != std::string::npos &&
+                   borrowText.text.find("owner_access(") == std::string::npos,
+               "the MIR detector must precede success publication and preserve "
+               "a failure return");
+      }
+    }
+  }
+  expect(checkedBorrows != 0,
+         "the upcast client must exercise checked owner access");
   const std::size_t upcastCall = text.text.find("unique_owner_upcast<");
   const std::size_t movedArgument = text.text.find(">(std::move(", upcastCall);
   expect(text.text.find("unique_owner_upcast<") != std::string::npos &&

@@ -4881,6 +4881,71 @@ exactCapabilityReferenceValue(const MirProgram &program,
 }
 
 [[nodiscard]] bool
+exactUniqueOwnerBorrowContract(const MirBody &body,
+                               const MirInstruction &instruction) {
+  const AccessMode access =
+      instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.bodyTarget || instruction.lambdaTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() ||
+      instruction.operands.size() != 1 || !instruction.result ||
+      !instruction.lifecycle.empty() || instruction.successResultDrop ||
+      instruction.successResultDestination ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.localFailureSites.size() != 1 ||
+      instruction.localFailureSites.front() == 0 ||
+      !instruction.safetyDischarges.empty()) {
+    return false;
+  }
+  const auto &outcomes =
+      instruction.definedFailure.localOrigins.front().outcomes;
+  if (outcomes.size() != 1 ||
+      outcomes.front().code != DefinedFailureCode::EmptyOwnerAccess ||
+      (outcomes.front().detail != DefinedFailureDetail::Dereference &&
+       outcomes.front().detail != DefinedFailureDetail::MemberAccess)) {
+    return false;
+  }
+  const MirOperand &operand = instruction.operands.front();
+  if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+      operand.place != 0 || operand.loan != 0 || operand.literal ||
+      operand.type.kind != SemanticType::UniqueOwner ||
+      operand.type.arguments.size() != 1 ||
+      instruction.parameterTypes != std::vector<SemanticType>{operand.type}) {
+    return false;
+  }
+  const MirInstruction *stage = definitionFor(body, operand.value);
+  if (stage == nullptr || stage->kind != MirInstructionKind::Load ||
+      stage->operands.size() != 1 ||
+      stage->operands.front().kind != MirOperandKind::Copy ||
+      stage->info.type != operand.type) {
+    return false;
+  }
+  const MirPlace *owner = body.findPlace(stage->operands.front().place);
+  const MirLoan *loan =
+      instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+  return owner != nullptr && owner->type == operand.type &&
+         (access != AccessMode::Mutable ||
+          owner->access == AccessMode::Mutable) &&
+         instruction.info.type == operand.type.arguments.front() &&
+         instruction.info.category == ValueCategory::Place &&
+         instruction.info.access == access &&
+         instruction.borrowOrigin == BorrowOriginKind::Argument &&
+         instruction.borrowArgument == 0 &&
+         instruction.borrowAccess == access && loan != nullptr &&
+         loan->kind == MirLoanKind::CallResult && loan->source == owner->id &&
+         loan->access == access && loan->producedBy == instruction.hirValue &&
+         !loan->entry && !loan->escapes && !loan->lifecycleBound &&
+         loan->parent == 0;
+}
+
+[[nodiscard]] bool
 exactOptionalStorageIntrinsicContract(const MirProgram &program,
                                       const MirBody &body,
                                       const MirInstruction &instruction) {
@@ -5647,6 +5712,17 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "atomic intrinsic does not retain its exact "
                           "operation-specific synchronization contract"});
+        }
+        if ((instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
+            !exactUniqueOwnerBorrowContract(body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "unique-owner borrow does not retain its exact "
+                          "operand, result, loan, and failure contract"});
         }
         const bool mutexIntrinsic =
             instruction.intrinsic == IntrinsicKind::MutexLock ||

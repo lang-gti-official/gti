@@ -101,6 +101,7 @@ assertions.
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close and standard streams, plus bounded expected diagnostics for unsupported surfaces |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
+| `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |

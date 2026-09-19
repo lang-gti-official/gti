@@ -2588,6 +2588,13 @@ to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea owns release
 dispatch; the former GitHub remote is no longer a publication destination.
 The Gitea topic branches require their own reachability and patch review before
 cleanup. Their presence is not evidence that the previous cleanup was undone.
+The 0.334.1 publication includes the first Gitea cleanup batch: 20 topic tips
+are ancestors of the validated `main`, and 11 more have zero unique patches
+and zero unmerged merge commits. All 31 exact tips are retained in the verified
+complete-history backup `out/stdlib-gitea-history.OFwGKI/branches.bundle`.
+Publication pairs their deletion with the checkpoint in one atomic push,
+guarding each deletion against its reviewed tip; the remaining 32 topic refs
+still require individual reconciliation. `main` is the only local branch.
 The hosting, release-asset synchronization, release-version policy, CMake test
 ownership, C ABI, and stdlib manifest gates pass. Workflow YAML and embedded
 shell syntax checks pass, as does the complete Neovim installer/editor smoke
@@ -2667,13 +2674,35 @@ contracts remain on their existing paths. Iteration, emplacement, swap, and
 all other remaining campaign families—including the selected C-style thread
 API—remain open.
 
-`tests/fixtures/unique_ptr_empty_access_cleanup_gap.gti` retains another
-completion gap found while testing owner-field stores. The unique-owner
-borrow intrinsic still uses the backend's terminal `empty_owner_error`
-accessor, which aborts rather than following ordinary MIR cleanup and the
-structured `GTI-R0008` report. The current checked-field-store regression uses
-a user-defined fallible `operator->` to prove staged-RHS cleanup independently;
-that evidence must not be described as fixing empty unique-owner access.
+The 0.334.1 owner-access checkpoint replaces the legacy terminal accessor
+with a local MIR detector, mandatory failure edge, and success-only reference
+publication. The original reproducer now lives at
+`tests/fixtures/unique_ptr_empty_access_cleanup.gti` as a passing regression.
+Read-only/mutable dereference and arrow access preserve their trusted lexical
+site, run ordinary cleanup before `GTI-R0008`, and clean an already completed
+right-hand owner if checked destination formation fails. Failure while already
+cleaning preserves the primary record and takes `GTI-R0014`. The separate
+custom fallible-arrow fixture remains independent coverage, not a substitute
+for the real unique-owner path. All 45 selected compiler/MIR/optimizer,
+runtime/stdlib, CLI, and inventory gates pass, including all 36 stdlib surface
+cases. The strengthened emitter lifecycle assertions also pass after rebuilding.
+The new runtime matrix performs 21 builds and 63 runs across C++20/C++23 at
+O0/O1/O3 plus ASan/UBSan, against both the build-tree and fresh installed
+compiler. Eight installed-library consumers pass. The emitter corpus retains
+3,907 ready bodies, and all 82 examples build and run at both C++20/O0 and
+C++23/O3 with identical MIR ownership. All 67 reference examples, 11 content
+tests, type checks, and the single-worker static build/render checks pass.
+The optional audit's 23 contract cases also pass; its generated, composition,
+mutation, comparison, and full public-example searches were not repeated in
+this checkpoint. These are local macOS results, not CI or cross-host evidence.
+No syntax, token, query, or native ABI changed.
+
+Scalar allocation is a separate unfinished library capability: the private
+unique-allocation semantic boundary currently rejects
+`std::make_unique<int32_t>(7)` because it requires a class/struct object type.
+That rejection does not prevent empty scalar-owner access checks, but it must
+be resolved as part of this campaign rather than counted as completed generic
+`make_unique` support.
 
 ### L-GEN-01: Production Generic Function System
 

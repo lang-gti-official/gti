@@ -9057,8 +9057,10 @@ int main() {
           // the otherwise non-deducible owner argument.
           artifact.contents.find("_make_unique__gti_mir_failure(") !=
               std::string::npos &&
+          artifact.contents.find("GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1") !=
+              std::string::npos &&
           artifact.contents.find(
-              "::gti_internal::backend::owner_access((*this).owner)") !=
+              "::gti_internal::backend::owner_access((*this).owner)") ==
               std::string::npos &&
           artifact.contents.find("unique_owner_is_null") != std::string::npos &&
           artifact.contents.find("unique_owner_has_value") == std::string::npos,

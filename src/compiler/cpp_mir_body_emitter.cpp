@@ -15564,11 +15564,6 @@ private:
         const bool terminalAllocation =
             instruction.kind == MirInstructionKind::Call &&
             (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
-             // The owner borrow contains its null-state failure terminally
-             // inside the backend accessor, exactly like the compatibility
-             // call site.
-             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
-             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
              // Prefix-storage allocation aborts inside the backend helper
              // on exhaustion, exactly like the compatibility call site.
              instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage);
@@ -16178,6 +16173,41 @@ storageAllocationFailureCall(const MirProgram &program,
          site->outcomes == std::vector<DefinedFailureOutcome>{expected} &&
          instruction.definedFailure.localOrigins.front().outcomes ==
              std::vector<DefinedFailureOutcome>{expected};
+}
+
+[[nodiscard]] bool uniqueOwnerBorrowCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+          instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
+}
+
+// Semantics selects dereference versus member-access at the trusted lexical
+// operation. The backend only spells that exact MIR outcome.
+[[nodiscard]] std::optional<std::string_view>
+uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
+                                const MirInstruction &instruction) {
+  if (!uniqueOwnerBorrowCall(instruction) ||
+      instruction.localFailureSites.size() != 1 ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None) {
+    return std::nullopt;
+  }
+  const FailureSiteDescriptor *site =
+      program.failureMetadata().findSite(instruction.localFailureSites.front());
+  if (site == nullptr || site->outcomes.size() != 1 ||
+      site->outcomes !=
+          instruction.definedFailure.localOrigins.front().outcomes ||
+      site->outcomes.front().code != DefinedFailureCode::EmptyOwnerAccess) {
+    return std::nullopt;
+  }
+  switch (site->outcomes.front().detail) {
+  case DefinedFailureDetail::Dereference:
+    return "GTI_FAILURE_DETAIL_DEREFERENCE_V1";
+  case DefinedFailureDetail::MemberAccess:
+    return "GTI_FAILURE_DETAIL_MEMBER_ACCESS_V1";
+  default:
+    return std::nullopt;
+  }
 }
 
 // A storage read with no live failure edge is terminally contained by the
@@ -20612,6 +20642,7 @@ public:
               (storageBoundsCheckCall(instruction) ||
                storageAllocationFailureCall(program, instruction) ||
                mutexLockFailureCall(program, instruction) ||
+               uniqueOwnerBorrowCall(instruction) ||
                (storageReadIntrinsic(instruction.intrinsic) &&
                 invokePairedInstruction(facts.body, instruction.id)) ||
                checkedConversionIntrinsicCall(instruction) ||
@@ -26562,14 +26593,25 @@ private:
       output << ";\n";
       return;
     }
-    if (instruction.kind == MirInstructionKind::Call &&
-        (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
-         instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
-      // The borrow publishes at its consuming return, which spells the
-      // backend accessor over the owner field directly.
-      writeIndent();
-      output << "// owner borrow " << instruction.id
-             << " publishes at its consuming return\n";
+    if (uniqueOwnerBorrowCall(instruction)) {
+      const MirInstruction *load =
+          definitionFor(facts.body, instruction.operands.front());
+      const MirPlace *owner =
+          load != nullptr && load->operands.size() == 1
+              ? facts.body.findPlace(load->operands.front().place)
+              : nullptr;
+      const auto detail = uniqueOwnerBorrowDetailSpelling(program, instruction);
+      if (!failureForm || owner == nullptr || !detail ||
+          !invokePairedInstruction(facts.body, instruction.id)) {
+        throw std::logic_error(
+            "verified MIR owner borrow lost its failure edge");
+      }
+      output << "__gti_mir_failure_status_" << instruction.id << " = ";
+      emitStoragePlaceValue(facts, *owner);
+      output << " ? ::gti_internal::backend::mir_failure_success_v1"
+                " : ::gti_internal::backend::mir_failure_status_v1{"
+                "GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1, "
+             << *detail << "};\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -27546,6 +27588,7 @@ private:
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
           (storageAllocationFailureCall(program, *producer) ||
            mutexLockFailureCall(program, *producer) ||
+           uniqueOwnerBorrowCall(*producer) ||
            (storageReadIntrinsic(producer->intrinsic) &&
             !producer->localFailureSites.empty()) ||
            (sparseStorageIntrinsic(producer->intrinsic) &&
@@ -27820,9 +27863,8 @@ private:
           !(returnedClassSlot.returnBlock == &block &&
             returnedClassSlot.consumerKind ==
                 ClassSsaSlotConsumerKind::Return)) {
-        // A return loan produced by an owner borrow spells the backend
-        // accessor over the owner field directly — no loan pointer ever
-        // binds, exactly like the compatibility body.
+        // The owner detector has already taken its verified success edge.
+        // The return loan keeps the owner stable until this publication.
         const auto ownerBorrowField = [&]() -> const MirPlace * {
           const MirLoan *loan = facts.body.findLoan(*terminator.returnLoan);
           const MirInstruction *producer =
@@ -27845,18 +27887,14 @@ private:
         };
         if (const MirPlace *field = ownerBorrowField()) {
           writeIndent();
-          if (failureForm) {
-            output << "*__gti_mir_out_result = &::gti_internal::backend::"
-                      "owner_access((*this)."
-                   << fieldSpelling(facts, field->projections.front().field)
-                   << ");\n";
-            writeIndent();
-            output << "return true;\n";
-          } else {
-            output << "return ::gti_internal::backend::owner_access((*this)."
-                   << fieldSpelling(facts, field->projections.front().field)
-                   << ");\n";
+          if (!failureForm) {
+            throw std::logic_error("owner borrow requires the MIR failure ABI");
           }
+          output << "*__gti_mir_out_result = ";
+          emitStoragePlaceValue(facts, *field);
+          output << ".get();\n";
+          writeIndent();
+          output << "return true;\n";
           return;
         }
         if (const MirLoan *returnLoan =
@@ -36049,10 +36087,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
               instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) {
-            // The owner borrow spells the backend accessor over the
-            // receiver's owner field and publishes through its paired
-            // return loan at the consuming return; the null-state failure
-            // contains terminally inside the accessor.
+            // Check before taking the success edge; only then may the paired
+            // return loan publish the pointee. No terminal accessor bypasses
+            // caller cleanup.
             const MirValue *operandValue =
                 instruction.operands.size() == 1 &&
                         valueOperand(instruction.operands.front())
@@ -36076,7 +36113,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     MirProjectionKind::Field ||
                 !fieldRow(fieldPlace->projections.front().field) ||
                 !instruction.result ||
-                !body.usesOf(*instruction.result).empty()) {
+                !body.usesOf(*instruction.result).empty() || !failureForm ||
+                !uniqueOwnerBorrowDetailSpelling(program_, instruction) ||
+                !invokePairedInstruction(body, instruction.id)) {
               {
                 return false;
               }
@@ -36570,6 +36609,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         if (checkedConversionIntrinsicCall(*producer)) {
+          continue;
+        }
+        if (uniqueOwnerBorrowDetailSpelling(program_, *producer)) {
           continue;
         }
         if (storageBoundsCheckCall(*producer) &&
