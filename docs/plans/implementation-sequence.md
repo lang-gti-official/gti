@@ -2451,6 +2451,20 @@ or MIR prerequisite.
   create/join: runtime attachment, concurrent callback entry, synchronization,
   shutdown, and lifetime/failure containment remain required before that API
   can ship.
+- **Native runtime prerequisite implemented:** source-private create/join now
+  has never-reused handle identities, retained context obligations, integer
+  results and join publication, recoverable creation/join errors, exact
+  once-only registered callback entry, and initial-thread-owned shutdown that
+  closes creation while preserving outstanding joins. The separate archive
+  member leaves the existing yield-only boundary unchanged. Focused native
+  tests cover repeated/nested/competing joins, stale and self handles,
+  unregistered/mismatched/replayed entry, in-flight shutdown, and native
+  exception/incomplete-adapter firewalls under C++20/C++23 O0/O1/O3 plus
+  ASan/UBSan and TSAN on macOS. The private header is not installed; this does
+  **not** expose a new GTI operation or relax concurrent callbacks. Next,
+  connect this runtime through the stable C boundary and exact trusted
+  declarations, hosted and callback MIR plans, synchronization verification,
+  and ordinary unsafe GTI create/join wrappers with end-to-end failure tests.
 - **Following families:** identity/equality and sleep; C-style mutexes and
   condition-variable wait/reacquisition; once and thread-specific storage;
   explicit exit/detach with their adopted ownership and shutdown contracts.

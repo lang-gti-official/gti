@@ -36,6 +36,7 @@ assertions.
 | `runtime_io_boundary` | version-one file mode/seek behavior, create/truncate/append/read reopening, embedded-zero preservation, bounded reads, empty-buffer rules, exact offsets, invalid descriptors/origins, embedded-NUL path rejection, deterministic cleanup, and file/stdout broken-pipe failure without `SIGPIPE` escape |
 | `cmath_runtime` | every declared binary32 math operation at O0/O1/O3 under C++20/C++23; independent known results, rounding directions and ties, domains, poles, signed zero, infinities, NaN, overflow and gradual underflow; scalar ABI and verified-MIR witnesses; plus generated-boundary ASan/UBSan execution |
 | `cthread_runtime` | real C-style yield on initial and managed threads, both execution profiles, atomic/join composition, exact native-call retention through a separate boundary oracle, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; no timing or fairness oracle |
+| `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join prerequisite: non-reused handles, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes; no GTI callback permission or public API implied |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
@@ -238,6 +239,14 @@ GTI backend.
 `installed_cthread_library` compiles a C11 consumer of `gti/cthread.h`, links
 through the exported `GTI::runtime`, and calls the actual yield entry. It checks
 that the new runtime symbol and header are both present in a clean stage.
+The internal create/join prerequisite is additionally tested by
+`runtime_cthread_boundary_test.py`. Passing `--cxx <compiler> --sanitizers`
+builds its actual runtime implementation and boundary tests serially at
+O0/O1/O3 under C++20/C++23, then under ASan/UBSan and TSAN; requested sanitizer
+failures are not silently skipped. Condition-variable handshakes, not delays
+or scheduler fairness, establish the concurrent test states. These native
+tests cannot substitute for semantic/MIR and installed GTI create/join evidence
+when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 

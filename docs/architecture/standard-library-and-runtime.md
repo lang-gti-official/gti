@@ -337,6 +337,34 @@ no public-name recognition, concurrency intrinsic, or AST/HIR fallback is
 introduced. The module's remaining C-style families require their own
 attachment, ownership, synchronization, and failure contracts.
 
+The source-private `runtime/src/cthread_state.cpp` now supplies the native
+create/join and registered-entry prerequisite. It is a separate archive member,
+so yield-only clients do not acquire the registry. `cthread_internal.h` is not
+installed and no GTI declaration or generated backend path calls these helpers
+yet. This is runtime implementation evidence, not a public C-thread API or
+permission for concurrent GTI callback conversion.
+
+One initial thread starts the service once and alone owns shutdown. Nonzero
+64-bit handle identities are never reused; the registry retains each worker
+until exactly one successful join publishes its signed 32-bit result and
+ordinary writes. Creation failure leaves the output and caller-owned context
+untouched. Recoverable join failure leaves the handle live; invalid, consumed,
+self, and competing joins cannot consume another obligation. The caller still
+owns raw context lifetime and synchronization—this is not managed task transfer.
+
+The worker installs a thread-local registration for the exact entry function.
+An adapter can claim that registration once, then leave once after its own
+cleanup. Initial/unregistered threads, mismatched callbacks, recursion, and
+replay fail the check. Native exceptions and an entered-but-unfinished adapter
+terminate at the host firewall; they do not manufacture a GTI failure record.
+Shutdown closes creation and returns busy while any registered worker or join
+obligation remains, allowing existing workers to finish and owners to join.
+Only an empty registry permits successful shutdown, and shutdown cannot reopen
+the service. This bounded service intentionally adds neither detach nor general
+foreign-thread registration. The compiler integration must still represent
+hosted startup/shutdown, exact entry and synchronization contracts, and defined
+failure cleanup/containment in verified MIR before exposing create/join.
+
 ## Defined-Failure Boundary
 
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns
