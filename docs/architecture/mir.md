@@ -94,7 +94,11 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v54`/`mir-body-v47`.
+The deterministic serialization is currently `mir-v55`/`mir-body-v48`.
+Program v55/body v48 add `AllocateObject`, the generated `ObjectAllocation`
+drop obligation, and the instruction's exact `object-allocation` identity.
+These separate raw allocation from selected ordinary class construction; raw
+storage is not a live source value or a source-address capability.
 Program v54/body v47 add the nominal function ID to function-item semantic
 types and serialize the new zero-state `FunctionItem` operation with its exact
 concrete namespace target. Program v53 adds the closed payload-enum lifecycle
@@ -871,9 +875,28 @@ verification checks its scalar pointee, zero/one exact initializer, result,
 absence of constructor dispatch, and failure metadata. Named native callback
 values are passive ordered by-value inputs, including expanded packs; an
 ordinary callback parameter may also receive the already-admitted null value.
-This does not admit callback invocation or foreign-thread entry. Class unique
-allocation retains its separate construction contract and terminal backend
-boundary pending failure/rollback migration.
+This does not admit callback invocation or foreign-thread entry.
+
+Class unique allocation with a selected ordinary constructor evaluates and
+prepares arguments first, then issues `AllocateObject`. Its local allocation
+failure edge owns argument cleanup. Success arms one `ObjectAllocation`
+obligation for unconstructed storage. The following allocation intrinsic call
+retains the exact constructor target and normalized constructor-failure effect,
+transferring prepared arguments only at constructor entry. Constructor failure
+drains the raw allocation without invoking a pointee destructor; successful
+construction activates the ordinary owner result and immediately transfers out
+the raw-storage obligation. The independent protocol verifier rejects foreign
+uses, loans, aliases, detectors, lifecycle events, and reordered publication;
+ordinary lifecycle dataflow additionally verifies path-wise cleanup.
+
+The C++ backend implements raw storage with matched aligned allocation and
+deallocation and publishes a native owner only on success. Copied and moved
+class inputs are materialized in MIR lifetime slots before allocation, not
+deferred until constructor entry. Fallible construction retains the existing
+bounded constructor rollback proof: destroying a completed unpublished native
+representation is valid only where that proof covers its subobjects. Broader
+rollback, targetless generated default/copy/move allocation, and other
+terminal allocation capabilities remain separate migration work.
 
 The current `MirPrinter` schema includes each body domain, carried place key,
 constant or dynamic index metadata, ownership event, complete cleanup-relevant

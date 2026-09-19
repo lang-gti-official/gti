@@ -574,6 +574,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(unique_scalar_allocation_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME unique_class_allocation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/unique_class_allocation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(unique_class_allocation_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME release_version_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/release_version_test.py"
@@ -1563,6 +1570,7 @@ if(Python3_Interpreter_FOUND)
       string_owned_output_runtime string_index_range_runtime forward_list_runtime
       unique_owner_access_runtime
       unique_scalar_allocation_runtime
+      unique_class_allocation_runtime
       managed_thread_end_to_end
       managed_thread_tsan cthread_runtime atomic_end_to_end atomic_tsan mutex_end_to_end
       mutex_tsan
