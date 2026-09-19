@@ -774,6 +774,37 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                                    nativeCall);
                              });
         };
+    const auto exactDeclaredUnsafeOperation =
+        [&](const MirInstruction &instruction) {
+          if (instruction.unsafeOperation !=
+                  UnsafeOperationKind::DeclaredUnsafeCall ||
+              instruction.rawMemoryAccess || instruction.hirValue == 0) {
+            return false;
+          }
+          const auto unsafeCall = [&](const MirInstruction &candidate) {
+            const auto *target =
+                candidate.kind == MirInstructionKind::Call &&
+                        candidate.functionTarget
+                    ? program.findFunctionInstance(*candidate.functionTarget)
+                    : nullptr;
+            return candidate.hirValue == instruction.hirValue &&
+                   candidate.unsafeOperation ==
+                       UnsafeOperationKind::DeclaredUnsafeCall &&
+                   !candidate.rawMemoryAccess && target != nullptr &&
+                   target->requiresUnsafe;
+          };
+          if (instruction.kind == MirInstructionKind::Call) {
+            return unsafeCall(instruction);
+          }
+          return instruction.kind == MirInstructionKind::Lifecycle &&
+                 std::any_of(body.blocks.begin(), body.blocks.end(),
+                             [&](const MirBlock &candidateBlock) {
+                               return std::any_of(
+                                   candidateBlock.instructions.begin(),
+                                   candidateBlock.instructions.end(),
+                                   unsafeCall);
+                             });
+        };
     // A reference parameter cannot raise by itself: the reference is a
     // compile-proven borrow, and what the body reads through it is
     // guarded by the place rules below.
@@ -873,11 +904,13 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         const bool exactRawBoundary = exactRawLifecycle(instruction);
         const bool exactForeignPointer =
             exactForeignPointerOperation(instruction);
+        const bool exactDeclaredUnsafe =
+            exactDeclaredUnsafeOperation(instruction);
         const bool admittedOperationMetadata =
             (instruction.unsafeOperation == UnsafeOperationKind::None &&
              !instruction.rawMemoryAccess) ||
             exactRawComputeInstruction || exactRawMemory || exactRawBoundary ||
-            exactForeignPointer;
+            exactForeignPointer || exactDeclaredUnsafe;
         const bool common =
             admittedOperationMetadata &&
             instruction.closureCaptureTypes.empty() &&
@@ -989,16 +1022,17 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                    exactRawMemory);
           break;
         case MirInstructionKind::Lifecycle:
-          valid = instruction.callSite == 0 && !instruction.callInputRole &&
-                  !instruction.destination && !instruction.receiver &&
-                  instruction.parameterTypes.empty() &&
-                  !instruction.functionTarget && !instruction.result &&
-                  instruction.operation == MirOperation::None &&
-                  !instruction.literal && instruction.definedFailure.empty() &&
-                  instruction.fullExpressionEnd != 0 &&
-                  instruction.operands.empty() &&
-                  (instruction.unsafeOperation == UnsafeOperationKind::None ||
-                   exactRawBoundary || exactForeignPointer);
+          valid =
+              instruction.callSite == 0 && !instruction.callInputRole &&
+              !instruction.destination && !instruction.receiver &&
+              instruction.parameterTypes.empty() &&
+              !instruction.functionTarget && !instruction.result &&
+              instruction.operation == MirOperation::None &&
+              !instruction.literal && instruction.definedFailure.empty() &&
+              instruction.fullExpressionEnd != 0 &&
+              instruction.operands.empty() &&
+              (instruction.unsafeOperation == UnsafeOperationKind::None ||
+               exactRawBoundary || exactForeignPointer || exactDeclaredUnsafe);
           break;
         case MirInstructionKind::CallInput:
           valid = instruction.callSite != 0 &&

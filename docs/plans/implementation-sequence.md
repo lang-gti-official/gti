@@ -2445,6 +2445,12 @@ or MIR prerequisite.
   Raw context retention and manual handle lifetime need explicit unsafe
   obligations; a native thread must not bypass GTI's transfer/share or global
   policy merely by receiving a function pointer.
+- **Caller-contract prerequisite:** namespace-scope GTI `[[unsafe]]` functions
+  make the raw-context/manual-lifetime obligation visible at direct calls and
+  forbid erasing it through safe callable conversion. This does not complete
+  create/join: runtime attachment, concurrent callback entry, synchronization,
+  shutdown, and lifetime/failure containment remain required before that API
+  can ship.
 - **Following families:** identity/equality and sleep; C-style mutexes and
   condition-variable wait/reacquisition; once and thread-specific storage;
   explicit exit/detach with their adopted ownership and shutdown contracts.

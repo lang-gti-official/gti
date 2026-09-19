@@ -206,8 +206,8 @@ valid. A callback binding requires an explicit initializer.
 
 This is not a general first-class GTI function-pointer facility. GTI callback
 values cannot be invoked directly, arithmetically manipulated, cast, or formed
-from lambdas, methods, generic functions, declarations without bodies, or
-inexact overloads. In an exact callback context, one non-generic
+from lambdas, methods, generic functions, `[[unsafe]]` functions, declarations
+without bodies, or inexact overloads. In an exact callback context, one non-generic
 namespace-scope GTI function with a body may convert to the alias:
 
 ```gti

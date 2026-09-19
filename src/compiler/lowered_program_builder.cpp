@@ -577,6 +577,7 @@ private:
             .staticMember = info->staticMember,
             .internalLinkage = info->internalLinkage,
             .constexprFunction = info->constexprFunction,
+            .requiresUnsafe = info->requiresUnsafe,
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
@@ -784,6 +785,8 @@ private:
         source.entryArgumentAppendTarget != lowered.entryArgumentAppendTarget ||
         source.staticMember != lowered.staticMember ||
         source.constexprFunction != lowered.constexprFunction ||
+        source.requiresUnsafe != lowered.requiresUnsafe ||
+        (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
         source.body.placeDomain != lowered.body.placeDomain ||

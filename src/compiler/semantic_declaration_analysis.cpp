@@ -2559,6 +2559,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .staticMember = classMember && function->isStatic(),
           .internalLinkage = !classMember && function->isStatic(),
           .constexprFunction = function->isConstexpr(),
+          .requiresUnsafe = function->unsafeAttribute().has_value(),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage() ? function->name().lexeme : std::string{},
@@ -5435,6 +5436,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .staticMember = declaration.staticMember,
       .internalLinkage = declaration.internalLinkage,
       .constexprFunction = declaration.constexprFunction,
+      .requiresUnsafe = declaration.requiresUnsafe,
       .linkage = declaration.linkage,
       .externalSymbol = declaration.externalSymbol,
       .cArrayCountParameter = declaration.cArrayCountParameter,

@@ -1,0 +1,18 @@
+==================
+Unsafe caller contract
+==================
+
+[[unsafe]] void retain(void* context) {}
+
+---
+
+(source_file
+  (function_declaration
+    (unsafe_function_attribute)
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type (pointer_declarator))
+        (identifier)))
+    (block)))

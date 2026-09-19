@@ -258,6 +258,11 @@ add_executable("gti_native_callback_tests"
 target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
 
+add_executable(gti_unsafe_function_tests
+               "${PROJECT_SOURCE_DIR}/tests/unsafe_function_tests.cpp")
+target_link_libraries(gti_unsafe_function_tests PRIVATE gti_cpp_backend)
+add_test(NAME unsafe_function_contract COMMAND gti_unsafe_function_tests)
+
 add_executable("gti_managed_thread_tests"
                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tests.cpp")
 target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
@@ -545,6 +550,11 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(cthread_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME unsafe_function_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/unsafe_function_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(unsafe_function_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME string_index_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -1568,7 +1578,7 @@ if(Python3_Interpreter_FOUND)
         random_engine_runtime default_parameters_runtime
       compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
       string_owned_output_runtime string_index_range_runtime forward_list_runtime
-      unique_owner_access_runtime
+      unique_owner_access_runtime unsafe_function_runtime
       unique_scalar_allocation_runtime
       unique_class_allocation_runtime
       managed_thread_end_to_end
@@ -1607,6 +1617,10 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
+    add_test(NAME unsafe_function_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"
@@ -1625,7 +1639,7 @@ if(Python3_Interpreter_FOUND)
     )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
-        lsp_protocol block_comment_lsp source_text_lsp
+        lsp_protocol block_comment_lsp source_text_lsp unsafe_function_lsp
         lsp_scalability_benchmark_smoke
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib"

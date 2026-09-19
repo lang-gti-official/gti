@@ -90,9 +90,10 @@ The gated operations are:
 - dereference reads and writes with `*pointer`;
 - raw indexing with `pointer[index]`;
 - raw member access with `pointer->member`;
-- pointer arithmetic, difference, increment, decrement, and `+=`/`-=`; and
+- pointer arithmetic, difference, increment, decrement, and `+=`/`-=`;
 - a call to an `extern "C"` function whose return type or any parameter type is
-  a raw pointer.
+  a raw pointer; and
+- a call to a GTI function declared `[[unsafe]]`.
 
 Unsafe blocks may nest and otherwise follow ordinary block scope and cleanup
 rules. Permission does not escape the closing brace. A nested lambda starts a
@@ -161,6 +162,40 @@ Safe functions and classes may contain reviewed unsafe blocks, but they must
 meet these obligations for every input accepted by their safe public API. A
 safe abstraction must not require its caller to know about an undocumented raw
 pointer precondition.
+
+## Functions With A Caller Obligation
+
+Use `[[unsafe]]` when a namespace-scope GTI function requires the caller to
+establish a precondition that its types and implementation cannot enforce:
+
+```gti
+// Caller: pointer must address a live, initialized int32_t for this call.
+[[unsafe]] int32_t read_raw(const int32_t* pointer) {
+  unsafe { return *pointer; }
+}
+```
+
+Every call to this function requires a lexical `unsafe` block, even when its
+body is empty or its signature contains no pointer. Overload resolution first
+selects the ordinary exact declaration; its unsafe requirement is then checked.
+The attribute does not change overload ranking, return types, ownership,
+checked failure, or cleanup. It does not make the function body unsafe: raw
+operations and calls to other unsafe functions still need explicit blocks.
+The implementation must document the actual obligation; the compiler checks
+the caller's acknowledgement, not the truth of a lifetime or aliasing claim.
+
+This bounded surface admits namespace-scope GTI free functions, including
+`static`, `constexpr`, and generic declarations. It excludes methods,
+constructors, destructors, operators, runtime bindings, `extern "C"`
+declarations, and hosted `main`. Unsafe callable types are not implemented:
+an unsafe function cannot convert to a native callback or a safe function item,
+including an algorithm argument or managed-thread task, even inside `unsafe`.
+A safe wrapper is appropriate only when it establishes the precondition itself.
+
+For a future C-style thread wrapper that retains a raw context, the obligation
+extends until the native consumer has finished, not just until the initiating
+call returns. This attribute does not itself enable concurrent native callbacks,
+runtime attachment, or any additional C-thread operation.
 
 ## Native C ABI
 

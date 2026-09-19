@@ -133,6 +133,7 @@ local ok, problem = xpcall(function()
     "uint64_t selected_extent<uint64_t N>() { return N; }",
     "uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }",
     "int explicit_value_client() { return int(selected_extent<4>()); }",
+    "[[unsafe]] void retain_context(void* context) {}",
     "char marker = 'G';",
     "constexpr uint64_t int_size = sizeof(int32_t);",
     "void raw_write(uint8_t* writable, const uint8_t* readable) {",
@@ -236,6 +237,9 @@ local ok, problem = xpcall(function()
     "sizeof",
     "gtiOperator"
   )
+  require_fallback_syntax(
+    "[[unsafe]] void retain_context(void* context) {}", "unsafe", "gtiAttribute"
+  )
   vim.bo.syntax = active_syntax
 
   local function require_capture(line_text, token, capture)
@@ -256,6 +260,7 @@ local ok, problem = xpcall(function()
   end
 
   require_capture("T choose<std::ordered T>(T left, T right) {", "left", "variable.parameter")
+  require_capture("[[unsafe]] void retain_context(void* context) {}", "unsafe", "attribute")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "selected_extent", "function.call")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "4", "number")
   require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "N", "variable.parameter")

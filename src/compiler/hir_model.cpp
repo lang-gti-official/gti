@@ -158,6 +158,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
   }
+  for (const auto &instance : program.functionInstances()) {
+    const auto *declaration = semantics.findFunction(instance.declaration);
+    if (declaration == nullptr ||
+        instance.requiresUnsafe != declaration->requiresUnsafe) {
+      result.errors.emplace_back(
+          "HIR function unsafe contract differs from its semantic declaration");
+    }
+  }
   for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
        ++index) {
     const HirNativeCallbackAdapter &adapter =
@@ -172,9 +180,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         adapter.type.nativeFunctionParameterTypes();
     if (adapter.id != index + 1 || target == nullptr ||
         target->owner.has_value() || target->source == nullptr ||
-        target->linkage != LanguageLinkage::Gti || declaration == nullptr ||
-        declaration->ownerClass != 0 || returnType == nullptr ||
-        target->returnType != *returnType ||
+        target->requiresUnsafe || target->linkage != LanguageLinkage::Gti ||
+        declaration == nullptr || declaration->ownerClass != 0 ||
+        returnType == nullptr || target->returnType != *returnType ||
         target->parameterTypes.size() != parameterTypes.size() ||
         !std::equal(target->parameterTypes.begin(),
                     target->parameterTypes.end(), parameterTypes.begin())) {
@@ -258,8 +266,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.info.type.functionId != target->declaration ||
           selection->function != target->declaration ||
           selection->declaration != target->source || target->owner ||
-          target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
-          *returnType != target->returnType ||
+          target->linkage != LanguageLinkage::Gti || target->requiresUnsafe ||
+          returnType == nullptr || *returnType != target->returnType ||
           parameters.size() != target->parameterTypes.size() ||
           !std::equal(parameters.begin(), parameters.end(),
                       target->parameterTypes.begin())) {

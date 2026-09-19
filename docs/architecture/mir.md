@@ -94,7 +94,15 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v55`/`mir-body-v48`.
+The deterministic serialization is currently `mir-v56`/`mir-body-v49`.
+Program v56/body v49 retain the resolved `requiresUnsafe` function contract and
+`DeclaredUnsafeCall` instruction marker. HIR checks the declaration flag
+against semantics, MIR checks direct calls against their exact targets and
+rejects unsafe targets in native/managed adapters and function items, and
+lowered construction preserves declaration/instance agreement. The detached
+lowered serialization advances to `lowered-program-v6` for the additional
+declaration flag. This is caller-permission metadata, not a new execution or
+failure mechanism: ordinary calls and existing cleanup still execute from MIR.
 Program v55/body v48 add `AllocateObject`, the generated `ObjectAllocation`
 drop obligation, and the instruction's exact `object-allocation` identity.
 These separate raw allocation from selected ordinary class construction; raw

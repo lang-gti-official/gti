@@ -609,6 +609,13 @@ requireCapture(defaultValueRow, "N", "variable.parameter");
 requireCapture(defaultValueRow, "3", "number");
 requireCapture(defaultValueRow, "<", "punctuation.bracket");
 
+const unsafeFunctionRow = fixtureLines.findIndex((line) =>
+  line.includes("[[unsafe]] void retain_context_highlight"),
+);
+requireCapture(unsafeFunctionRow, "unsafe", "attribute");
+requireCaptureCount(unsafeFunctionRow, "unsafe", "keyword", 0);
+requireCapture(unsafeFunctionRow, "retain_context_highlight", "function");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

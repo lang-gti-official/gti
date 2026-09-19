@@ -30,6 +30,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
   std::string result;
+  if (info.requiresUnsafe) {
+    result += "[[unsafe]] ";
+  }
   if (declaration != nullptr && declaration->nativeCArray()) {
     result += "[[c_array(" +
               declaration->nativeCArray()->countParameter.lexeme + ")]] ";

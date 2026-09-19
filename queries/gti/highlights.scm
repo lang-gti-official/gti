@@ -35,6 +35,7 @@
     name: (identifier) @type.definition))
 (class_attribute_list
   attribute: (identifier) @attribute)
+(unsafe_function_attribute "unsafe" @attribute)
 (native_c_array_attribute
   attribute: (identifier) @attribute
   count: (identifier) @variable.parameter)
@@ -229,7 +230,7 @@
 ] @keyword.repeat
 
 "return" @keyword.return
-"unsafe" @keyword
+(unsafe_statement "unsafe" @keyword)
 "unexpected" @keyword
 "requires" @keyword
 (layout_query_expression

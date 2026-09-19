@@ -3426,8 +3426,17 @@
               "type": "FIELD",
               "name": "attribute",
               "content": {
-                "type": "SYMBOL",
-                "name": "native_c_array_attribute"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "native_c_array_attribute"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "unsafe_function_attribute"
+                  }
+                ]
               }
             },
             {
@@ -3518,6 +3527,23 @@
         {
           "type": "SYMBOL",
           "name": "_function_declaration_body"
+        }
+      ]
+    },
+    "unsafe_function_attribute": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "[["
+        },
+        {
+          "type": "STRING",
+          "value": "unsafe"
+        },
+        {
+          "type": "STRING",
+          "value": "]]"
         }
       ]
     },
