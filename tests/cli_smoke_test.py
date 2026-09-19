@@ -1826,8 +1826,12 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert empty_owner_failure.returncode != 0
-        assert "dereferenced an empty unique owner" in empty_owner_failure.stderr
+        assert empty_owner_failure.returncode == 70
+        assert empty_owner_failure.stdout == ""
+        assert (
+            "runtime error[GTI-R0008]: empty_owner_access in member_access\n"
+            in empty_owner_failure.stderr
+        )
 
         moved_owner_source = root / "moved-owner.gti"
         moved_owner_source.write_text(

@@ -857,6 +857,14 @@ otherwise conservative destructor-failure edge. Program verification replays
 that proof before accepting the non-failing drop. Cross-block or ambiguous
 state stays conservative; this does not eliminate the shell's explicit drop.
 
+The private unique-owner borrow intrinsics are local failure detectors, just
+like checked storage reads. Both read-only and mutable access require one
+`Invoke` edge before reference publication. The operation-specific verifier
+checks the staged owner, pointee type, result loan/access, and one
+`empty_owner_access` outcome with the semantic dereference/member-access
+detail. Failure follows ordinary loan ending and reverse owner cleanup;
+callers propagate the original record without re-siting it.
+
 The current `MirPrinter` schema includes each body domain, carried place key,
 constant or dynamic index metadata, ownership event, complete cleanup-relevant
 class lifecycle shape,

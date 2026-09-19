@@ -1,0 +1,13 @@
+// Empty access must clean the live marker before reporting GTI-R0008.
+#include <std/memory>
+
+class marker {
+public:
+  ~marker() { std::println("cleanup"); }
+};
+
+int main() {
+  marker live = marker();
+  std::unique_ptr<int32_t> empty = std::unique_ptr<int32_t>();
+  return *empty;
+}

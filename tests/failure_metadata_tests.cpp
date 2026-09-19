@@ -1974,6 +1974,108 @@ int main() { return checked_add(1, 2); }
   expectContractRejection(duplicateRecord, "exactly one fixed failure record");
 }
 
+void testUniqueOwnerBorrowFailureEdges() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "/tmp/gti-owner-failure/main.gti", R"(
+#include <std/memory>
+struct Record { mut int32_t value = 1; };
+int32_t read(std::unique_ptr<Record>& owner) {
+  return (*owner).value + owner->value;
+}
+int32_t write(mut std::unique_ptr<Record>& owner) {
+  (*owner).value = 2;
+  owner->value = 3;
+  return 0;
+}
+int main() {
+  mut auto owner = std::make_unique<Record>();
+  return read(owner) + write(owner);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "all four unique-owner access forms need verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  std::size_t detectors = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerBorrow &&
+            instruction.intrinsic !=
+                lang::IntrinsicKind::UniqueOwnerBorrowMut) {
+          continue;
+        }
+        ++detectors;
+        const auto *failure =
+            function.body.findBlock(block.terminator.elseTarget);
+        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id &&
+                   failure != nullptr &&
+                   failure->terminator.kind ==
+                       lang::MirTerminatorKind::PropagateFailure &&
+                   instruction.localFailureSites.size() == 1 &&
+                   function.mayRaiseDefinedFailure,
+               "owner access must check before publishing a reference and "
+               "forward one original failure record");
+        for (int mutation = 0; mutation < 7; ++mutation) {
+          lang::MirProgram forged = frontend.mir;
+          lang::MirBody *body = functionBody(forged, function.id);
+          auto &changedBlock = body->blocks[block.id - 1];
+          auto &changed = *std::find_if(
+              changedBlock.instructions.begin(),
+              changedBlock.instructions.end(),
+              [&](const auto &value) { return value.id == instruction.id; });
+          switch (mutation) {
+          case 0:
+            changedBlock.terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                       .target = block.terminator.target};
+            break;
+          case 1:
+            changed.definedFailure.localOrigins.clear();
+            changed.localFailureSites.clear();
+            break;
+          case 2:
+            changed.definedFailure.localOrigins.front().outcomes.front().code =
+                lang::DefinedFailureCode::AllocationFailure;
+            break;
+          case 3:
+            changed.definedFailure.localOrigins.front()
+                .outcomes.front()
+                .detail = lang::DefinedFailureDetail::PrivateStorage;
+            break;
+          case 4:
+            changed.borrowOrigin = lang::BorrowOriginKind::None;
+            break;
+          case 5:
+            body->loans[*changed.loan - 1].source = 0;
+            break;
+          case 6:
+            body->loans[*changed.loan - 1].access =
+                changed.borrowAccess == lang::AccessMode::Mutable
+                    ? lang::AccessMode::ReadOnly
+                    : lang::AccessMode::Mutable;
+            break;
+          }
+          const auto result = lang::verifyMirProgram(forged);
+          expect(!result.valid(), "forged owner detector, failure edge, or "
+                                  "loan must fail MIR verification");
+          if (mutation != 0) {
+            expect(hasVerificationError(result, "unique-owner borrow"),
+                   "owner failures need an independent operation-specific "
+                   "verifier contract");
+          }
+        }
+      }
+    }
+  }
+  expect(
+      detectors == 4,
+      "read/mutable dereference and arrow each need an exact owner detector");
+}
+
 } // namespace
 
 int main() {
@@ -1984,5 +2086,6 @@ int main() {
   testExternalSourceRouteIdentity();
   testMetadataAndSiteVerifierMutations();
   testCheckedIntegerOperationVerifierContracts();
+  testUniqueOwnerBorrowFailureEdges();
   return passed ? 0 : 1;
 }

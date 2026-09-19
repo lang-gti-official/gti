@@ -4073,6 +4073,8 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
        instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
        instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
+       instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+       instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
        instruction.intrinsic == IntrinsicKind::ExpectedValue) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();

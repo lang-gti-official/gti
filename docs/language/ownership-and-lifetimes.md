@@ -839,6 +839,11 @@ cyclic object graphs can be supported responsibly.
 Owning pointers may be empty, including after movement. Boolean and `nullptr`
 comparisons inspect that state. Dereference and member access on an empty owner
 produce a defined GTI runtime failure rather than undefined behavior.
+For `std::unique_ptr`, both read-only and mutable access now follow explicit
+MIR failure edges: initialized live values are cleaned before status 70 and
+`GTI-R0008` are reported. The original trusted `<std/memory>` operation owns
+the source site and `dereference` or `member_access` detail. A failed checked
+destination also cleans a completed, unpublished right-hand value.
 
 An owner may be initialized directly from the exact `nullptr_t` literal and
 may be reset or assigned `nullptr` later:

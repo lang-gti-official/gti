@@ -190,8 +190,8 @@
       "id": "checked-empty-owner",
       "kind": "runtime_failure",
       "source": "runtime/checked-empty-owner.gti",
-      "contains": ["dereferenced an empty unique owner"],
-      "emit_contains": ["owner_access"]
+      "contains": ["GTI-R0008", "empty_owner_access", "member_access"],
+      "emit_contains": ["GTI_FAILURE_CODE_EMPTY_OWNER_ACCESS_V1"]
     }
   ]
 }

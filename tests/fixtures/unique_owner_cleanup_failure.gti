@@ -1,0 +1,17 @@
+#include <std/memory>
+
+class failing_cleanup {
+public:
+  ~failing_cleanup() {
+    std::println("cleanup");
+    std::unique_ptr<int32_t> empty = std::unique_ptr<int32_t>();
+    int32_t value = *empty;
+  }
+};
+
+int32_t fail(int32_t divisor) {
+  failing_cleanup live = failing_cleanup();
+  return 1 / divisor;
+}
+
+int main() { return fail(0); }

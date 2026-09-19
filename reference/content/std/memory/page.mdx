@@ -69,3 +69,8 @@ borrow rules.
 part of the implicit prelude. `std::shared_ptr`, `std::weak_ptr`, and
 `std::make_shared` are still declaration-only and are excluded from the
 executable synopsis.
+
+Empty `unique_ptr` dereference or arrow access, including mutable access,
+reports `GTI-R0008` after normal cleanup. Its source site is the checked
+operation in `<std/memory>`. `make_unique` currently allocates class/struct
+objects; scalar allocation is not yet implemented.

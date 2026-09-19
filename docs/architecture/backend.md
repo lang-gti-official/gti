@@ -789,6 +789,15 @@ that contract as runtime descriptors and transformed failure siblings where
 the native ABI requires them. It does not infer failure from emitted C++ or use
 C++ exceptions to reconstruct GTI semantics.
 
+Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
+backend tests the represented owner for emptiness and selects only the exact
+code/detail carried by MIR. Its `Invoke` routes failure through cleanup; the
+success path publishes the pointee pointer at the paired reference return.
+The loan keeps that owner stable between the check and publication. This path
+does not call the legacy terminal `owner_access` helper, and a missing failure
+edge or plain-body representation is rejected rather than bypassing caller
+cleanup. No public smart-pointer name is recognized.
+
 Each native callback item produces one typed `extern "C" noexcept` thunk. A
 non-failing target is called directly. A failure-capable target uses its
 verified failure sibling and forwards the original record to the runtime
