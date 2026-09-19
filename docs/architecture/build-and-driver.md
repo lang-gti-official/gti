@@ -137,6 +137,27 @@ synchronization keeps retired platform archives from surviving a successful
 rolling publication while preserving current archives if upload is
 interrupted.
 
+Stable versions describe user-visible toolchain behavior. Internal compiler or
+runtime work, tests, and documentation alone retain `VERSION` and reach users
+through nightly. `scripts/check_release_version.py` conservatively identifies
+potentially shipped files, including deletions and moves. An unchanged version
+requires each affected first-parent commit (or a merge's complete destination-
+parent delta) to carry these Git trailers:
+
+```text
+Release-Impact: internal
+Release-Reason: Explain why no user-visible behavior or public API changes.
+```
+
+This is an explicit author/reviewer impact assertion, not automated proof that
+a change is invisible. User-visible fixes still require a patch increment;
+new or changed surface requires a minor increment. Missing, duplicate,
+malformed, or reason-free declarations fail the check, and a later internal
+commit cannot excuse earlier unclassified changes. Versions may not decrease;
+an internal declaration cannot authorize version churn. Documentation-only
+changes need no trailer. A stable-version advance retains the ordinary release
+workflow, with no competing manual tag.
+
 ## Direct Mode
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
