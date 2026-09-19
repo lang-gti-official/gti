@@ -1,0 +1,11 @@
+#include <std/memory>
+
+int main() {
+  mut auto number = std::make_unique<int32_t>(7);
+  *number = 42;
+  if (*number != 42) { return 1; }
+  number.reset();
+  if (number != nullptr) { return 2; }
+  number = std::make_unique<int32_t>();
+  return *number;
+}

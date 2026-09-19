@@ -5044,11 +5044,41 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
     validateType(pointeeRef);
     validateReferencePlacement(pointeeRef, false, "allocated type");
     const SemanticType pointeeType = typeOf(pointeeRef);
-    if (pointeeType.kind != SemanticType::Class &&
-        pointeeType.kind != SemanticType::TypeParameter) {
+    const bool scalar =
+        isNumeric(pointeeType) || pointeeType == SemanticType::Bool ||
+        pointeeType == SemanticType::Char ||
+        pointeeType.kind == SemanticType::RawPointer ||
+        pointeeType.kind == SemanticType::NativeFunction ||
+        pointeeType == SemanticType::NullPtr ||
+        (pointeeType.kind == SemanticType::Enum && pointeeType.enumId != 0 &&
+         pointeeType.enumId <= enums.size() &&
+         !enums[pointeeType.enumId - 1].payload);
+    if (scalar) {
+      if (const auto arguments =
+              concreteCallArguments(argumentTypes, expr.arguments())) {
+        if (arguments->empty()) {
+          if (!isDefaultInitializable(pointeeType, true)) {
+            report(expr.paren(),
+                   "Allocation of '" + typeSpelling(pointeeType) +
+                       "' requires one value of the exact pointee type; this "
+                       "type has no default initialization.",
+                   "GTI-S2018");
+          }
+        } else if (arguments->size() != 1 ||
+                   (arguments->front().type != SemanticType::Unknown &&
+                    arguments->front().type != pointeeType)) {
+          report(expr.paren(),
+                 "Scalar allocation requires one value of the exact pointee "
+                 "type '" +
+                     typeSpelling(pointeeType) + "'.",
+                 "GTI-S2018");
+        }
+      }
+    } else if (pointeeType.kind != SemanticType::Class &&
+               pointeeType.kind != SemanticType::TypeParameter) {
       report(pointeeRef.name.last(),
              "Compiler-private unique allocation currently requires a "
-             "class, struct, or generic object type.",
+             "class, struct, scalar, or generic object type.",
              "GTI-S2018");
     } else if (pointeeType.kind == SemanticType::Class) {
       if (const std::optional<std::vector<AnalyzedCallArgument>> arguments =

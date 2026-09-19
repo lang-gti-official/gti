@@ -2697,12 +2697,32 @@ mutation, comparison, and full public-example searches were not repeated in
 this checkpoint. These are local macOS results, not CI or cross-host evidence.
 No syntax, token, query, or native ABI changed.
 
-Scalar allocation is a separate unfinished library capability: the private
-unique-allocation semantic boundary currently rejects
-`std::make_unique<int32_t>(7)` because it requires a class/struct object type.
-That rejection does not prevent empty scalar-owner access checks, but it must
-be resolved as part of this campaign rather than counted as completed generic
-`make_unique` support.
+The 0.335.0 scalar `make_unique` checkpoint accepts the exact/default primitive
+initialization family and explicit plain-enum, null, raw-pointer, and
+native-callback values.
+The private MIR allocation retains a mandatory status edge, success-only owner
+activation, and original-record cleanup propagation. Concrete callback pack
+inputs retain their passive native signature through HIR/MIR. C++ representation
+also preserves distinct `char`/`uint8_t` generic arguments instead of emitting
+colliding native member specializations. Focused verifier mutations, exact
+semantic diagnostics, and injected-allocation runtime tests own this boundary.
+Class allocation still uses a terminal helper; exhaustion cleanup and fallible
+class-constructor rollback remain open. This does not close the broader stdlib
+campaign, including full C-style threads and remaining list operations.
+
+All 45 selected compiler/MIR/optimizer, runtime/stdlib, native ABI, CLI, LSP,
+and inventory gates pass after the focused regression reruns. The scalar
+runtime matrix performs 21 builds and runs across C++20/C++23 at O0/O1/O3 plus
+ASan/UBSan, against both the build-tree and fresh installed compiler. It covers
+exhaustion, primary-record preservation during failing cleanup, native callback
+transport, and distinct character/byte owners plus lossless byte-alias
+conversion. Eight clean installed-library consumers pass. The emitter corpus
+retains 3,907 ready bodies, and all 82 examples build and run at both endpoints
+with unchanged MIR ownership. All 68 reference examples, 11 content tests,
+type checks, and the single-worker static build/render checks pass. The optional
+audit's 23 contract cases pass; its broader generated and mutation searches
+were not repeated. These are local macOS results, not CI or cross-host evidence.
+No syntax, token, query, or public native ABI changed.
 
 ### L-GEN-01: Production Generic Function System
 

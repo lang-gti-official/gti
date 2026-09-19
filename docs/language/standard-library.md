@@ -70,7 +70,8 @@ The current implemented foundation includes:
 
 - `<std/memory>` `std::unique_ptr<T>` as a nominal move-only unique owner with
   explicit null construction, reset, null assignment, and checked explicit
-  base upcast, plus the ordinary generic `std::make_unique<T>` and consuming
+  base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct
+  construction or exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions; and
 - `std::array<T, N>` over checked fixed-array storage, including front/back
   access and copyable-element fill; and

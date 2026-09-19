@@ -2076,6 +2076,149 @@ int main() {
       "read/mutable dereference and arrow each need an exact owner detector");
 }
 
+void testScalarUniqueAllocationContracts() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "/tmp/gti-scalar-allocation/main.gti", R"(
+#include <std/memory>
+int main() {
+  auto value = std::make_unique<int32_t>(7);
+  auto zero = std::make_unique<int32_t>();
+  return *value + *zero;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "scalar unique allocation needs verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  std::size_t allocations = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner) {
+          continue;
+        }
+        ++allocations;
+        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id &&
+                   instruction.successResultDrop.has_value(),
+               "allocation must publish an owner only after its success edge");
+        for (int mutation = 0; mutation < 6; ++mutation) {
+          auto forged = frontend.mir;
+          auto *body = functionBody(forged, function.id);
+          auto &changedBlock = body->blocks[block.id - 1];
+          auto &changed = *std::find_if(changedBlock.instructions.begin(),
+                                        changedBlock.instructions.end(),
+                                        [&](const auto &candidate) {
+                                          return candidate.id == instruction.id;
+                                        });
+          switch (mutation) {
+          case 0:
+            changedBlock.terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                       .target = block.terminator.target};
+            break;
+          case 1:
+            changed.definedFailure.localOrigins.clear();
+            changed.localFailureSites.clear();
+            break;
+          case 2:
+            changed.definedFailure.localOrigins.front()
+                .outcomes.front()
+                .detail = lang::DefinedFailureDetail::PrivateStorage;
+            break;
+          case 3:
+            changed.info.type =
+                lang::SemanticType::uniqueOwnerOf(lang::SemanticType::Void);
+            break;
+          case 4:
+            changed.parameterTypes.push_back(lang::SemanticType::Bool);
+            break;
+          case 5:
+            changed.constructorTarget = 1;
+            break;
+          }
+          const auto verified = lang::verifyMirProgram(forged);
+          expect(!verified.valid(),
+                 "forged scalar allocation must fail verification");
+          if (mutation != 0) {
+            expect(hasVerificationError(verified, "scalar unique allocation"),
+                   "scalar allocation must have an independent exact contract");
+          }
+        }
+      }
+    }
+  }
+  expect(allocations == 2,
+         "default and exact-value scalar allocation are distinct instances");
+
+  const auto callback = lang::Frontend().analyze(
+      "/tmp/gti-scalar-callback/main.gti", R"(
+#include <std/memory>
+using callback = (int32_t) -> int32_t;
+int main() {
+  callback empty = nullptr;
+  auto owner = std::make_unique<callback>(empty);
+  return *owner == nullptr ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(callback.canGenerateCode(),
+         "callback values need scalar owner allocation");
+  if (!callback.canGenerateCode()) {
+    printDiagnostics(callback);
+  }
+
+  for (const auto &[expression, fragment] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"std::make_unique<uint32_t>(7)", "exact pointee type"},
+           {"std::make_unique<bool>(1)", "exact pointee type"},
+           {"std::make_unique<int32_t>(1, 2)", "exact pointee type"},
+           {"std::make_unique<choice>()", "no default initialization"},
+           {"std::make_unique<nullptr_t>()", "no default initialization"},
+           {"std::make_unique<callback>()", "no default initialization"}}) {
+    const std::string path = "/tmp/gti-invalid-scalar/main.gti";
+    const auto rejected = lang::Frontend().analyze(
+        path,
+        "#include <std/memory>\nenum class choice { one };\n"
+        "using callback = (int32_t) -> int32_t;\n"
+        "int main() { auto owner = " +
+            expression + "; return 0; }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode(),
+           "inexact scalar allocation must be rejected");
+    const auto diagnostic =
+        std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [&](const auto &value) {
+                       return value.code == "GTI-S2018" &&
+                              value.message.find(fragment) != std::string::npos;
+                     });
+    expect(diagnostic != rejected.diagnostics.end(),
+           "scalar allocation needs its owning semantic diagnostic");
+    if (diagnostic != rejected.diagnostics.end()) {
+      const auto *source = rejected.sources.find(diagnostic->primary.source);
+      expect(diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+                 diagnostic->severity == lang::DiagnosticSeverity::Error &&
+                 diagnostic->fixes.empty() && source != nullptr &&
+                 std::filesystem::path(diagnostic->primary.source).filename() ==
+                     "memory.gti" &&
+                 source->substr(diagnostic->primary.start,
+                                diagnostic->primary.end -
+                                    diagnostic->primary.start) == ")" &&
+                 std::any_of(diagnostic->related.begin(),
+                             diagnostic->related.end(),
+                             [&](const auto &related) {
+                               return std::filesystem::weakly_canonical(
+                                          related.span.source) ==
+                                      std::filesystem::weakly_canonical(path);
+                             }),
+             "invalid generic allocation must retain exact stdlib span and "
+             "application instantiation");
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -2087,5 +2230,6 @@ int main() {
   testMetadataAndSiteVerifierMutations();
   testCheckedIntegerOperationVerifierContracts();
   testUniqueOwnerBorrowFailureEdges();
+  testScalarUniqueAllocationContracts();
   return passed ? 0 : 1;
 }

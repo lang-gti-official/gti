@@ -339,13 +339,13 @@ mir_checked_index_bounds_v1(std::uint64_t index, std::uint64_t size,
 template <typename Index>
 inline mir_failure_status_v1
 mir_checked_string_view_at_v1(std::string_view value, Index index,
-                              std::uint8_t *result) noexcept {
+                              char8_t *result) noexcept {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
   if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_STRING_VIEW_V1};
   }
-  *result = static_cast<std::uint8_t>(static_cast<unsigned char>(
+  *result = static_cast<char8_t>(static_cast<unsigned char>(
       value[static_cast<std::size_t>(index)]));
   return mir_failure_success_v1;
 }
@@ -478,6 +478,23 @@ inline mir_failure_status_v1 mir_checked_array_write_v1(
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
   array[static_cast<std::size_t>(index)] = value;
+  return mir_failure_success_v1;
+}
+
+// Scalar initialization cannot execute user code. Allocation is the sole
+// detector here; the caller's MIR owns its record, cleanup, and publication.
+template <typename T, typename... Args>
+inline mir_failure_status_v1
+mir_allocate_unique_scalar_v1(std::unique_ptr<T> *result, Args... args) noexcept {
+  static_assert(std::is_scalar_v<T> && sizeof...(Args) <= 1);
+  // A direct allocation-function call cannot be elided as a C++ new-expression;
+  // GTI's allocation outcome must remain observable at this MIR instruction.
+  void *storage = ::operator new(sizeof(T), std::nothrow);
+  if (storage == nullptr) {
+    return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+            GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1};
+  }
+  result->reset(std::construct_at(static_cast<T *>(storage), args...));
   return mir_failure_success_v1;
 }
 

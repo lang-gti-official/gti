@@ -37,6 +37,17 @@ the application instantiation site when that use is invalid. The backend invokes
 the resolved stdlib function rather than replacing the public API with a backend
 allocation call. `std::make_shared` remains planned.
 
+Scalar allocation admits the fixed-width integers, `float`, `double`, `bool`,
+`char`, plain enums, raw pointers, `nullptr_t`, and named native callbacks.
+One initializer must have the exact pointee type; allocation introduces no
+implicit numeric or callback conversion. With no initializer, integers,
+floating values, booleans, and characters become zero, and raw pointers become
+null. Plain enums, `nullptr_t`, and callbacks require an explicit value under
+their existing GTI initialization rules. Allocating a raw pointer owns only the
+stored pointer value, never its pointee, and does not relax raw-pointer or
+reference restrictions. Arrays and other compound scalar-like values are not
+admitted by this allocation slice.
+
 `std::upcast_unique<Base, Derived>(owner)` is an explicit, consuming ordinary
 stdlib operation. Semantics admits it only when `Base` is a public base of
 `Derived` and has polymorphic destruction. The private owner representation is
@@ -868,10 +879,14 @@ call arguments still require an exact parameter type.
 The default `make_unique` operation is infallible at the type level: allocation
 exhaustion raises `GTI-R0011` with detail `unique_owner`. Future
 `try_make_unique` and `try_make_shared` APIs may return `expected` for programs
-that need recoverable allocation failure. The backend contains native
-allocation failure at the generated boundary and routes the admitted operation
-through GTI's defined-failure record and cleanup contract; native allocator
-exceptions are not exposed to source.
+that need recoverable allocation failure. Scalar allocation returns a checked
+status to the verified MIR `Invoke`: the owner becomes live only on success,
+and exhaustion runs caller cleanup before the original allocation record is
+reported. Allocation failure during failure cleanup preserves the primary
+record and reports `GTI-R0014`. Native allocator exceptions are not exposed to
+source. Class/struct allocation still uses a terminal allocation boundary;
+its allocation-failure cleanup and fallible-constructor rollback are remaining
+implementation gaps, not guarantees established by the scalar path.
 
 ## Destruction
 

@@ -545,7 +545,7 @@ int main() {
       lang::OptimizationLevel::O1, &optimized);
   expect(generated.find("using string_view = std::string_view;") !=
                  std::string::npos &&
-             generated.find("std::uint8_t{71}") != std::string::npos &&
+             generated.find("char8_t{71}") != std::string::npos &&
              generated.find("std::string_view{\"GTI\\000text\", 8}") !=
                  std::string::npos &&
              generated.find(
@@ -696,7 +696,7 @@ int main() {
   expect(
       generated.find("class string") != std::string::npos &&
           generated.find("::gti_internal::backend::prefix_storage<"
-                         "std::uint8_t> data") != std::string::npos &&
+                         "char8_t> data") != std::string::npos &&
           generated.find("string(const string &) = delete;") !=
               std::string::npos &&
           generated.find("string(string &&) = default;") != std::string::npos &&

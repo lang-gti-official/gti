@@ -47,14 +47,15 @@ api:
   - std/memory|function|std::try_make_pool
 examples:
   - allocate-and-reuse
+  - scalar-owner
 ---
 
 ```gti
 #include <std/memory>
 ```
 
-Allocation is recoverable and returns `expected`; it does not expose `new`,
-`delete`, an allocation address, or an unchecked deallocation operation.
+Typed storage allocation is recoverable and returns `expected`; it does not
+expose `new`, `delete`, an allocation address, or an unchecked deallocation operation.
 `std::storage<T>` owns a fixed number of independently initialized slots and
 drops every remaining live value before releasing the allocation.
 
@@ -72,5 +73,12 @@ executable synopsis.
 
 Empty `unique_ptr` dereference or arrow access, including mutable access,
 reports `GTI-R0008` after normal cleanup. Its source site is the checked
-operation in `<std/memory>`. `make_unique` currently allocates class/struct
-objects; scalar allocation is not yet implemented.
+operation in `<std/memory>`. `make_unique` allocates class/struct objects and
+scalar values. A scalar initializer must match `T` exactly. Numeric, boolean,
+character, and raw-pointer values also support zero/null initialization with
+no argument; plain enums, `nullptr_t`, and native callbacks need an explicit
+value. Allocating a raw pointer does not acquire ownership of its pointee.
+
+Unlike typed storage allocation, `make_unique` does not return `expected`.
+Scalar exhaustion reports `GTI-R0011` after normal cleanup. Class allocation's
+failure cleanup and fallible-constructor rollback are still incomplete.

@@ -2492,6 +2492,10 @@ private:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
       return true;
+    case SemanticType::NativeFunction:
+      // A named native callback value is a passive pointer, not a confined
+      // GTI callable. Packs retain its exact native signature by value.
+      return type.hasNativeFunctionShape();
     case SemanticType::Enum:
       return !instanceProvider->requiresActiveCleanupFor(type);
     default:

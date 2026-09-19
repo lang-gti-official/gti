@@ -4024,6 +4024,9 @@ public:
 };
 
 int32_t main() {
+  auto scalar = std::make_unique<int32_t>(7);
+  auto zero = std::make_unique<int32_t>();
+  if (*scalar != 7 || *zero != 0) { return 1; }
   mut std::unique_ptr<Derived> derived = std::make_unique<Derived>();
   mut std::unique_ptr<Base> base =
       std::upcast_unique<Base, Derived>(std::move(derived));
@@ -4122,9 +4125,39 @@ int32_t main() {
   const lang::CppMirBodyEmissionText text =
       emitter.emitFailureBodyText(address, "unique-owner-upcast-test-v0", 1);
   std::size_t checkedBorrows = 0;
+  std::size_t checkedAllocations = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
+            instruction.info.type.arguments ==
+                std::vector<lang::SemanticType>{lang::SemanticType::Int32}) {
+          ++checkedAllocations;
+          const lang::MirBodyAddress allocationAddress{
+              .kind = lang::MirBodyKind::Function, .owner = function.id};
+          expect(emitter.analyze(allocationAddress).ready() &&
+                     !emitter.supportsBodyText(allocationAddress) &&
+                     emitter.supportsFailureBodyText(allocationAddress),
+                 "scalar allocation must require the MIR failure ABI");
+          if (emitter.supportsFailureBodyText(allocationAddress)) {
+            const auto allocationText = emitter.emitFailureBodyText(
+                allocationAddress, "scalar-allocation-test-v0", 1);
+            expect(allocationText.text.find("mir_allocate_unique_scalar_v1<") !=
+                           std::string::npos &&
+                       allocationText.text.find(
+                           ".code == GTI_FAILURE_CODE_NONE_V1") !=
+                           std::string::npos &&
+                       allocationText.text.find("*__gti_mir_failure_record = "
+                                                "::gti_failure_record_v1{") !=
+                           std::string::npos &&
+                       allocationText.text.find("return false;") !=
+                           std::string::npos &&
+                       allocationText.text.find("::backend::make_unique<") ==
+                           std::string::npos,
+                   "scalar allocation must inspect status and retain its "
+                   "failure return");
+          }
+        }
         if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerBorrow &&
             instruction.intrinsic !=
                 lang::IntrinsicKind::UniqueOwnerBorrowMut) {
@@ -4160,6 +4193,8 @@ int32_t main() {
   }
   expect(checkedBorrows != 0,
          "the upcast client must exercise checked owner access");
+  expect(checkedAllocations == 2,
+         "both scalar allocation forms need checked production emission");
   const std::size_t upcastCall = text.text.find("unique_owner_upcast<");
   const std::size_t movedArgument = text.text.find(">(std::move(", upcastCall);
   expect(text.text.find("unique_owner_upcast<") != std::string::npos &&
