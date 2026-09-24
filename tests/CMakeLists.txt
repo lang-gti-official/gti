@@ -753,6 +753,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/install_neovim_local.py"
   )
   add_test(
+    NAME native_packages
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/native_packages_test.py"
+  )
+  add_test(
     NAME gitea_release_asset_sync
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/gitea_release_asset_sync_test.py"

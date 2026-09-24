@@ -8,6 +8,14 @@ assertions.
 
 ## Primary Targets
 
+The `native_packages` CTest runs offline preparation-safety and inventory
+checks without acquiring upstream code. After explicitly preparing the optional
+packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
+GLFW version, GLAD loader state, SQLite prepared statements, a headless cimgui
+frame, zlib compression, and libpng encode/decode plus invalid input/capacity
+handling. This separate integration gate needs the pinned native sources and
+does not run network acquisition implicitly during the compiler test suite.
+
 | CTest target | Owns |
 | --- | --- |
 | `compiler_pipeline` | manifest-backed aggregate of 141 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |

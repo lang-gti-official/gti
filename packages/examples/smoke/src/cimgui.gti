@@ -1,0 +1,20 @@
+#include <cimgui/cimgui>
+
+int main() {
+  unsafe {
+    imgui::ImGuiContext* context = imgui::gti_imgui_create_context();
+    if (context == nullptr) { return 1; }
+    imgui::gti_imgui_configure_frame(640.0, 480.0, 0.016);
+    imgui::gti_imgui_new_frame();
+    if (imgui::gti_imgui_begin("GTI binding smoke", nullptr, 0) != 0) {
+      imgui::gti_imgui_text("A frame generated through cimgui.");
+      [[discard]] imgui::gti_imgui_button("Button", 100.0, 30.0);
+    }
+    imgui::gti_imgui_end();
+    imgui::gti_imgui_render();
+    int32_t valid = imgui::gti_imgui_draw_data_valid();
+    imgui::gti_imgui_destroy_context(context);
+    if (valid == 0) { return 2; }
+  }
+  return 0;
+}

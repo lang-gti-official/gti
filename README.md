@@ -430,12 +430,18 @@ inputs, not promises that a feature has shipped.
 
 ## Repository map
 
+Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib and libpng live
+under [`packages/`](packages/README.md). Prepare the pinned sources with
+`python3 packages/prepare.py`, then use them as GTI path dependencies. They are
+separate from the standard library and require no compiler-specific handling.
+
 | Path | Responsibility |
 | --- | --- |
 | `include/gti/`, `src/compiler/` | compiler frontend, semantic model, HIR, MIR, optimization, and backend |
 | `include/gti/driver/`, `src/driver/` | reusable compilation, project, artifact, and native toolchain driver |
 | `src/cli/`, `src/lsp/` | command-line and language-server entry points |
 | `stdlib/`, `runtime/` | public GTI library source, private capabilities, and narrow host runtime |
+| `packages/` | optional native-library bindings, pinned source preparation and package consumers |
 | `tree-sitter-gti/`, `queries/gti/` | parser and Neovim structural queries |
 | `tests/`, `examples/` | verification and user programs |
 | `docs/` | compiler architecture, language specification, decisions, plans, and agent routing |

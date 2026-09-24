@@ -1,0 +1,18 @@
+#include <zlib/zlib>
+
+int main() {
+  mut uint8_t source[4] = {1, 2, 3, 4};
+  mut uint8_t packed[64] = {};
+  mut uint8_t restored[4] = {};
+  mut uint64_t packed_size = 64;
+  mut uint64_t restored_size = 4;
+  unsafe {
+    if (zlib::compress2(&packed[0], &packed_size, &source[0], uint64_t(4), 6) != zlib::Z_OK) { return 1; }
+    if (zlib::uncompress(&restored[0], &restored_size, &packed[0], packed_size) != zlib::Z_OK) { return 2; }
+  }
+  if (restored_size != 4) { return 3; }
+  for (mut int32_t index = 0; index < 4; index++) {
+    if (restored[index] != source[index]) { return 4; }
+  }
+  return 0;
+}

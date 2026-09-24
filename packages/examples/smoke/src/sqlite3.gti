@@ -1,0 +1,20 @@
+#include <sqlite3/sqlite3>
+
+int main() {
+  unsafe {
+    mut sqlite::sqlite3* database = nullptr;
+    if (sqlite::sqlite3_open(":memory:", &database) != sqlite::SQLITE_OK) { return 1; }
+    mut sqlite::sqlite3_stmt* statement = nullptr;
+    if (sqlite::sqlite3_prepare_v2(database, "SELECT ?1 + 2;", -1, &statement, nullptr) != sqlite::SQLITE_OK) {
+      [[discard]] sqlite::sqlite3_close(database);
+      return 2;
+    }
+    mut int32_t result = 0;
+    if (sqlite::sqlite3_bind_int(statement, 1, 40) != sqlite::SQLITE_OK) { result = 3; }
+    if (result == 0 && sqlite::sqlite3_step(statement) != sqlite::SQLITE_ROW) { result = 4; }
+    if (result == 0 && sqlite::sqlite3_column_int(statement, 0) != 42) { result = 5; }
+    if (sqlite::sqlite3_finalize(statement) != sqlite::SQLITE_OK) { result = 6; }
+    if (sqlite::sqlite3_close(database) != sqlite::SQLITE_OK) { result = 7; }
+    return result;
+  }
+}
