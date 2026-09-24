@@ -2442,7 +2442,11 @@ or MIR prerequisite.
 
 ### C-CTHREAD-01: C-Style Threading Library Completion
 
-- **State/role:** active; required by the standard-library completion request.
+- **State/role:** deferred outside the current standard-library completion and
+  1.0 goal at the user's request (2026-09-24). Preserve and regression-test the
+  implemented surface; thread-specific storage and explicit exit/detach are
+  not completion gates for this campaign. The existing safe managed-thread,
+  atomic, and mutex APIs remain in scope.
   This is a separate C-style surface, not a rename of `std::thread` and not
   completion of a module merely because its include or yield operation works.
 - **First executable slice:** `std::thrd_yield()` permits cooperative backoff
@@ -2637,8 +2641,9 @@ name recognition.
 ### Active Request: Complete The Existing Standard Library
 
 The current user-requested campaign includes **every operation already present
-in the shipped stdlib**, not merely the executable entries in the surface
-manifest. Declaration-only functions, placeholder constructors, and currently
+in the shipped stdlib, except further C-style thread completion**, not merely
+the executable entries in the surface manifest. Declaration-only functions,
+placeholder constructors, and currently
 unsupported compositions remain completion work. The manifest is an evidence
 ledger, not permission to exclude a declared API. Required language capabilities
 must ship through verified MIR with their real library clients.
@@ -2651,17 +2656,15 @@ library operations revealed by source-by-source review. Existing placeholder
 bodies require behavior tests, not just successful linkage. This campaign does
 not claim completion from an include-only or manifest-only pass.
 
-The user explicitly includes `stdlib/std/cthread.gti` in this campaign. The
-initially empty module is not unrelated workspace material. The user selected
-C-style thread creation/join, mutexes, condition variables, and thread-specific
-storage alongside the existing safe `std::thread` API. Native thread entry,
-callbacks, lifetimes, synchronization,
-failure containment, and execution-profile rules must remain consistent with
-ADR 008 and the concurrency contract. Concurrent GTI callback conversion now
-admits only the exact registered C-thread entry shape; unsupported signatures
-and missing runtime declarations still reject with `GTI-S2076`. Native
-attachment and cleanup must precede entry. An empty include or
-unchecked forwarding to native thread functions is not completion evidence.
+**Current scope override (2026-09-24):** the user removed further C-style
+thread work from this goal because it is not a core 1.0 requirement. This
+supersedes the earlier request to complete `stdlib/std/cthread.gti` and the
+historical checkpoints below that list full C-thread completion as remaining
+campaign work. Do not remove existing APIs, tests, or their safety contracts;
+their regressions still matter. Defer TSS, detach, and exit under
+`C-CTHREAD-01` without claiming that module complete. The safe managed-thread,
+atomic, and mutex APIs are unaffected. Prioritize the core ownership,
+container, iterator, algorithm, and utility families listed above.
 
 The first local executable slice adds `std::thrd_yield()` for cooperative
 scheduling/backoff in ordinary or managed code. It has no resource, failure
@@ -2674,11 +2677,11 @@ toolchain. The managed fixture also passes ThreadSanitizer. All 35 stdlib
 surface cases, the include sweep, direct CLI workflow, eight installed-library
 consumers, 66 reference examples, content/type checks, and single-worker static
 site build/render checks pass locally on macOS. Other host platforms still
-need their own execution evidence. The rest of the requested
-C-style thread surface remains in this campaign: subsequent create/join,
-identity, sleep, mutex, and condition evidence is recorded in `C-CTHREAD-01` above; once,
-explicit lifecycle and thread-specific storage are still
-pending. Yielding alone is not module completion.
+need their own execution evidence. Subsequent create/join, identity, sleep,
+mutex, condition, and once evidence is recorded in `C-CTHREAD-01` above.
+Explicit lifecycle and thread-specific storage are still unimplemented but,
+under the current scope override, no longer block this campaign. Yielding
+alone was not module completion.
 
 Binary32 mathematics is the first completed slice: all 18 previously
 bodyless `<std/cmath>` functions now have ordinary GTI wrappers over a scalar
