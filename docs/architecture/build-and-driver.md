@@ -639,6 +639,17 @@ discovery covers group sources.
 
 ### Vendored Native Dependencies
 
+The repository's optional `packages/` collection exercises this contract with
+GLFW, GLAD, SQLite3, cimgui, zlib and libpng. Its explicit preparation command
+verifies pinned upstream archives, generates public GTI units with `gti bindgen`,
+and prepares GLFW's platform archive through upstream CMake. Ordinary project
+builds compile the other native C/C++ inputs through isolated package groups;
+libpng composes its zlib dependency through the normal package graph. These are
+prepared local path packages, not registry entries or automatic build hooks.
+Generated public bindings are direct source units because including a private
+bindgen unit does not re-export its declarations. See
+[`packages/README.md`](../../packages/README.md) for commands and API limits.
+
 The composition rules above and the bindgen imports below combine into one
 workflow worth naming, because it is what makes a GTI project portable: a
 dependency may **vendor a C library** and a consumer needs no system

@@ -1,0 +1,29 @@
+manifest-version = 1
+
+[package]
+name = "gti-glfw"
+version = "0.1.0"
+
+[[package.native.platforms]]
+os = "macos"
+arch = "arm64"
+link-files = ["native/lib/macos-arm64/libglfw3.a"]
+frameworks = ["Cocoa", "IOKit", "CoreFoundation"]
+
+[[package.native.platforms]]
+os = "macos"
+arch = "x86_64"
+link-files = ["native/lib/macos-x86_64/libglfw3.a"]
+frameworks = ["Cocoa", "IOKit", "CoreFoundation"]
+
+[[package.native.platforms]]
+os = "linux"
+arch = "arm64"
+link-files = ["native/lib/linux-arm64/libglfw3.a"]
+libraries = ["m", "dl", "pthread"]
+
+[[package.native.platforms]]
+os = "linux"
+arch = "x86_64"
+link-files = ["native/lib/linux-x86_64/libglfw3.a"]
+libraries = ["m", "dl", "pthread"]

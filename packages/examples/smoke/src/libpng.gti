@@ -1,0 +1,19 @@
+#include <libpng/libpng>
+
+int main() {
+  mut uint8_t pixels[4] = {255, 0, 0, 255};
+  mut uint8_t encoded[256] = {};
+  mut uint8_t decoded[4] = {};
+  unsafe {
+    png::GtiPngResult written = png::gti_png_encode_rgba(&pixels[0], uint64_t(4), uint32_t(1), uint32_t(1), &encoded[0], uint64_t(256));
+    if (written.status != png::GTI_PNG_OK) { return 1; }
+    png::GtiPngResult read = png::gti_png_decode_rgba(&encoded[0], written.bytes, &decoded[0], uint64_t(4));
+    if (read.status != png::GTI_PNG_OK || read.width != 1 || read.height != 1) { return 2; }
+    if (decoded[0] != 255 || decoded[1] != 0 || decoded[2] != 0 || decoded[3] != 255) { return 3; }
+    png::GtiPngResult small = png::gti_png_decode_rgba(&encoded[0], written.bytes, &decoded[0], uint64_t(3));
+    if (small.status != png::GTI_PNG_BUFFER_SMALL) { return 4; }
+    png::GtiPngResult invalid = png::gti_png_info(&pixels[0], uint64_t(4));
+    if (invalid.status != png::GTI_PNG_INVALID) { return 5; }
+  }
+  return 0;
+}

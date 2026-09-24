@@ -1,0 +1,57 @@
+{
+  "glfw": {
+    "version": "3.4",
+    "revision": "7b6aead9fb88b3623e3b3725ebb42670cbe4c579",
+    "url": "https://codeload.github.com/glfw/glfw/tar.gz/7b6aead9fb88b3623e3b3725ebb42670cbe4c579",
+    "sha256": "169d49096e339caabbc12e1762273c5cb9130a535a282ba46cf5c14ab6e55694",
+    "destination": "glfw/vendor/glfw",
+    "license": "LICENSE.md"
+  },
+  "glad": {
+    "version": "2.0.8",
+    "revision": "73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+    "url": "https://codeload.github.com/Dav1dde/glad/tar.gz/73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+    "sha256": "33dbeae44d8315ece57e14eba4b1b4a02ac5406d1c4f49cd20048c91522a6b9a",
+    "destination": "glad/vendor/glad",
+    "license": "LICENSE"
+  },
+  "sqlite3": {
+    "version": "3.53.4",
+    "url": "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip",
+    "sha256": "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+    "destination": "sqlite3/vendor/sqlite3",
+    "license": "sqlite3.h"
+  },
+  "cimgui": {
+    "version": "pinned-master",
+    "revision": "bb4d4848b759e037a6cc26d23be0387a148ac39f",
+    "url": "https://codeload.github.com/cimgui/cimgui/tar.gz/bb4d4848b759e037a6cc26d23be0387a148ac39f",
+    "sha256": "aeecff515891239fd16e37b976928b569f65ec5f6b752dac42ca2ae11b0c38d2",
+    "destination": "cimgui/vendor/cimgui",
+    "license": "LICENSE"
+  },
+  "zlib": {
+    "version": "1.3.2",
+    "revision": "da607da739fa6047df13e66a2af6b8bec7c2a498",
+    "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz",
+    "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+    "destination": "zlib/vendor/zlib",
+    "license": "LICENSE"
+  },
+  "libpng": {
+    "version": "1.6.58",
+    "revision": "3061454d980de7d53608f594194cfac722721d2a",
+    "url": "https://codeload.github.com/pnggroup/libpng/tar.gz/3061454d980de7d53608f594194cfac722721d2a",
+    "sha256": "a2569b7553971e36e86c8f75b9d1b5abbe92c436e05169afe3f0072e937f3536",
+    "destination": "libpng/vendor/libpng",
+    "license": "LICENSE"
+  },
+  "imgui": {
+    "version": "cimgui-matched-submodule",
+    "revision": "f1cc2ae15e53a861a874c3034aae6798fde194ab",
+    "url": "https://codeload.github.com/ocornut/imgui/tar.gz/f1cc2ae15e53a861a874c3034aae6798fde194ab",
+    "sha256": "f30be7f3e2136615b1848a9afb72f6dfd8a60820ddf1c1a85997bf3b722e7cfc",
+    "destination": "cimgui/vendor/cimgui/imgui",
+    "license": "LICENSE.txt"
+  }
+}
