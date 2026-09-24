@@ -390,6 +390,12 @@ diagnostics or letting a backend message choose either identity.
   prerequisite. Do not suggest filing a compiler bug. A generic text-vocabulary
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
+  One such classification is a fallible source function returning a class value
+  in a declaration-time field initializer (Gitea #2): the backend lacks the
+  enclosing constructor failure channel. The diagnostic names that prerequisite
+  and suggests null initialization plus a later initialization method only for
+  assignable nullable owners. It offers no automatic fix-it and does not claim
+  the valid initializer is supported.
 
 `GTI-S2029` owns failure of a declared public concept relationship before a
 generic body is instantiated. It retains the source concept name and required

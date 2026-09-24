@@ -765,6 +765,7 @@ readinessForIssue(CppMirBodyEmissionIssueKind kind) {
   case CppMirBodyEmissionIssueKind::MissingCallInputScheduleMir:
   case CppMirBodyEmissionIssueKind::MissingConstructionScheduleMir:
   case CppMirBodyEmissionIssueKind::MissingPartialConstructionRollbackMir:
+  case CppMirBodyEmissionIssueKind::MissingFieldInitializerFailureRouting:
   case CppMirBodyEmissionIssueKind::MissingFailureCleanupMir:
   case CppMirBodyEmissionIssueKind::MissingProgramInitializationMir:
   case CppMirBodyEmissionIssueKind::MissingHostedStartupMir:
@@ -7958,9 +7959,8 @@ failureDestructorTarget(const MirProgram &program, const MirBody &body,
                         const MirInstruction &instruction);
 
 [[nodiscard]] bool
-containedInitializerDestructorCannotFail(const MirProgram &program,
-                                         const MirBody &body,
-                                         const MirInstruction &instruction) {
+containedInitializerDestructor(const MirProgram &program, const MirBody &body,
+                               const MirInstruction &instruction) {
   const MirDestructorInstance *target =
       failureDestructorTarget(program, body, instruction);
   if (target == nullptr || instruction.lifecycle.size() != 1)
@@ -7971,7 +7971,12 @@ containedInitializerDestructorCannotFail(const MirProgram &program,
     return false;
   for (const auto id : mirDropDestructorTargets(drop->dropType)) {
     const auto *selected = program.findDestructorInstance(id);
-    if (selected == nullptr || !failureStatusCannotFail(selected->body))
+    // This is only a shape witness for an unreachable rollback edge. The
+    // initializer schedule separately proves that every producer either
+    // succeeds or contains its failure, so a destructor's ability to fail
+    // cannot make this dead edge executable. In particular, an empty owner
+    // must not depend on the failure summary of its absent pointee.
+    if (selected == nullptr)
       return false;
   }
   return true;
@@ -8325,8 +8330,7 @@ directOwningFieldInitializerTransfers(const MirProgram &program,
             place->projections.empty();
         const bool containedDestructorDrop =
             (fieldRollbackDrop || aggregateElementDrop) &&
-            containedInitializerDestructorCannotFail(program, body,
-                                                     instruction);
+            containedInitializerDestructor(program, body, instruction);
         if (block.activeFailure == 0 || event == nullptr || drop == nullptr ||
             place == nullptr || instruction.result ||
             !instruction.operands.empty() ||
@@ -8405,8 +8409,7 @@ directOwningFieldInitializerTransfers(const MirProgram &program,
       }
       if (cleanupDrop && !instruction.definedFailure.empty()) {
         if (containedDestructor != nullptr ||
-            !containedInitializerDestructorCannotFail(program, body,
-                                                      instruction)) {
+            !containedInitializerDestructor(program, body, instruction)) {
           return false;
         }
         containedDestructor = &instruction;
@@ -15169,6 +15172,32 @@ private:
       if (const MirClassInstance *owner =
               program.findClassInstance(result.body.owner)) {
         requireType(owner->type);
+      }
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          const MirFunctionInstance *target =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (instruction.kind == MirInstructionKind::Call &&
+              target != nullptr &&
+              target->definitionKind == MirDefinitionKind::Source &&
+              target->mayRaiseDefinedFailure && instruction.result &&
+              instruction.info.type.kind == SemanticType::Class &&
+              instruction.definedFailure.propagation ==
+                  FailurePropagationKind::DirectCall &&
+              invokePairedInstruction(body, instruction.id)) {
+            add(CppMirBodyEmissionIssueKind::
+                    MissingFieldInitializerFailureRouting,
+                block.id, instruction.id,
+                "a failure-capable function returning a class value in a "
+                "declaration-time field initializer needs constructor failure "
+                "propagation that this backend does not yet implement; for an "
+                "assignable nullable owner, initialize the field to nullptr "
+                "and perform the allocation/assignment in an initialization "
+                "method after construction");
+          }
+        }
       }
       return;
     case MirBodyKind::StaticFieldInitializers:
@@ -30942,9 +30971,36 @@ plainConstructedFieldTarget(const MirProgram &program,
     return true;
   }
   probing.push_back(target.id);
-  const bool published =
+  bool published =
       !cppMirConstructedFieldInitializerBindings(program, target).empty();
   probing.pop_back();
+  if (!published && owner != nullptr &&
+      passiveConstructorFieldInitializers(program, owner->fieldInitializers) &&
+      target.body.blocks.size() == 1 && target.body.dropObligations.empty() &&
+      target.body.loans.empty() &&
+      target.body.blocks.front().terminator.kind == MirTerminatorKind::Return) {
+    // A scalar parameter-to-field constructor also has an ordinary overload.
+    // Its conservative may-raise summary is not evidence of a failure edge.
+    // Claim only the complete copy/boundary schedule; additional body work
+    // must still be proved by a different constructor representation.
+    const auto copies = cppMirCopyParameterFieldBindings(program, target);
+    if (copies && !copies->empty() &&
+        copies->size() == target.initializers.size()) {
+      std::unordered_set<MirInstructionId> claimed;
+      for (const auto &copy : *copies) {
+        claimed.insert(copy.loadInstruction);
+        claimed.insert(copy.boundaryInstruction);
+        if (copy.initializeInstruction != 0)
+          claimed.insert(copy.initializeInstruction);
+      }
+      const auto &instructions = target.body.blocks.front().instructions;
+      published = claimed.size() == instructions.size() &&
+                  std::all_of(instructions.begin(), instructions.end(),
+                              [&](const MirInstruction &instruction) {
+                                return claimed.contains(instruction.id);
+                              });
+    }
+  }
   return published;
 }
 

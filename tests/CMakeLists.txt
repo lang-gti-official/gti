@@ -758,6 +758,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/native_packages_test.py"
   )
   add_test(
+    NAME toy_engine_initializers
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/toy_engine_initializers_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  add_test(
     NAME gitea_release_asset_sync
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/gitea_release_asset_sync_test.py"

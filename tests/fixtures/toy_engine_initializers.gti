@@ -1,0 +1,58 @@
+#include <std/memory>
+
+mut int destroyed = 0;
+
+class Resource {
+  int weight;
+public:
+  Resource(int value) : weight(value) {}
+  ~Resource() { destroyed += this.weight; }
+};
+
+class Point {
+  float x;
+public:
+  Point(float first) : x(first) {}
+  float first() { return this.x; }
+};
+
+class DoublePoint {
+  double x;
+public:
+  DoublePoint(double value) : x(value) {}
+  double value() { return this.x; }
+};
+
+class Camera {
+  Point position;
+public:
+  Camera() : position(Point(5.0)) {}
+  bool valid() { return this.position.first() == 5.0; }
+};
+
+class Engine {
+  mut std::unique_ptr<Resource> first = nullptr;
+  mut std::unique_ptr<Resource> second = nullptr;
+public:
+  Engine() {}
+  void initialize() mut {
+    this.first = std::make_unique<Resource>(3);
+    this.second = std::make_unique<Resource>(7);
+  }
+};
+
+int main() {
+  Camera camera = Camera();
+  if (!camera.valid()) { return 1; }
+  DoublePoint exact = DoublePoint(double(7.0));
+  if (exact.value() != double(7.0)) { return 4; }
+  {
+    Engine empty = Engine();
+  }
+  if (destroyed != 0) { return 2; }
+  {
+    mut Engine populated = Engine();
+    populated.initialize();
+  }
+  return destroyed == 10 ? 0 : 3;
+}

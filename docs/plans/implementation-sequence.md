@@ -821,6 +821,18 @@ analysis, HIR, MIR, and the backend.
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
+- **Open toy-engine prerequisite (Gitea #2):** declaration-time field calls
+  returning an owning class value, including `std::make_unique<T>()`, have
+  verified local Call/Invoke/publication/rollback MIR but lack the enclosing
+  constructor-to-initializer failure channel in the C++ representation. The
+  compiler now reports the bounded `GTI-B0003` limitation instead of an ICE.
+  Completion requires propagation to the caller, reverse cleanup of completed
+  sibling fields and caller-owned values, and allocation/constructor failure
+  tests; adding a terminal wrapper around the call is not completion. The
+  toy-engine workflow currently uses null fields plus an explicit initialization
+  method after construction. This remains M-FAIL-01/M-BACK-02 work, not a change
+  to source-language validity.
+
 - **State/role:** active for broader failure semantics; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact
   origin/site metadata, propagation and cleanup edges, hosted containment, and
