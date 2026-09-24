@@ -248,6 +248,10 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "terminate-cleanup-failure";
   case MirHostedStartupOperationKind::Count:
     return "invalid";
+  case MirHostedStartupOperationKind::BeginCThreadRuntime:
+    return "begin-cthread-runtime";
+  case MirHostedStartupOperationKind::EndCThreadRuntime:
+    return "end-cthread-runtime";
   }
   return "invalid";
 }
@@ -255,7 +259,19 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v56 valid=" << program.valid() << '\n';
+    output << "mir-v70 valid=" << program.valid() << '\n';
+    for (const MirNativeCallbackAdapter &adapter :
+         program.nativeCallbackAdapters()) {
+      output << "native-callback @" << adapter.id
+             << " target=" << adapter.target << " cthread-callback="
+             << static_cast<unsigned>(adapter.cThreadCallback)
+             << " may-raise=" << adapter.targetMayRaiseDefinedFailure
+             << " failure-policy=" << number(adapter.failurePolicy)
+             << " catches-native=" << adapter.catchesNativeExceptions
+             << " type=";
+      type(adapter.type);
+      output << '\n';
+    }
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -509,7 +525,9 @@ public:
         break;
       }
       output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
-             << " requires-unsafe=" << instance.requiresUnsafe;
+             << " requires-unsafe=" << instance.requiresUnsafe
+             << " cthread-operation="
+             << static_cast<unsigned>(instance.cThreadOperation);
       effectSummary(instance.effectSummary);
       output << " roots=[";
       list(instance.virtualRoots);
@@ -651,7 +669,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v49\n";
+    output << "mir-body-v60\n";
     body(value, 0);
     return output.str();
   }
@@ -736,8 +754,9 @@ private:
            << " index-place=p" << plan->argumentIndexPlace << " vector-place=p"
            << plan->argumentVectorPlace << " count=%" << plan->stabilizedCount
            << " vector=%" << plan->argumentVector << " result=%"
-           << plan->entryResult << " operations=" << plan->operations.size()
-           << '\n';
+           << plan->entryResult << " cthread-begin=" << plan->cThreadBegin
+           << " cthread-end=" << plan->cThreadEnd
+           << " operations=" << plan->operations.size() << '\n';
     for (const MirHostedStartupOperation &operation : plan->operations) {
       output << "  hosted-operation @" << operation.id
              << " kind=" << hostedStartupOperationName(operation.kind)
@@ -1094,8 +1113,35 @@ private:
       optional(value.dropType.fixedArray->leafClassInstance);
       output << ')';
     }
-    output << " active-cleanup=" << value.dropType.requiresActiveCleanup
+    output << " unique-pointee=";
+    optional(value.dropType.uniquePointeeClass);
+    output << " unique-field=" << value.dropType.uniqueOwnerField
+           << " unique-base=";
+    optional(value.dropType.uniqueOwnerBase);
+    output << " recursive=" << value.dropType.recursiveCleanup
+           << " aggregate=[";
+    for (const auto &step : value.dropType.aggregate)
+      aggregateDropStep(step);
+    output << "] active-cleanup=" << value.dropType.requiresActiveCleanup
            << " initially-active=" << value.initiallyActive << '\n';
+  }
+
+  void aggregateDropStep(const MirDropType &step) {
+    output << "step(type=";
+    type(step.type);
+    output << ";class=";
+    optional(step.classInstance);
+    output << ";destructor=";
+    optional(step.destructor);
+    output << ";pointee=";
+    optional(step.uniquePointeeClass);
+    output << ";field=" << step.uniqueOwnerField << ";base=";
+    optional(step.uniqueOwnerBase);
+    output << ";recursive=" << step.recursiveCleanup
+           << ";active=" << step.requiresActiveCleanup << ";children=[";
+    for (const auto &child : step.aggregate)
+      aggregateDropStep(child);
+    output << "])";
   }
 
   void fullExpression(const MirFullExpression &value) {
@@ -1195,6 +1241,19 @@ private:
     output << " receiver=";
     if (value.receiver) {
       operand(*value.receiver);
+    } else {
+      output << '-';
+    }
+    output << " element-cleanup=";
+    if (value.elementCleanup) {
+      aggregateDropStep(*value.elementCleanup);
+    } else {
+      output << '-';
+    }
+    output << " replacement-pair=" << value.replacementPair
+           << " replacement-cleanup=";
+    if (value.replacementCleanup) {
+      aggregateDropStep(*value.replacementCleanup);
     } else {
       output << '-';
     }

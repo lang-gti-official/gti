@@ -495,6 +495,7 @@ struct HirFunctionInstance {
   bool internalLinkage = false;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -509,6 +510,7 @@ struct HirNativeCallbackAdapter {
   HirNativeCallbackAdapterId id = 0;
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 
 struct HirThreadTaskAdapter {

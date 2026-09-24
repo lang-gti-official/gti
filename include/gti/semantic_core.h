@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/checked_integer.h"
+#include "gti/concurrency.h"
 #include "gti/constant_evaluator.h"
 #include "gti/diagnostic.h"
 #include "gti/failure.h"
@@ -380,6 +381,23 @@ struct SemanticType {
 
   [[nodiscard]] bool hasNativeFunctionShape() const {
     return kind == NativeFunction && !arguments.empty();
+  }
+
+  [[nodiscard]] bool hasCThreadEntryShape() const {
+    return kind == NativeFunction && arguments.size() == 2 &&
+           arguments[0] == SemanticType::Int32 &&
+           arguments[1] == rawPointerTo(SemanticType::Void);
+  }
+
+  [[nodiscard]] CThreadCallbackKind cThreadCallbackKind() const {
+    if (hasCThreadEntryShape()) {
+      return CThreadCallbackKind::ThreadEntry;
+    }
+    if (kind == NativeFunction && arguments.size() == 1 &&
+        arguments[0] == SemanticType::Void) {
+      return CThreadCallbackKind::OnceInitializer;
+    }
+    return CThreadCallbackKind::None;
   }
 
   [[nodiscard]] const SemanticType *nativeFunctionReturnType() const {

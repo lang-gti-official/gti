@@ -385,6 +385,7 @@ private:
     bool internalLinkage = false;
     bool constexprFunction = false;
     bool requiresUnsafe = false;
+    CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;
     std::optional<std::size_t> cArrayCountParameter;
@@ -1756,6 +1757,15 @@ private:
   [[nodiscard]] bool
   validateConcurrentSurfaceAvailability(const Token &location,
                                         std::string_view surface);
+
+  void finalizeCThreadRequirements();
+
+  struct CThreadCallUse {
+    const FunctionDecl *caller = nullptr;
+    const FunctionDecl *callee = nullptr;
+    Token location;
+    bool trusted = false;
+  };
 
   [[nodiscard]] static std::string
   constructorSignatureSpelling(const ConstructorInfo &constructor);
@@ -3756,6 +3766,8 @@ private:
     std::size_t preferReadOnlySubscriptReceiverDepth = 0;
     std::vector<const Expr *> suppressedProjectedPlaceReads;
     ProgramEffectOwner currentProgramEffectOwner;
+    std::vector<CThreadCallUse> cThreadCallUses;
+    bool hasCThreadRequirements = false;
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;

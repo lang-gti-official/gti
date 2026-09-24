@@ -1,0 +1,29 @@
+// Ordinary construction does not transfer an existing object's identity.
+class Stationary {
+public:
+  int32_t value;
+  Stationary(int32_t initial) : value(initial) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+};
+Stationary shared{41};
+
+class Value {
+public:
+  mut int32_t value;
+  Value(int32_t initial) : value(initial) {}
+};
+class Snapshot {
+public:
+  int32_t observed;
+  Snapshot(Value copied, int32_t ignored) : observed(copied.value) {}
+};
+int32_t change(mut Value& value) { value.value = 9; return 0; }
+
+int main() {
+  Stationary local = Stationary(42);
+  mut Value value{7};
+  Snapshot snapshot{value, change(value)};
+  return shared.value == 41 && local.value == 42 &&
+         snapshot.observed == 7 && value.value == 9 ? 0 : 1;
+}

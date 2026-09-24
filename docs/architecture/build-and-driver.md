@@ -119,14 +119,27 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Gitea is the Git, tag, workflow, and release authority. Release archive shapes
+Gitea is the Git, tag, workflow, and release authority. Release archives
+are downloaded by the plugin from `https://git.internal.howetotech.dev`.
+The plugin uses a full HTTPS Git URL, not GitHub-style owner/repository shorthand.
+Archive shapes
 exist for Linux x64, Linux arm64, and macOS arm64, but an archive is published
 only by a configured native runner job. The current workflow packages the
-native platform of the runner claiming `ubuntu-latest`; adding another
+native platform of the runner claiming `ubuntu-24.04`; adding another
 advertised binary platform requires a statically labelled native package job.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
+
+`scripts/install_neovim_local.py` is a macOS-only local installation workflow:
+it builds with system LLVM, stages `gti_toolchain`, smoke-tests a checksummed
+archive, and activates it through the existing Lua release installer without
+network downloads. It writes a local-checkout Lazy spec with explicit tool
+paths and downloads disabled, backing up an existing different spec only after
+`--replace-config`. It preserves a supplied build directory's generator and
+does not change source compilation, project manifests, LSP semantics, or release
+publication authority. Its local system-LLVM archive is not a self-contained
+release artifact.
 
 A `VERSION` change on Gitea `main` dispatches the stable workflow, which owns
 the matching immutable tag and versioned release. The `nightly` release is one

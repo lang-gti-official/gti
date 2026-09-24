@@ -6537,6 +6537,18 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   if (info == nullptr) {
     return true;
   }
+  // An ordinary constructor creates a new object, not a transfer from an
+  // existing object's storage. Copy/move policy still applies to named values
+  // and explicit lifecycle constructions, but must not forbid initial creation
+  // of an immobile value (for example a shared once flag).
+  if (info->category == ValueCategory::Value) {
+    const ResolvedConstructionInfo *construction =
+        semanticModel.findConstruction(*expression);
+    if (construction != nullptr && construction->constructedType == target &&
+        construction->kind == ConstructorKind::Ordinary) {
+      return true;
+    }
+  }
   const SemanticTypeTraits traits = typeTraits(target);
   return info->category == ValueCategory::Value ? traits.movable
                                                 : traits.copyable;

@@ -77,6 +77,7 @@ const ReferencePageMetadataSchema = z
 const exampleCommon = {
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
+  executionProfile: z.enum(["single-threaded", "concurrent"]).optional(),
 };
 
 const ExampleMetadataSchema = z.discriminatedUnion("mode", [
@@ -343,6 +344,9 @@ function loadExample(
     id,
     title: parsed.data.title,
     description: parsed.data.description,
+    ...(parsed.data.executionProfile === undefined
+      ? {}
+      : { executionProfile: parsed.data.executionProfile }),
     sourcePath: stablePath(projectRoot, sourcePath),
     sourceText: readFileSync(sourcePath, "utf8"),
   };

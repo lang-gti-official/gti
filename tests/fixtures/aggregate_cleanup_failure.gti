@@ -1,0 +1,84 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+class Trace {
+public:
+  Trace() {}
+  ~Trace() { std::println(9); }
+};
+
+class First {
+public:
+  First() {}
+  ~First() {
+    std::println(1);
+    if (phase == 4 || phase == 6) {
+      int32_t first_failure = 11 / zero;
+    }
+  }
+};
+
+class Second {
+public:
+  Second() {}
+  ~Second() {
+    std::println(2);
+    if (phase == 1 || phase == 3 || phase == 5 || phase == 6 || phase == 9) {
+      int32_t second_failure = 13 / zero;
+    }
+  }
+};
+
+class Base {
+  std::string label;
+  std::unique_ptr<First> first;
+  std::unique_ptr<int32_t> scalar;
+  std::unique_ptr<Second> second;
+public:
+  Base() : label(std::string("owned alongside fallible resources")), first(std::make_unique<First>()), scalar(std::make_unique<int32_t>(42)), second(std::make_unique<Second>()) {}
+  virtual int32_t read() = 0;
+};
+
+class Derived : public Base {
+  int32_t checked;
+public:
+  Derived() : Base(), checked(17 / (phase >= 2 && phase <= 4 ? zero : 1)) {}
+  int32_t read() override { return this.checked; }
+};
+
+class Outer {
+  std::unique_ptr<Derived> value;
+  int32_t checked;
+public:
+  Outer() : value(std::make_unique<Derived>()), checked(19 / zero) {}
+};
+
+int32_t run() {
+  if (phase == 11) {
+    std::unique_ptr<Derived> empty = std::unique_ptr<Derived>();
+    return 0;
+  }
+  if (phase == 8 || phase == 9) {
+    auto outer = std::make_unique<Outer>();
+    return 0;
+  }
+  auto value = std::make_unique<Derived>();
+  if (phase == 5) {
+    return 23 / zero;
+  }
+  if (phase == 10) {
+    auto moved = std::move(value);
+    return 0;
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Trace outer = Trace();
+  return run();
+}

@@ -1,9 +1,9 @@
 #include <std/string>
 #include <std/vector>
 
-// Known backend gap, not a passing runtime fixture: rollback of a field with
-// a source destructor needs an explicit failure-aware subobject schedule.
-// Keep this reproducer alongside the supported temporary-argument fixture.
+// Former backend gap: source-destructor fields now use MIR-owned publication
+// and failure-aware rollback. Keep the original receiver/argument composition
+// as a passing regression beside the simpler temporary-argument fixture.
 
 void checked(int32_t divisor) {
   int32_t value = 7 / divisor;

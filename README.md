@@ -1,9 +1,9 @@
 # GTI
 
 <p align="center">
-  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml"><img src="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml"><img src="https://git2.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
-  <a href="https://git2.internal.howetotech.dev/lukeh/gti-internal/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -136,7 +136,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://git2.internal.howetotech.dev/lukeh/gti-internal.git gti
+git clone https://git.internal.howetotech.dev/lukeh/gti-internal.git gti
 cd gti
 cmake -S . -B build -G Ninja
 cmake --build build --parallel 4
@@ -357,7 +357,7 @@ language server, standard library, runtime, and native Tree-sitter parser:
 ```lua
 return {
   {
-    "https://git2.internal.howetotech.dev/lukeh/gti-internal.git",
+    "https://git.internal.howetotech.dev/lukeh/gti-internal.git",
     name = "gti",
     version = "*",
   },
@@ -367,6 +367,45 @@ return {
 Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
 toolchain, LSP, and parser versions.
+
+Use the complete `https://` URL for Gitea, and write `version = "*"` without
+a backslash. The selected tag must have a matching toolchain archive under
+Gitea Releases; syncing Git tags does not create or copy release binaries.
+Older tags from before the hostname migration still contain the old installer.
+The current Linux-only runner cannot publish macOS binaries. On macOS, build
+locally and set `GTI_PATH` and `GTI_LSP_PATH` to those executables (and
+`GTI_TREE_SITTER_PATH` to the built parser), or provision a native macOS runner.
+When supplying your own toolchain, set `build = false` in the Lazy spec to
+disable its release-download hook.
+
+### Local macOS installation without a release runner
+
+From this checkout, run:
+
+```sh
+python3 scripts/install_neovim_local.py --dry-run --replace-config
+python3 scripts/install_neovim_local.py --replace-config
+```
+
+Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
+(including libclang), and the Xcode command-line tools. It discovers Homebrew
+LLVM or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
+automatically. Builds use one low-priority job by default (`--jobs N` to change).
+
+The script builds compiler/LSP/parser, stages the complete `gti_toolchain`
+component, verifies a checksummed local archive with the Neovim plugin smoke
+test, then activates it with the same installer used for downloaded releases.
+It writes `lua/plugins/gti.lua` under Neovim's active config directory, pointing
+Lazy at this checkout with downloads disabled. An existing different config
+requires `--replace-config` and is backed up beside the original. Use `--config`
+for another Lazy spec location. It never edits `init.lua` or installs Lazy;
+your configuration must already import that plugins directory.
+
+Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
+Re-run the script after pulling changes. This system-LLVM build uses the same
+editor layout but is local to this Mac, not a portable official release. Keep
+its Homebrew LLVM installed. `--build-dir` may reuse a Release/LSP-enabled build
+from this checkout without switching its CMake generator.
 
 See the [LSP architecture](docs/architecture/lsp.md) for the implemented
 semantic, formatting, snapshot, and protocol boundaries.

@@ -1,0 +1,43 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t failure_phase = 0;
+mut int32_t zero = 0;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() {
+    std::println(this.identity);
+    if (this.identity == 2 && (failure_phase == 4 || failure_phase == 5)) {
+      int32_t secondary = 11 / zero;
+    }
+  }
+};
+
+void consume(Resource owner, int32_t value) {
+  if (failure_phase == 2 || failure_phase == 4) {
+    int32_t callee_failure = 13 / zero;
+  }
+}
+
+class Caller {
+  std::unique_ptr<Resource> completed;
+public:
+  Caller() : completed(std::make_unique<Resource>(1)) {
+    consume(Resource(2), 7 / (failure_phase == 1 || failure_phase == 5 ? 0 : 1));
+    consume(Resource(3), 1);
+    if (failure_phase == 3) {
+      int32_t constructor_failure = 17 / zero;
+    }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  failure_phase = argc - 1;
+  Resource outer = Resource(9);
+  auto caller = std::make_unique<Caller>();
+  return 0;
+}

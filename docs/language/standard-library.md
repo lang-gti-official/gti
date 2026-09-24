@@ -117,8 +117,25 @@ The current implemented foundation includes:
 - `<std/cthread>` supplies `std::thrd_yield()`, a host scheduling hint usable
   from the initial or a managed thread in either execution profile. It creates
   no synchronization edge and promises neither fairness nor a minimum delay.
-  C-style worker creation/join, mutexes, condition variables, and
-  thread-specific storage remain unimplemented; and
+  Safe `std::thrd_current()` observes a stable, nonzero, never-reused process
+  identity; `std::thrd_equal()` compares identity values without testing liveness
+  or granting join/callback permissions. Both work in either execution profile.
+  `std::timespec` and `std::thrd_sleep` supply relative sleep, optional remaining
+  time on interruption, safe value/reference overloads, and an unsafe pointer
+  overload. Sleep works in either profile and creates no synchronization edge;
+  its exact validation and status contract is in
+  [Concurrency](concurrency.md#c-style-relative-sleep).
+  Its `[[unsafe]]` `std::thrd_create`/`std::thrd_join` wrappers provide manual
+  integer-result workers in the concurrent profile, with exact registered
+  callback entry, caller-owned context lifetime, and an obligation to join
+  before hosted entry returns. Its unsafe C-style mutex family provides explicit
+  init/destroy and lock/try/timed/unlock, with plain, recursive, and timed flags,
+  conditional acquire/release synchronization, and caller-owned lifetime.
+  Unsafe conditions provide init/destroy, signal/broadcast, and wait/timed-wait
+  with atomic enrollment/release and reacquisition before return, including
+  timeout. `once_flag` and unsafe `call_once` supply registered, release/acquire
+  one-time initialization; detach/exit and thread-specific storage remain
+  unimplemented; and
 - `<std/functional>` public exact `read_callable`, `mut_callable`,
   `once_callable`, unary/binary predicate and operation, comparator,
   iterator-aware indirect predicate/operation, and nullary `once_action`

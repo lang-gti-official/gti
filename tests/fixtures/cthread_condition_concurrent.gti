@@ -1,0 +1,56 @@
+#include <std/cthread>
+extern "C" {
+  void* cthread_condition_context(uint64_t mutex, uint64_t condition);
+  uint64_t cthread_condition_mutex(void* context);
+  uint64_t cthread_condition_handle(void* context);
+  int32_t* cthread_condition_turn(void* context);
+  int32_t* cthread_condition_count(void* context);
+}
+[[unsafe]] int32_t relay(void* context, int32_t role) {
+  unsafe {
+    std::mtx_t mutex = cthread_condition_mutex(context);
+    std::cnd_t condition = cthread_condition_handle(context);
+    int32_t* turn = cthread_condition_turn(context);
+    int32_t* count = cthread_condition_count(context);
+    for (mut int32_t index = 0; index < 100; index++) {
+      if (std::mtx_lock(mutex) != 0) { return 1; }
+      while (*turn != role) {
+        if (role == 0) {
+          if (std::cnd_wait(&condition, &mutex) != 0) { return 2; }
+        } else {
+          if (std::cnd_timedwait(condition, mutex, std::timespec(int64_t(9223372036), int64_t(854775807))) != 0) { return 3; }
+        }
+      }
+      *count = *count + 1;
+      *turn = 1 - role;
+      if (role == 0) {
+        if (std::cnd_signal(condition) != 0) { return 4; }
+      } else {
+        if (std::cnd_broadcast(&condition) != 0) { return 5; }
+      }
+      if (std::mtx_unlock(mutex) != 0) { return 6; }
+    }
+  }
+  return 0;
+}
+int32_t first(void* context) { unsafe { return relay(context, 0); } }
+int32_t second(void* context) { unsafe { return relay(context, 1); } }
+int main() {
+  unsafe {
+    mut std::mtx_t mutex = 0;
+    mut std::cnd_t condition = 0;
+    if (std::mtx_init(mutex, std::mtx_plain) != 0 || std::cnd_init(condition) != 0) { return 1; }
+    void* context = cthread_condition_context(mutex, condition);
+    mut std::thrd_t left = 0;
+    mut std::thrd_t right = 0;
+    if (std::thrd_create(left, first, context) != 0 || std::thrd_create(right, second, context) != 0) { return 2; }
+    mut int32_t result = 0;
+    if (std::thrd_join(left, result) != 0 || result != 0) { return 3; }
+    if (std::thrd_join(right, result) != 0 || result != 0) { return 4; }
+    int32_t* count = cthread_condition_count(context);
+    if (*count != 200) { return 5; }
+    std::cnd_destroy(condition);
+    std::mtx_destroy(mutex);
+  }
+  return 0;
+}

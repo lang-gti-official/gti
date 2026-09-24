@@ -15,6 +15,8 @@ RELEASE_FILES = {
     "VERSION",
     "build.lua",
     "lazy.lua",
+    "scripts/install_neovim_local.py",
+    "scripts/install_neovim_local.lua",
 }
 
 RELEASE_PREFIXES = (

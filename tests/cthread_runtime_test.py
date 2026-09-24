@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""C-style yield: real host calls, managed workers, and an exact-call oracle."""
+"""C-style yield and identity on initial, managed, and manual workers."""
 
 import pathlib
 import subprocess
@@ -29,9 +29,11 @@ def main():
             for optimization in ("O0", "O1", "O3")
         ]
         modes.append(("sanitized", ["--std", "c++23", "-O1"]))
+        modes.append(("tsan", ["--std", "c++23", "-O1"]))
         for name, flags in modes:
             for fixture in (
                 "cthread_yield", "cthread_yield_concurrent", "cthread_yield_call_count",
+                "cthread_identity", "cthread_identity_concurrent",
             ):
                 suffix = ".exe" if sys.platform == "win32" else ""
                 binary = root / f"{fixture}-{name}{suffix}"
@@ -44,10 +46,22 @@ def main():
                 native = []
                 if fixture.endswith("call_count"):
                     native.append(str(fixtures / "cthread_yield_call_count.cpp"))
+                    if sys.platform.startswith("linux"):
+                        # ELF can extract the real runtime object before the
+                        # trailing oracle input. Wrap the call instead of
+                        # defining the runtime symbol a second time. Generated
+                        # GTI C++ deliberately undefines user macros, so this
+                        # define renames only the separate oracle definition.
+                        native.extend([
+                            "-Dgti_rt_cthread_yield_v1=__wrap_gti_rt_cthread_yield_v1",
+                            "-Wl,--wrap=gti_rt_cthread_yield_v1",
+                        ])
                 if name == "sanitized":
                     native.extend([
                         "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                     ])
+                if name == "tsan":
+                    native.extend(["-fsanitize=thread", "-fno-omit-frame-pointer"])
                 if native:
                     command.extend(["--", *native])
                 execute(command)
@@ -57,7 +71,10 @@ def main():
                     raise AssertionError("missing verified-MIR production witness")
                 if emitted.count("gti_rt_cthread_yield_v1(") < 2:
                     raise AssertionError("yield lost its native call or declaration")
-            print(f"cthread yield: {name} passed", flush=True)
+                if fixture.startswith("cthread_identity"):
+                    if emitted.count("gti_rt_cthread_current_v1(") < 2:
+                        raise AssertionError("identity lost its native call or declaration")
+            print(f"cthread yield/identity: {name} passed", flush=True)
 
 
 if __name__ == "__main__":

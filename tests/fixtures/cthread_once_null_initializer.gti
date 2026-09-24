@@ -1,0 +1,8 @@
+#include <std/cthread>
+extern "C" { void once_terminal(); }
+int main() {
+  once_terminal();
+  std::once_flag flag{};
+  unsafe { std::call_once(flag, nullptr); }
+  return 1;
+}

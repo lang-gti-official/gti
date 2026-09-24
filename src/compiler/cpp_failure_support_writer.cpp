@@ -319,9 +319,22 @@ template <typename T>
   return mir_empty_state_factory_v1<T>::make();
 }
 
+// The MIR Drop ends a completed field's GTI lifetime now. Recreate only its
+// proved observation-free representation so the enclosing unpublished C++
+// object's later destruction sees an empty field. Ordinary fields are
+// transparently replaceable; this helper must not be used for base subobjects.
+template <typename T>
+inline void mir_rollback_field_v1(T &field) noexcept {
+  static_assert(!std::is_const_v<T>);
+  T *address = std::addressof(field);
+  std::destroy_at(address);
+  ::new (static_cast<void *>(address)) T(mir_empty_state_v1<T>());
+}
+
 struct mir_failure_status_v1 {
   ::gti_failure_code_v1 code;
   ::gti_failure_detail_v1 detail;
+  bool propagated = false;
 };
 
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
@@ -615,6 +628,25 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
+                       std::uint64_t index, ::gti_failure_record_v1 *record,
+                       Cleanup cleanup) {
+  if (index >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (!storage.initialized(index)) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
+  }
+  if (!storage.destroy_with_failure(index, record, cleanup)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
 template <typename T>
 inline mir_failure_status_v1
 mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
@@ -756,6 +788,20 @@ mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {
   return mir_failure_success_v1;
 }
 
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                  ::gti_failure_record_v1 *record, Cleanup cleanup) {
+  if (storage.length() == 0) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
+  }
+  if (!storage.pop_with_failure(record, cleanup)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
 template <typename T>
 inline mir_failure_status_v1
 mir_prefix_read_v1(const ::gti_internal::backend::prefix_storage<T> &storage,
@@ -805,6 +851,22 @@ mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
             GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
   }
   storage.erase_at(index);
+  return mir_failure_success_v1;
+}
+
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                    std::uint64_t index, ::gti_failure_record_v1 *record,
+                    const ::gti_failure_artifact_descriptor_v1 *artifact,
+                    Cleanup cleanup) {
+  if (index >= storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (!storage.erase_with_failure(index, record, artifact, cleanup)) {
+    return {record->code, record->detail, true};
+  }
   return mir_failure_success_v1;
 }
 

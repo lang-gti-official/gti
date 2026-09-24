@@ -1,0 +1,7 @@
+#include <std/cthread>
+extern "C" { void cthread_condition_terminal(); }
+int main() {
+  cthread_condition_terminal();
+  unsafe { std::cnd_destroy(nullptr); }
+  return 1;
+}

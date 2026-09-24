@@ -1,6 +1,7 @@
 #include <std/cthread>
 
 int main() {
+  std::thrd_t initial = std::thrd_current();
   std::thrd_yield();
-  return 0;
+  return std::thrd_equal(initial, std::thrd_current()) == 1 ? 0 : 1;
 }

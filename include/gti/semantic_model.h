@@ -446,6 +446,9 @@ struct FunctionInfo {
   bool internalLinkage = false;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  // Derived from resolved calls, after all source bodies have been analyzed.
+  bool requiresCThreadRuntime = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -795,6 +798,7 @@ struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 
 // One context-selected, namespace-scope GTI function item. The semantic type

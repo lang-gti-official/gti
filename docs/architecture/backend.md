@@ -480,6 +480,18 @@ acyclic concrete layout graph even though both source families mention one
 another across the program. A genuine cycle in that exact graph remains a
 fail-closed backend invariant violation; ordinary source-level recursive
 by-value fields are rejected earlier by semantics.
+For retained native generic carriers, merely mentioning a class as a type
+argument does not impose its complete layout. The planner follows the exact
+MIR instance's fields and bases, stopping at pointer/owner/storage indirection.
+This permits mutually owning node types while preserving true by-value
+dependencies such as `box<T>` storing a `T` field. Symbolic template spellings
+without a concrete instance retain conservative argument dependencies.
+Private unique-owner carriers spell generated default/move/destruction with
+explicit non-constexpr bodies and fixed `noexcept` signatures. This avoids
+C++23 constexpr special-member instantiation requiring an incomplete pointee's
+deleter while another recursive class is being defined. The move spelling
+uses the same resolved field/base order and lifecycle guard policy; it does
+not add a GTI constructor or source cleanup body.
 A selected generic method on a retained carrier keeps its stable
 `__gti_member_` name, but the backend emits the required owner-specialization
 declaration before any use. These carriers consume identities and validity
@@ -616,6 +628,11 @@ the referent type through an exact field row. The C++ alias relies only on the
 language's existing implicit reference-member dereference; unsupported
 projections fail body admission.
 
+Nested checked-owner arrow chains use those same exact field rows. MIR keeps
+each projected receiver rooted in its preceding call-result loan, whose
+referent type comes from the exact target. The backend does not reinterpret a
+dependency owner as a returned pointee or synthesize missing dereferences.
+
 A fixed-array drop with a concrete MIR schedule uses the same lifetime-slot
 boundary for its aggregate storage. The C++ representation recursively visits
 the recorded extents in reverse order, invokes the exact leaf failure-form
@@ -696,15 +713,40 @@ additional exact representations. A transformed source call may initialize one
 value-rooted obligation, publish it through an unconditional `Replace` into
 the field, and then drop only the moved-from slot shell. A move from one field
 through a unique mutable `CallResult` loan may initialize the same kind of
-slot only when the move and receiver-field assignment are adjacent, the
+slot only when the move and receiver-field assignment are adjacent (or
+separated by their exact MIR replacement preparation and success edge), the
 success path ends that loan before the slot drop, and no alias or extra
 lifecycle event exists. A targetless concrete default construction may use the
 same replace/drop schedule when its own unconditional `Initialize` is the
 single activation. Each route requires an exact noncopyable, move-assignable
 class representation and one resolved active-cleanup field row. The emitter
-does not recognize the owning wrapper or container name; projected
-destinations beyond one direct field, conditional lifecycle events, incomplete
+does not recognize the owning wrapper or container name. Apart from the
+checked-array replacement extension below, projected destinations beyond one
+direct field, conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
+
+For complete represented cleanup families, `CleanupBeforeAssign` drains the
+old contents through the MIR-selected helper before the paired `Assign` moves
+the held replacement. Lifetime-slot values are accessed as live objects, not
+as slot wrappers. Failure keeps the RHS obligation active: class stages use
+their explicit lifetime slots, and native storage-handle SSA stages drain their
+held handle before the empty native carrier leaves scope. No C++ assignment
+decides the old value's failure behavior. The exact instruction pair is a
+cleanup barrier even when its selected destructors cannot fail.
+For checked array-element replacement, preparation first emits a bounds guard
+for each dimension from the exact MIR place and writes the original fixed-array
+failure site before returning false. Only validated subscripts reach cleanup;
+the paired commit has no detector and only moves the held value. Fresh call
+results, direct constructed objects, and named moved RHS values retain their
+own lifetime slots until commit or failure cleanup. Bounds-only preparation
+still has a success/failure edge when old-value cleanup is non-failing.
+
+An immediately consumed, targetless generated empty class argument can also
+feed a status constructor without an extra native local. This requires the
+exact MIR initialization/transfer/constructor chain, a generated default
+constructor, no source destructor, a proved empty field representation, and
+literal-only field initialization ending in MIR `Exit`. Source-defined or
+potentially failing default construction cannot use this inline representation.
 
 The field may belong to `this`, a mutable local binding, or an exact
 non-escaping mutable call-result loan. The enclosing owner retains cleanup
@@ -826,6 +868,17 @@ non-failing target is called directly. A failure-capable target uses its
 verified failure sibling and forwards the original record to the runtime
 terminal boundary. Native exceptions are contained and terminate; the backend
 cannot select another target or weaken that policy.
+
+Concurrent thunks consume the verified `CThreadCallbackKind` to select manual
+worker or synchronous once entry/leave hooks. The public once state machine
+remains ordinary MIR-emitted GTI and atomic operations. Module initialization
+uses the canonical program-storage root even when a copied argument retains
+another MIR view. Data-only constexpr aggregates are not runtime lifetime slots.
+Passive generated class copies in `CallInput` retain a representation slot at
+their written evaluation point, including across a later argument's failure
+edge; native argument ordering cannot delay the copy. Such slots own no
+source destructor effects. Unused passive constructor tags retain their exact
+lexical cleanup without preventing other fields' verified initialization.
 
 A call resolved to a concrete override remains virtual in MIR; the C++ backend
 does not infer devirtualization. For a conservatively failure-capable virtual

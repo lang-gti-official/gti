@@ -1,0 +1,52 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t failure_phase = 0;
+mut int32_t zero = 0;
+
+class Trace {
+public:
+  Trace() {}
+  ~Trace() { std::println(9); }
+};
+
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {
+    std::println(10);
+    if (failure_phase == 1 || failure_phase == 3 || failure_phase == 4) {
+      int32_t secondary = 11 / zero;
+    }
+  }
+};
+
+class Holder {
+  std::unique_ptr<Resource> resource;
+  int32_t checked;
+public:
+  Holder() : resource(std::make_unique<Resource>()), checked(13 / zero) {}
+};
+
+int32_t run() {
+  auto owner = std::make_unique<Resource>();
+  if (failure_phase == 2 || failure_phase == 3) {
+    return 7 / zero;
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  failure_phase = argc - 1;
+  Trace outer = Trace();
+  if (failure_phase == 4) {
+    auto holder = std::make_unique<Holder>();
+    return 0;
+  }
+  if (failure_phase == 5) {
+    std::unique_ptr<Resource> empty = std::unique_ptr<Resource>();
+    return 0;
+  }
+  return run();
+}

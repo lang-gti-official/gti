@@ -206,6 +206,14 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testSourceDestructorOwningFieldCleanup",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwningBaseConstructorStatus",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveOwnedParameterConstructorFields",
       "suite": "lifecycle"
     },

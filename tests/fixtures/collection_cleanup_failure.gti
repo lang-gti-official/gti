@@ -1,0 +1,189 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() {
+    std::println(this.identity);
+    if ((this.identity == 2 &&
+         (phase == 1 || phase == 3 || phase == 4 || phase == 6 ||
+          phase == 7 || phase == 8 || phase == 9 || phase == 10 || phase == 13 ||
+          phase == 15 || phase == 16 || phase == 18 || phase == 19 ||
+          phase == 20 || phase == 21 || phase == 22 || phase == 23 ||
+          phase == 27 || phase == 28 || phase == 29 || phase == 31 ||
+          phase == 37 || phase == 39 || phase == 42)) ||
+        (this.identity == 1 && (phase == 4 || phase == 16 || phase == 19 || phase == 29 || phase == 32)) ||
+        (this.identity == 3 && phase == 33)) {
+      int32_t element_failure = 11 / zero;
+    }
+    if (this.identity == 3 && phase == 28) {
+      int32_t suffix_failure = 13 / zero;
+    }
+  }
+};
+
+int32_t fail_body() { return 17 / zero; }
+
+class Bundle {
+  std::string text;
+  std::unique_ptr<Resource> resource;
+public:
+  Bundle(int32_t identity)
+      : text(std::string("bundle")), resource(std::make_unique<Resource>(identity)) {}
+};
+
+int32_t owning_elements() {
+  mut std::vector<std::unique_ptr<Resource>> values = std::vector<std::unique_ptr<Resource>>();
+  if (phase != 12 && phase != 24) {
+    values.push_back(std::make_unique<Resource>(1));
+    values.push_back(std::make_unique<Resource>(2));
+  }
+  if (phase == 11) {
+    auto moved = std::move(values);
+    return fail_body();
+  }
+  if (phase == 2 || phase == 3 || phase == 12) { return fail_body(); }
+  if (phase >= 14 && phase <= 16) { values.pop_back(); }
+  if (phase == 22) { values.clear(); }
+  if (phase == 24) { values.pop_back(); }
+  return 0;
+}
+
+int32_t direct_elements() {
+  mut std::vector<Resource> values = std::vector<Resource>();
+  values.push_back(Resource(1));
+  values.push_back(Resource(2));
+  if (phase == 6) { return fail_body(); }
+  if (phase == 20) { values.pop_back(); }
+  return 0;
+}
+
+int32_t sparse_elements() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<Resource>(std::size_t(6));
+  if (!allocated) { return 20; }
+  mut std::storage<Resource> values = std::move(allocated).value();
+  // Construct out of slot order: cleanup is reverse slot order, not reverse
+  // construction order, and must skip all uninitialized holes.
+  values.construct(std::size_t(4), Resource(2));
+  values.construct(std::size_t(1), Resource(1));
+  if (phase == 8) { return fail_body(); }
+  if (phase >= 17 && phase <= 19) { values.destroy(std::size_t(4)); }
+  if (phase == 23) { values.clear(); }
+  if (phase == 25) {
+    values.destroy(std::size_t(4));
+    values.destroy(std::size_t(4));
+  }
+  return 0;
+}
+
+int32_t nested_elements() {
+  mut std::vector<std::vector<std::unique_ptr<Resource>>> values = std::vector<std::vector<std::unique_ptr<Resource>>>();
+  mut std::vector<std::unique_ptr<Resource>> first = std::vector<std::unique_ptr<Resource>>();
+  first.push_back(std::make_unique<Resource>(3));
+  values.push_back(std::move(first));
+  mut std::vector<std::unique_ptr<Resource>> second = std::vector<std::unique_ptr<Resource>>();
+  second.push_back(std::make_unique<Resource>(1));
+  second.push_back(std::make_unique<Resource>(2));
+  values.push_back(std::move(second));
+  if (phase == 10) { return fail_body(); }
+  if (phase == 21) { values.pop_back(); }
+  return 0;
+}
+
+int32_t aggregate_elements() {
+  mut std::vector<Bundle> values = std::vector<Bundle>();
+  values.push_back(Bundle(1));
+  values.push_back(Bundle(2));
+  return fail_body();
+}
+
+int32_t erased_elements() {
+  mut std::vector<std::unique_ptr<Resource>> values = std::vector<std::unique_ptr<Resource>>();
+  values.push_back(std::make_unique<Resource>(1));
+  values.push_back(std::make_unique<Resource>(2));
+  values.push_back(std::make_unique<Resource>(3));
+  if (phase == 32 || phase == 35) { values.erase(std::size_t(0)); }
+  else if (phase == 33 || phase == 36) { values.erase(std::size_t(2)); }
+  else if (phase == 34) { values.erase(std::size_t(3)); }
+  else { values.erase(std::size_t(1)); }
+  if (values.size() != std::size_t(2)) { return 21; }
+  // Successful removal must retain a reusable contiguous prefix.
+  values.push_back(std::make_unique<Resource>(4));
+  return 0;
+}
+
+int32_t erased_direct_elements() {
+  mut std::vector<Resource> values = std::vector<Resource>();
+  values.push_back(Resource(1));
+  values.push_back(Resource(2));
+  values.push_back(Resource(3));
+  values.erase(std::size_t(1));
+  if (values.size() != std::size_t(2)) { return 22; }
+  values.push_back(Resource(4));
+  return 0;
+}
+
+int32_t erased_nested_elements() {
+  mut std::vector<std::vector<std::unique_ptr<Resource>>> values = std::vector<std::vector<std::unique_ptr<Resource>>>();
+  for (mut int32_t identity = 1; identity <= 3; identity++) {
+    mut std::vector<std::unique_ptr<Resource>> inner = std::vector<std::unique_ptr<Resource>>();
+    inner.push_back(std::make_unique<Resource>(identity));
+    values.push_back(std::move(inner));
+  }
+  values.erase(std::size_t(1));
+  return 0;
+}
+
+int32_t erased_aggregate_elements() {
+  mut std::vector<Bundle> values = std::vector<Bundle>();
+  values.push_back(Bundle(1));
+  values.push_back(Bundle(2));
+  values.push_back(Bundle(3));
+  values.erase(std::size_t(1));
+  values.push_back(Bundle(4));
+  return 0;
+}
+
+mut int32_t next_identity = 0;
+int32_t next_resource_identity() { next_identity++; return next_identity; }
+class OwningBase {
+  std::unique_ptr<Resource> resource;
+public:
+  OwningBase() : resource(std::make_unique<Resource>(next_resource_identity())) {}
+};
+class DerivedElement : public OwningBase {
+public:
+  DerivedElement() {}
+};
+
+int32_t erased_inherited_elements() {
+  mut std::vector<DerivedElement> values = std::vector<DerivedElement>();
+  values.push_back(DerivedElement());
+  values.push_back(DerivedElement());
+  values.push_back(DerivedElement());
+  values.erase(std::size_t(1));
+  values.push_back(DerivedElement());
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Resource outer = Resource(9);
+  if ((phase >= 26 && phase <= 29) || (phase >= 32 && phase <= 36)) { return erased_elements(); }
+  if (phase == 30 || phase == 31) { return erased_direct_elements(); }
+  if (phase == 37 || phase == 38) { return erased_nested_elements(); }
+  if (phase == 39 || phase == 40) { return erased_aggregate_elements(); }
+  if (phase == 41 || phase == 42) { return erased_inherited_elements(); }
+  if (phase == 5 || phase == 6 || phase == 20) { return direct_elements(); }
+  if (phase == 7 || phase == 8 || (phase >= 17 && phase <= 19) || phase == 23 || phase == 25) { return sparse_elements(); }
+  if (phase == 9 || phase == 10 || phase == 21) { return nested_elements(); }
+  if (phase == 13) { return aggregate_elements(); }
+  return owning_elements();
+}

@@ -122,6 +122,12 @@ from `FunctionInfo::requiresUnsafe`. The LSP publishes `GTI-S2055` and its
 related declaration span from the same frontend; it neither infers safety
 requirements nor offers a fix-it accepting an unsafe obligation.
 
+C-style create/join, manual mutexes, conditions, and once initialization use that same public declaration path.
+Their `GTI-S2084` profile requirement is derived by semantics from the resolved
+private runtime call graph, and `GTI-S2055` retains the ordinary unsafe caller contract. The
+editor publishes both without recognizing public `std::thrd_*`, `std::mtx_*`, or `std::cnd_*`
+spellings or `std::call_once`; hover and definition select the ordinary wrapper in `<std/cthread>`.
+
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
 read-only or mutable access and the deduplicated exact invocation signatures

@@ -7,7 +7,7 @@ Next.js site with a compiler-backed content pipeline. An author can add one
 trustworthy language or library page, bind it to current compiler
 declarations, give it dedicated examples, and have CI reject structural,
 semantic-binding, compilation, or rendering drift. The implemented site
-publishes 90 authored pages and verifies 67 displayed programs. Its complete
+publishes 90 authored pages and verifies 71 displayed programs. Its complete
 member-page families cover `std::array`, `std::string`, and `std::vector`,
 including a canonical child route for every constructor/member group shown by
 those type pages. Compiler-bound header pages additionally cover every
@@ -164,6 +164,13 @@ The metadata selects one of three verification modes:
 - `run` must build, exit successfully, and optionally match exact stdout; or
 - `diagnostic` must fail compilation and contain each declared GTI
   diagnostic code.
+
+An example may explicitly select `executionProfile` as `single-threaded` or
+`concurrent`. Absence preserves the compiler default; arbitrary native flags
+and profile inference from source are not accepted. The runner passes the
+selected profile to the same compiler invocation and the displayed example
+shows its required CLI option. The C-thread mutex example exercises this
+concurrent-profile path.
 
 `scripts/verify-examples.ts` invokes an actual `gti` executable for every
 authored example and runs binaries in owned temporary directories. A

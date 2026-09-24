@@ -1,0 +1,30 @@
+#include <std/cthread>
+int main() {
+  unsafe {
+    mut std::cnd_t condition = 0;
+    mut std::mtx_t mutex = 0;
+    if (std::cnd_init(&condition) != 0 || std::mtx_init(mutex, std::mtx_plain) != 0) { return 1; }
+    if (std::cnd_signal(&condition) != 0 || std::cnd_broadcast(condition) != 0) { return 2; }
+    if (std::cnd_wait(condition, mutex) != std::thrd_error) { return 3; }
+    if (std::mtx_lock(mutex) != 0) { return 4; }
+    std::timespec past = std::timespec(int64_t(0), int64_t(0));
+    if (std::cnd_timedwait(&condition, &mutex, &past) != std::thrd_timedout) { return 5; }
+    if (std::mtx_trylock(mutex) != std::thrd_busy) { return 6; }
+    if (std::cnd_timedwait(condition, mutex, std::timespec(int64_t(0), int64_t(1000000000))) != std::thrd_error) { return 7; }
+    if (std::cnd_wait(nullptr, &mutex) != std::thrd_error ||
+        std::cnd_wait(&condition, nullptr) != std::thrd_error ||
+        std::cnd_timedwait(nullptr, &mutex, &past) != std::thrd_error ||
+        std::cnd_timedwait(&condition, nullptr, &past) != std::thrd_error ||
+        std::cnd_timedwait(&condition, &mutex, nullptr) != std::thrd_error ||
+        std::cnd_signal(nullptr) != std::thrd_error || std::cnd_broadcast(nullptr) != std::thrd_error ||
+        std::cnd_init(nullptr) != std::thrd_error) { return 8; }
+    if (std::mtx_unlock(mutex) != 0) { return 9; }
+    std::cnd_t stale = condition;
+    std::cnd_destroy(&condition);
+    if (condition != 0 || std::cnd_signal(stale) != std::thrd_error) { return 10; }
+    if (std::cnd_init(condition) != 0 || condition == stale) { return 11; }
+    std::cnd_destroy(condition);
+    std::mtx_destroy(mutex);
+  }
+  return 0;
+}

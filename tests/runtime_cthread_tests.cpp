@@ -1,5 +1,6 @@
 #include "cthread_internal.h"
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <mutex>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 
 namespace {
 
@@ -49,6 +51,64 @@ std::int32_t publish(void *context) {
   auto &value = *static_cast<std::int32_t *>(context);
   value += 7;
   return value;
+}
+
+std::int32_t publishIdentity(void *context) {
+  const auto identity = currentCThread();
+  *static_cast<CThreadHandle *>(context) = identity;
+  expect(identity != 0 && currentCThread() == identity,
+         "manual worker identity is stable before adapter entry");
+  expect(enterCThreadCallback(publishIdentity),
+         "identity does not claim entry");
+  expect(currentCThread() == identity, "entry preserves identity");
+  expect(leaveCThreadCallback(publishIdentity),
+         "identity does not claim leave");
+  expect(currentCThread() == identity, "leave preserves identity");
+  return 0;
+}
+
+void testIdentity() {
+  const auto initial = currentCThread();
+  expect(initial != 0 && initial == currentCThread(),
+         "initial identity is stable");
+  std::unordered_set<CThreadHandle> identities{initial};
+  for (int round = 0; round < 4; ++round) {
+    Gate start;
+    std::array<std::thread, 32> threads;
+    std::array<CThreadHandle, 32> observed{};
+    for (std::size_t index = 0; index < threads.size(); ++index) {
+      threads[index] = std::thread([&, index] {
+        start.wait();
+        const auto identity = currentCThread();
+        observed[index] = identity;
+        expect(identity != 0 && identity == currentCThread(),
+               "foreign identity is stable");
+        expect(!enterCThreadCallback(publishIdentity),
+               "observing foreign identity must not grant callback entry");
+        expect(joinCThread(identity, nullptr) == CThreadStatus::Error,
+               "observing identity creates no join obligation");
+      });
+    }
+    start.open();
+    for (auto &thread : threads) {
+      thread.join();
+    }
+    for (auto identity : observed) {
+      expect(identities.insert(identity).second,
+             "simultaneous and exited native thread IDs are never reused");
+    }
+    CThreadHandle handle = 0;
+    CThreadHandle observedWorker = 0;
+    expect(createCThread(&handle, publishIdentity, &observedWorker) ==
+                   CThreadStatus::Success &&
+               joinCThread(handle, nullptr) == CThreadStatus::Success,
+           "manual identity worker creates and joins");
+    expect(handle == observedWorker && identities.insert(handle).second,
+           "manual worker observes its exact globally unique create handle");
+  }
+  expect(currentCThread() == initial &&
+             joinCThread(initial, nullptr) == CThreadStatus::Error,
+         "initial identity remains stable and is not joinable");
 }
 
 void testInitialization() {
@@ -306,12 +366,16 @@ int main(int argc, char **argv) {
     (void)joinCThread(handle, nullptr);
     return 3;
   }
+  const auto initial = currentCThread();
   testInitialization();
+  testIdentity();
   testPublicationAndConsumption();
   testRecoverableFailures();
   testAttachment();
   testSelfJoin();
   testSimultaneousJoin();
   testShutdown();
+  expect(currentCThread() == initial,
+         "identity is independent of service initialization and shutdown");
   return failures == 0 ? 0 : 1;
 }

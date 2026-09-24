@@ -231,7 +231,10 @@ diagnostics or letting a backend message choose either identity.
   Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
   those choices require intent. Foreign callback values remain valid in the
   concurrent profile, so this code applies there only when GTI code is exposed
-  through an adapter. The same code continues to own a bare namespace function
+  through an adapter. It rejects conversion without `<std/cthread>` or with a
+  signature other than `int32_t(void*)` or `void()`
+  in the concurrent profile. The exact registered worker/once forms additionally
+  checks target support through `GTI-S2084`. The code also owns a bare function
   name used outside any exact native-callback, confined-callable, or thread-task
   context; explain that a function name must otherwise be called directly.
 - `GTI-S2077` owns a syntactically valid but semantically invalid parameter

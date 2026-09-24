@@ -50,6 +50,9 @@ public:
       : owner(std::move(value)) {}
 
   void reset() mut {
+    // Detach before cleanup. The local owns destruction and propagates any
+    // failure through ordinary MIR scope cleanup; the receiver stays empty.
+    unique_ptr<T> previous = unique_ptr<T>(std::move(this.owner));
     this.owner = nullptr;
   }
 

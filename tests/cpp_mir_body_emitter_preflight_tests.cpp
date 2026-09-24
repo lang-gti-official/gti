@@ -236,11 +236,40 @@ int main() {
 lang::MirInstructionId immutableClassMoveAssignment(const lang::MirBody &body) {
   lang::MirInstructionId found = 0;
   for (const lang::MirBlock &block : body.blocks) {
-    for (std::size_t index = 0; index + 2 < block.instructions.size();
+    for (std::size_t index = 0; index + 1 < block.instructions.size();
          ++index) {
       const lang::MirInstruction &move = block.instructions[index];
-      const lang::MirInstruction &assign = block.instructions[index + 1];
-      const lang::MirInstruction &destroy = block.instructions[index + 2];
+      const lang::MirBlock *commitBlock = &block;
+      std::size_t commitIndex = index + 1;
+      const lang::MirInstruction *prepare = nullptr;
+      if (block.instructions[commitIndex].kind ==
+          lang::MirInstructionKind::CleanupBeforeAssign) {
+        prepare = &block.instructions[commitIndex];
+        if (!prepare->replacementCleanup || !prepare->lifecycle.empty())
+          continue;
+        if (prepare->definedFailure.propagation ==
+            lang::FailurePropagationKind::Destructor) {
+          if (commitIndex + 1 != block.instructions.size() ||
+              block.terminator.kind != lang::MirTerminatorKind::Invoke ||
+              block.terminator.invokeInstruction != prepare->id)
+            continue;
+          commitBlock = body.findBlock(block.terminator.target);
+          commitIndex = 0;
+        } else {
+          ++commitIndex;
+        }
+      }
+      if (commitBlock == nullptr ||
+          commitIndex + 1 >= commitBlock->instructions.size())
+        continue;
+      const lang::MirInstruction &assign =
+          commitBlock->instructions[commitIndex];
+      const lang::MirInstruction &destroy =
+          commitBlock->instructions[commitIndex + 1];
+      if (prepare != nullptr && (prepare->replacementPair != assign.id ||
+                                 assign.replacementPair != prepare->id ||
+                                 prepare->destination != assign.destination))
+        continue;
       const lang::MirPlace *source =
           move.operands.size() == 1
               ? body.findPlace(move.operands.front().place)
@@ -381,9 +410,20 @@ int main() {
   if (immutableClass.canGenerateCode() && immutableClassEntry != nullptr) {
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                        .owner = immutableClassEntry->id};
-    expect(immutableClassMoveAssignment(immutableClassEntry->body) != 0,
+    const bool hasPreparation = std::any_of(
+        immutableClassEntry->body.blocks.begin(),
+        immutableClassEntry->body.blocks.end(), [](const auto &block) {
+          return std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [](const auto &instruction) {
+                return instruction.kind ==
+                       lang::MirInstructionKind::CleanupBeforeAssign;
+              });
+        });
+    expect(hasPreparation &&
+               immutableClassMoveAssignment(immutableClassEntry->body) != 0,
            "the unrelated class fixture should retain one immutable-source "
-           "Move/Assign/Drop schedule without payload-enum state");
+           "Move/cleanup/commit/Drop schedule without payload-enum state");
     for (const lang::CppStandard standard :
          {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
       const lang::CppMirBodyEmissionMap map(

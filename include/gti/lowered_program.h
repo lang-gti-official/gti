@@ -286,6 +286,7 @@ struct LoweredFunctionDeclaration {
   bool internalLinkage = false;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;

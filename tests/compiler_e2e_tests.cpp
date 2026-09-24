@@ -913,7 +913,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v49\n") &&
+  expect(dump.starts_with("mir-body-v60\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -2101,9 +2101,11 @@ int main() { return lifetime(true) - 13; }
   }
   const lang::MirVerificationResult wrongDestructorResult =
       lang::verifyMirProgram(wrongDestructor);
+  // Direct source-class leaves now use the same canonical recipe check as
+  // pointee and collection cleanup, before the legacy class-only check.
   expect(!wrongDestructorResult.valid() &&
              hasVerificationMessage(wrongDestructorResult,
-                                    "exact class cleanup descriptor"),
+                                    "exact pointee cleanup"),
          "MIR verification should reject a forged destructor target");
 
   lang::MirProgram wrongActiveCleanup = frontend.mir;

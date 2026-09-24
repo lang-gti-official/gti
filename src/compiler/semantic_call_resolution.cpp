@@ -3329,6 +3329,36 @@ auto SemanticVisitor::Impl::typeRequiresThreads(const SemanticType &type) const
   return typeRequiresThreads(type, visiting);
 }
 
+auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
+  // Declaration order and wrapper spelling must not determine availability.
+  // Propagate the exact native requirement through resolved source calls.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const CThreadCallUse &use : requestSession.cThreadCallUses) {
+      const FunctionInfo *callee = semanticModel.findFunction(*use.callee);
+      const FunctionInfo *caller =
+          use.caller == nullptr ? nullptr
+                                : semanticModel.findFunction(*use.caller);
+      if (callee == nullptr || !callee->requiresCThreadRuntime ||
+          caller == nullptr || caller->requiresCThreadRuntime) {
+        continue;
+      }
+      FunctionInfo updated = *caller;
+      updated.requiresCThreadRuntime = true;
+      semanticModel.record(*use.caller, std::move(updated));
+      changed = true;
+    }
+  }
+  for (const CThreadCallUse &use : requestSession.cThreadCallUses) {
+    const FunctionInfo *callee = semanticModel.findFunction(*use.callee);
+    if (!use.trusted && callee != nullptr && callee->requiresCThreadRuntime) {
+      (void)validateConcurrentSurfaceAvailability(use.location,
+                                                  "This C-thread API");
+    }
+  }
+}
+
 auto SemanticVisitor::Impl::validateConcurrentSurfaceAvailability(
     const Token &location, std::string_view surface) -> bool {
   if (target.executionProfile == ExecutionProfile::Concurrent &&
@@ -3345,7 +3375,7 @@ auto SemanticVisitor::Impl::validateConcurrentSurfaceAvailability(
   diagnostic.hints.emplace_back(
       target.executionProfile != ExecutionProfile::Concurrent
           ? "Select the concurrent execution profile for programs that "
-            "use std::thread or atomic synchronization."
+            "use threads or synchronization APIs."
           : "Select a target whose runtime capability set includes "
             "threads.");
   diagnostics.emplace_back(std::move(diagnostic));
@@ -3382,6 +3412,17 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
   if (!isCompilerTrustedRequester(paren)) {
+    const FunctionInfo *resolved = semanticModel.findFunction(function.id);
+    if (resolved == nullptr && instanceBaseModel != nullptr) {
+      resolved = instanceBaseModel->findFunction(function.id);
+    }
+    // Root analysis checks the closed call graph once all bodies exist.
+    // Concrete reanalysis consumes that derived requirement from its base.
+    if (instanceAnalysisActive && resolved != nullptr &&
+        resolved->requiresCThreadRuntime &&
+        !validateConcurrentSurfaceAvailability(paren, "This C-thread API")) {
+      return false;
+    }
     const SemanticType ownerType =
         function.dispatchOwner.kind == SemanticType::Class
             ? function.dispatchOwner
@@ -5123,6 +5164,14 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   }
   recordCallableForwardings(call, function);
   recordDefaultArgumentEffects(call, function);
+  if (requestSession.hasCThreadRequirements && !instanceAnalysisActive &&
+      function.declaration != nullptr) {
+    requestSession.cThreadCallUses.push_back(
+        {.caller = currentFunctionDeclaration,
+         .callee = function.declaration,
+         .location = call.paren(),
+         .trusted = isCompilerTrustedRequester(call.paren())});
+  }
   const FunctionInfo *declarationInfo = semanticModel.findFunction(function.id);
   if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
     declarationInfo = instanceBaseModel->findFunction(function.id);
@@ -5171,6 +5220,34 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .typeArguments = std::move(typeArguments),
       .valueArguments = std::move(valueArguments),
       .requirements = function.requirements,
+      .synchronization =
+          {.kind = function.record().cThreadOperation ==
+                           CThreadRuntimeOperation::Create
+                       ? SynchronizationOperationKind::ThreadSpawn
+                   : function.record().cThreadOperation ==
+                           CThreadRuntimeOperation::Join
+                       ? SynchronizationOperationKind::ThreadJoin
+                   : (function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::MutexLock ||
+                      function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::MutexTryLock ||
+                      function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::MutexTimedLock)
+                       ? SynchronizationOperationKind::MutexLock
+                   : function.record().cThreadOperation ==
+                           CThreadRuntimeOperation::MutexUnlock
+                       ? SynchronizationOperationKind::MutexUnlock
+                   : (function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::ConditionWait ||
+                      function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::ConditionTimedWait)
+                       ? SynchronizationOperationKind::ConditionWait
+                   : (function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::ConditionSignal ||
+                      function.record().cThreadOperation ==
+                          CThreadRuntimeOperation::ConditionBroadcast)
+                       ? SynchronizationOperationKind::ConditionNotify
+                       : SynchronizationOperationKind::None},
       .borrowOrigin = returnBorrowOrigin,
       .borrowArgument = returnBorrowParameter,
       .borrowAccess = returnBorrowAccess,

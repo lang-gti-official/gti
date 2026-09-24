@@ -80,14 +80,40 @@ auto SemanticVisitor::Impl::matchingNativeFunctionCandidates(
 auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
     const Expr &expression, const Symbol &symbol,
     const SemanticType &expectedType, const Token &location) -> SemanticType {
-  if (target.executionProfile == ExecutionProfile::Concurrent) {
+  const bool concurrent =
+      target.executionProfile == ExecutionProfile::Concurrent;
+  if (concurrent &&
+      expectedType.cThreadCallbackKind() == CThreadCallbackKind::None) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2076", DiagnosticPhase::Semantics, location,
-        "GTI function callbacks are not available in the concurrent "
-        "execution profile yet.");
+        "Concurrent GTI callbacks require a registered C-thread entry "
+        "'(void*) -> int32_t' or once initializer '() -> void'.");
     diagnostic.hints.emplace_back(
-        "Use the single-threaded execution profile until callback thread "
-        "entry and synchronization semantics are defined.");
+        "Use std::thrd_create for a worker or std::call_once for an "
+        "initializer; "
+        "other native callback signatures remain single-threaded.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return SemanticType::Unknown;
+  }
+  if (concurrent &&
+      !validateConcurrentSurfaceAvailability(location, "This C-thread entry")) {
+    return SemanticType::Unknown;
+  }
+  if (concurrent &&
+      (sourceGraph == nullptr ||
+       std::none_of(sourceGraph->sourceUnits().begin(),
+                    sourceGraph->sourceUnits().end(),
+                    [](const SourceUnit &unit) {
+                      return unit.role == SourceUnitRole::StandardLibrary &&
+                             unit.standardLibraryName == "std/cthread";
+                    }))) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2076", DiagnosticPhase::Semantics, location,
+        "A concurrent GTI callback requires the C-thread runtime boundary.");
+    diagnostic.hints.emplace_back(
+        "Include <std/cthread> and invoke the callback only through "
+        "std::thrd_create or std::call_once; general foreign-thread attachment "
+        "is unavailable.");
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
@@ -123,9 +149,12 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
   const CallableCandidate &selected = *matches.front();
   semanticModel.recordNativeFunctionConversion(
       expression,
-      NativeFunctionConversionInfo{.function = selected.id,
-                                   .declaration = selected.declaration,
-                                   .type = expectedType});
+      NativeFunctionConversionInfo{
+          .function = selected.id,
+          .declaration = selected.declaration,
+          .type = expectedType,
+          .cThreadCallback = concurrent ? expectedType.cThreadCallbackKind()
+                                        : CThreadCallbackKind::None});
   return expectedType;
 }
 

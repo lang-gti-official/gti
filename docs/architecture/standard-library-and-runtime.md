@@ -338,11 +338,51 @@ introduced. The module's remaining C-style families require their own
 attachment, ownership, synchronization, and failure contracts.
 
 The source-private `runtime/src/cthread_state.cpp` now supplies the native
-create/join and registered-entry prerequisite. It is a separate archive member,
-so yield-only clients do not acquire the registry. `cthread_internal.h` is not
-installed and no GTI declaration or generated backend path calls these helpers
-yet. This is runtime implementation evidence, not a public C-thread API or
-permission for concurrent GTI callback conversion.
+create/join, identity, and registered-entry implementation. It is a separate archive member,
+so C consumers referencing only the yield ABI do not acquire the registry.
+GTI currently emits unused ordinary wrappers conservatively, so importing the
+expanded module can link that archive member without starting the service.
+`cthread_internal.h` is not
+installed. The stable C boundary now exposes create/join plus compiler-generated
+begin/end/enter/leave entries. Ordinary `[[unsafe]]` GTI wrappers expose
+`std::thrd_create` and `std::thrd_join`, with raw-pointer and mutable-reference
+output overloads. The frontend recognizes only exact private native
+declarations from the trusted `std/cthread` unit. Their concrete call graph
+derives wrapper profile requirements without recognizing public names.
+
+`std::thrd_current` is an ordinary GTI wrapper over the scalar native
+`gti_rt_cthread_current_v1` entry; `std::thrd_equal` is ordinary GTI integer
+comparison. Neither gains a compiler operation or synchronization record.
+One atomic, non-wrapping identity allocator serves initial, managed, foreign,
+and manual native threads. Per-thread storage keeps an observed identity stable;
+manual creation reserves its worker's identity before launch. Relaxed atomic
+allocation guarantees uniqueness but publishes no application data. Identity
+observation is independent of service begin/end, callback registration, and
+the join registry. Exhaustion permanently closes allocation: creation returns
+error and observation of a not-yet-identified thread terminates. The runtime
+never recycles host thread IDs into public handles.
+
+`std::thrd_sleep` uses the existing ordinary MIR native-call route over
+`gti_rt_cthread_sleep_v1`. Public `std::timespec` remains a GTI struct; the C
+boundary receives two signed 64-bit scalars and two optional scalar output
+pointers, never the struct's layout. Source wrappers validate duration and
+snapshot aliased input; both source and runtime publish remaining time only
+on interruption. The runtime validates normalized input and host results,
+rejects incomplete or identical output pointers, and uses private output slots
+until the result is accepted. No new compiler intrinsic, synchronization
+record, ownership operation, or AST/HIR emission path is added.
+
+`runtime/src/cthread_sleep.cpp` is a separate archive member, preserving the
+yield-only C link boundary and native-symbol test overrides. POSIX calls
+`nanosleep` once, maps `EINTR` to interruption, and changes neither signal
+handlers nor masks. Windows rounds up to the relative waitable timer's 100ns
+units with checked range conversion and uses an alertable wait; an APC/I/O
+completion interruption reports a clamped remainder derived from
+`GetTickCount64`, at host tick resolution. Neither path retries interruption.
+The source-private `cthread_sleep_internal.h` seam accepts a host function per
+call for deterministic validation/publication tests, with no global injection
+state or installed testing API. Native tests also exercise real host
+interruption separately from the deterministic wrapper oracle.
 
 One initial thread starts the service once and alone owns shutdown. Nonzero
 64-bit handle identities are never reused; the registry retains each worker
@@ -361,9 +401,80 @@ Shutdown closes creation and returns busy while any registered worker or join
 obligation remains, allowing existing workers to finish and owners to join.
 Only an empty registry permits successful shutdown, and shutdown cannot reopen
 the service. This bounded service intentionally adds neither detach nor general
-foreign-thread registration. The compiler integration must still represent
-hosted startup/shutdown, exact entry and synchronization contracts, and defined
-failure cleanup/containment in verified MIR before exposing create/join.
+foreign-thread registration. Semantic conversion permits the exact concurrent
+`int32_t(void*)` worker entry and `void()` once initializer; HIR/MIR retain their distinct registered-entry
+policy. Create/join are native calls with exact spawn/join synchronization
+records. Hosted MIR begins the service after program initialization and ends
+it after normal user-entry cleanup; outstanding manual handles at that terminal
+boundary terminate. Existing failure exits keep the original GTI record and
+do not attempt ordinary shutdown. Generated callback adapters enter once,
+invoke the MIR target, and leave after normal cleanup. Defined worker failures
+clean the target and terminate at the original failure firewall rather than
+being re-raised at join, unlike managed threads.
+
+The manual C-style mutex surface uses exact private `gti_rt_mtx_*_v1`
+declarations from `std/cthread`. Semantics selects their operation and propagates
+concurrent-profile requirements through ordinary wrappers; HIR/MIR and the
+detached declaration table preserve that selection. Native lock/try/timed calls
+carry `MutexLock` and unlock carries `MutexUnlock`, independently verified
+against exact native signatures. The existing native-call emitter and optimizer
+barriers consume them; no public wrapper names or new C++ body path are used.
+
+`runtime/src/cthread_mutex.cpp` owns a never-reused mutex-handle registry.
+Each mutex has a short-held state gate, condition variable, owner identity, and
+recursive depth. No state gate is held throughout user critical sections.
+Final release wakes a waiter; an acquisition loop tolerates spurious wakeups.
+If a woken wait fails before taking a free mutex, it notifies another waiter
+before returning error; it cannot consume the only release notification.
+Timed acquisition validates and range-checks scalar UTC deadlines before any
+ownership change. In-flight calls retain the native object independently of
+registry lookup, so retirement cannot destroy a waiter or active call. The
+void C destruction boundary terminates on invalid or busy retirement. This
+surface has explicit unsafe lifetime obligations, not managed-owner cleanup.
+The source-private header exposes allocation/wait-failure and waiter-observation
+test seams; neither is installed. The public ABI remains scalar-only.
+
+The same translation unit implements manual condition variables so atomic
+enrollment/release can share the private mutex state gate without exposing a
+native lock or callback API. A separate never-reused condition registry owns
+condition gates and intrusive lists of stack-owned waiters. Enrollment holds
+the condition gate while checking and releasing exactly one mutex acquisition.
+Signal selects one unnotified waiter; broadcast selects all. No notification
+credit survives for future waiters. Host waits atomically release the condition
+gate, tolerate spurious wakes, and remove their list entry before reacquiring
+the mutex. Both registry references survive through reacquisition, preventing
+retirement of a woken but still blocked waiter. Invalid input preserves the
+original ownership; recoverable wait errors reacquire, and an unrecoverable
+reacquisition error terminates. Private allocation/wait-failure and enrollment
+observation seams support deterministic tests and are not installed.
+
+Semantics binds six exact private `gti_rt_cnd_*_v1` declarations. HIR/MIR retain
+`ConditionWait` and `ConditionNotify`, with release/reacquisition rather than
+notification supplying shared-data ordering. The ordinary native-call backend
+and existing effect propagation consume these records; no public wrapper
+spelling or backend-inferred synchronization is involved.
+
+`std::once_flag` is ordinary source-defined policy over `std::atomic<int32_t>`:
+0 is unclaimed, 1 is initializing, and 2 is complete. Acquire loads and a strong
+acquire CAS select the initializer; its normal return precedes a release store
+of 2. Other callers yield and retry. These are existing verified MIR atomic
+operations, not a backend-recognized public once operation.
+
+The only new host capability is exact synchronous `gti_rt_once_invoke_v1`.
+`cthread_state.cpp` keeps a stack of thread-local invocation registrations;
+generated thunks enter/leave the matching registration. Initial-thread
+ownership, manual-worker attachment, or the managed runtime's private active
+scope establishes the allowed execution domain. Nested distinct initializers
+restore the outer registration; arbitrary foreign threads cannot claim one.
+The installed C ABI contains no once-flag representation or reset operation.
+`CThreadCallbackKind` selects `ThreadEntry` versus `OnceInitializer` from
+semantic conversion through HIR, MIR, detached rows, and the emitted thunk.
+Failure uses the existing terminating firewall and never publishes completion.
+While a native callback registration is entered, defined failure bypasses the
+managed-worker handoff even when the callback runs on a managed worker. Its
+verified local cleanup precedes the original diagnostic and termination rather
+than throwing a handoff across the native callback. Leaving a successful
+initializer restores ordinary managed-worker failure transport.
 
 ## Defined-Failure Boundary
 

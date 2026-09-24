@@ -1,0 +1,48 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+mut int32_t failure_phase = 0;
+
+int32_t divisor(int32_t phase) {
+  std::println(phase * 10);
+  return failure_phase == phase ? 0 : 1;
+}
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() { std::println(this.identity); }
+};
+
+enum class State : uint8_t { Ready };
+
+class Base {
+  std::unique_ptr<Resource> resource;
+  int32_t checked;
+  State state = State::Ready;
+public:
+  Base() : resource(std::make_unique<Resource>(1)), checked(7 / divisor(1)) {}
+  bool ready() { return this.state == State::Ready; }
+  virtual int32_t read() = 0;
+};
+
+class Derived : public Base {
+  int32_t derived_value;
+public:
+  Derived() : Base(), derived_value(9 / divisor(2)) {}
+  int32_t read() override { return this.ready() ? this.derived_value : 0; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  failure_phase = argc - 1;
+  Resource outer = Resource(9);
+  if (failure_phase == 3) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+  }
+  auto value = std::make_unique<Derived>();
+  return value->read() == 9 ? 0 : 1;
+}

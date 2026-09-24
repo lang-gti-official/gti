@@ -49,6 +49,13 @@ async function main(): Promise<void> {
   requireText(vectorExample, 'class="shiki', "/std/vector/vector/push-back/");
   requireText(vectorExample, ">mut</span>", "/std/vector/vector/push-back/");
 
+  const mutexExample = await renderedPage("std/cthread");
+  requireText(mutexExample, "--execution-profile", "/std/cthread/");
+  requireText(mutexExample, "concurrent", "/std/cthread/");
+  requireText(mutexExample, "Balance a manual mutex lifetime", "/std/cthread/");
+  requireText(mutexExample, "A timed wait returns with the mutex locked", "/std/cthread/");
+  requireText(mutexExample, "cnd_timedwait", "/std/cthread/");
+
   console.log(
     "Validated rendered tables, reference index, and syntax highlighting.",
   );

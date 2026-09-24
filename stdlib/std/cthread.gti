@@ -1,15 +1,302 @@
-// C-style threading facilities. This first executable slice supplies yield;
-// worker creation/join, C mutexes, condition variables, and thread-specific
-// storage remain completion work, not aliases for the managed-thread API.
+// C-style manual threading. Context lifetime and synchronization are unsafe
+// caller obligations; use <std/thread> for owned automatically joined tasks.
+#include <std/atomic>
+namespace std {
+using thrd_t = uint64_t;
+using thrd_start_t = (void*) -> int32_t;
+using mtx_t = uint64_t;
+using cnd_t = uint64_t;
+using once_initializer_t = () -> void;
+constexpr int32_t thrd_success = 0;
+constexpr int32_t thrd_error = 1;
+constexpr int32_t thrd_nomem = 2;
+constexpr int32_t thrd_busy = 3;
+constexpr int32_t thrd_timedout = 4;
+constexpr int32_t mtx_plain = 0;
+constexpr int32_t mtx_recursive = 1;
+constexpr int32_t mtx_timed = 2;
+
+/// Seconds and nanoseconds: relative for sleep, absolute UTC for timed waits.
+/// This is a GTI value, not native timespec ABI.
+struct timespec {
+  mut int64_t tv_sec = 0;
+  mut int64_t tv_nsec = 0;
+  timespec() {}
+  timespec(int64_t seconds, int64_t nanoseconds)
+    : tv_sec(seconds), tv_nsec(nanoseconds) {}
+};
+}
+
 namespace gti_internal {
+// A private source token keeps the flag's implementation method out of the
+// application API without granting public access to its atomic state.
+struct once_access { once_access() {} };
 namespace runtime {
 extern "C" {
+void gti_rt_once_invoke_v1(std::once_initializer_t initializer);
 void gti_rt_cthread_yield_v1();
+uint64_t gti_rt_cthread_current_v1();
+int32_t gti_rt_cthread_sleep_v1(int64_t seconds, int64_t nanoseconds,
+                               int64_t* remaining_seconds, int64_t* remaining_nanoseconds);
+int32_t gti_rt_cthread_create_v1(uint64_t* output, std::thrd_start_t entry, void* context);
+int32_t gti_rt_cthread_join_v1(uint64_t handle, int32_t* result);
+void gti_rt_cthread_begin_v1();
+void gti_rt_cthread_end_v1();
+int32_t gti_rt_mtx_init_v1(uint64_t* output, int32_t flags);
+void gti_rt_mtx_destroy_v1(uint64_t handle);
+int32_t gti_rt_mtx_lock_v1(uint64_t handle);
+int32_t gti_rt_mtx_trylock_v1(uint64_t handle);
+int32_t gti_rt_mtx_timedlock_v1(uint64_t handle, int64_t seconds, int64_t nanoseconds);
+int32_t gti_rt_mtx_unlock_v1(uint64_t handle);
+int32_t gti_rt_cnd_init_v1(uint64_t* output);
+void gti_rt_cnd_destroy_v1(uint64_t handle);
+int32_t gti_rt_cnd_signal_v1(uint64_t handle);
+int32_t gti_rt_cnd_broadcast_v1(uint64_t handle);
+int32_t gti_rt_cnd_wait_v1(uint64_t condition, uint64_t mutex);
+int32_t gti_rt_cnd_timedwait_v1(uint64_t condition, uint64_t mutex, int64_t seconds, int64_t nanoseconds);
 }
 }
 }
 
 namespace std {
+/// Explicit constructor tag for a fresh once flag; not a shared flag instance.
+struct once_flag_init {
+  constexpr once_flag_init() {}
+};
+constexpr once_flag_init ONCE_FLAG_INIT = once_flag_init();
+
+/// Stable, noncopyable, nonmovable once state. An immutable binding can be
+/// shared; synchronization comes from its private atomic, not from mutability.
+class once_flag {
+  std::atomic<int32_t> state;
+public:
+  once_flag() : state(std::atomic<int32_t>(0)) {}
+  once_flag(once_flag_init initial) : state(std::atomic<int32_t>(0)) {}
+  once_flag(once_flag& other) = delete;
+  once_flag(once_flag&& other) = delete;
+
+  /// The caller keeps the flag alive through every call and supplies a valid
+  /// initializer. The initializer must not recursively wait on the same flag.
+  void invoke(gti_internal::once_access access, once_initializer_t initializer) {
+    while (true) {
+      if (state.load(std::memory_order_acquire()) == 2) { return; }
+      auto claimed = state.compare_exchange_strong(0, 1, std::memory_order_acquire());
+      if (claimed.exchanged()) {
+        unsafe { gti_internal::runtime::gti_rt_once_invoke_v1(initializer); }
+        state.store(2, std::memory_order_release());
+        return;
+      }
+      gti_internal::runtime::gti_rt_cthread_yield_v1();
+    }
+  }
+};
+
+/// Runs one selected initializer exactly once; every normal return observes
+/// its completed writes. Contenders may yield; no fairness is promised.
+[[unsafe]] void call_once(once_flag& flag, once_initializer_t initializer) {
+  unsafe { flag.invoke(gti_internal::once_access(), initializer); }
+}
+[[unsafe]] void call_once(const once_flag* flag, once_initializer_t initializer) {
+  unsafe {
+    if (flag == nullptr) { gti_internal::runtime::gti_rt_once_invoke_v1(nullptr); return; }
+    call_once(*flag, initializer);
+  }
+}
+
+/// Creates a manually destroyed condition variable. Failure preserves output.
+/// Requires the concurrent profile; keep the handle live through every call.
+[[unsafe]] int32_t cnd_init(cnd_t* output) {
+  unsafe { return gti_internal::runtime::gti_rt_cnd_init_v1(output); }
+}
+[[unsafe]] int32_t cnd_init(mut cnd_t& output) {
+  unsafe { return cnd_init(&output); }
+}
+/// Requires a live condition with no calls in flight, including reacquiring
+/// waiters. Violations terminate. Success clears this handle, not its copies.
+[[unsafe]] void cnd_destroy(cnd_t* condition) {
+  unsafe {
+    if (condition == nullptr) { gti_internal::runtime::gti_rt_cnd_destroy_v1(uint64_t(0)); return; }
+    gti_internal::runtime::gti_rt_cnd_destroy_v1(*condition);
+    *condition = 0;
+  }
+}
+[[unsafe]] void cnd_destroy(mut cnd_t& condition) {
+  unsafe { cnd_destroy(&condition); }
+}
+/// Wakes one currently waiting thread, if any. Notifications are not stored.
+[[unsafe]] int32_t cnd_signal(cnd_t condition) {
+  return gti_internal::runtime::gti_rt_cnd_signal_v1(condition);
+}
+[[unsafe]] int32_t cnd_signal(const cnd_t* condition) {
+  unsafe { if (condition == nullptr) { return thrd_error; } return cnd_signal(*condition); }
+}
+/// Wakes all currently waiting threads; it does not transfer mutex ownership.
+[[unsafe]] int32_t cnd_broadcast(cnd_t condition) {
+  return gti_internal::runtime::gti_rt_cnd_broadcast_v1(condition);
+}
+[[unsafe]] int32_t cnd_broadcast(const cnd_t* condition) {
+  unsafe { if (condition == nullptr) { return thrd_error; } return cnd_broadcast(*condition); }
+}
+/// Requires exactly one mutex acquisition by this thread. Atomically enrolls
+/// and unlocks, then relocks before returning, including timeout/wait error.
+/// Recheck shared predicates in a loop. No automatic unlock on GTI failure.
+[[unsafe]] int32_t cnd_wait(cnd_t condition, mtx_t mutex) {
+  return gti_internal::runtime::gti_rt_cnd_wait_v1(condition, mutex);
+}
+[[unsafe]] int32_t cnd_wait(const cnd_t* condition, const mtx_t* mutex) {
+  unsafe {
+    if (condition == nullptr || mutex == nullptr) { return thrd_error; }
+    return cnd_wait(*condition, *mutex);
+  }
+}
+/// Absolute UTC deadline; thrd_timedout still returns with the mutex locked.
+/// The mutex need not be mtx_timed. Invalid input does not release the mutex.
+[[unsafe]] int32_t cnd_timedwait(cnd_t condition, mtx_t mutex, timespec deadline) {
+  return gti_internal::runtime::gti_rt_cnd_timedwait_v1(condition, mutex, deadline.tv_sec, deadline.tv_nsec);
+}
+[[unsafe]] int32_t cnd_timedwait(const cnd_t* condition, const mtx_t* mutex, const timespec* deadline) {
+  unsafe {
+    if (condition == nullptr || mutex == nullptr || deadline == nullptr) { return thrd_error; }
+    return cnd_timedwait(*condition, *mutex, timespec(deadline->tv_sec, deadline->tv_nsec));
+  }
+}
+
+/// Initializes one manually destroyed mutex; failure preserves output.
+/// The concurrent profile is required. Copying the handle does not duplicate
+/// its lifetime. Every access must finish before destruction; no automatic
+/// unlock or destruction is implied on GTI scope exit or defined failure.
+[[unsafe]] int32_t mtx_init(mtx_t* output, int32_t flags) {
+  unsafe { return gti_internal::runtime::gti_rt_mtx_init_v1(output, flags); }
+}
+[[unsafe]] int32_t mtx_init(mut mtx_t& output, int32_t flags) {
+  unsafe { return mtx_init(&output, flags); }
+}
+
+/// Requires a live, unlocked mutex with no operations in flight. A violation
+/// terminates. Successful destruction clears this handle, not its copies.
+[[unsafe]] void mtx_destroy(mtx_t* mutex) {
+  unsafe {
+    if (mutex == nullptr) { gti_internal::runtime::gti_rt_mtx_destroy_v1(uint64_t(0)); return; }
+    gti_internal::runtime::gti_rt_mtx_destroy_v1(*mutex);
+    *mutex = 0;
+  }
+}
+[[unsafe]] void mtx_destroy(mut mtx_t& mutex) {
+  unsafe { mtx_destroy(&mutex); }
+}
+
+/// Acquires a live mutex, ordering after its prior final unlock on success.
+/// Failure acquires nothing. Recursive locking requires mtx_recursive.
+[[unsafe]] int32_t mtx_lock(mtx_t mutex) {
+  return gti_internal::runtime::gti_rt_mtx_lock_v1(mutex);
+}
+[[unsafe]] int32_t mtx_lock(const mtx_t* mutex) {
+  unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_lock(*mutex); }
+}
+[[unsafe]] int32_t mtx_trylock(mtx_t mutex) {
+  return gti_internal::runtime::gti_rt_mtx_trylock_v1(mutex);
+}
+[[unsafe]] int32_t mtx_trylock(const mtx_t* mutex) {
+  unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_trylock(*mutex); }
+}
+
+/// Absolute UTC/Unix seconds and normalized nanoseconds, unlike relative sleep.
+/// Requires mtx_timed. Timeout acquires nothing and returns thrd_timedout.
+[[unsafe]] int32_t mtx_timedlock(mtx_t mutex, timespec deadline) {
+  return gti_internal::runtime::gti_rt_mtx_timedlock_v1(mutex, deadline.tv_sec, deadline.tv_nsec);
+}
+[[unsafe]] int32_t mtx_timedlock(const mtx_t* mutex, const timespec* deadline) {
+  unsafe {
+    if (mutex == nullptr || deadline == nullptr) { return thrd_error; }
+    return mtx_timedlock(*mutex, timespec(deadline->tv_sec, deadline->tv_nsec));
+  }
+}
+
+/// Releases one acquisition on the current thread. Only the final recursive
+/// release makes the mutex available; wrong-thread or unlocked use is an error.
+[[unsafe]] int32_t mtx_unlock(mtx_t mutex) {
+  return gti_internal::runtime::gti_rt_mtx_unlock_v1(mutex);
+}
+[[unsafe]] int32_t mtx_unlock(const mtx_t* mutex) {
+  unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_unlock(*mutex); }
+}
+
+/// Blocks for a relative duration. Returns 0 when elapsed, -1 when interrupted,
+/// and -2 for invalid input or host failure. Only interruption writes remaining.
+/// Non-null pointers must address live, correctly synchronized values; duration
+/// may alias remaining. A null duration is an error; null remaining discards it.
+[[unsafe]] int32_t thrd_sleep(const timespec* duration, timespec* remaining) {
+  if (duration == nullptr) { return -2; }
+  unsafe {
+    int64_t seconds = duration->tv_sec;
+    int64_t nanoseconds = duration->tv_nsec;
+    if (seconds < 0 || nanoseconds < 0 || nanoseconds >= 1000000000) { return -2; }
+    mut int64_t remaining_seconds = 0;
+    mut int64_t remaining_nanoseconds = 0;
+    int32_t result = gti_internal::runtime::gti_rt_cthread_sleep_v1(
+      seconds, nanoseconds, &remaining_seconds, &remaining_nanoseconds);
+    if (result == -1 && remaining != nullptr) {
+      remaining->tv_sec = remaining_seconds;
+      remaining->tv_nsec = remaining_nanoseconds;
+    }
+    return result;
+  }
+}
+
+/// Copies the input before borrowing the output, permitting safe in-place retry.
+int32_t thrd_sleep(timespec duration, mut timespec& remaining) {
+  unsafe { return thrd_sleep(&duration, &remaining); }
+}
+
+/// Sleeps without returning the unslept duration if interrupted.
+int32_t thrd_sleep(timespec duration) {
+  unsafe { return thrd_sleep(&duration, nullptr); }
+}
+
+/// Stable nonzero identity of the calling thread, in either execution profile.
+/// Observing an identity creates no join obligation or synchronization edge.
+thrd_t thrd_current() {
+  return gti_internal::runtime::gti_rt_cthread_current_v1();
+}
+
+/// Compares identity values only, including saved values after thread exit.
+/// Returns one for equal values and zero otherwise; it does not test liveness.
+int32_t thrd_equal(thrd_t left, thrd_t right) {
+  if (left == right) { return 1; }
+  return 0;
+}
+
+/// Starts one manually joined worker. Requires the concurrent profile.
+/// Keep context and everything reachable through it live and synchronized
+/// through successful join. Failure preserves output; success requires one
+/// eventual successful join before hosted entry returns. No detach is implied.
+[[unsafe]] int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context) {
+  unsafe {
+    return gti_internal::runtime::gti_rt_cthread_create_v1(output, entry, context);
+  }
+}
+
+[[unsafe]] int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context) {
+  unsafe {
+    return thrd_create(&output, entry, context);
+  }
+}
+
+/// Joins once, publishing worker writes and its integer result. A null result
+/// discards the value. An error leaves the caller's output unchanged; a
+/// recoverable native error preserves the live handle for retry.
+[[unsafe]] int32_t thrd_join(thrd_t handle, int32_t* result) {
+  unsafe {
+    return gti_internal::runtime::gti_rt_cthread_join_v1(handle, result);
+  }
+}
+
+[[unsafe]] int32_t thrd_join(thrd_t handle, mut int32_t& result) {
+  unsafe {
+    return thrd_join(handle, &result);
+  }
+}
+
 /// Offers the host scheduler an opportunity to run another thread.
 /// May have no effect. Provides no fairness, delay, or synchronization guarantee.
 /// Available in both execution profiles; it creates no thread or ownership.

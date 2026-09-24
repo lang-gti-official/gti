@@ -3738,7 +3738,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v49\n") &&
+  expect(dump.starts_with("mir-body-v60\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -4058,14 +4058,14 @@ int main() {
       }
     }
   }
-  expect(spawnInstruction != nullptr && lowered.valid() &&
+  expect(spawnInstruction != nullptr && !lowered.valid() &&
              lowered.program.executionProfile() ==
                  lang::ExecutionProfile::Concurrent &&
              spawnInstruction->synchronization.kind ==
                  lang::SynchronizationOperationKind::ThreadSpawn &&
-             lang::verifyMirProgram(lowered.program).valid(),
-         "HIR synchronization identity should lower exactly into verified "
-         "concurrent MIR");
+             !lang::verifyMirProgram(lowered.program).valid(),
+         "staged HIR synchronization must survive lowering, but an ordinary "
+         "call cannot impersonate an exact thread-spawn operation");
   if (loweredMain == nullptr || spawnInstruction == nullptr) {
     return;
   }
@@ -4100,6 +4100,8 @@ int main() {
        .failureOrder = lang::AtomicMemoryOrder::Acquire},
       {.kind = lang::SynchronizationOperationKind::MutexLock},
       {.kind = lang::SynchronizationOperationKind::MutexUnlock},
+      {.kind = lang::SynchronizationOperationKind::ConditionWait},
+      {.kind = lang::SynchronizationOperationKind::ConditionNotify},
   };
   for (const lang::SynchronizationOperation &operation : validOperations) {
     lang::MirBody candidate = loweredMain->body;

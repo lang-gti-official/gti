@@ -46,6 +46,18 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                        .line = hirPlan->mainAnchor.line};
   plan.programInitializationTarget = {.kind = MirBodyKind::Module};
   plan.exitPolicy = MirHostedStartupExitPolicy::ImmediateExit70;
+  if (program.requiresCThreadRuntime()) {
+    for (const MirFunctionInstance &function : program.functionInstances()) {
+      if (function.cThreadOperation == CThreadRuntimeOperation::Begin) {
+        valid = valid && plan.cThreadBegin == 0;
+        plan.cThreadBegin = function.id;
+      } else if (function.cThreadOperation == CThreadRuntimeOperation::End) {
+        valid = valid && plan.cThreadEnd == 0;
+        plan.cThreadEnd = function.id;
+      }
+    }
+    valid = valid && plan.cThreadBegin != 0 && plan.cThreadEnd != 0;
+  }
 
   MirBody body;
   body.kind = MirBodyKind::HostedStartup;
@@ -197,6 +209,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
         !instance->requiresActiveCleanup) {
       valid = false;
     }
+    if (auto cleanup = mirUniqueCleanupType(program, type))
+      return *cleanup;
     return MirDropType{
         .type = type,
         .classInstance = owner == 0 ? std::nullopt : std::optional{owner},
@@ -235,11 +249,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       };
   const auto destructorMayRaise = [&](MirDropObligationId obligation) {
     const MirDropObligation *drop = body.findDropObligation(obligation);
-    const MirDestructorInstance *destructor =
-        drop != nullptr && drop->dropType.destructor
-            ? program.findDestructorInstance(*drop->dropType.destructor)
-            : nullptr;
-    return destructor != nullptr && destructor->mayRaiseDefinedFailure;
+    return drop != nullptr &&
+           mirDropMayRaiseDefinedFailure(program, drop->dropType);
   };
   const auto emitFailureCleanup =
       [&](MirBlock &parameterBlock, MirFailureRecordId primary,
@@ -358,6 +369,20 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
   MirBlock &entryBlock = appendBlock();
   body.entry = entryBlock.id;
+  const auto cThreadBoundary = [&](MirBlock &block, bool begin) {
+    if (!program.requiresCThreadRuntime()) {
+      return;
+    }
+    const auto operation = beginOperation(
+        begin ? MirHostedStartupOperationKind::BeginCThreadRuntime
+              : MirHostedStartupOperationKind::EndCThreadRuntime,
+        MirHostedStartupFailureBehavior::None, block.id);
+    MirInstruction call;
+    call.kind = MirInstructionKind::Call;
+    call.functionTarget = begin ? plan.cThreadBegin : plan.cThreadEnd;
+    call.info = generatedInfo(SemanticType::Void);
+    appendInstruction(operation, block, std::move(call));
+  };
 
   if (hirPlan->kind == ProgramEntryKind::NoArguments) {
     MirBlock *startupBlock = &entryBlock;
@@ -383,6 +408,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       }
     }
 
+    cThreadBoundary(*startupBlock, true);
     const bool entryMayRaise =
         entry != nullptr && entry->mayRaiseDefinedFailure;
     const MirHostedStartupOperationId entryCallOperation =
@@ -404,6 +430,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       routeOperationFailure(startupBlock, entryCallInstruction, {});
     }
     plan.entryResult = entryResult;
+
+    cThreadBoundary(*startupBlock, false);
 
     const MirHostedStartupOperationId returnOperation =
         beginOperation(MirHostedStartupOperationKind::ReturnEntry,
@@ -492,6 +520,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       }
     }
 
+    cThreadBoundary(*setupBlock, true);
     const bool vectorMayRaise = vectorConstructor != nullptr &&
                                 vectorConstructor->mayRaiseDefinedFailure;
     const MirHostedStartupOperationId vectorOperation =
@@ -898,6 +927,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       routeOperationFailure(finalBlock, entryCallInstruction, {});
     }
     plan.entryResult = entryResult;
+
+    cThreadBoundary(*finalBlock, false);
 
     const MirHostedStartupOperationId returnOperation =
         beginOperation(MirHostedStartupOperationKind::ReturnEntry,

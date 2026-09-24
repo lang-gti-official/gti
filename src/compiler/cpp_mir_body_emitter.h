@@ -12,6 +12,14 @@
 
 namespace lang {
 
+// Spell one verified cleanup recipe against an existing live representation.
+// The caller owns ending that representation's lifetime. Collection recipes
+// supply this same operation recursively to their reverse-live-element loop.
+[[nodiscard]] std::string
+cppMirCleanupValueExpression(const MirProgram &program, const MirDropType &type,
+                             std::string_view value, std::string_view record,
+                             std::string_view unwinding);
+
 // This is the private, pointer-free representation input to the generic MIR
 // body emitter. Production construction belongs to the one sealed C++
 // representation-snapshot builder. Tests may construct rows directly, but no
@@ -425,6 +433,14 @@ cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
 [[nodiscard]] bool
 cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
                                                const SemanticType &type);
+
+// Unlike an empty value of the whole class, empty fields are also valid while
+// a source destructor's lifecycle guard is disarmed during construction.
+// This proof permits body-ordered parameter publication, not a new empty
+// constructor for a user-destructor-bearing class.
+[[nodiscard]] bool
+cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
+                                            HirClassInstanceId instance);
 
 // An explicit base initializer whose arguments are exact copy-loads of this
 // constructor's scalar parameters. The native C++ initializer list may spell

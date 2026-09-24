@@ -1,0 +1,16 @@
+#include <std/cthread>
+
+int main() {
+  mut std::mtx_t mutex = 0;
+  unsafe {
+    if (std::mtx_init(mutex, std::mtx_plain) != std::thrd_success) { return 1; }
+    if (std::mtx_lock(mutex) != std::thrd_success) {
+      std::mtx_destroy(mutex);
+      return 2;
+    }
+    // Work protected by this mutex belongs here.
+    if (std::mtx_unlock(mutex) != std::thrd_success) { return 3; }
+    std::mtx_destroy(mutex);
+  }
+  return 0;
+}

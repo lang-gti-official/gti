@@ -58,6 +58,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
+  requestSession.cThreadCallUses.clear();
+  requestSession.hasCThreadRequirements = false;
   programStoragePlaceUseDepth = 0;
   preferReadOnlySubscriptReceiverDepth = 0;
   contextualInitializerType.reset();
@@ -143,6 +145,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateConfinedCallableContracts();
   validateConfinedCallableUses();
   semanticModel.finalizeCallableArguments();
+  finalizeCThreadRequirements();
   finalizeProgramInitialization(program);
   semanticModel.finalizeOccurrences();
   catalog.assertUnchangedSinceSeal();
