@@ -193,9 +193,20 @@ def main() -> int:
         )
         if replacement_cpp is None:
             return 1
-        replacement = re.search(
+        cleanup = re.search(
             r"// GTI MIR activate two-phase loan (?P<loan>\d+)\s*"
-            r"\(\*__gti_mir_loan_(?P=loan)\) = "
+            r"(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
+            r"\}\(\(\*__gti_mir_loan_(?P=loan)\)\);\s*"
+            r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
+            r"\s*\} else \{\s*goto (?P<failure>__gti_mir_bb_\d+);",
+            replacement_cpp,
+        )
+        if cleanup is None:
+            sys.stderr.write("missing checked subscript replacement cleanup\n")
+            return 1
+        replacement = re.search(
+            re.escape(cleanup.group("success")) + r": \{\s*"
+            r"\(\*__gti_mir_loan_(?P<loan>" + cleanup.group("loan") + r")\) = "
             r"std::move\((?P<slot>__gti_mir_p_\d+)\.get\(\)\);\s*"
             r"// GTI MIR end-borrow loan (?P=loan)\s*"
             r"(?:__gti_mir_drop_success_\d+ = )?"
@@ -207,6 +218,17 @@ def main() -> int:
                 "generated C++ lost the cleanup-owning subscript "
                 "replacement schedule\n"
             )
+            return 1
+        rollback = re.search(
+            re.escape(cleanup.group("failure")) + r": \{\s*"
+            r"// GTI MIR failure-record \d+ cleanup\s*"
+            r"__gti_mir_drop_success_\d+ = "
+            + re.escape(replacement.group("slot"))
+            + r"\.destroy_with_failure\(",
+            replacement_cpp,
+        )
+        if rollback is None:
+            sys.stderr.write("missing unpublished subscript value rollback\n")
             return 1
 
     return 0

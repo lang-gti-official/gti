@@ -207,8 +207,9 @@ and count mismatches are returned through `std::format_errc` before output.
 Floating-point conversion and formatter customization remain later
 standard-library layers and must not make the compiler recognize the public
 `std::string` name.
-Front/back, mutable `at`, resize, shrink-to-fit, and pop-back are implemented;
-`swap` remains bodyless until moving through mutable references is expressible.
+Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
+storage `swap` are implemented. Swap also exchanges size and capacity without
+copying characters or allocating.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over `gti_internal::prefix_storage<T>` and imported with
@@ -253,16 +254,20 @@ movement, and other overlapping owner operations are rejected while that range
 is active. Owned vector temporaries are supported and destroyed once after
 range cleanup. Precise public invalidation effects, iterator-position mutation,
 allocator customization, and a complete C++ `vector` API remain future work.
-`swap` remains bodyless because the current ownership model deliberately
-forbids moving an owner out through a mutable reference.
+`swap` exchanges storage and capacity without allocation or element movement.
+Private receiver methods replace their own storage and return the previous
+owner; no move through a borrowed reference is needed. Both owners must be
+mutable and distinct, with no live overlapping element/view/iterator loans.
 
 `std::forward_list<T>` has a source-defined exclusive `std::unique_ptr` node
 chain. Empty/front and front push/pop are constant-time; clear and destruction
 are iterative and linear. Resize, reverse, stable sorted merge, removal,
 adjacent uniqueness, and stable O(n log n) sort transfer node owners without
 copying or moving stored elements. Only growing resize allocates new nodes.
-Merge consumes its other list. Iterators, emplacement, and swap remain
-bodyless pending their lifetime, construction, and replacement capabilities.
+Merge consumes its other list. Swap exchanges the node chains in constant time
+without allocation or element movement and obeys the same exclusive-owner
+borrow rules as vector swap. Iterators and emplacement remain bodyless pending
+their lifetime and construction capabilities.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -437,7 +442,7 @@ is recognized by the backend.
 | Include | Scaffolded surface |
 | --- | --- |
 | `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, structural complete-range predicate/operation overloads plus generic `fill`, and vector-bounded `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
-| `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, and unique; iteration, emplacement, and swap remain declarations |
+| `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, and swap; iteration and emplacement remain declarations |
 | `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |

@@ -50,6 +50,13 @@ namespace std {
     mut size_t count = 0;
     mut size_t reserved = 0;
 
+    gti_internal::prefix_storage<char> replace_storage(
+        gti_internal::prefix_storage<char> replacement) mut {
+      auto previous = std::move(this.data);
+      this.data = std::move(replacement);
+      return std::move(previous);
+    }
+
     bool equals(string_view other) {
       if (this.count != other.size()) {
         return false;
@@ -292,7 +299,17 @@ namespace std {
       return std::move(result);
     }
 
-    void swap(mut string& other) mut;
+    /// Exchanges storage, size, and capacity without copying code units.
+    void swap(mut string& other) mut {
+      auto previous = std::move(this.data);
+      this.data = other.replace_storage(std::move(previous));
+      size_t previous_count = this.count;
+      this.count = other.count;
+      other.count = previous_count;
+      size_t previous_capacity = this.reserved;
+      this.reserved = other.reserved;
+      other.reserved = previous_capacity;
+    }
 
     bool operator==(string_view other) {
       return this.equals(other);

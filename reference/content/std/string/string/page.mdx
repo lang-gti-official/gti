@@ -46,5 +46,7 @@ returns a counted `std::string_view`, while `as_span()` returns a checked
 character view. Both preserve the owner's lifetime and prevent movement or
 mutation of the string while retained.
 
-`swap` remains declaration-only scaffolding. All other members listed in the
-synopsis are implemented.
+`swap(other)` exchanges storage, size, and capacity in constant time without
+allocating or copying characters. Embedded zeros and empty strings are
+preserved. Both owners must be mutable and distinct, with no live overlapping
+element or view borrow. All members listed in the synopsis are implemented.

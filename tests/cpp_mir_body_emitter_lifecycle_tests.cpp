@@ -2,6 +2,125 @@
 
 namespace {
 
+void testContainerSwapStorageAndMemberResults() {
+  const auto frontend =
+      analyzeWithStandardLibrary("container-swap-slots.gti", R"(
+#include <std/vector>
+#include <std/forward_list>
+class Item {
+public:
+  int key;
+  Item(int value) : key(value) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { std::println(this.key); }
+};
+int main() {
+  mut std::vector<Item> a = std::vector<Item>();
+  mut std::vector<Item> b = std::vector<Item>();
+  a.push_back(Item(1));
+  a.swap(b);
+  mut std::forward_list<Item> left = std::forward_list<Item>();
+  mut std::forward_list<Item> right = std::forward_list<Item>();
+  left.push_front(Item(2));
+  left.swap(right);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(), "container swaps must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    auto rows = buildRows(frontend, frontend.mir, standard);
+    const lang::CppMirBodyEmissionMap map(rows);
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyzeProgram().ready(),
+           "storage-return and owned member-result swaps must be MIR-ready");
+    std::size_t storageReturns = 0;
+    std::size_t memberPublications = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      if (function.returnType.kind == lang::SemanticType::PrefixStorage &&
+          function.definitionKind == lang::MirDefinitionKind::Source) {
+        ++storageReturns;
+        expect(emitter.supportsFailureBodyText(address),
+               "private storage returns must use the explicit status ABI");
+        const auto text =
+            emitter.emitFailureBodyText(address, "storage-return-test", 1);
+        expect(text.emitted() &&
+                   text.text.find("*__gti_mir_out_result = std::move(") !=
+                       std::string::npos,
+               "storage publication must transfer rather than copy a handle");
+        auto missing = rows;
+        std::erase_if(missing.types, [&](const auto &row) {
+          return row.type == function.returnType;
+        });
+        const lang::CppMirBodyEmissionMap missingMap(std::move(missing));
+        expect(!lang::CppMirBodyEmitter(frontend.mir, missingMap)
+                    .supportsFailureBodyText(address),
+               "storage returns require their exact representation row");
+      }
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.receiver || !instruction.functionTarget ||
+              !instruction.successResultDrop ||
+              instruction.info.type.kind != lang::SemanticType::Class)
+            continue;
+          const bool replacesField = std::any_of(
+              function.body.blocks.begin(), function.body.blocks.end(),
+              [&](const auto &candidate) {
+                return std::any_of(
+                    candidate.instructions.begin(),
+                    candidate.instructions.end(), [&](const auto &user) {
+                      return user.kind == lang::MirInstructionKind::Assign &&
+                             std::any_of(
+                                 user.lifecycle.begin(), user.lifecycle.end(),
+                                 [&](const auto &event) {
+                                   return event.kind ==
+                                              lang::MirLifecycleEventKind::
+                                                  Replace &&
+                                          event.source ==
+                                              *instruction.successResultDrop &&
+                                          event.target == 0;
+                                 });
+                    });
+              });
+          if (!replacesField)
+            continue;
+          ++memberPublications;
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks) {
+              for (auto &changedInstruction : changedBlock.instructions) {
+                if (changedInstruction.id != instruction.id)
+                  continue;
+                if (mutation == 0)
+                  changedInstruction.receiver.reset();
+                else if (mutation == 1)
+                  changedInstruction.successResultDrop.reset();
+                else
+                  changedInstruction.callSite += 10000;
+              }
+            }
+            expect(!lang::CppMirBodyEmitter(malformed, map)
+                        .supportsFailureBodyText(address),
+                   "member field publication rejects missing receivers, "
+                   "activation, "
+                   "and retargeted input schedules");
+          }
+        }
+      }
+    }
+    expect(storageReturns > 0 && memberPublications > 0,
+           "both new result representations must be exercised");
+  }
+}
+
 void testToyEngineConstructorInitializers() {
   const auto frontend =
       analyzeWithStandardLibrary("toy-engine-initializers.gti", R"(
@@ -5732,6 +5851,8 @@ int32_t main() { return cleanup_t().value - 7; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testContainerSwapStorageAndMemberResults",
+     testContainerSwapStorageAndMemberResults},
     {"testOwningCheckedBodyEmitsWholeCleanupProof",
      testOwningCheckedBodyEmitsWholeCleanupProof},
     {"testRichFieldInitializerSchedule", testRichFieldInitializerSchedule},

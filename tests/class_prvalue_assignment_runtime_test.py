@@ -85,9 +85,9 @@ def main() -> int:
 
         # Every cleanup-owning prvalue assignment keeps MIR's exact schedule:
         # the temporary is constructed into its own staging slot, the
-        # destination binding is move-assigned from that slot -- which drops
-        # the value it replaces -- and only the moved-from shell is destroyed,
-        # immediately and exactly once.
+        # old destination is cleaned before publication, then the destination
+        # is move-assigned and the moved-from shell is immediately retired.
+        # A failed old-value cleanup instead destroys the unpublished value.
         publication = re.compile(
             r"^\s*__gti_mir_p_\d+\.get\(\) = "
             r"std::move\((__gti_mir_p_\d+)\.get\(\)\);$"
@@ -113,19 +113,41 @@ def main() -> int:
                         f"its publication: {following!r}\n"
                     )
                     return 1
-                # Exactly one destructor call reaches the staged shell. A
-                # failed construction's `std::destroy_at` cleanup is a
-                # different call and never runs on the same path.
+                # A fallible replacement has two mutually exclusive textual
+                # drops: the success shell and the failure's unpublished value.
+                # Bind both to the exact replacement branch and block labels,
+                # rather than mistaking textual count for execution count.
+                labels = re.findall(r"(__gti_mir_bb_\d+): \{", "\n".join(lines[:index]))
+                guarded = re.search(
+                    r"if \((__gti_mir_replacement_success_\d+)\) \{\s*"
+                    r"goto (" + re.escape(labels[-1]) + r");\s*\} else \{\s*"
+                    r"goto (__gti_mir_bb_\d+);",
+                    body,
+                ) if labels else None
+                expected_drops = 1
+                if guarded is not None:
+                    rollback = re.search(
+                        re.escape(guarded.group(3)) + r": \{\s*"
+                        r"// GTI MIR failure-record \d+ cleanup\s*"
+                        r"__gti_mir_drop_success_\d+ = " + re.escape(slot)
+                        + r"\.destroy_with_failure\(",
+                        body,
+                    )
+                    if rollback is None:
+                        sys.stderr.write(f"missing rollback of {slot}\n")
+                        return 1
+                    expected_drops = 2
                 destructions = re.findall(
                     r"(?<![\w.])"
                     + re.escape(slot)
                     + r"\.destroy(?:_with_failure)?\(",
                     body,
                 )
-                if len(destructions) != 1:
+                if len(destructions) != expected_drops:
                     sys.stderr.write(
                         f"staging slot {slot} is destroyed "
-                        f"{len(destructions)} times; expected exactly once\n"
+                        f"{len(destructions)} textual times; expected "
+                        f"{expected_drops} across exclusive paths\n"
                     )
                     return 1
                 constructions = re.findall(

@@ -98,6 +98,13 @@ class vector<std::movable T> {
   mut gti_internal::prefix_storage<T> data;
   mut size_t reserved = 0;
 
+  gti_internal::prefix_storage<T> replace_storage(
+      gti_internal::prefix_storage<T> replacement) mut {
+    auto previous = std::move(this.data);
+    this.data = std::move(replacement);
+    return std::move(previous);
+  }
+
   void ensure_capacity_for_one() mut {
     size_t live = gti_internal::prefix_storage_length(this.data);
     if (live < this.reserved) {
@@ -305,7 +312,14 @@ public:
     }
   }
 
-  void swap(mut vector<T>& other) mut;
+  /// Exchanges storage and capacity without allocating or moving elements.
+  void swap(mut vector<T>& other) mut {
+    auto previous = std::move(this.data);
+    this.data = other.replace_storage(std::move(previous));
+    size_t previous_capacity = this.reserved;
+    this.reserved = other.reserved;
+    other.reserved = previous_capacity;
+  }
 
   vector<T> clone()
     requires std::copyable<T> {

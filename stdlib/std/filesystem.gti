@@ -135,15 +135,9 @@ namespace std {
         this.text.append(replacement);
       }
 
-      // std::string::swap is currently declared without a definition, so the
-      // exchange goes through a temporary instead of delegating to it.
+      /// Exchanges the owned spelling without copying code units.
       void swap(mut path& other) mut {
-        mut std::string carried = std::string("");
-        path::copy_text(carried, this.text);
-        this.text.clear();
-        path::copy_text(this.text, other.text);
-        other.text.clear();
-        path::copy_text(other.text, carried);
+        this.text.swap(other.text);
       }
 
       // --- Format observers -----------------------------------------------

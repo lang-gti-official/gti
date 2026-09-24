@@ -17,6 +17,7 @@ api:
   - std/forward_list|method|std::forward_list::remove
   - std/forward_list|method|std::forward_list::unique
   - std/forward_list|method|std::forward_list::sort
+  - std/forward_list|method|std::forward_list::swap
 examples:
   - sort-and-deduplicate
 ---
@@ -40,5 +41,8 @@ unique return the number removed.
 Resize preserves the existing prefix and constructs only added elements,
 using either default construction or copies of its fill value.
 
-Iteration, emplacement, and swap remain declaration-only scaffolds and are
+Swap exchanges node chains in constant time without allocation or element
+movement. Both lists must be mutable and distinct, with no live element borrow.
+
+Iteration and emplacement remain declaration-only scaffolds and are
 intentionally absent from this executable API synopsis.
