@@ -430,7 +430,7 @@ inputs, not promises that a feature has shipped.
 
 ## Repository map
 
-Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib and libpng live
+Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib, libpng and Assimp live
 under [`packages/`](packages/README.md). Prepare the pinned sources with
 `python3 packages/prepare.py`, then use them as GTI path dependencies. They are
 separate from the standard library and require no compiler-specific handling.

@@ -21,7 +21,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-PACKAGES = ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng")
+PACKAGES = ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp")
 GENERATOR_REQUIREMENTS = ("Jinja2==3.1.6", "MarkupSafe==3.0.3")
 
 
@@ -50,21 +50,26 @@ def contained(root, relative):
     return current
 
 
-def archive_files(data, zipped=False):
+def archive_files(data, zipped=False, exclude_directories=()):
     """Validate the complete archive before creating any source files."""
     entries = []
+    def excluded(name):
+        # Validate even excluded names before choosing not to read their data.
+        contained(Path("/archive-check"), name)
+        parts = PurePosixPath(name).parts
+        return len(parts) > 1 and parts[1] in exclude_directories
     if zipped:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for item in archive.infolist():
                 if stat.S_ISLNK(item.external_attr >> 16):
                     raise ValueError(f"archive symlink: {item.filename}")
-                entries.append((item.filename, None if item.is_dir() else archive.read(item)))
+                entries.append((item.filename, None if item.is_dir() or excluded(item.filename) else archive.read(item)))
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for item in archive.getmembers():
                 if not (item.isdir() or item.isfile()):
                     raise ValueError(f"archive special entry: {item.name}")
-                entries.append((item.name, None if item.isdir() else archive.extractfile(item).read()))
+                entries.append((item.name, None if item.isdir() or excluded(item.name) else archive.extractfile(item).read()))
     roots = set()
     files = {}
     folded = set()
@@ -89,19 +94,22 @@ def archive_files(data, zipped=False):
 
 def acquire(entry, cache, offline):
     archive = contained(cache, entry["sha256"])
+    limit = entry.get("max-download-bytes", 64 * 1024 * 1024)
     if archive.exists():
+        if archive.stat().st_size > limit:
+            raise ValueError("cached archive exceeds the locked size limit")
         data = archive.read_bytes()
     else:
         if offline:
             raise ValueError(f"offline: missing cached archive for {entry['url']}")
         print(f"Downloading {entry['url']}", flush=True)
         with urllib.request.urlopen(entry["url"], timeout=60) as response:
-            data = response.read(64 * 1024 * 1024 + 1)
-        if len(data) > 64 * 1024 * 1024:
-            raise ValueError("archive exceeds 64 MiB limit")
+            data = response.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError("archive exceeds the locked size limit")
     if digest(data) != entry["sha256"]:
         raise ValueError(f"checksum mismatch for {entry['url']}")
-    files = archive_files(data, entry["url"].endswith(".zip"))
+    files = archive_files(data, entry["url"].endswith(".zip"), entry.get("exclude-directories", ()))
     destination = contained(ROOT, entry["destination"])
     # Preflight all existing paths before writing; never overwrite edited sources.
     for relative, content in files.items():
@@ -157,19 +165,12 @@ def prepare_glad(cache, offline):
         staged.rename(output)
 
 
-def prepare_glfw(jobs, host):
-    build = contained(ROOT, f"glfw/build/native-{host}")
-    run(["cmake", "-S", ROOT / "glfw/vendor/glfw", "-B", build,
-         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-         "-DGLFW_BUILD_DOCS=OFF", "-DGLFW_BUILD_TESTS=OFF", "-DGLFW_BUILD_EXAMPLES=OFF",
-         "-DGLFW_BUILD_WAYLAND=OFF"])
-    run(["cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "glfw"])
-    source = build / "src/libglfw3.a"
+def publish_native_file(source, relative):
     if not source.is_file():
-        raise ValueError(f"missing GLFW static archive: {source}")
-    target = contained(ROOT, f"glfw/native/lib/{host}/libglfw3.a")
+        raise ValueError(f"missing native build product: {source}")
+    target = contained(ROOT, relative)
     target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".libglfw3-", dir=target.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix=".native-", dir=target.parent)
     os.close(descriptor)
     try:
         shutil.copyfile(source, temporary)
@@ -178,9 +179,47 @@ def prepare_glfw(jobs, host):
         Path(temporary).unlink(missing_ok=True)
 
 
+def prepare_assimp(jobs, host):
+    zlib_source = ROOT / "zlib/vendor/zlib"
+    zlib_build = contained(ROOT, f"assimp/build/zlib-{host}")
+    run(["cmake", "-S", zlib_source, "-B", zlib_build,
+         "-DCMAKE_BUILD_TYPE=Release", "-DZLIB_BUILD_SHARED=OFF",
+         "-DZLIB_BUILD_STATIC=ON", "-DZLIB_BUILD_TESTING=OFF", "-DZLIB_INSTALL=OFF"])
+    run(["cmake", "--build", zlib_build, "--config", "Release", "--parallel", jobs, "--target", "zlibstatic"])
+    zlib_archive = zlib_build / "libz.a"
+    if not zlib_archive.is_file():
+        raise ValueError(f"missing pinned zlib archive: {zlib_archive}")
+    build = contained(ROOT, f"assimp/build/native-{host}")
+    run(["cmake", "-S", ROOT / "assimp/vendor/assimp", "-B", build,
+         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
+         f"-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY={build / 'lib'}",
+         "-DASSIMP_BUILD_TESTS=OFF", "-DASSIMP_BUILD_ASSIMP_TOOLS=OFF",
+         "-DASSIMP_BUILD_SAMPLES=OFF", "-DASSIMP_INSTALL=OFF",
+         "-DASSIMP_NO_EXPORT=ON", "-DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=ON",
+         "-DASSIMP_BUILD_DRACO=OFF", "-DASSIMP_HUNTER_ENABLED=OFF",
+         "-DASSIMP_DOUBLE_PRECISION=OFF", "-DASSIMP_WARNINGS_AS_ERRORS=OFF",
+         "-DASSIMP_BUILD_ZLIB=OFF", "-DASSIMP_BUILD_MINIZIP=ON",
+         f"-DZLIB_INCLUDE_DIR={zlib_source}", f"-DZLIB_LIBRARY={zlib_archive}",
+         f"-DZLIB_LIBRARY_REL={zlib_archive}", f"-DZLIB_LIBRARY_DBG={zlib_archive}"])
+    run(["cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "assimp"])
+    publish_native_file(build / "lib/libassimp.a", f"assimp/native/lib/{host}/libassimp.a")
+    for header in ("config.h", "revision.h"):
+        publish_native_file(build / "include/assimp" / header, f"assimp/native/generated/assimp/{header}")
+
+
+def prepare_glfw(jobs, host):
+    build = contained(ROOT, f"glfw/build/native-{host}")
+    run(["cmake", "-S", ROOT / "glfw/vendor/glfw", "-B", build,
+         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
+         "-DGLFW_BUILD_DOCS=OFF", "-DGLFW_BUILD_TESTS=OFF", "-DGLFW_BUILD_EXAMPLES=OFF",
+         "-DGLFW_BUILD_WAYLAND=OFF"])
+    run(["cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "glfw"])
+    publish_native_file(build / "src/libglfw3.a", f"glfw/native/lib/{host}/libglfw3.a")
+
+
 def generate_bindings(name, gti):
     namespace = {"sqlite3": "sqlite", "glad": "gl", "cimgui": "imgui",
-                 "zlib": "zlib", "libpng": "png"}[name]
+                 "zlib": "zlib", "libpng": "png", "assimp": "assimp"}[name]
     package = ROOT / name
     destination = contained(package, f"src/{name}.gti")
     marker = contained(package, "src/.bindings.json")
@@ -201,6 +240,12 @@ def generate_bindings(name, gti):
                         "sqlite3_mutex_notheld", "sqlite3_rtree_*", "sqlite3_snapshot_*",
                         "sqlite3_stmt_scanstatus*", "sqlite3_win32_*"):
             command += ["--deny", pattern]
+    elif name == "assimp":
+        command += ["-I", package / "vendor/assimp/include", "-I", package / "native/generated"]
+        # Upstream headers mark themselves as system headers. Bind the explicit
+        # C adapter instead, without overriding bindgen's provenance boundary.
+        for pattern in ("aiScene", "aiNode", "aiMesh", "GtiAssimp*", "gti_assimp_*"):
+            command += ["--allow", pattern]
     elif name == "zlib":
         command += ["-I", package / "vendor/zlib"]
         for pattern in ("zlibVersion", "zError", "compress*", "uncompress*",
@@ -222,7 +267,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("packages", nargs="*", choices=PACKAGES)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
-                        help="GLFW build workers (default: logical CPU count)")
+                        help="native library build workers (default: logical CPU count)")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--gti", default="gti", help="GTI compiler used to generate public bindings")
     args = parser.parse_args()
@@ -233,7 +278,7 @@ def main():
     if not os_name or not arch:
         parser.error("currently supports native 64-bit macOS and Linux hosts only")
     selected = args.packages or list(PACKAGES)
-    if "libpng" in selected and "zlib" not in selected:
+    if any(name in selected for name in ("libpng", "assimp")) and "zlib" not in selected:
         selected.append("zlib")
     gti = shutil.which(args.gti)
     if any(name != "glfw" for name in selected) and not gti:
@@ -261,10 +306,12 @@ def main():
         prepare_glad(cache, args.offline)
     if "glfw" in selected:
         prepare_glfw(args.jobs, f"{os_name}-{arch}")
+    if "assimp" in selected:
+        prepare_assimp(args.jobs, f"{os_name}-{arch}")
     for name in selected:
         if name != "glfw":
             generate_bindings(name, gti)
-    print("Ready. Run gti test in packages/examples/smoke (after preparing all packages).")
+    print("Ready. See packages/README.md for consumer and smoke-test commands.")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "assimp-import-smoke"
+version = "0.1.0"
+
+[dependencies]
+assimp = { path = "../../assimp" }
+
+[targets.import-model]
+kind = "test"
+root = "src/main.gti"
