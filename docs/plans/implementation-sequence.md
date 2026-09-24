@@ -2640,6 +2640,27 @@ name recognition.
 
 ### Active Request: Complete The Existing Standard Library
 
+The storage-swap slice implements vector, string, and forward-list swap in
+ordinary GTI and makes path swap delegate to string. Receiver-local replacement
+helpers avoid consuming borrowed references. The C++ backend now preserves
+private storage return handles and exactly staged member-call class results
+through their existing MIR return/replacement/cleanup schedules. General
+swap/exchange, array swap, and the remaining ownership/container families below
+are still incomplete; this checkpoint does not close the campaign.
+Local macOS evidence includes the seven-mode build-tree and fresh-installed
+swap matrix, zero-allocation observations, exact normal/failure cleanup,
+borrow rejection, and malformed backend result-record rejection. The full
+224-test CTest run plus focused reruns validates 223 gates in the working tree;
+the project workflow passes in an isolated HEAD snapshot with this stdlib
+overlaid because the working tree's game-engine example was user-deleted.
+Three pre-existing generated-C++ assertions reproduced on 0.337.2 and now
+check the existing cleanup-before-publication success/rollback paths explicitly.
+The reviewed corpus adds six helper bodies without changing generated-item
+counts; all 82 examples pass both endpoints. All 72 reference examples,
+static-site checks, and nine fresh-installed library smoke tests pass (the
+system-LLVM install uses its matching Homebrew LLVM CMake package).
+No Linux/Windows execution is claimed.
+
 The numeric-boundary repair completes the existing gcd/lcm/midpoint operations'
 edge semantics in ordinary GTI: signed inputs, zero lcm, full-width midpoint,
 floating overflow/subnormals, and unrepresentable-result cleanup. It also

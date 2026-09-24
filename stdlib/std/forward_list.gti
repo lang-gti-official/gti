@@ -1,8 +1,7 @@
 // C++-familiar API scaffold for <std/forward_list>.
 //
 // Node algorithms transfer exclusive node owners instead of retaining mutable
-// traversal borrows. Iteration and swap still need their separate lifetime
-// and replacement capabilities.
+// traversal borrows. Iteration still needs nullable owner-tied traversal.
 
 #include <std/memory>
 
@@ -38,6 +37,13 @@ namespace std {
   class forward_list<T> {
     mut std::unique_ptr<detail::forward_list_node<T>> head =
         std::unique_ptr<detail::forward_list_node<T>>();
+
+    std::unique_ptr<detail::forward_list_node<T>> replace_head(
+        std::unique_ptr<detail::forward_list_node<T>> replacement) mut {
+      mut auto previous = std::move(this.head);
+      this.head = std::move(replacement);
+      return std::move(previous);
+    }
 
     // Callers first establish that the list is nonempty. Restore the detached
     // node's next field before returning its whole owner.
@@ -142,7 +148,11 @@ namespace std {
       result.head = std::unique_ptr<detail::forward_list_node<T>>();
     }
 
-    void swap(mut forward_list<T>& other) mut;
+    /// Exchanges node chains without allocating or moving elements.
+    void swap(mut forward_list<T>& other) mut {
+      mut auto previous = std::move(this.head);
+      this.head = other.replace_head(std::move(previous));
+    }
 
     // GTI consumes the other move-only owner by value; callers pass an
     // explicit std::move rather than a general C++ rvalue reference.

@@ -76,6 +76,10 @@ types and preserve deterministic cleanup.
 receiver-tied mutable borrow. It is in-place construction, but it does not
 promise C++ perfect-forwarding behavior.
 
+`swap(other)` exchanges storage, size, and capacity in constant time without
+allocation or element movement. Both owners must be mutable and distinct, and
+neither may have a live element, iterator, or view borrow. Empty owners work too.
+
 ## Iteration
 
 An ordinary range loop uses the read-only iterator. A mutable range loop uses
@@ -87,6 +91,4 @@ read-only view with the same owner-dependent lifetime.
 ## Current limitations
 
 Iterator-position insertion and erasure, allocator policy, and retained
-cursors are not implemented. `swap` is currently declared as API scaffolding
-but has no library body, so using it in a native build will fail to link until
-that implementation lands.
+cursors are not implemented.

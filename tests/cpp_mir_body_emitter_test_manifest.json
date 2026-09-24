@@ -182,6 +182,10 @@
       "suite": "text"
     },
     {
+      "name": "testContainerSwapStorageAndMemberResults",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testOwningCheckedBodyEmitsWholeCleanupProof",
       "suite": "lifecycle"
     },

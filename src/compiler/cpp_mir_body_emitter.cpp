@@ -6658,7 +6658,8 @@ copyStageForTemporary(const MirBody &body, const MirPlace &place) {
   return moved;
 }
 
-// Storage SSA locals are empty native handle carriers until their MIR Move.
+// Storage SSA locals are empty native handle carriers until their MIR Move or
+// successful status-returning call.
 // A replacement failure must drain that held handle before leaving the body;
 // its later native destructor then sees only the empty carrier.
 [[nodiscard]] const MirDropObligation *
@@ -6679,7 +6680,13 @@ replacementStorageValueDrop(const MirBody &body,
       !place->projections.empty() || drop->place != place->id ||
       (place->type.kind != SemanticType::Storage &&
        place->type.kind != SemanticType::PrefixStorage) ||
-      producer == nullptr || producer->kind != MirInstructionKind::Move)
+      producer == nullptr ||
+      (producer->kind != MirInstructionKind::Move &&
+       !(producer->kind == MirInstructionKind::Call &&
+         producer->intrinsic == IntrinsicKind::None &&
+         producer->functionTarget && producer->info.type == place->type &&
+         producer->successResultDrop == drop->id &&
+         invokeSuccessActivates(body, *producer, drop->id))))
     return nullptr;
   auto uses = body.usesOf(place->value);
   std::erase_if(uses, [&](const auto &use) {
@@ -10777,6 +10784,36 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
           .fieldDrop = fieldDrop};
 }
 
+// A source member call's receiver must be its unique, correctly typed staged
+// borrow. Returning an owned result does not consume or extend that borrow.
+[[nodiscard]] bool
+exactStagedMemberReceiver(const MirProgram &program, const MirBody &body,
+                          const MirInstruction &producer,
+                          const MirFunctionInstance &target) {
+  if (!producer.receiver || producer.callSite == 0 || !target.owner ||
+      target.staticMember || target.virtualMethod || target.pureVirtual ||
+      target.overrideMethod ||
+      !hasExactCallInput(body, *producer.receiver, producer.callSite,
+                         MirCallInputRole::Receiver, 0)) {
+    return false;
+  }
+  const MirInstruction *staged =
+      borrowStagedCallInput(body, *producer.receiver);
+  if (staged == nullptr || !staged->result ||
+      nonRootRecordUses(body, *staged->result).size() != 1) {
+    return false;
+  }
+  const MirOperand &borrow = staged->operands.front();
+  const MirPlace *receiver = body.findPlace(borrow.place);
+  const MirClassInstance *owner = program.findClassInstance(*target.owner);
+  const ReceiverMutability mutability =
+      borrow.kind == MirOperandKind::BorrowWrite ? ReceiverMutability::Mutable
+                                                 : ReceiverMutability::ReadOnly;
+  return receiver != nullptr && owner != nullptr &&
+         target.receiverMutability == mutability &&
+         classTypeIsOrDerivesFrom(program, receiver->type, owner->id);
+}
+
 // A failure-capable class call or constructor used as one constructor field
 // initializer first owns its result in a Value-rooted MIR place. The
 // successful Invoke edge arms that value, and the following Initialize
@@ -10828,32 +10865,8 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
   const auto exactMemberReceiver = [&]() {
-    if (producer == nullptr || functionTarget == nullptr ||
-        !producer->receiver || producer->callSite == 0 ||
-        !functionTarget->owner || functionTarget->staticMember ||
-        functionTarget->virtualMethod || functionTarget->pureVirtual ||
-        functionTarget->overrideMethod ||
-        !hasExactCallInput(body, *producer->receiver, producer->callSite,
-                           MirCallInputRole::Receiver, 0)) {
-      return false;
-    }
-    const MirInstruction *staged =
-        borrowStagedCallInput(body, *producer->receiver);
-    if (staged == nullptr || !staged->result ||
-        nonRootRecordUses(body, *staged->result).size() != 1) {
-      return false;
-    }
-    const MirOperand &borrow = staged->operands.front();
-    const MirPlace *receiver = body.findPlace(borrow.place);
-    const MirClassInstance *receiverOwner =
-        program.findClassInstance(*functionTarget->owner);
-    const ReceiverMutability stagedMutability =
-        borrow.kind == MirOperandKind::BorrowWrite
-            ? ReceiverMutability::Mutable
-            : ReceiverMutability::ReadOnly;
-    return receiver != nullptr && receiverOwner != nullptr &&
-           functionTarget->receiverMutability == stagedMutability &&
-           classTypeIsOrDerivesFrom(program, receiver->type, receiverOwner->id);
+    return producer != nullptr && functionTarget != nullptr &&
+           exactStagedMemberReceiver(program, body, *producer, *functionTarget);
   };
   const bool commonProducer =
       value != nullptr && producer != nullptr && producer->result &&
@@ -13301,7 +13314,9 @@ valueRootedClassCallResultSlot(const MirProgram &program,
   const bool transformedCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       producer->result && *producer->result == valueId &&
-      !producer->destination && !producer->receiver &&
+      !producer->destination && callee != nullptr &&
+      ((!producer->receiver && (!callee->owner || callee->staticMember)) ||
+       exactStagedMemberReceiver(program, body, *producer, *callee)) &&
       producer->functionTarget && !producer->constructorTarget &&
       !producer->lambdaTarget && !producer->bodyTarget &&
       !producer->callableInvocation &&
@@ -22268,7 +22283,15 @@ private:
   void emitReturnOperand(const ScalarBodyFacts &facts,
                          const MirOperand &operand) {
     if (operand.kind == MirOperandKind::Value) {
+      const bool storage = operand.type.kind == SemanticType::Storage ||
+                           operand.type.kind == SemanticType::PrefixStorage;
+      if (storage) {
+        output << "std::move(";
+      }
       emitOperand(operand);
+      if (storage) {
+        output << ')';
+      }
       return;
     }
     if (operand.kind == MirOperandKind::Constant && operand.literal) {
@@ -32878,6 +32901,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                         return row.type == function->returnType &&
                                !row.spelling.empty();
                       });
+      // Private storage has a failure-free empty handle representation.
+      // Callers default-initialize that handle; only a successful MIR Return
+      // transfers into it. Element lifetime and failure cleanup remain MIR's.
+      const bool exactStorageResult =
+          returnKind && *returnKind == CppMirTypeRepresentationKind::Storage &&
+          std::any_of(
+              representations_.types().begin(), representations_.types().end(),
+              [&](const CppMirTypeRepresentation &row) {
+                return row.type == function->returnType &&
+                       row.kind == CppMirTypeRepresentationKind::Storage &&
+                       !row.spelling.empty();
+              });
       const bool exactLambdaResult =
           returnKind && *returnKind == CppMirTypeRepresentationKind::Lambda &&
           std::any_of(representations_.types().begin(),
@@ -32921,6 +32956,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // A passive fixed array is also default-constructible and
            // assignable through the ordinary typed out-parameter.
            *returnKind != CppMirTypeRepresentationKind::FixedArray &&
+           !exactStorageResult &&
            *returnKind != CppMirTypeRepresentationKind::Void &&
            // A loan-returning body publishes through a `T **`
            // out-parameter (ADR 018 §5); its Return-with-loan rule and
@@ -36863,6 +36899,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               case CppMirTypeRepresentationKind::Scalar:
               case CppMirTypeRepresentationKind::StringView:
               case CppMirTypeRepresentationKind::FixedArray:
+              case CppMirTypeRepresentationKind::Storage:
                 returnReady = typeRow(target->returnType);
                 break;
               case CppMirTypeRepresentationKind::RawPointer:

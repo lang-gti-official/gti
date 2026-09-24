@@ -871,6 +871,18 @@ body admission rather than asking C++ to resolve the name.
 
 ### Defined Failure
 
+Private typed-storage results use a default-empty native handle at a
+status-returning call boundary. A successful MIR Return moves the exact handle
+through the out-parameter; it is not copied or default-constructed as an element
+value. If destination replacement later fails, the activated result's MIR Drop
+drains the held storage before the empty native carrier leaves scope. Missing
+representation rows or success activation fail admission. Owned class results
+from source member calls use the existing value-rooted replacement slot only
+when the receiver has its exact unique staged borrow and matching owner and
+mutability; result activation, input transfers, replacement, and shell cleanup
+retain the same proof as a free-function result. Container swaps are ordinary
+clients of these representations, not backend-recognized operations.
+
 MIR carries canonical failure metadata, detector sites, failure edges, cleanup
 schedules, propagation, and publication behavior. The C++ backend materializes
 that contract as runtime descriptors and transformed failure siblings where

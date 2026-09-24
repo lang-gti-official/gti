@@ -1,0 +1,100 @@
+#include <std/vector>
+#include <std/string>
+#include <std/span>
+#include <std/forward_list>
+#include <std/filesystem>
+#include <std/memory>
+
+extern "C" {
+void swap_observe_allocations();
+uint64_t swap_allocation_count();
+}
+
+int main() {
+  mut std::vector<int32_t> a = std::vector<int32_t>();
+  mut std::vector<int32_t> b = std::vector<int32_t>();
+  a.reserve(std::size_t(17));
+  b.reserve(std::size_t(5));
+  // Positive control: the observer must see actual storage allocations.
+  if (swap_allocation_count() < uint64_t(2)) { return 15; }
+  a.push_back(1);
+  a.push_back(2);
+  b.push_back(9);
+  swap_observe_allocations();
+  a.swap(b);
+  if (swap_allocation_count() != uint64_t(0) ||
+      a.capacity() != std::size_t(5) || b.capacity() != std::size_t(17) ||
+      a.size() != std::size_t(1) || b.size() != std::size_t(2) ||
+      a.front() != 9 || b.front() != 1 || b.back() != 2) { return 1; }
+  for (mut int32_t& value : b) { value += 10; }
+  {
+    std::span<int32_t> view = b.as_span();
+    if (view[std::size_t(1)] != 12) { return 2; }
+  }
+  a.clear();
+  a.swap(b);
+  if (!b.empty() || a.front() != 11) { return 3; }
+  b.push_back(7);
+  a.swap(b);
+  if (a.front() != 7 || b.back() != 12) { return 4; }
+  a.clear();
+  b.clear();
+  a.swap(b);
+  if (!a.empty() || !b.empty()) { return 5; }
+
+  mut std::vector<std::unique_ptr<int32_t>> owners =
+      std::vector<std::unique_ptr<int32_t>>();
+  mut std::vector<std::unique_ptr<int32_t>> empty =
+      std::vector<std::unique_ptr<int32_t>>();
+  owners.push_back(std::make_unique<int32_t>(42));
+  swap_observe_allocations();
+  owners.swap(empty);
+  if (swap_allocation_count() != uint64_t(0) || !owners.empty() ||
+      *empty.front() != 42) { return 6; }
+  auto moved = std::move(empty);
+  if (*moved.front() != 42) { return 7; }
+
+  mut std::string x = std::string("a\0b");
+  mut std::string y = std::string("longer");
+  x.reserve(std::size_t(19));
+  y.reserve(std::size_t(31));
+  swap_observe_allocations();
+  for (mut int index = 0; index < 101; index++) { x.swap(y); }
+  if (swap_allocation_count() != uint64_t(0) || x != "longer" ||
+      y.size() != std::size_t(3) || y[std::size_t(1)] != '\0' ||
+      x.capacity() != std::size_t(31) || y.capacity() != std::size_t(19)) { return 8; }
+  { std::string_view view = y.view(); if (view[std::size_t(2)] != 'b') { return 9; } }
+  x.clear();
+  x.swap(y);
+  y.push_back('z');
+  if (x.size() != std::size_t(3) || y != "z") { return 10; }
+  x.clear();
+  y.clear();
+  x.swap(y);
+  if (!x.empty() || !y.empty()) { return 11; }
+
+  mut std::forward_list<int32_t> left = std::forward_list<int32_t>();
+  mut std::forward_list<int32_t> right = std::forward_list<int32_t>();
+  left.swap(right);
+  swap_observe_allocations();
+  left.push_front(2);
+  left.push_front(1);
+  // Node allocation uses the other no-throw allocation seam.
+  if (swap_allocation_count() != uint64_t(2)) { return 16; }
+  swap_observe_allocations();
+  left.swap(right);
+  if (swap_allocation_count() != uint64_t(0) || !left.empty() || right.front() != 1) { return 12; }
+  right.pop_front();
+  left.push_front(3);
+  swap_observe_allocations();
+  left.swap(right);
+  if (swap_allocation_count() != uint64_t(0) || left.front() != 2 || right.front() != 3) { return 13; }
+
+  mut std::filesystem::path first = std::filesystem::path("/first/a.txt");
+  mut std::filesystem::path second = std::filesystem::path("/second/b.gti");
+  swap_observe_allocations();
+  first.swap(second);
+  if (swap_allocation_count() != uint64_t(0) ||
+      first.string() != "/second/b.gti" || second.string() != "/first/a.txt") { return 14; }
+  return 0;
+}

@@ -229,8 +229,8 @@ into per-component specification sections.
 Some implemented units also carry explicitly documented bodyless declarations
 for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
-link until its GTI body is supplied. Array/vector/string swap, forward-list
-iteration, emplacement and swap, and the list scaffold remain in that
+link until its GTI body is supplied. Array swap, forward-list
+iteration and emplacement, and the list scaffold remain in that
 category.
 
 The owned program-entry form names the canonical installed
@@ -310,6 +310,20 @@ Public ownership and container classes retain logical state and policy in
 ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, or capacity policy as public language state.
+
+`vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned
+storage in constant time without allocation or copying, moving, or destroying
+elements. Vector and string capacities follow the exchanged storage; sizes and
+string code units (including embedded zeros) are preserved. Empty owners are
+valid, and both owners remain independently mutable and destructible afterward.
+`filesystem::path::swap` delegates to string storage exchange.
+
+Both arguments must be distinct mutable owners. Existing loans into either
+owner, including element references, iterators, spans, and string views,
+prevent swap while live. In particular, `a.swap(a)` is rejected as overlapping
+mutable access, not treated as a runtime no-op. Swapping does not migrate a
+retained reference to the other owner. General `std::swap`/`std::exchange` and
+`array::swap` remain separate incomplete operations.
 
 `std::string(begin, end, other)` copies the code units in the half-open interval
 `[begin, end)` into an independent owning string. Its `size_t` endpoints must
@@ -433,7 +447,7 @@ suffix. Clear and ordinary destruction drain the chain iteratively.
 
 The declaration-only iterator is explicitly move-only and read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
-operations, generic emplacement, and swap are still bodyless. The separate
+operations and generic emplacement are still bodyless. The separate
 list scaffold has no node representation because a compliant constant-time
 back operation requires a
 safe non-owning link that GTI cannot yet retain. The declaration-only span is

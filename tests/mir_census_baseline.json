@@ -18,7 +18,7 @@
     "17-standard-array.gti": 25,
     "18-lambdas.gti": 20,
     "19-auto.gti": 32,
-    "20-strings.gti": 189,
+    "20-strings.gti": 190,
     "21-scoped-enums.gti": 19,
     "22-switch.gti": 19,
     "23-direct-initialization.gti": 26,
@@ -38,10 +38,10 @@
     "37-tcp-socket-owner.gti": 33,
     "38-vector-emplace.gti": 69,
     "39-raw-pointers.gti": 18,
-    "40-loan-flow-edges.gti": 189,
+    "40-loan-flow-edges.gti": 190,
     "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 34,
-    "43-program-arguments.gti": 200,
+    "43-program-arguments.gti": 201,
     "44-bounded-requires.gti": 140,
     "45-layout-queries.gti": 18,
     "46-defined-integer-arithmetic.gti": 117,
@@ -56,7 +56,7 @@
     "55-owned-callable-transport.gti": 35,
     "56-sum-types.gti": 22,
     "57-contextual-array-arguments.gti": 33,
-    "58-formatted-output.gti": 206,
+    "58-formatted-output.gti": 207,
     "59-default-parameters.gti": 25,
     "60-configuration-and-comments.gti": 20,
     "61-global-borrow-returns.gti": 22,
@@ -70,8 +70,8 @@
     "69-mutable-field-groups.gti": 22,
     "70-qualified-specializations.gti": 24,
     "71-fresh-temporary-borrows.gti": 25,
-    "72-filesystem-paths.gti": 250,
-    "73-constructor-local-generics.gti": 195,
+    "72-filesystem-paths.gti": 251,
+    "73-constructor-local-generics.gti": 196,
     "74-read-only-range-loans.gti": 36,
     "75-bounded-arena-pool.gti": 54,
     "76-scalar-atomics.gti": 61,
@@ -83,5 +83,5 @@
     "84-optional-values.gti": 44,
     "85-payload-enum-fields.gti": 28
   },
-  "total": 3904
+  "total": 3910
 }

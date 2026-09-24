@@ -940,6 +940,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(numeric_boundaries_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME container_swap_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/container_swap_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(container_swap_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME constexpr_aggregate_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_aggregate_runtime_test.py"
