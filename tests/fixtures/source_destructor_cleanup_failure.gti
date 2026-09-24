@@ -1,0 +1,139 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+class Trace {
+public:
+  Trace() {}
+  ~Trace() { std::println(9); }
+};
+
+class First {
+public:
+  First() {}
+  ~First() {
+    std::println(1);
+    if (phase == 3 || phase == 7 || phase == 30) {
+      int32_t first_failure = 11 / zero;
+    }
+  }
+};
+
+class Second {
+public:
+  Second() {}
+  ~Second() {
+    std::println(2);
+    if (phase == 2 || phase == 3 || phase == 6 || phase == 8 || phase == 12 || phase == 14 || phase == 16 || phase == 17 || phase == 18 || phase == 20 || phase == 28) {
+      int32_t second_failure = 13 / zero;
+    }
+  }
+};
+
+class Owner {
+  std::unique_ptr<First> first;
+  int32_t checked;
+  std::string label;
+  std::unique_ptr<Second> second;
+public:
+  Owner() : first(std::make_unique<First>()), checked(37 / (phase == 29 || phase == 30 ? zero : 1)), label(std::string("still alive in destructor")), second(std::make_unique<Second>()) {}
+  ~Owner() {
+    std::println(3);
+    if (this.label.empty()) {
+      std::println("lost field before destructor");
+    }
+    if (phase == 1 || phase == 4 || phase == 6 || phase == 7 || phase == 11 || phase == 13 || phase == 15 || phase == 17 || phase == 19 || phase == 21 || phase == 22 || phase == 23 || phase == 27) {
+      int32_t owner_failure = 17 / zero;
+    }
+  }
+};
+
+// This body is proved failure-free, but its field's destructor is not.
+class QuietOwner {
+  std::unique_ptr<Second> second;
+public:
+  QuietOwner() : second(std::make_unique<Second>()) {}
+  ~QuietOwner() {}
+};
+
+class Nested {
+  Owner owner;
+public:
+  Nested() : owner(Owner()) {}
+  ~Nested() { std::println(4); }
+};
+
+class Rollback {
+  Owner owner;
+  int32_t checked;
+public:
+  Rollback() : owner(Owner()), checked(31 / (phase == 25 ? 1 : zero)) {}
+  ~Rollback() { std::println(5); }
+};
+
+int32_t run() {
+  if (phase >= 25 && phase <= 28) {
+    Rollback value = Rollback();
+    return 0;
+  }
+  if (phase == 22 || phase == 23) {
+    Nested value = Nested();
+    if (phase == 23) { return 29 / zero; }
+    return 0;
+  }
+  if (phase == 21 || phase == 24) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.push_back(Owner());
+    return 0;
+  }
+  if (phase == 11 || phase == 12) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.pop_back();
+    return 0;
+  }
+  if (phase == 13 || phase == 14) {
+    std::allocator allocator = std::allocator();
+    mut auto allocated = allocator.try_storage<Owner>(std::size_t(2));
+    if (!allocated) { return 20; }
+    mut std::storage<Owner> values = std::move(allocated).value();
+    values.construct(std::size_t(1), Owner());
+    values.destroy(std::size_t(1));
+    return 0;
+  }
+  if (phase == 15 || phase == 16) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.erase(std::size_t(0));
+    return 0;
+  }
+  if (phase == 8) {
+    QuietOwner value = QuietOwner();
+    return 0;
+  }
+  if (phase == 9 || phase == 19 || phase == 20) {
+    auto value = std::make_unique<Owner>();
+    auto moved = std::move(value);
+    return 0;
+  }
+  if (phase == 10) {
+    Owner value = Owner();
+    Owner moved = std::move(value);
+    return 0;
+  }
+  Owner value = Owner();
+  if (phase == 4 || phase == 5 || phase == 6 || phase == 18) {
+    return 19 / zero;
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Trace outer = Trace();
+  return run();
+}

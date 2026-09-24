@@ -82,7 +82,11 @@ function verifyExample(
         : `example-${index}`,
     );
     const source = path.resolve(projectRoot, example.sourcePath);
-    const compilation = spawnSync(gti, [source, "-o", executable], {
+    const arguments_ = [source, "-o", executable];
+    if (example.executionProfile !== undefined) {
+      arguments_.push("--execution-profile", example.executionProfile);
+    }
+    const compilation = spawnSync(gti, arguments_, {
       cwd: repositoryRoot,
       encoding: "utf8",
       env: process.env,

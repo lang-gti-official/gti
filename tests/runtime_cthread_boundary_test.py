@@ -62,6 +62,7 @@ def main():
             execute([
                 args.cxx.resolve(), *flags, "-Wall", "-Wextra", "-Werror",
                 "-pthread", "-I", root / "runtime/src",
+                "-I", root / "runtime/include",
                 root / "runtime/src/cthread_state.cpp",
                 root / "tests/runtime_cthread_tests.cpp", "-o", binary,
             ])

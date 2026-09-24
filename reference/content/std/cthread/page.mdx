@@ -1,10 +1,32 @@
 ---
 title: <std/cthread>
-description: C-style thread facilities, beginning with a cooperative scheduling hint.
+description: Manual C-style workers, mutexes and conditions, thread identity, sleep, and scheduling.
 kind: library-header
 api:
+  - std/cthread|function|std::call_once
+  - std/cthread|function|std::cnd_broadcast
+  - std/cthread|function|std::cnd_destroy
+  - std/cthread|function|std::cnd_init
+  - std/cthread|function|std::cnd_signal
+  - std/cthread|function|std::cnd_timedwait
+  - std/cthread|function|std::cnd_wait
+  - std/cthread|function|std::mtx_destroy
+  - std/cthread|function|std::mtx_init
+  - std/cthread|function|std::mtx_lock
+  - std/cthread|function|std::mtx_timedlock
+  - std/cthread|function|std::mtx_trylock
+  - std/cthread|function|std::mtx_unlock
+  - std/cthread|function|std::thrd_create
+  - std/cthread|function|std::thrd_current
+  - std/cthread|function|std::thrd_equal
+  - std/cthread|function|std::thrd_join
+  - std/cthread|function|std::thrd_sleep
   - std/cthread|function|std::thrd_yield
 examples:
+  - condition
+  - mutex
+  - once
+  - sleep
   - yield
 since: 0.333.0
 ---
@@ -22,6 +44,79 @@ Yield creates no synchronization edge and guarantees neither fairness nor a
 minimum delay. Shared-memory polling still needs atomics or another supported
 synchronization operation.
 
-Only yield is implemented. C-style worker creation/join, mutexes, condition
-variables, thread-specific storage, and the other C thread facilities remain
-work in progress. For supported owned workers, use [`<std/thread>`](/std/thread/).
+`std::thrd_current()` returns a stable, nonzero, process-local identity in
+either execution profile. Identities are never reused after thread exit.
+`std::thrd_equal(left, right)` returns 1 for equal values and 0 otherwise;
+it is value comparison, not a liveness query. A manually created worker
+observes its exact create handle. Observing an initial or managed thread's
+identity does not make it manually joinable or grant callback-entry permission.
+
+`std::thrd_create` and `std::thrd_join` require the concurrent execution profile
+and lexical `unsafe`. The caller keeps the raw context alive and synchronized
+through successful join. Every successful creation requires one successful
+join before hosted entry returns; there is no implicit detach. Successful join
+publishes worker writes and its signed integer result. A worker defined failure
+performs its GTI cleanup and terminates with the original failure rather than
+being re-raised by join.
+
+`std::timespec` holds mutable signed 64-bit `tv_sec` and `tv_nsec` fields;
+default construction produces zero and its two-argument constructor takes
+seconds and nanoseconds. It is a GTI value, not native C `timespec` ABI.
+`std::thrd_sleep(duration)` sleeps in either execution profile; passing a second
+mutable `timespec` receives the remaining duration only on interruption. Input
+seconds must be nonnegative and nanoseconds must be in `[0, 1000000000)`.
+Results are 0 for elapsed, -1 for interrupted, and -2 for invalid input or host
+failure, including an unrepresentable host duration. Success and error preserve
+the output. Zero duration succeeds without waiting.
+
+The value-input overload allows `thrd_sleep(duration, duration)` for in-place
+retry. The `unsafe` pointer overload allows aliasing too; null input is an error
+and null output discards the remainder. Valid non-null pointers must address
+live, aligned, appropriately synchronized storage, writable for the output.
+Sleep does not synchronize memory, retry interruptions, or promise exact
+wakeup timing. The normalized remainder never exceeds the original request.
+
+The unsafe `mtx_*` family supplies manually managed mutex handles in the
+concurrent profile. Initialize with `mtx_plain`, `mtx_recursive`, `mtx_timed`,
+or `mtx_recursive | mtx_timed`; failure preserves the output. Every successful
+lock, try-lock, or timed-lock needs one matching unlock on the same thread.
+Try-lock reports `thrd_busy` without acquiring a contended mutex. Timed-lock
+requires `mtx_timed` and an absolute UTC/Unix timestamp, not a relative duration;
+it reports `thrd_timedout` without acquiring when an unavailable mutex reaches
+the deadline. Nanoseconds must be normalized and the timestamp must fit a signed
+64-bit nanosecond count. Other rejected requests return `thrd_error`;
+initialization allocation failure returns `thrd_nomem`.
+
+Only successful acquisition and the final recursive release provide an
+inter-thread synchronization edge. Destroy only after the mutex is unlocked
+and every user has finished: invalid or in-use destruction terminates. A
+successful `mtx_destroy` clears the supplied handle, but copied handles are
+still stale. Scope exit and defined failure do not automatically release or
+destroy this manual resource. Use `<std/mutex>` for owned scoped
+guards instead.
+
+The unsafe `cnd_*` family provides manual condition variables. A wait requires
+exactly one mutex acquisition on the calling thread, atomically enrolls and
+unlocks, then reacquires before returning. Timed wait uses an absolute UTC
+deadline but does not require `mtx_timed`; even `thrd_timedout` returns with the
+mutex locked. A recoverable wait error also reacquires; invalid input leaves
+the original ownership unchanged, and unrecoverable reacquisition terminates.
+Always recheck the shared predicate under the mutex in a loop.
+
+Signal wakes one current waiter; broadcast wakes all. Neither stores a
+notification for future waiters or independently publishes shared data.
+Destroy the condition only after all calls finish, including reacquisition;
+in-use destruction terminates. Scope exit provides no automatic cleanup.
+
+`std::once_flag` has a stable identity: construct it with `{}` or
+`{std::ONCE_FLAG_INIT}`, but do not copy or move it. Unsafe `std::call_once`
+takes a flag reference (or pointer) and a named `void()` initializer in the
+concurrent profile. One caller runs the initializer; every normal return
+observes its completed writes. Different flags may nest. Recursing through
+the same active flag cannot finish. Keep the flag alive through all calls;
+there is no reset or fairness guarantee. A defined failure cleans up the
+initializer and terminates with its original record, including on a managed
+worker. It is not converted into a recoverable join result.
+
+Detach/exit and thread-specific storage remain work in progress. For safe owned workers with
+automatic join, use [`<std/thread>`](/std/thread/).

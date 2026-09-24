@@ -1,0 +1,6 @@
+{
+  "title": "Publish one initialization",
+  "description": "Two calls share one stable flag; the named initializer runs only once.",
+  "mode": "run",
+  "executionProfile": "concurrent"
+}

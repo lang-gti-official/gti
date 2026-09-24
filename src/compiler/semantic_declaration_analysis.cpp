@@ -5437,6 +5437,9 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .internalLinkage = declaration.internalLinkage,
       .constexprFunction = declaration.constexprFunction,
       .requiresUnsafe = declaration.requiresUnsafe,
+      .cThreadOperation = declaration.cThreadOperation,
+      .requiresCThreadRuntime =
+          requiresCThreadConcurrency(declaration.cThreadOperation),
       .linkage = declaration.linkage,
       .externalSymbol = declaration.externalSymbol,
       .cArrayCountParameter = declaration.cArrayCountParameter,
@@ -5494,6 +5497,112 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
       candidateOwnsBorrow ? candidate.returnBorrowPlace : concreteBorrow.place;
   declaration->virtualRoots = candidate.virtualRoots;
   declaration->compilerPrivate = candidate.compilerPrivate;
+  const SourceUnit *unit = sourceGraph == nullptr
+                               ? nullptr
+                               : sourceGraph->findUnit(declaration->sourceUnit);
+  const SemanticType context = SemanticType::rawPointerTo(SemanticType::Void);
+  if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/cthread" &&
+      declaration->namespaceScope ==
+          std::vector<std::string>{"gti_internal", "runtime"} &&
+      declaration->compilerPrivate && function.hasCLinkage() &&
+      function.body() == nullptr && !function.runtimeBinding() &&
+      declaration->genericParameters.empty() && !declaration->parameterPack &&
+      declaration->ownerClass == 0) {
+    if (declaration->externalSymbol == "gti_rt_cthread_create_v1" &&
+        declaration->returnType == SemanticType::Int32 &&
+        declaration->parameterTypes ==
+            std::vector<SemanticType>{
+                SemanticType::rawPointerTo(SemanticType::UInt64),
+                SemanticType::nativeFunctionType(SemanticType::Int32,
+                                                 std::array{context}),
+                context}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::Create;
+    } else if (declaration->externalSymbol == "gti_rt_cthread_join_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{
+                       SemanticType::UInt64,
+                       SemanticType::rawPointerTo(SemanticType::Int32)}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::Join;
+    } else if (declaration->externalSymbol == "gti_rt_once_invoke_v1" &&
+               declaration->returnType == SemanticType::Void &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::nativeFunctionType(
+                       SemanticType::Void, {})}) {
+      declaration->cThreadOperation =
+          CThreadRuntimeOperation::InvokeOnceInitializer;
+    } else if (declaration->externalSymbol == "gti_rt_cnd_init_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{
+                       SemanticType::rawPointerTo(SemanticType::UInt64)}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::ConditionInit;
+    } else if (declaration->externalSymbol == "gti_rt_cnd_destroy_v1" &&
+               declaration->returnType == SemanticType::Void &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::ConditionDestroy;
+    } else if (declaration->externalSymbol == "gti_rt_cnd_wait_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64,
+                                             SemanticType::UInt64}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::ConditionWait;
+    } else if (declaration->externalSymbol == "gti_rt_cnd_timedwait_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{
+                       SemanticType::UInt64, SemanticType::UInt64,
+                       SemanticType::Int64, SemanticType::Int64}) {
+      declaration->cThreadOperation =
+          CThreadRuntimeOperation::ConditionTimedWait;
+    } else if (declaration->externalSymbol == "gti_rt_mtx_init_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{
+                       SemanticType::rawPointerTo(SemanticType::UInt64),
+                       SemanticType::Int32}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::MutexInit;
+    } else if (declaration->externalSymbol == "gti_rt_mtx_destroy_v1" &&
+               declaration->returnType == SemanticType::Void &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::MutexDestroy;
+    } else if (declaration->externalSymbol == "gti_rt_mtx_timedlock_v1" &&
+               declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64,
+                                             SemanticType::Int64,
+                                             SemanticType::Int64}) {
+      declaration->cThreadOperation = CThreadRuntimeOperation::MutexTimedLock;
+    } else if (declaration->returnType == SemanticType::Int32 &&
+               declaration->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64}) {
+      if (declaration->externalSymbol == "gti_rt_mtx_lock_v1") {
+        declaration->cThreadOperation = CThreadRuntimeOperation::MutexLock;
+      } else if (declaration->externalSymbol == "gti_rt_mtx_trylock_v1") {
+        declaration->cThreadOperation = CThreadRuntimeOperation::MutexTryLock;
+      } else if (declaration->externalSymbol == "gti_rt_mtx_unlock_v1") {
+        declaration->cThreadOperation = CThreadRuntimeOperation::MutexUnlock;
+      } else if (declaration->externalSymbol == "gti_rt_cnd_signal_v1") {
+        declaration->cThreadOperation =
+            CThreadRuntimeOperation::ConditionSignal;
+      } else if (declaration->externalSymbol == "gti_rt_cnd_broadcast_v1") {
+        declaration->cThreadOperation =
+            CThreadRuntimeOperation::ConditionBroadcast;
+      }
+    } else if (declaration->returnType == SemanticType::Void &&
+               declaration->parameterTypes.empty()) {
+      if (declaration->externalSymbol == "gti_rt_cthread_begin_v1") {
+        declaration->cThreadOperation = CThreadRuntimeOperation::Begin;
+      } else if (declaration->externalSymbol == "gti_rt_cthread_end_v1") {
+        declaration->cThreadOperation = CThreadRuntimeOperation::End;
+      }
+    }
+  }
+  requestSession.hasCThreadRequirements |=
+      requiresCThreadConcurrency(declaration->cThreadOperation);
   semanticModel.record(function, projectCallableDeclaration(*declaration));
 }
 

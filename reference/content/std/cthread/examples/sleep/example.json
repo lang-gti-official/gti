@@ -1,0 +1,5 @@
+{
+  "title": "Sleep and retry an interrupted duration",
+  "description": "Uses the safe in-place remaining-duration overload without assuming exact wakeup timing.",
+  "mode": "run"
+}

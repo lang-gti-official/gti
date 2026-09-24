@@ -1,0 +1,36 @@
+#include <std/cthread>
+
+extern "C" {
+  void cthread_sleep_mode(int32_t mode);
+  int32_t cthread_sleep_calls();
+}
+
+int main() {
+  std::timespec duration = std::timespec(int64_t(8), int64_t(900000000));
+  mut std::timespec remaining = std::timespec(int64_t(7), int64_t(9));
+  cthread_sleep_mode(0);
+  if (std::thrd_sleep(duration, remaining) != 0 || cthread_sleep_calls() != 1) { return 1; }
+  if (remaining.tv_sec != 7 || remaining.tv_nsec != 9) { return 2; }
+  cthread_sleep_mode(-2);
+  if (std::thrd_sleep(duration, remaining) != -2 || cthread_sleep_calls() != 2) { return 3; }
+  if (remaining.tv_sec != 7 || remaining.tv_nsec != 9) { return 4; }
+  cthread_sleep_mode(-1);
+  if (std::thrd_sleep(duration, remaining) != -1 || cthread_sleep_calls() != 3) { return 5; }
+  if (remaining.tv_sec != 2 || remaining.tv_nsec != 250000000) { return 6; }
+  if (duration.tv_sec != 8 || duration.tv_nsec != 900000000) { return 7; }
+  mut std::timespec aliased = duration;
+  if (std::thrd_sleep(aliased, aliased) != -1 || cthread_sleep_calls() != 4) { return 8; }
+  if (aliased.tv_sec != 2 || aliased.tv_nsec != 250000000) { return 9; }
+  aliased = duration;
+  unsafe {
+    if (std::thrd_sleep(&aliased, &aliased) != -1 || cthread_sleep_calls() != 5) { return 10; }
+    if (aliased.tv_sec != 2 || aliased.tv_nsec != 250000000) { return 11; }
+    if (std::thrd_sleep(&duration, nullptr) != -1 || cthread_sleep_calls() != 6) { return 12; }
+    if (std::thrd_sleep(nullptr, &remaining) != -2) { return 13; }
+  }
+  if (std::thrd_sleep(duration) != -1 || cthread_sleep_calls() != 7) { return 14; }
+  if (std::thrd_sleep(std::timespec(int64_t(-1), int64_t(0))) != -2) { return 15; }
+  if (std::thrd_sleep(std::timespec(int64_t(0), int64_t(-1))) != -2) { return 16; }
+  if (std::thrd_sleep(std::timespec(int64_t(0), int64_t(1000000000))) != -2) { return 17; }
+  return cthread_sleep_calls() == 7 ? 0 : 18;
+}

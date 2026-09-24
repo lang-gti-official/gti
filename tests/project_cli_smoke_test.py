@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import hashlib
 import json
 import os
@@ -68,18 +69,30 @@ def host_target_os():
     return "unknown"
 
 
-def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: project_cli_smoke_test.py /path/to/gti")
+def parse_arguments(arguments=None):
+    parser = argparse.ArgumentParser(description="Exercise the GTI project CLI.")
+    parser.add_argument("gti", help="path to the GTI executable")
+    parser.add_argument(
+        "--jobs", type=int, choices=range(1, 5), default=4,
+        help="maximum concurrent target builds (default: 4; use 1 for a serial run)",
+    )
+    return parser.parse_args(arguments)
 
-    requested_gti = pathlib.Path(sys.argv[1])
+
+def main():
+    arguments = parse_arguments()
+    if arguments.jobs == 1:
+        print("project_cli: serial resource limit; parallel scheduling parity "
+              "requires the default four-job run", flush=True)
+
+    requested_gti = pathlib.Path(arguments.gti)
     resolved_gti = (
         requested_gti.resolve()
         if requested_gti.exists()
-        else shutil.which(sys.argv[1])
+        else shutil.which(arguments.gti)
     )
     if resolved_gti is None:
-        raise AssertionError(f"could not resolve GTI executable: {sys.argv[1]}")
+        raise AssertionError(f"could not resolve GTI executable: {arguments.gti}")
     gti = str(resolved_gti)
     # Cache checks need a deterministic environment. Some hosted Python
     # launchers inject SDK/include/library search paths before this script
@@ -2192,7 +2205,7 @@ def main():
             }
 
         parallel_all = run(
-            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache"],
             cwd=multi_project,
         )
         built_positions = [
@@ -2214,7 +2227,10 @@ def main():
         assert serial_artifacts == parallel_artifacts
 
         # A cached rebuild restores every target through the same command.
-        cached_all = run([gti, "build", "--all"], cwd=multi_project)
+        # Keep default-job CLI coverage in the ordinary run, but do not let
+        # hardware-concurrency defaults escape an explicit local resource cap.
+        cached_jobs = [] if arguments.jobs == 4 else ["--jobs", str(arguments.jobs)]
+        cached_all = run([gti, "build", "--all", *cached_jobs], cwd=multi_project)
         assert "Built 4 targets [dev]" in cached_all.stdout
 
         # One failing target must produce the same ordered diagnostics and
@@ -2233,7 +2249,7 @@ def main():
             failing_manifest, encoding="utf-8"
         )
         parallel_failure = run(
-            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache"],
             expected=65,
             cwd=multi_project,
         )

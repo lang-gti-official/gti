@@ -1,0 +1,6 @@
+{
+  "title": "Balance a manual mutex lifetime",
+  "description": "Initializes a plain mutex, balances one acquisition, and explicitly destroys it.",
+  "mode": "run",
+  "executionProfile": "concurrent"
+}

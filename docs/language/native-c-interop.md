@@ -227,12 +227,19 @@ If the GTI target reports a defined failure, the thunk completes the target's
 verified cleanup and terminates through the runtime failure boundary; a native
 exception is caught and terminates rather than crossing C.
 
-The first callback profile is deliberately single-threaded. A concurrent
-program may describe and transport callback values received from C, but it may
-not expose a GTI function through an adapter. Native/foreign-thread entry needs
-runtime attachment, synchronization, observer, and thread-owned cleanup rules
-before it can be enabled. `GTI-S2076` owns invalid callback type shapes and
-conversions.
+General callbacks remain single-threaded. In the concurrent profile, GTI
+adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`
+once initializer, with target
+thread support and `<std/cthread>` included. The adapter requires once-only
+attachment on its exact runtime-registered worker; ordinary initial-thread or
+foreign-thread invocation of the worker adapter terminates before entering GTI.
+The once adapter instead requires its exact synchronous invocation on an
+existing initial, managed, or entered manual GTI execution thread. This is not general
+foreign-thread attachment. See the [C-style thread contract](concurrency.md#c-style-manual-create-and-join)
+for context lifetime, synchronization, hosted shutdown, and failure containment.
+Concurrent code may still describe and transport other callback values received
+from C without exposing a GTI target. `GTI-S2076` owns invalid callback type
+shapes and conversions; `GTI-S2084` owns unavailable thread capability.
 
 ## NUL-Terminated C Strings
 

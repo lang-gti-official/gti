@@ -368,10 +368,37 @@ thread in either execution profile and grants no synchronization, fairness,
 or minimum-delay guarantee. It has no parameters or result and raises no
 defined failure. Use atomics or locks, not yield, to order shared accesses.
 
-Only yield is implemented. C-style worker creation/join, identity, sleep,
-detach/exit, once, mutexes, condition variables, and thread-specific storage
-remain in the stdlib-completion campaign. `std::thread` remains the distinct
-safe managed-thread owner; this module is not an alias for it.
+Safe `std::thrd_current()` and `std::thrd_equal()` observe stable process-local
+identities and compare their values in either profile. A manual worker sees
+the exact handle returned by creation. Identity alone does not grant callback
+entry, a join obligation, or synchronization.
+
+`std::thrd_sleep(std::timespec(...))` waits for a relative duration in either
+profile. The optional mutable-reference output receives normalized remaining
+time only on interruption. Results are 0 for elapsed, -1 for interrupted, and
+-2 for invalid duration or host error. The safe value-input overload permits
+in-place retry; the raw-pointer overload requires `unsafe`. `timespec` is an
+ordinary GTI value, not a native C layout promise.
+
+The concurrent profile also supports unsafe `std::thrd_create` and
+`std::thrd_join`: the caller must keep raw context alive and synchronized, and
+successfully join every created worker before hosted entry returns. See the
+[concurrency contract](../docs/language/concurrency.md) for exact entry,
+failure, and shutdown rules. Unsafe `mtx_init`/`mtx_destroy`, `mtx_lock`,
+`mtx_trylock`, `mtx_timedlock`, and `mtx_unlock` now supply plain, recursive,
+and timed manual mutexes. Successful acquisition and final release establish
+the mutex ordering edge; callers balance every lock and explicitly destroy
+each mutex after all uses end. Timed locking uses an absolute UTC timestamp,
+not sleep's relative duration. Unsafe `cnd_*` conditions add explicit lifetime,
+signal/broadcast, and wait/timed-wait with atomic enrollment/release and mutex
+reacquisition, including on timeout or recoverable wait error. Predicate loops
+and shared-data synchronization remain caller obligations. Source-defined
+`once_flag` and unsafe `call_once` provide atomic one-time initialization with
+registered `void()` callbacks. Flags are stable, noncopyable/nonmovable objects;
+normal returns observe initialization, and callback failures clean up and
+terminate rather than retrying. Detach/exit and thread-specific storage remain
+in the completion campaign.
+`std::thread` remains the distinct safe managed-thread owner.
 
 ## Partial modules and declaration scaffolds
 

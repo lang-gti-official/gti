@@ -1,7 +1,7 @@
 # GTI on Gitea Actions
 
 The repository at
-`https://git2.internal.howetotech.dev/lukeh/gti-internal` is GTI's canonical
+`https://git.internal.howetotech.dev/lukeh/gti-internal` is GTI's canonical
 Git host. Gitea owns branches, pull requests, CI, tags, nightly builds, stable
 releases, and release assets. The workflows in `.gitea/workflows/` do not rely
 on a GitHub mirror or on GitHub-created tags.
@@ -11,12 +11,14 @@ on a GitHub mirror or on GitHub-created tags.
 1. Use Gitea 1.26 or newer and enable the Actions repository unit.
 2. Keep `.gitea/workflows` in the instance's configured workflow directories.
    GTI intentionally ships no alternative-host workflow fallback.
-3. Register a trusted repository runner whose `ubuntu-latest` label maps to
+3. Register a trusted repository runner whose `ubuntu-24.04` label maps to
    the intended host or container. Gitea requires static runner labels for the
    versions used by this repository.
-4. Optionally set `GTI_JOBS` to a positive integer in **Repository settings ->
-   Actions -> Variables**. Otherwise each build detects the runner's available
-   processors. A preinstalled `sccache` is used automatically, including the
+4. Optionally set `GTI_JOBS` and `GTI_TEST_JOBS` to positive integers in
+   **Repository settings -> Actions -> Variables**. Defaults are two compile
+   jobs and one CTest worker. A container's visible CPU count is not its resource
+   budget; the workflows deliberately do not expand to every host CPU.
+   A preinstalled `sccache` is used automatically, including the
    Actions cache backend when the runner exposes it.
 5. In **Repository settings -> Actions -> General**, allow the workflow token
    a maximum of `code: write` and `releases: write`. Ordinary CI requests only
@@ -30,10 +32,37 @@ source and therefore require outbound access to that upstream release host.
 An Ubuntu runner should be based on Ubuntu 24.04 so `llvm-18-dev` is available.
 
 The current publication jobs create one archive for the native OS and
-architecture of the runner claiming `ubuntu-latest`. Before advertising
+architecture of the runner claiming `ubuntu-24.04`. Before advertising
 additional binary platforms from Gitea, register those native runners and add
 statically labelled package jobs for them; source support for a target is not
 evidence that a binary archive was published for it.
+
+For one shared runner host, start with `runner.capacity: 1` and
+`runner.timeout: 6h` in the runner configuration. Four concurrent jobs can mean
+four independent LLVM/compiler builds, not four compiler processes. The former
+three-hour limit cancelled the stable and sanitizer jobs during execution.
+Tune capacity only after measuring the host's memory/CPU budget. Restart the
+runner after changing its configuration; repository variables cannot alter its
+job capacity or timeout.
+
+The native and release jobs execute a small, race-free C++ sanitizer probe
+before their expensive builds. `ThreadSanitizer: unexpected memory mapping`
+from this probe is a host/toolchain address-space failure, not a GTI race.
+Check the compiler's sanitizer runtime against the host kernel, address-space
+limits, and container seccomp policy. Modern LLVM may need the `personality`
+system call when re-executing with a compatible mapping. Use a suitably
+configured dedicated runner/VM and retest the probe in the exact job container;
+do not skip sanitizers or enable privileged containers as a blanket fix.
+The workflows do not change host ASLR or sandbox policy automatically.
+
+After a hostname migration, also check Gitea's configured server `ROOT_URL`,
+runner registration URL, and reverse-proxy routing. The canonical URL is now
+`https://git.internal.howetotech.dev/`; old tagged plugin revisions retain their
+old installer URL. A Git clone alone does not migrate historical release assets.
+The plugin's stable channel requires a successfully published matching version
+and native-platform archive, while nightly requires its archive and `BUILD_ID`.
+With only a Linux runner there is no macOS archive: macOS users need a locally
+built toolchain or an added native macOS package job.
 
 ## Workflow authority
 

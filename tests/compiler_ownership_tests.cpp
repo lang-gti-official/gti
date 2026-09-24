@@ -1076,7 +1076,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v49\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v60\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3069,7 +3069,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v56 ") &&
+  expect(mirDump.starts_with("mir-v70 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -9077,7 +9077,12 @@ int main() {
               std::string::npos &&
           artifact.contents.find("unique_ptr(const unique_ptr &) = delete") !=
               std::string::npos &&
-          artifact.contents.find("unique_ptr(unique_ptr &&) = default") !=
+          artifact.contents.find("unique_ptr(unique_ptr &&other) noexcept : "
+                                 "owner(std::move(other.owner)) {}") !=
+              std::string::npos &&
+          artifact.contents.find("unique_ptr() noexcept {}") !=
+              std::string::npos &&
+          artifact.contents.find("~unique_ptr() noexcept {}") !=
               std::string::npos &&
           artifact.contents.find(
               "const __gti_std::unique_ptr<Widget> widget =") ==
@@ -15689,7 +15694,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v56 ") &&
+             mirDump.starts_with("mir-v70 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

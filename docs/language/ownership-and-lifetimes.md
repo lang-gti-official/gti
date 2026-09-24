@@ -554,7 +554,12 @@ and behaves like its cross-statement read-then-store form. A retained
 overlapping borrow still rejects the write through the ordinary loan rules
 above.
 
-General nested owner projections remain outside this checkpoint. In
+Nested checked unique-owner arrow chains such as `root->next->next` support
+field access, replacement, and calls, retaining each intermediate borrow until
+its dependent child ends. Empty intermediate owners retain checked failure
+and ordinary cleanup, including an already staged replacement value.
+
+General retained nested owner projections remain outside this checkpoint. In
 particular, a borrow reached through `expected<owner, E>.value()` may be
 consumed immediately within the same full expression, but it cannot be stored
 or returned through another helper. The one bounded exception is a read-only
@@ -706,6 +711,13 @@ ordinary generated move and cleanup machinery to guarantee exactly-once
 release. The class owns the resource; the raw pointer field still does not.
 
 ## Ownership Transfer
+
+An ordinary constructor creates a fresh object; initializing a binding from
+that construction does not require the type to permit movement of an existing
+object. Explicitly deleted copy and move constructors still reject copying or
+moving a live binding. This permits stable-identity values such as `once_flag`
+to be constructed locally or in permitted global storage without making them
+relocatable. Existing global cleanup and concurrency restrictions still apply.
 
 `std::move(value)` is a compiler-defined explicit move operation with familiar
 C++ spelling. It accepts a named movable local value, by-value parameter, or
@@ -890,8 +902,67 @@ exhaustion; once construction begins its parameters belong to the constructor.
 Failure frees unconstructed storage, never publishes an owner, and preserves
 the constructor's original failure record. This includes the currently proved
 constructor rollback family, including generated-cleanup owning fields such
-as strings. It does not establish arbitrary subobject rollback: combinations
-outside that existing constructor proof still fail closed. Targetless
+as strings. Completed fields are cleaned before earlier-created constructor
+parameters, in reverse field order; an enclosing source destructor remains
+inactive if construction fails. The selected zero-argument owning-base family
+also propagates base-constructor failure before the derived body runs. A
+completed base is cleaned after later derived construction fails. A generated
+field/base/pointee aggregate ending in lifecycle-guarded leaf destructors
+now preserves the original failure if a leaf destructor also fails, reporting
+`GTI-R0014` with both sites. Empty owners perform no pointee cleanup. This
+includes multiple resource owners and scalar/string ownership in the same
+generated aggregate: cleanup runs in reverse field order, and a first failure
+drains the remaining fields before propagation. A second failure stops cleanup
+immediately. Destruction of vector/prefix storage and sparse storage now
+applies this protocol in reverse live-element order, including source-leaf
+class elements, unique owners, nested collections, and generated aggregates.
+An empty or moved-from collection performs no element cleanup. The allocation
+is released after all live elements have been drained. Explicit vector
+`pop_back()`, sparse-storage `destroy()`, and their source-defined `clear()`
+loops use the same contained element cleanup. A failed removal retires that
+element exactly once and propagates its original failure through caller
+cleanup; a later destructor failure reports both records and stops cleanup.
+Vector `erase(index)` also uses contained cleanup for these element families.
+Successful removal shifts survivors into the hole through generated moves and
+keeps the collection reusable. If the selected destructor fails, later elements
+are drained in reverse order before caller cleanup handles the earlier prefix.
+A second failure stops that sequence immediately, preserving both records.
+An invalid index leaves the collection unchanged until caller cleanup.
+Source-destructor classes with represented owning fields now use this same
+protocol: their body runs while the fields are live, followed by reverse field
+cleanup. A first body failure still drains fields; a failure during an existing
+failure stops immediately and retains both records. This composes through direct
+and unique-owned values, nested fields, and vector/storage cleanup and removal.
+Partial construction runs only completed fields, never the enclosing source
+destructor. Recursive ownership types, including `forward_list` nodes and a
+source-destructor class owning another instance of itself, use finite MIR
+cleanup recipes. Empty owners end the traversal; live children retain the same
+first/secondary failure rules. This does not permit cyclic exclusive ownership
+values or promise constant stack usage for arbitrary recursive destruction.
+`forward_list` continues to detach and release nodes iteratively in its source
+implementation. Other unrepresented element/payload families still need their
+contained failure protocols.
+
+`unique_ptr::reset()` detaches the old owner into a local source-defined owner
+and leaves the receiver empty before that local is destroyed. Its cleanup uses
+the same MIR failure protocol as scope destruction. Plain assignment over a
+represented owning value now holds the replacement while explicitly cleaning
+the old contents. Only successful cleanup commits the replacement. A first
+cleanup failure drains the old value's remaining subobjects, then ordinary
+caller cleanup destroys the uncommitted replacement and remaining locals. A
+second failure terminates with both records. This covers represented direct
+objects and unique owners, including moved and fresh replacements and checked
+owner-field access and built-in fixed-array elements. Array replacement checks
+every destination dimension before starting the old value's cleanup. Invalid
+bounds leave the array unchanged and destroy the staged replacement through
+ordinary caller cleanup. This includes fresh and explicitly moved values,
+direct source-destructor objects, and arrays of unique owners. Unrepresented
+cleanup families remain separate completion work.
+
+The base-construction implementation requires parameterless derived
+construction, cleanup-free derived fields, and generated base/derived
+destruction; combinations outside that existing constructor proof still fail
+closed. Targetless
 generated default/copy/move allocation retains the terminal compatibility
 boundary and remains an implementation gap.
 

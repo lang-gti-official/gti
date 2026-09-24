@@ -517,8 +517,8 @@ int main() {
 }
 
 void testBodyOrderedOwnedParameterConstructor() {
-  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
-      "cpp-mir-body-ordered-owned-parameter-constructor.gti", R"(
+  for (const bool declaredDestructor : {false, true}) {
+    std::string source = R"(
 #include <std/string>
 
 class OrderedPath {
@@ -527,6 +527,7 @@ public:
       : first(value.clone()), second(std::move(value)) {
     first.append("!");
   }
+  // destructor-stage
 
   std::size_t first_size() {
     return first.size();
@@ -548,95 +549,275 @@ int main() {
   }
   return 0;
 }
-)");
-  expect(frontend.canGenerateCode(),
-         "the body-ordered owned-parameter constructor should pass the "
-         "frontend");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-
-  const lang::MirConstructorInstance *constructor = nullptr;
-  for (const lang::MirConstructorInstance &candidate :
-       frontend.mir.constructorInstances()) {
-    if (candidate.initializers.size() == 2 &&
-        !candidate.initializers.front().ownedParameter &&
-        candidate.initializers.back().ownedParameter) {
-      constructor = &candidate;
-      break;
+)";
+    if (declaredDestructor) {
+      const std::string marker = "// destructor-stage";
+      source.replace(source.find(marker), marker.size(), "~OrderedPath() {}");
     }
-  }
-  expect(constructor != nullptr && constructor->mayRaiseDefinedFailure,
-         "the ordered constructor should retain its clone, move, and body "
-         "failure schedule");
-  if (constructor == nullptr) {
-    return;
-  }
-
-  const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
-                                     .owner = constructor->id};
-  expect(emitter.analyze(address).ready() &&
-             emitter.supportsFailureBodyText(address),
-         "the transformed constructor should preserve body-ordered clone and "
-         "owned-parameter publication");
-  if (!emitter.supportsFailureBodyText(address)) {
-    return;
-  }
-
-  const std::string text =
-      emitter
-          .emitFailureBodyText(address,
-                               "body-ordered-owned-parameter-constructor-v0", 1)
-          .text;
-  const std::size_t clone = text.find("clone__gti_mir_failure");
-  const std::size_t parameterMove = text.find("std::move(__gti_mir_p_", clone);
-  expect(clone != std::string::npos && parameterMove != std::string::npos &&
-             clone < parameterMove &&
-             text.find("construction rollback deferred") != std::string::npos,
-         "the emitted constructor should clone before moving the parameter "
-         "and retain exact later-failure rollback");
-
-  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
-  expect(!artifact.contents.empty() &&
-             artifact.contents.find("mir_failure_constructor_tag_v1") !=
-                 std::string::npos &&
-             artifact.contents.find("mir_empty_state_v1") != std::string::npos,
-         "production emission should build the transformed initializer list "
-         "without dereferencing absent native owned-field bindings");
-
-  lang::MirProgram mismatchedReceiver = frontend.mir;
-  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
-      mismatchedReceiver.constructorInstances());
-  bool mutated = false;
-  for (lang::MirConstructorInstance &candidate : constructors) {
-    if (candidate.id != constructor->id) {
-      continue;
+    const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+        "cpp-mir-body-ordered-owned-parameter-constructor.gti", source);
+    expect(frontend.canGenerateCode(),
+           "the body-ordered owned-parameter constructor should pass the "
+           "frontend");
+    if (!frontend.canGenerateCode()) {
+      return;
     }
-    for (lang::MirBlock &block : candidate.body.blocks) {
-      for (lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::CallInput &&
-            instruction.callInputRole == lang::MirCallInputRole::Receiver) {
-          instruction.callInputRole = lang::MirCallInputRole::Argument;
-          mutated = true;
-          break;
-        }
-      }
-      if (mutated) {
+
+    const lang::MirConstructorInstance *constructor = nullptr;
+    for (const lang::MirConstructorInstance &candidate :
+         frontend.mir.constructorInstances()) {
+      if (candidate.initializers.size() == 2 &&
+          !candidate.initializers.front().ownedParameter &&
+          candidate.initializers.back().ownedParameter) {
+        constructor = &candidate;
         break;
       }
     }
+    expect(constructor != nullptr && constructor->mayRaiseDefinedFailure,
+           "the ordered constructor should retain its clone, move, and body "
+           "failure schedule");
+    if (constructor == nullptr) {
+      return;
+    }
+
+    expect(
+        lang::cppMirFailureConstructorEmptyFieldsEligible(frontend.mir,
+                                                          constructor->owner),
+        "the constructor should have proved empty fields for body publication");
+    expect(lang::cppMirFailureConstructorEmptyStateEligible(frontend.mir,
+                                                            constructor->owner),
+           "the private empty representation supports generated fields and "
+           "an independently verified disarmed source destructor");
+    if (declaredDestructor) {
+      lang::MirProgram malformed = frontend.mir;
+      auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+          malformed.classInstances());
+      for (lang::MirClassInstance &owner : classes) {
+        if (owner.id == constructor->owner) {
+          owner.requiresActiveDropState = false;
+        }
+      }
+      expect(
+          !lang::cppMirFailureConstructorEmptyFieldsEligible(
+              malformed, constructor->owner),
+          "empty fields with a source destructor require the lifecycle guard");
+      expect(!lang::cppMirFailureConstructorEmptyStateEligible(
+                 malformed, constructor->owner),
+             "private empty representation cannot activate an unguarded "
+             "source destructor");
+    }
+
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                       .owner = constructor->id};
+    expect(emitter.analyze(address).ready() &&
+               emitter.supportsFailureBodyText(address),
+           "the transformed constructor should preserve body-ordered clone and "
+           "owned-parameter publication");
+    if (!emitter.supportsFailureBodyText(address)) {
+      return;
+    }
+
+    const std::string text =
+        emitter
+            .emitFailureBodyText(
+                address, "body-ordered-owned-parameter-constructor-v0", 1)
+            .text;
+    const std::size_t clone = text.find("clone__gti_mir_failure");
+    const std::size_t parameterMove =
+        text.find("std::move(__gti_mir_p_", clone);
+    expect(clone != std::string::npos && parameterMove != std::string::npos &&
+               clone < parameterMove &&
+               text.find("mir_rollback_field_v1(") != std::string::npos &&
+               text.find("construction rollback deferred") == std::string::npos,
+           "the emitted constructor should clone before moving the parameter "
+           "and retain exact later-failure rollback");
+
+    const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+    expect(!artifact.contents.empty() &&
+               artifact.contents.find("mir_failure_constructor_tag_v1") !=
+                   std::string::npos &&
+               artifact.contents.find("mir_empty_state_v1") !=
+                   std::string::npos,
+           "production emission should build the transformed initializer list "
+           "without dereferencing absent native owned-field bindings");
+
+    lang::MirProgram mismatchedReceiver = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            mismatchedReceiver.constructorInstances());
+    bool mutated = false;
+    for (lang::MirConstructorInstance &candidate : constructors) {
+      if (candidate.id != constructor->id) {
+        continue;
+      }
+      for (lang::MirBlock &block : candidate.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputRole == lang::MirCallInputRole::Receiver) {
+            instruction.callInputRole = lang::MirCallInputRole::Argument;
+            mutated = true;
+            break;
+          }
+        }
+        if (mutated) {
+          break;
+        }
+      }
+    }
+    expect(mutated,
+           "the near-miss fixture should expose the clone receiver stage");
+    if (mutated) {
+      const lang::CppMirBodyEmitter mismatchedEmitter(mismatchedReceiver, map);
+      expect(!mismatchedEmitter.supportsFailureBodyText(address),
+             "member-call field publication should fail closed when its exact "
+             "receiver schedule is absent");
+    }
   }
-  expect(mutated,
-         "the near-miss fixture should expose the clone receiver stage");
-  if (mutated) {
-    const lang::CppMirBodyEmitter mismatchedEmitter(mismatchedReceiver, map);
-    expect(!mismatchedEmitter.supportsFailureBodyText(address),
-           "member-call field publication should fail closed when its exact "
-           "receiver schedule is absent");
+}
+
+void testSourceDestructorOwningFieldCleanup() {
+  for (const auto name : {"source_destructor_cleanup_failure.gti",
+                          "temporary_constructor_argument_user_drop_gap.gti"}) {
+    const auto fixture =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
+    std::ifstream input(fixture);
+    expect(input.good(), "source-destructor cleanup fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "source-destructor fixture must verify");
+    if (!frontend.canGenerateCode())
+      return;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    bool checked = false;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto owned = std::find_if(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [&](const auto &initializer) {
+            return initializer.ownedParameter &&
+                   std::any_of(frontend.mir.classInstances().begin(),
+                               frontend.mir.classInstances().end(),
+                               [&](const auto &owner) {
+                                 return owner.type == initializer.targetType &&
+                                        owner.destructor;
+                               });
+          });
+      if (owned == constructor.initializers.end())
+        continue;
+      checked = true;
+      expect(
+          !lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor),
+          "fallible parameter cleanup requires body-ordered publication");
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor.id};
+      const auto text =
+          emitter.emitFailureBodyText(address, "source-fields-v0", 1);
+      expect(
+          text.emitted() &&
+              text.text.find(" = std::move(__gti_mir_v_") !=
+                  std::string::npos &&
+              text.text.find("field initialization publishes in the member") ==
+                  std::string::npos &&
+              text.text.find("__gti_mir_unique_cleanup_failure<") !=
+                  std::string::npos,
+          "the owned field must publish in MIR and roll back through its "
+          "contained source destructor");
+    }
+    if (std::string_view(name) ==
+        "temporary_constructor_argument_user_drop_gap.gti")
+      expect(checked,
+             "receiver regression must check its owned field publication");
+    const auto artifact = gti_test::emitCpp(frontend);
+    expect(artifact.contents.find(
+               "if (!sequence.step(__gti_mir_destruct_failure(") !=
+               std::string::npos,
+           "source cleanup must execute before its aggregate children");
+    if (std::string_view(name) == "source_destructor_cleanup_failure.gti") {
+      expect(
+          artifact.contents.find("Nested::Nested() {") == std::string::npos &&
+              artifact.contents.find("Nested::Nested(::gti_internal::backend::"
+                                     "mir_failure_constructor_tag_v1") !=
+                  std::string::npos,
+          "nested construction cannot emit a plain call to a status-only "
+          "owning constructor");
+    }
   }
+}
+
+void testOwningBaseConstructorStatus() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/inherited_unique_allocation.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "the inherited-allocation fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "the owning-base fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t selected = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *entry = constructor.body.findBlock(constructor.body.entry);
+    if (!entry || entry->instructions.empty() ||
+        entry->instructions.front().kind !=
+            lang::MirInstructionKind::InitializeBase)
+      continue;
+    ++selected;
+    const auto &stage = entry->instructions.front();
+    const auto bindings =
+        lang::cppMirBaseParameterInitializerBindings(frontend.mir, constructor);
+    expect(bindings && bindings->size() == 1 &&
+               bindings->front().parameters.empty() &&
+               bindings->front().constructor == stage.constructorTarget &&
+               bindings->front().initializer + 1 ==
+                   stage.constructorInitializer,
+           "zero-argument base initialization must retain its exact native "
+           "binding");
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const lang::CppMirBodyEmissionMap map(
+          buildRows(frontend, frontend.mir, standard));
+      const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor.id};
+      expect(emitter.supportsFailureBodyText(address) &&
+                 !emitter.supportsBodyText(address),
+             "base initialization must consume its MIR failure edge, not a "
+             "terminal plain call");
+      const auto text =
+          emitter.emitFailureBodyText(address, "owning-base-test-v0", 1);
+      expect(text.emitted() &&
+                 text.text.find(" = *__gti_mir_constructor_success;") !=
+                     std::string::npos &&
+                 text.text.find("if (__gti_mir_construct_success_" +
+                                std::to_string(stage.id) + ")") !=
+                     std::string::npos &&
+                 text.text.find("auto &__gti_mir_p_" +
+                                std::to_string(*stage.destination) + " =") ==
+                     std::string::npos &&
+                 text.text.find("mir_rollback_field_v1(") == std::string::npos,
+             "the base must use its status edge without a field alias or field "
+             "replacement");
+      auto malformed = frontend.mir;
+      auto &constructors =
+          const_cast<std::vector<lang::MirConstructorInstance> &>(
+              malformed.constructorInstances());
+      for (auto &candidate : constructors) {
+        if (candidate.id == constructor.id)
+          candidate.body.blocks[candidate.body.entry - 1]
+              .instructions.front()
+              .successResultDrop.reset();
+      }
+      expect(!lang::CppMirBodyEmitter(malformed, map)
+                  .supportsFailureBodyText(address),
+             "base status emission must reject missing rollback activation");
+    }
+  }
+  expect(selected == 1,
+         "the fixture must exercise exactly one owning-base stage");
 }
 
 void testPassiveOwnedParameterConstructorFields() {
@@ -1349,7 +1530,9 @@ int main() {
             for (const lang::MirInstruction &candidate :
                  candidateBlock.instructions) {
               if (candidate.kind == lang::MirInstructionKind::Drop &&
-                  candidate.destination == slot->id) {
+                  candidate.destination == slot->id &&
+                  candidate.lifecycle.size() == 1 &&
+                  !candidate.lifecycle.front().failureCleanup) {
                 if (destroy != nullptr) {
                   destroy = nullptr;
                   break;
@@ -1393,24 +1576,52 @@ int main() {
           if (producerPosition == candidateBlock.instructions.end()) {
             continue;
           }
-          const auto consumerPosition = std::next(producerPosition);
-          if (consumerPosition == candidateBlock.instructions.end() ||
+          const lang::MirBlock *commitBlock = &candidateBlock;
+          auto consumerPosition = std::next(producerPosition);
+          if (consumerPosition != candidateBlock.instructions.end() &&
+              consumerPosition->kind ==
+                  lang::MirInstructionKind::CleanupBeforeAssign) {
+            if (consumerPosition->replacementPair != instruction.id ||
+                instruction.replacementPair != consumerPosition->id ||
+                consumerPosition->destination != instruction.destination ||
+                !consumerPosition->lifecycle.empty() ||
+                !consumerPosition->replacementCleanup)
+              continue;
+            if (consumerPosition->definedFailure.propagation ==
+                lang::FailurePropagationKind::Destructor) {
+              if (std::next(consumerPosition) !=
+                      candidateBlock.instructions.end() ||
+                  candidateBlock.terminator.kind !=
+                      lang::MirTerminatorKind::Invoke ||
+                  candidateBlock.terminator.invokeInstruction !=
+                      consumerPosition->id)
+                continue;
+              commitBlock =
+                  function.body.findBlock(candidateBlock.terminator.target);
+              if (commitBlock == nullptr)
+                continue;
+              consumerPosition = commitBlock->instructions.begin();
+            } else {
+              ++consumerPosition;
+            }
+          }
+          if (consumerPosition == commitBlock->instructions.end() ||
               consumerPosition->id != instruction.id) {
             continue;
           }
           const auto endBorrow = std::find_if(
-              std::next(consumerPosition), candidateBlock.instructions.end(),
+              std::next(consumerPosition), commitBlock->instructions.end(),
               [&](const lang::MirInstruction &candidate) {
                 return candidate.kind == lang::MirInstructionKind::EndBorrow &&
                        candidate.loan && *candidate.loan == source->loan;
               });
           const auto drop =
-              std::find_if(endBorrow, candidateBlock.instructions.end(),
+              std::find_if(endBorrow, commitBlock->instructions.end(),
                            [&](const lang::MirInstruction &candidate) {
                              return candidate.id == destroy->id;
                            });
-          if (endBorrow != candidateBlock.instructions.end() &&
-              drop != candidateBlock.instructions.end() && endBorrow < drop) {
+          if (endBorrow != commitBlock->instructions.end() &&
+              drop != commitBlock->instructions.end() && endBorrow < drop) {
             successEndBorrow = endBorrow->id;
           }
         }
@@ -1427,6 +1638,7 @@ int main() {
 
   expect(movedField.function != nullptr && movedField.producer != nullptr &&
              movedField.consumer != nullptr && movedField.destroy != nullptr &&
+             movedField.consumer->replacementPair != 0 &&
              movedField.slot != nullptr && movedField.source != nullptr &&
              movedField.successEndBorrow != 0,
          "pop_front should expose the exact borrowed-field move, replace, "
@@ -1738,22 +1950,23 @@ void instantiate() {
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   expect(
-      emitter.supportsNativeContainedBaseConstruction(derivedConstructor->id),
-      "the derived constructor should prove its exact native base "
-      "construction from MIR");
+      !emitter.supportsNativeContainedBaseConstruction(derivedConstructor->id),
+      "the derived constructor now needs its explicit base failure edge, "
+      "not the older terminally contained native-base proof");
 
   const lang::CppMirBodyEmissionText baseText = emitter.emitBodyText(
       {.kind = lang::MirBodyKind::Constructor, .owner = baseConstructor->id},
       "contained-abstract-base-v0", 1);
-  const lang::CppMirBodyEmissionText derivedText = emitter.emitBodyText(
+  const lang::CppMirBodyEmissionText derivedText = emitter.emitFailureBodyText(
       {.kind = lang::MirBodyKind::Constructor, .owner = derivedConstructor->id},
       "contained-derived-v0", 1);
   expect(baseText.emitted(),
          "an abstract base's source constructor must remain directly "
          "spellable from MIR");
-  expect(derivedText.emitted(),
-         "the derived source constructor must remain directly spellable "
-         "from MIR");
+  expect(derivedText.emitted() &&
+             derivedText.text.find(" = *__gti_mir_constructor_success;") !=
+                 std::string::npos,
+         "the derived constructor must consume the selected base's MIR status");
   expect(baseText.text.find("__gti_mir_boundary_failure_") != std::string::npos,
          "the base field call should contain its transformed failure at the "
          "ordinary constructor boundary");
@@ -5392,6 +5605,9 @@ constexpr NamedTest kTests[] = {
      testContainedOwningStringFieldConstructor},
     {"testBodyOrderedOwnedParameterConstructor",
      testBodyOrderedOwnedParameterConstructor},
+    {"testSourceDestructorOwningFieldCleanup",
+     testSourceDestructorOwningFieldCleanup},
+    {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
     {"testMoveOnlyClassResultReceiverFieldTransfer",

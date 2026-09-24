@@ -17,7 +17,7 @@ concurrency:
 jobs:
   formatting:
     name: Formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -35,7 +35,7 @@ jobs:
 
   release-version:
     name: Release version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -56,7 +56,7 @@ jobs:
 
   tree-sitter:
     name: Tree-sitter grammar
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -78,7 +78,7 @@ jobs:
 
   reference:
     name: Reference site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -96,6 +96,12 @@ jobs:
             clang cmake libclang-18-dev llvm-18-dev ninja-build
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
+      - name: Configure runner resources
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+        run: bash scripts/configure_ci_resources.sh
+
       - name: Configure reference tools
         run: >-
           cmake -S . -B build-reference -G Ninja
@@ -105,7 +111,7 @@ jobs:
 
       - name: Build compiler-backed reference tools
         run: >-
-          cmake --build build-reference --config Release --parallel 4
+          cmake --build build-reference --config Release --parallel "${GTI_JOBS}"
           --target gti_docgen gti
 
       - name: Install pinned pnpm
@@ -136,7 +142,7 @@ jobs:
 
   build-and-test:
     name: Native toolchain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -146,22 +152,8 @@ jobs:
         shell: bash
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
-        run: |
-          jobs="${GTI_CONFIGURED_JOBS:-}"
-          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
-            jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
-          fi
-          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
-            jobs=4
-          fi
-          echo "GTI_JOBS=${jobs}" >> "${GITEA_ENV}"
-          if command -v sccache >/dev/null 2>&1; then
-            echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
-            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
-            if [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
-              echo "SCCACHE_GHA_ENABLED=true" >> "${GITEA_ENV}"
-            fi
-          fi
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+        run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
         if: runner.os == 'Linux'
@@ -182,7 +174,12 @@ jobs:
           brew install ninja llvm@22
           echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
 
+      - name: Check runner sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --sanitizer thread --sanitizer address,undefined
+
       - name: Configure
+        # Same native compiler used by the default GTI/CTest runtime probes.
+        # The preflight below must pass; failures are not converted into skips.
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
@@ -193,7 +190,7 @@ jobs:
       - name: Test
         run: >-
           ctest --test-dir build -C Release
-          --parallel "${GTI_JOBS}" --output-on-failure
+          --parallel "${GTI_TEST_JOBS}" --output-on-failure
 
       - name: Stage system-LLVM toolchain
         run: >-
@@ -214,11 +211,11 @@ jobs:
             --config Release --parallel "${GTI_JOBS}"
           ctest \
             --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
-            -C Release --parallel "${GTI_JOBS}" --output-on-failure
+            -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
 
   compiler-sanitizers:
     name: Compiler sanitizers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out GTI
@@ -228,22 +225,8 @@ jobs:
         shell: bash
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
-        run: |
-          jobs="${GTI_CONFIGURED_JOBS:-}"
-          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
-            jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
-          fi
-          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
-            jobs=4
-          fi
-          echo "GTI_JOBS=${jobs}" >> "${GITEA_ENV}"
-          if command -v sccache >/dev/null 2>&1; then
-            echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
-            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
-            if [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
-              echo "SCCACHE_GHA_ENABLED=true" >> "${GITEA_ENV}"
-            fi
-          fi
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+        run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
         if: runner.os == 'Linux'
@@ -265,6 +248,9 @@ jobs:
           echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
           echo "$(brew --prefix llvm@22)/bin" >> "${GITEA_PATH}"
 
+      - name: Check compiler sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx clang++ --sanitizer address,undefined
+
       - name: Configure
         env:
           CC: clang
@@ -285,5 +271,5 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
-          --parallel "${GTI_JOBS}"
+          --parallel "${GTI_TEST_JOBS}"
           -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|failure_metadata|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter|cpp_mir_program_plan|cpp_mir_representation_snapshot'

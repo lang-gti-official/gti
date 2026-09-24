@@ -578,6 +578,7 @@ private:
             .internalLinkage = info->internalLinkage,
             .constexprFunction = info->constexprFunction,
             .requiresUnsafe = info->requiresUnsafe,
+            .cThreadOperation = info->cThreadOperation,
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
@@ -786,6 +787,9 @@ private:
         source.staticMember != lowered.staticMember ||
         source.constexprFunction != lowered.constexprFunction ||
         source.requiresUnsafe != lowered.requiresUnsafe ||
+        source.cThreadOperation != lowered.cThreadOperation ||
+        (info != nullptr &&
+         source.cThreadOperation != info->cThreadOperation) ||
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
@@ -841,7 +845,8 @@ private:
     const MirNativeCallbackAdapter &lowered =
         mir.nativeCallbackAdapters()[index];
     if (source.id != lowered.id || source.target != lowered.target ||
-        source.type != lowered.type) {
+        source.type != lowered.type ||
+        source.cThreadCallback != lowered.cThreadCallback) {
       return reject("native callback adapter " + std::to_string(index + 1) +
                     " differs");
     }

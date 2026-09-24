@@ -4,10 +4,93 @@
 #include <stddef.h>
 #include <stdint.h>
 
+_Static_assert(_Generic(&gti_rt_once_invoke_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "registered once invocation ABI");
+_Static_assert(_Generic(&gti_rt_once_enter_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "exact once entry ABI");
+_Static_assert(_Generic(&gti_rt_once_leave_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "exact once leave ABI");
+
+_Static_assert(_Generic(&gti_rt_cthread_current_v1,
+                   uint64_t (*)(void): 1,
+                   default: 0),
+               "C-thread identity ABI");
+
+_Static_assert(_Generic(&gti_rt_cthread_sleep_v1,
+                   int32_t (*)(int64_t, int64_t, int64_t *, int64_t *): 1,
+                   default: 0),
+               "C-thread sleep scalar ABI");
+
 _Static_assert(_Generic(&gti_rt_cthread_yield_v1,
                    void (*)(void): 1,
                    default: 0),
                "the C-style yield entry must retain its void C prototype");
+_Static_assert(_Generic(&gti_rt_mtx_init_v1,
+                   int32_t (*)(uint64_t *, int32_t): 1,
+                   default: 0),
+               "manual mutex init ABI");
+_Static_assert(_Generic(&gti_rt_cnd_init_v1,
+                   int32_t (*)(uint64_t *): 1,
+                   default: 0),
+               "condition init ABI");
+_Static_assert(_Generic(&gti_rt_cnd_destroy_v1,
+                   void (*)(uint64_t): 1,
+                   default: 0),
+               "condition destroy ABI");
+_Static_assert(_Generic(&gti_rt_cnd_signal_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "condition signal ABI");
+_Static_assert(_Generic(&gti_rt_cnd_broadcast_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "condition broadcast ABI");
+_Static_assert(_Generic(&gti_rt_cnd_wait_v1,
+                   int32_t (*)(uint64_t, uint64_t): 1,
+                   default: 0),
+               "condition wait ABI");
+_Static_assert(_Generic(&gti_rt_cnd_timedwait_v1,
+                   int32_t (*)(uint64_t, uint64_t, int64_t, int64_t): 1,
+                   default: 0),
+               "condition deadline ABI");
+_Static_assert(_Generic(&gti_rt_mtx_destroy_v1,
+                   void (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex destruction ABI");
+_Static_assert(_Generic(&gti_rt_mtx_lock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex acquire ABI");
+_Static_assert(_Generic(&gti_rt_mtx_trylock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex try-acquire ABI");
+_Static_assert(_Generic(&gti_rt_mtx_timedlock_v1,
+                   int32_t (*)(uint64_t, int64_t, int64_t): 1,
+                   default: 0),
+               "manual mutex deadline ABI");
+_Static_assert(_Generic(&gti_rt_mtx_unlock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex release ABI");
+_Static_assert(_Generic(&gti_rt_cthread_create_v1,
+                   int32_t (*)(uint64_t *, gti_cthread_entry_v1, void *): 1,
+                   default: 0),
+               "C-thread create ABI");
+_Static_assert(_Generic(&gti_rt_cthread_join_v1,
+                   int32_t (*)(uint64_t, int32_t *): 1,
+                   default: 0),
+               "C-thread join ABI");
+_Static_assert(_Generic(&gti_rt_cthread_enter_v1,
+                   void (*)(gti_cthread_entry_v1): 1,
+                   default: 0),
+               "C-thread exact-entry ABI");
 
 #define GTI_CHECK_UNARY_MATH(name)                                             \
   _Static_assert(                                                              \

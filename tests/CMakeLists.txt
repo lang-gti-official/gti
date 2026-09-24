@@ -38,6 +38,42 @@ target_link_libraries("gti_runtime_cthread_tests" PRIVATE gti_runtime)
 add_test(NAME cthread_runtime_boundary COMMAND gti_runtime_cthread_tests)
 set_tests_properties(cthread_runtime_boundary PROPERTIES TIMEOUT 60)
 
+add_executable(gti_runtime_cthread_sleep_tests
+               "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_sleep_tests.cpp")
+target_include_directories(gti_runtime_cthread_sleep_tests
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_cthread_sleep_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_cthread_sleep_tests PRIVATE gti_runtime)
+add_test(NAME cthread_sleep_boundary COMMAND gti_runtime_cthread_sleep_tests)
+set_tests_properties(cthread_sleep_boundary PROPERTIES TIMEOUT 60)
+
+add_executable(gti_runtime_cthread_mutex_tests
+               "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_mutex_tests.cpp")
+target_include_directories(gti_runtime_cthread_mutex_tests
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_cthread_mutex_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_cthread_mutex_tests PRIVATE gti_runtime)
+add_test(NAME cthread_mutex_boundary COMMAND gti_runtime_cthread_mutex_tests)
+set_tests_properties(cthread_mutex_boundary PROPERTIES TIMEOUT 60)
+
+add_executable(gti_runtime_cthread_condition_tests
+               "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_condition_tests.cpp")
+target_include_directories(gti_runtime_cthread_condition_tests
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_cthread_condition_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_cthread_condition_tests PRIVATE gti_runtime)
+add_test(NAME cthread_condition_boundary COMMAND gti_runtime_cthread_condition_tests)
+set_tests_properties(cthread_condition_boundary PROPERTIES TIMEOUT 60)
+
+add_executable(gti_runtime_cthread_once_tests
+               "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_once_tests.cpp")
+target_include_directories(gti_runtime_cthread_once_tests
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_cthread_once_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_cthread_once_tests PRIVATE gti_runtime)
+add_test(NAME cthread_once_boundary COMMAND gti_runtime_cthread_once_tests)
+set_tests_properties(cthread_once_boundary PROPERTIES TIMEOUT 60)
+
 add_executable("gti_runtime_io_tests"
                "${PROJECT_SOURCE_DIR}/tests/runtime_io_tests.cpp")
 target_compile_features("gti_runtime_io_tests" PRIVATE cxx_std_23)
@@ -266,6 +302,10 @@ add_executable("gti_native_callback_tests"
                "${PROJECT_SOURCE_DIR}/tests/native_callback_tests.cpp")
 target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
+
+add_executable(gti_cthread_tests "${PROJECT_SOURCE_DIR}/tests/cthread_tests.cpp")
+target_link_libraries(gti_cthread_tests PRIVATE gti_cpp_backend)
+add_test(NAME cthread_semantic_ir COMMAND gti_cthread_tests)
 
 add_executable(gti_unsafe_function_tests
                "${PROJECT_SOURCE_DIR}/tests/unsafe_function_tests.cpp")
@@ -566,6 +606,31 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(cthread_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME cthread_sleep_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/cthread_sleep_test.py"
+                   "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(cthread_sleep_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME cthread_mutex_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/cthread_mutex_test.py"
+                   "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(cthread_mutex_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME cthread_condition_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/cthread_condition_test.py"
+                   "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(cthread_condition_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME cthread_once_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/cthread_once_test.py"
+                   "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(cthread_once_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME cthread_create_join_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/cthread_create_join_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(cthread_create_join_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME unsafe_function_runtime
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/unsafe_function_runtime_test.py"
@@ -607,6 +672,63 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(unique_class_allocation_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME inherited_unique_allocation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/inherited_unique_allocation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(inherited_unique_allocation_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME unique_pointee_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/unique_pointee_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(unique_pointee_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME aggregate_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/aggregate_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(aggregate_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME source_destructor_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/source_destructor_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(source_destructor_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+
+  add_test(
+    NAME recursive_cleanup_failure_runtime
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/recursive_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(recursive_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME checked_owner_replacement_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/checked_owner_replacement_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(checked_owner_replacement_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME constructor_owned_call_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constructor_owned_call_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(constructor_owned_call_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME collection_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/collection_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(collection_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME release_version_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/release_version_test.py"
@@ -617,6 +739,18 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/repository_hosting_test.py"
             "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
+    NAME ci_resources
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ci_resources_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/configure_ci_resources.sh"
+  )
+  add_test(
+    NAME neovim_local_installer
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/neovim_local_installer_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/install_neovim_local.py"
   )
   add_test(
     NAME gitea_release_asset_sync
@@ -1522,89 +1656,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(float_text_runtime PROPERTIES TIMEOUT 300)
 
-    if(GTI_RELEASE_BUILD)
-      # Release binaries deliberately omit source-tree fallback paths so the
-      # installed-toolchain checks exercise relocatable discovery. Build-tree
-    # tests still run before installation and therefore need an explicit
-    # test-only resource layout.
-    set_tests_properties(
-      driver_pipeline
-      output_determinism binary64_runtime sum_types_runtime
-      constexpr_aggregate_runtime
-      issues_122_124_field_initializers_runtime
-      stdlib_include_sweep
-      defined_integer_runtime_1of4 defined_integer_runtime_2of4
-      defined_integer_runtime_3of4 defined_integer_runtime_4of4
-      expected_wrong_state_runtime expected_propagation_runtime
-      expected_payload_range_runtime
-      returned_class_field_runtime
-      reference_parameter_range_runtime mutable_range_runtime
-      span_owner_dependent_runtime
-      evaluation_order_runtime optimizer_runtime
-      native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
-      cli_workflow project_cli_workflow
-      mir_backend_first_family_runtime global_class_storage_runtime
-      failure_descriptor_backend_compile
-      mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
-        mir_backend_class_default_cleanup_runtime
-        inline_lambda_argument_runtime
-        mir_backend_owned_lifecycle_runtime
-        mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
-        fixed_array_oob_write_runtime
-        fixed_array_multidimensional_index_runtime
-        issue_123_cleanup_temporary_argument_runtime
-        issue_126_array_element_assignment_runtime
-        issue_127_constructor_temporary_field_runtime
-        constructor_constructed_field_runtime
-        issues_117_120_regressions
-        issues_208_210_211_regressions
-        issue_143_polymorphic_class_array_runtime
-        issue_144_class_array_field_runtime
-        issue_146_class_value_positions_runtime
-      issue_147_stored_reference_field_read_runtime
-        reference_receiver_compound_assign_runtime
-        subscript_store_read_order_runtime
-        owner_tied_reference_argument_runtime
-        generic_symbolic_auto_local_runtime
-        requires_disjunction_runtime
-        explicit_function_value_generics_runtime
-        generic_callable_concepts_runtime
-        owner_tied_by_value_argument_runtime
-        moved_loop_local_runtime
-        mixed_capture_callable_template_runtime
-        generic_owner_callable_variants_runtime
-        class_move_assignment_runtime
-        class_prvalue_assignment_runtime
-        mutable_temporary_receiver_runtime
-        temporary_constructor_argument_runtime
-        nested_reference_return_runtime
-        class_payload_enum_runtime
-        payload_enum_containment_runtime
-        argument_reference_return_runtime
-        temporary_argument_borrow_runtime
-        field_subscript_store_runtime
-        disjoint_field_projection_runtime
-        retained_borrowed_call_result_runtime
-        mutable_stored_dependency_runtime
-        nested_borrow_chain_runtime
-        mut_reference_retained_chain_runtime
-        mir_backend_scalar_failure_callgraph_runtime_1of3
-        mir_backend_scalar_failure_callgraph_runtime_2of3
-        mir_backend_scalar_failure_callgraph_runtime_3of3
-        random_engine_runtime default_parameters_runtime
-      compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
-      string_owned_output_runtime string_index_range_runtime forward_list_runtime
-      unique_owner_access_runtime unsafe_function_runtime
-      unique_scalar_allocation_runtime
-      unique_class_allocation_runtime
-      managed_thread_end_to_end
-      managed_thread_tsan cthread_runtime atomic_end_to_end atomic_tsan mutex_end_to_end
-      mutex_tsan
-      domain_operator_runtime
-      PROPERTIES ENVIRONMENT
-        "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
-    )
-  endif()
 
   if(TARGET gti_lsp)
     add_test(
@@ -1637,6 +1688,10 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME cthread_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"
@@ -1653,13 +1708,19 @@ if(Python3_Interpreter_FOUND)
         --output "${PROJECT_BINARY_DIR}/lsp-benchmark-smoke"
         --dependencies 8 --smoke
     )
-    if(GTI_RELEASE_BUILD)
-      set_tests_properties(
-        lsp_protocol block_comment_lsp source_text_lsp unsafe_function_lsp
-        lsp_scalability_benchmark_smoke
-        PROPERTIES ENVIRONMENT
-          "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib"
-      )
-    endif()
   endif()
+endif()
+
+# Release binaries intentionally contain no source-tree resource fallback.
+# Every build-tree test runs before staging, including newly registered CLI/LSP
+# tests. Derive the inventory instead of maintaining an incomplete name list.
+# Installed-consumer checks run outside this directory without these overrides.
+if(GTI_RELEASE_BUILD)
+  get_property(gti_build_tree_tests DIRECTORY PROPERTY TESTS)
+  set_property(TEST ${gti_build_tree_tests} APPEND PROPERTY ENVIRONMENT
+    "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib"
+    "GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include"
+    "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
+    "GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
 endif()

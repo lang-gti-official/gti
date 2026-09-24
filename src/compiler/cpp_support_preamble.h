@@ -14,6 +14,7 @@ struct CppSupportPreambleFeatures {
   bool expected = false;
   bool storage = true;
   bool managedThreads = false;
+  bool cThreads = false;
   bool atomics = false;
   bool mutexes = false;
   bool definedFailure = true;

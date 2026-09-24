@@ -825,6 +825,9 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || declaration == nullptr ||
         declaration->requiresUnsafe != mir.requiresUnsafe ||
+        declaration->cThreadOperation != mir.cThreadOperation ||
+        (declaration->cThreadOperation != CThreadRuntimeOperation::None &&
+         !declaration->compilerPrivate) ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments ||

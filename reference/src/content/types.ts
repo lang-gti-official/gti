@@ -78,6 +78,7 @@ export type ReferenceExample =
       title: string;
       description: string;
       mode: "compile";
+      executionProfile?: "single-threaded" | "concurrent";
       sourcePath: string;
       sourceText: string;
     }
@@ -86,6 +87,7 @@ export type ReferenceExample =
       title: string;
       description: string;
       mode: "run";
+      executionProfile?: "single-threaded" | "concurrent";
       sourcePath: string;
       sourceText: string;
       stdoutPath?: string;
@@ -96,6 +98,7 @@ export type ReferenceExample =
       title: string;
       description: string;
       mode: "diagnostic";
+      executionProfile?: "single-threaded" | "concurrent";
       sourcePath: string;
       sourceText: string;
       diagnostics: string[];

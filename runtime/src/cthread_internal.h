@@ -4,16 +4,32 @@
 
 namespace gti::runtime::detail {
 
-// Source-private prerequisite for the C-style thread MIR boundary. These are
-// not installed APIs and do not authorize concurrent GTI callback conversion.
+// Source-private implementation behind the versioned C-thread ABI. This header
+// is not installed; compiler-owned MIR policy authorizes GTI callback entry.
 using CThreadHandle = std::uint64_t;
 using CThreadEntry = std::int32_t (*)(void *);
+using COnceInitializer = void (*)();
+
+void invokeCOnceInitializer(COnceInitializer initializer) noexcept;
+bool enterCOnceInitializer(COnceInitializer initializer) noexcept;
+bool leaveCOnceInitializer(COnceInitializer initializer) noexcept;
+// Balanced by the existing managed-worker runtime scope, never by user code.
+void enterCThreadManagedScope() noexcept;
+void leaveCThreadManagedScope() noexcept;
+// An entered native adapter owns a terminating failure boundary even when
+// synchronously invoked by a managed task. Do not hand its failure to join.
+bool terminalCThreadCallbackActive() noexcept;
+
+// Stable, nonzero process identity, including outside the manual service.
+// Observing an identity grants neither callback attachment nor join authority.
+CThreadHandle currentCThread() noexcept;
 
 enum class CThreadStatus : std::int32_t {
-  Success,
-  Error,
-  NoMemory,
-  Busy,
+  Success = 0,
+  Error = 1,
+  NoMemory = 2,
+  Busy = 3,
+  TimedOut = 4,
 };
 
 // One hosted invocation owns this process-wide service. Begin succeeds once;

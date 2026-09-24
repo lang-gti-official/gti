@@ -94,13 +94,164 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v56`/`mir-body-v49`.
-Program v56/body v49 retain the resolved `requiresUnsafe` function contract and
+The deterministic serialization is currently `mir-v70`/`mir-body-v60`.
+Program v69/body v60 add exact C-thread condition initialization, destruction,
+signal, broadcast, wait, and timed-wait declarations. The wait calls retain
+`ConditionWait` (atomic enrollment/release followed by reacquisition), and
+signal/broadcast retain `ConditionNotify`. Notification is not an independent
+shared-data publication edge. Both are non-removable/non-reorderable runtime
+barriers; their verifier rejects erased, replaced, or atomic-order-bearing
+records and forged native signatures. Ordinary native-call emission consumes
+the contracts without a new backend body path.
+
+Program v68 extends the exact private C-thread declaration vocabulary with
+manual mutex initialization, destruction, lock, try-lock, timed-lock, and
+unlock. The three acquisition calls retain `MutexLock`, and release retains
+`MutexUnlock`; their language edges are conditional on successful acquisition
+or final recursive release. The verifier binds records to exact native
+signatures and rejects erased/reversed operations and forged native targets.
+The ordinary native-call body representation is unchanged.
+
+Program v67/body v59 make checked fixed-array replacement preparation own its
+exact local bounds origin as well as its complete old-value cleanup. It checks
+the destination before beginning cleanup, consumes no RHS ownership on either
+failure path, and routes through `Invoke` even when the destructor cannot fail.
+The paired `Assign` has no local detector or propagation: only successful
+validation and cleanup reach its non-failing commit. Each dimension of a
+chained array place is checked before accessing the next dimension. The
+verifier rejects missing or displaced bounds origins, early ownership
+publication, unpaired replacement, and altered success routing.
+
+Program v66/body v58 split represented plain owning assignment into
+`CleanupBeforeAssign` and its paired `Assign`. The preparation carries the
+independently derived destination cleanup recipe, but consumes no RHS ownership
+and ends no representation lifetime. Fallible cleanup uses `Invoke`; only its
+unique success successor may commit the replacement. The destination remains
+live but disarmed/empty if cleanup fails, so subsequent scope cleanup is safe.
+The staged RHS stays active until `Assign` publishes it. Pair identities,
+adjacency/success routing, complete destructor effects, and generated non-failing
+assignment after cleanup are verifier-owned. The v67 extension adds the
+built-in checked array-element destination to that protocol; unrepresented
+cleanup and destination families still fail closed.
+
+Program v65/body v57 make recursive ownership recipes finite. On re-entering
+an enclosing class instance, lowering records an exact `recursiveCleanup`
+back-edge instead of expanding that class again. The back-edge has the same
+class/type identity and no body or children; it is never a root recipe. The
+independent MIR derivation exact-compares the complete tree, including these
+edges. Every reachable source destructor still occurs in the expanded root,
+so effect composition remains complete without following a cyclic graph.
+The backend calls the already selected class cleanup helper through the
+owning pointer or collection representation; it does not rediscover the
+schedule from native fields. Empty owners stop traversal. This is a cyclic
+*type* graph, not permission to construct cyclic exclusive ownership at runtime.
+
+Program v64/body v56 compose a class's guarded source destructor with its
+ordered active-subobject recipe. The body runs first, then reverse fields and
+the admitted base recipe. Its failure summary is separate from the complete
+recipe: a failure-free body can still have fallible fields. Lowering and the
+independent MIR derivation retain both the exact destructor and every child;
+the verifier rejects missing/retargeted bodies, missing guards, and incomplete
+or reordered children. The backend uses the shared cleanup sequence, preserving
+the first failure while draining children and stopping immediately on a second.
+Direct values, unique-owned values, nested source-destructor fields, and
+storage/vector scope destruction and removal use this same recipe.
+
+For acyclic non-polymorphic classes with generated move assignment and recursively
+empty-representable fields, the private native empty-state constructor explicitly
+disarms the source destructor. This is not a source-language default constructor.
+MIR publishes each completed field and rolls it back before constructor
+parameters. Body-ordered parameter publication may be suppressed only when the
+same complete native initializer binding also suppresses its move. Plain
+constructor emission must prove the ordinary callee actually exists; a
+status-only nested constructor cannot be called through an invented overload.
+
+Program v63/body v55 extend the explicit removal recipe to `PrefixStorageErase`.
+MIR independently proves generated relocation into an empty element slot,
+including guarded source-destructor state, every field and base, and recursively
+movable capture/aggregate state. This is not an assignment proof: overwriting a
+live value still requires its cleanup. Declared/deleted moves and missing guards
+cannot satisfy the contract.
+
+Erase detaches the suffix from the prefix before running the selected element's
+cleanup. On success, proved-failure-free moves close the hole and restore the
+contiguous prefix. On failure, the operation drains the detached suffix in
+reverse order, then returns the original record through `Invoke`; ordinary
+caller cleanup owns the untouched prefix. A second failure while draining the
+suffix terminates before native teardown with both source records. Local bounds
+failure changes no live state and retains the erase site's ordinary diagnostic.
+The collection matrix covers first/middle/last removal, append after success,
+direct leaves, owning aggregates, nested collections, and inherited elements.
+
+Program v62/body v54 carry an exact `elementCleanup` recipe on private
+`StorageDestroy` and `PrefixStoragePop` calls when the element belongs to the
+represented cleanup family. Lowering derives it from the concrete operand;
+the MIR verifier independently rederives and compares the entire recipe and
+its destructor propagation. These calls retain both their local bounds/state
+outcomes and source-destructor effects. Proving a local check safe does not
+prove element cleanup safe. Effect composition includes every source destructor
+in the recipe, and unrelated instructions cannot carry a recipe.
+
+Explicit removal retires the sparse live bit or prefix length before cleanup,
+ends the disarmed element representation once, and returns to the same MIR
+`Invoke` failure edge. The backend-private checked status distinguishes local
+errors, which create a record at the removal site, from propagated destructor
+errors, whose record is already complete and must not be overwritten. Caller
+cleanup drains the remaining live elements. Source-defined vector/storage
+`clear()` loops use these same operations. The v63 extension supplies the
+arbitrary-index prefix erase hole/shift protocol for the represented family.
+
+Program v61/body v53 extend the cleanup tree with one unprojected element
+recipe for owning storage and prefix storage. A collection drop walks live
+elements in reverse index order (skipping uninitialized sparse slots), runs
+the exact child recipe, ends the element representation lifetime, and finally
+releases the allocation. The live bit/prefix length is retired before entering
+element cleanup. Nested collections share the explicit primary/secondary
+failure protocol; no ambient failure state or native exception unwinding is
+used. Direct lifecycle-guarded source-destructor leaves, unique owners, and
+generated field/base aggregates compose as elements. The v64 extension adds
+source-destructor classes with represented active fields; v65 adds recursive
+ownership-type graphs using finite back-edges.
+The HIR producer and independent MIR derivation must agree on the entire
+element recipe; missing, duplicate, mistyped, projected, or inactive child
+descriptors are rejected. `collection_cleanup_failure_runtime` covers ordinary
+and failure-path drops, sparse slots, nested/moved/empty collections, aggregate
+elements, and inherited-base rollback. The v62 extension also tests explicit
+pop, slot destruction, clear, and unchanged local invalid-slot reporting.
+
+Program v60/body v52 extend v59's single-owner descriptor into an ordered
+aggregate cleanup tree. Generated classes retain every active field in reverse
+declaration order, then their active base; unique-owned generated aggregates
+retain the pointee schedule before allocation release. Terminal leaves include
+lifecycle-guarded source destructors and cleanup-free scalar ownership/storage,
+so ordinary `std::string` can coexist with fallible resource owners. The HIR
+lowerer constructs the schedule and the MIR verifier independently derives and
+exact-compares it. Effect composition retains every source-destructor target,
+not one representative leaf. Releasing owned allocation remains a runtime
+effect even when those source destructor bodies are empty. Raw allocation
+obligations do not gain pointee cleanup.
+
+The outer `Drop` uses the existing `Invoke` and primary/secondary record
+protocol. Within the ordered schedule, a first failure is retained while the
+remaining children drain. A second failure terminates immediately with both
+records. A schedule entered during failure returns on its first new failure,
+without native teardown running any remaining children before the terminal
+MIR edge. Generated C++ helpers consume the selected steps and eventually tear
+down empty representations; they do not consult AST/HIR or use ambient failure
+state. `aggregate_cleanup_failure_runtime` and
+`unique_pointee_cleanup_failure_runtime` own the focused runtime evidence.
+Program v58/body v50 add `InitializeBase` and a constructor-only `Base` place
+projection, selected by exact concrete base identity. The operation invokes
+its selected constructor in place and arms one `ConstructionRollback` only on
+the success edge; it never publishes a standalone class value.
+Program v57 adds exact C-thread runtime declarations, registered callback-entry
+policy, and hosted startup/shutdown calls. Program v56/body v49 introduced the
+resolved `requiresUnsafe` function contract and
 `DeclaredUnsafeCall` instruction marker. HIR checks the declaration flag
 against semantics, MIR checks direct calls against their exact targets and
 rejects unsafe targets in native/managed adapters and function items, and
 lowered construction preserves declaration/instance agreement. The detached
-lowered serialization advances to `lowered-program-v6` for the additional
+lowered serialization advanced to `lowered-program-v6` for the additional
 declaration flag. This is caller-permission metadata, not a new execution or
 failure mechanism: ordinary calls and existing cleanup still execute from MIR.
 Program v55/body v48 add `AllocateObject`, the generated `ObjectAllocation`
@@ -900,9 +1051,17 @@ ordinary lifecycle dataflow additionally verifies path-wise cleanup.
 The C++ backend implements raw storage with matched aligned allocation and
 deallocation and publishes a native owner only on success. Copied and moved
 class inputs are materialized in MIR lifetime slots before allocation, not
-deferred until constructor entry. Fallible construction retains the existing
-bounded constructor rollback proof: destroying a completed unpublished native
-representation is valid only where that proof covers its subobjects. Broader
+deferred until constructor entry. Fallible construction retains the bounded
+constructor rollback proof. Each field rollback executes at its MIR `Drop`,
+then recreates only the proved observation-free native empty state. This keeps
+field cleanup ahead of earlier-created constructor parameters; deferring field
+cleanup to caller-side object destruction would reverse that order. The caller
+then destroys only the unpublished representation. A source destructor remains
+disarmed until constructor success. The proof of empty fields for body-ordered
+parameter publication is distinct from permission to create an empty value of
+the whole class: the latter additionally requires a complete cleanup recipe,
+generated move assignment, recursively empty-representable fields, and explicit
+guard disarming in the private tag constructor. Broader
 rollback, targetless generated default/copy/move allocation, and other
 terminal allocation capabilities remain separate migration work.
 
@@ -933,7 +1092,15 @@ defined-failure edges at all — the lowering decides body-wide before any
 edge is placed and the verifier holds the matching body-wide rule — so lowering
 does not claim recoverable propagation for checked operations in that body.
 Their terminal operation remains part of the verified MIR body rather than an
-alternate source-tree authority. Owned-parameter class fields stage the same way: the
+alternate source-tree authority. A prepared argument handed to an ordinary
+call is not an unarmed subobject transfer. Its `PreparedParameter` obligation
+remains caller-owned until invocation; the ordered-call verifier binds its
+single `TransferOut` to that exact call. Constructors and field-initializer
+bodies retain failure routing across these calls. The status-constructor
+representation also admits the existing class-result argument staging slots:
+if a later argument fails, their ordinary MIR drops run before completed-field
+rollback, with the same secondary-failure edges as in function bodies.
+Owned-parameter class fields stage the same way: the
 moved value's obligation reparents into the armed rollback obligation, so
 those constructors keep routing failure edges, and every constructor failure
 edge drains temporaries, scope bindings, and armed rollback obligations as
@@ -952,8 +1119,45 @@ same owner, field identity, type, and cleanup descriptor; an explicit
 constructor initializer suppresses the default entry obligation. The
 constructor then drains those fields on failure or transfers them to the
 completed object on success without a backend reconstructing source
-initialization. Base subobjects, static-field initializer bodies, and the
-destructor double-failure envelope remain M-FAIL-01 work.
+initialization. The C++ spelling consumes these field drops in place and restores
+empty native fields, rather than deferring their observable cleanup beyond the
+MIR schedule.
+
+The first base-subobject family now uses an entry `InitializeBase` followed by
+an `Invoke`. It covers a selected zero-argument owning base constructor,
+parameterless derived construction, cleanup-free derived fields, and generated
+base/derived destruction. A base that fails is not armed in the derived body;
+later derived failure drains the completed base last, while successful
+construction transfers its obligation to the enclosing object. Independent
+verification binds the exact base relation, constructor, place, rollback type,
+entry position, activation and retirement, and forbids aliases or ordinary
+value/borrow uses of the base place. Interprocedural effect analysis follows
+the selected base constructor, so its allocation, memory, and other effects
+remain visible in the derived constructor's summary and to the optimizer.
+
+The C++ backend fuses this operation into the exact native base status overload
+and branches on the retained result before executing derived MIR. Passive
+field defaults include plain read-only enum values. For the selected
+aggregate schedule, a fallible base cleanup runs at the explicit MIR `Drop`
+and returns its secondary record before the caller tears down the empty native
+representation. Other admitted base rollback finishes when the allocation
+caller destroys the unpublished native object. That deferral is bounded to
+constructors without owning parameters or derived fields; it cannot cross
+their cleanup order. No base is destroyed and placement-reconstructed as an
+ordinary field.
+
+`tests/fixtures/inherited_constructor_cleanup_failure.gti` covers the original
+loss of the derived constructor's primary failure when its base's unique-owned
+leaf destructor also fails. The selected chain now retains both records for
+`GTI-R0014`. The corresponding multiple-owner regression is
+`tests/fixtures/inherited_multi_owner_cleanup_failure.gti`; it now uses the
+complete aggregate schedule rather than deferred native cleanup. Generated
+pointees may themselves contain several supported active fields. Collection
+destruction now composes through the v61 element recipe, including the
+vector-owning base in `inherited_collection_cleanup_failure.gti`. This still
+does not establish cyclic ownership-type graphs, base arguments, owning derived
+fields, declared base/derived destructors, or
+static-field initializer bodies. Those remain M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters
@@ -1100,6 +1304,16 @@ Disjoint sibling-field receiver borrows reached through one mutable reference
 parameter therefore each name their exact `[dereference, field…]` place, which
 keeps them field-disjoint for verification and lets the backend key every
 field projection to one concrete class instance.
+
+Borrow-source canonicalization preserves a projected call-result referent.
+The dependency origin of a call is not necessarily the address it returns:
+`unique_ptr<Left>::operator->`, for example, depends on the owner but returns a
+`Left` reference. A second call through `root->next` therefore retains the
+loan-rooted `Left::next` place, with the first call-result loan as its parent;
+it must not compose `Left::next` onto the `unique_ptr<Left>` binding. Program
+verification independently requires this exact projected source rather than
+accepting equality of flattened dependency keys. This repairs nested checked
+arrow chains without backend inference or a public-wrapper name rule.
 
 A reference binding that retains a borrowed call result keeps that call
 result's own loan and adds itself as a carrier, whether the loan is a root or
@@ -1298,9 +1512,26 @@ the concrete target's defined-failure effect, the
 `TerminateInvocation` containment policy, and the requirement to catch native
 exceptions. The producing MIR value references that row. Verification rejects
 a missing, stale, reordered, owner/member, external, signature-mismatched, or
-non-single-threaded GTI adapter before a backend sees it. Callback thunk text
+unsupported concurrent GTI adapter before a backend sees it. The exact
+C-thread entry additionally retains `CThreadCallbackKind`: `ThreadEntry` for
+`int32_t(void*)`, `OnceInitializer` for `void()`, and `None` outside the concurrent
+profile. HIR/MIR reject missing, swapped, or forged roles. The
+backend consumes the role to enter/leave the exact registered runtime callback around
+the verified target invocation, retaining the existing terminating failure
+firewall. Callback thunk text
 and calling-convention spelling remain backend representation choices; MIR
 owns the executable target and containment decision.
+
+MIR v57 retains `CThreadRuntimeOperation` on exact private native declarations.
+Create/join stay ordinary native `Call` instructions with explicit
+`ThreadSpawn`/`ThreadJoin` synchronization, not managed-task intrinsics. Verified
+hosted plans include exact `BeginCThreadRuntime`/`EndCThreadRuntime` native calls
+after module initialization and after normal entry cleanup, respectively.
+Verification checks declaration signatures, synchronization identity, callback
+policy, and the complete hosted ordering. The C++ backend admits these rows as
+part of the hosted schedule; it does not discover lifecycle from public wrapper
+names. The detached declaration/adapter contract is serialized as
+`lowered-program-v8`.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added

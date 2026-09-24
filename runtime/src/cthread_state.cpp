@@ -1,4 +1,5 @@
 #include "cthread_internal.h"
+#include "gti/cthread.h"
 
 #include <atomic>
 #include <limits>
@@ -17,6 +18,7 @@ enum class EntryPhase { Registered, Entered, Left };
 
 struct Worker {
   std::thread thread;
+  CThreadHandle handle = 0;
   CThreadEntry entry = nullptr;
   std::int32_t result = 0;
   bool joining = false;
@@ -26,7 +28,6 @@ struct Runtime {
   std::mutex mutex;
   RuntimePhase phase = RuntimePhase::Uninitialized;
   std::thread::id owner;
-  CThreadHandle nextHandle = 1;
   std::unordered_map<CThreadHandle, std::unique_ptr<Worker>> workers;
 };
 
@@ -41,7 +42,33 @@ struct Attachment {
 };
 
 thread_local Attachment attachment;
+struct OnceInvocation {
+  COnceInitializer initializer;
+  EntryPhase phase = EntryPhase::Registered;
+  OnceInvocation *previous = nullptr;
+};
+thread_local OnceInvocation *onceInvocation = nullptr;
+thread_local std::uint64_t managedDepth = 0;
+thread_local CThreadHandle currentHandle = 0;
+std::atomic<CThreadHandle> nextHandle{1};
 std::atomic<CThreadTestFault> testFault{CThreadTestFault::None};
+
+// One identity space for initial, managed, foreign, and manual workers. Native
+// thread IDs can be reused after exit and therefore cannot be the public ID.
+// Relaxed ordering allocates identities only; it publishes no user memory.
+CThreadHandle allocateHandle() noexcept {
+  CThreadHandle candidate = nextHandle.load(std::memory_order_relaxed);
+  while (candidate != 0) {
+    const CThreadHandle next =
+        candidate == std::numeric_limits<CThreadHandle>::max() ? 0
+                                                               : candidate + 1;
+    if (nextHandle.compare_exchange_weak(candidate, next,
+                                         std::memory_order_relaxed)) {
+      return candidate;
+    }
+  }
+  return 0;
+}
 
 bool consumeFault(CThreadTestFault expected) noexcept {
   return testFault.compare_exchange_strong(expected, CThreadTestFault::None,
@@ -50,9 +77,10 @@ bool consumeFault(CThreadTestFault expected) noexcept {
 }
 
 void runWorker(Worker &worker, void *context) noexcept {
-  if (attachment.worker != nullptr) {
+  if (attachment.worker != nullptr || currentHandle != 0) {
     std::terminate();
   }
+  currentHandle = worker.handle;
   attachment = {.worker = &worker};
   try {
     worker.result = worker.entry(context);
@@ -70,6 +98,91 @@ void runWorker(Worker &worker, void *context) noexcept {
 }
 
 } // namespace
+
+void enterCThreadManagedScope() noexcept {
+  if (managedDepth == std::numeric_limits<std::uint64_t>::max()) {
+    std::terminate();
+  }
+  ++managedDepth;
+}
+void leaveCThreadManagedScope() noexcept {
+  if (managedDepth == 0) {
+    std::terminate();
+  }
+  --managedDepth;
+}
+
+bool terminalCThreadCallbackActive() noexcept {
+  if (attachment.phase == EntryPhase::Entered) {
+    return true;
+  }
+  for (auto *invocation = onceInvocation; invocation != nullptr;
+       invocation = invocation->previous) {
+    if (invocation->phase == EntryPhase::Entered) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void invokeCOnceInitializer(COnceInitializer initializer) noexcept {
+  if (initializer == nullptr) {
+    std::terminate();
+  }
+  OnceInvocation invocation{.initializer = initializer,
+                            .previous = onceInvocation};
+  onceInvocation = &invocation;
+  try {
+    initializer();
+  } catch (...) {
+    std::terminate();
+  }
+  if (invocation.phase == EntryPhase::Entered) {
+    std::terminate();
+  }
+  onceInvocation = invocation.previous;
+}
+
+bool enterCOnceInitializer(COnceInitializer initializer) noexcept {
+  if (onceInvocation == nullptr || initializer == nullptr ||
+      onceInvocation->initializer != initializer ||
+      onceInvocation->phase != EntryPhase::Registered) {
+    return false;
+  }
+  Runtime &state = runtime();
+  const std::lock_guard lock(state.mutex);
+  if ((state.phase != RuntimePhase::Running &&
+       state.phase != RuntimePhase::Stopping) ||
+      (state.owner != std::this_thread::get_id() && managedDepth == 0 &&
+       (attachment.worker == nullptr ||
+        attachment.phase != EntryPhase::Entered))) {
+    return false;
+  }
+  onceInvocation->phase = EntryPhase::Entered;
+  return true;
+}
+
+bool leaveCOnceInitializer(COnceInitializer initializer) noexcept {
+  if (onceInvocation == nullptr || initializer == nullptr ||
+      onceInvocation->initializer != initializer ||
+      onceInvocation->phase != EntryPhase::Entered) {
+    return false;
+  }
+  onceInvocation->phase = EntryPhase::Left;
+  return true;
+}
+
+CThreadHandle currentCThread() noexcept {
+  if (currentHandle == 0) {
+    currentHandle = allocateHandle();
+    if (currentHandle == 0) {
+      // Identity exhaustion cannot return a valid identity or revive an old
+      // one. This terminal integrity boundary does not raise a GTI failure.
+      std::terminate();
+    }
+  }
+  return currentHandle;
+}
 
 CThreadStatus beginCThreadRuntime() noexcept {
   Runtime &state = runtime();
@@ -105,19 +218,19 @@ CThreadStatus createCThread(CThreadHandle *output, CThreadEntry entry,
   }
   Runtime &state = runtime();
   const std::lock_guard lock(state.mutex);
-  if (state.phase != RuntimePhase::Running || state.nextHandle == 0) {
+  if (state.phase != RuntimePhase::Running) {
     return CThreadStatus::Error;
   }
-  const CThreadHandle handle = state.nextHandle;
-  // Zero permanently closes the identity space instead of reviving a stale
-  // copied handle after unsigned wraparound.
-  state.nextHandle =
-      handle == std::numeric_limits<CThreadHandle>::max() ? 0 : handle + 1;
+  const CThreadHandle handle = allocateHandle();
+  if (handle == 0) {
+    return CThreadStatus::Error;
+  }
   try {
     if (consumeFault(CThreadTestFault::CreateNoMemory)) {
       throw std::bad_alloc{};
     }
     auto worker = std::make_unique<Worker>();
+    worker->handle = handle;
     worker->entry = entry;
     Worker *published = worker.get();
     state.workers.emplace(handle, std::move(worker));
@@ -214,3 +327,59 @@ void setCThreadTestFault(CThreadTestFault fault) noexcept {
 }
 
 } // namespace gti::runtime::detail
+
+extern "C" uint64_t gti_rt_cthread_current_v1(void) {
+  return gti::runtime::detail::currentCThread();
+}
+
+extern "C" void gti_rt_once_invoke_v1(gti_once_initializer_v1 initializer) {
+  gti::runtime::detail::invokeCOnceInitializer(initializer);
+}
+extern "C" void gti_rt_once_enter_v1(gti_once_initializer_v1 initializer) {
+  if (!gti::runtime::detail::enterCOnceInitializer(initializer)) {
+    std::terminate();
+  }
+}
+extern "C" void gti_rt_once_leave_v1(gti_once_initializer_v1 initializer) {
+  if (!gti::runtime::detail::leaveCOnceInitializer(initializer)) {
+    std::terminate();
+  }
+}
+
+extern "C" int32_t gti_rt_cthread_create_v1(uint64_t *output,
+                                            gti_cthread_entry_v1 entry,
+                                            void *context) {
+  return static_cast<int32_t>(
+      gti::runtime::detail::createCThread(output, entry, context));
+}
+
+extern "C" int32_t gti_rt_cthread_join_v1(uint64_t handle, int32_t *result) {
+  return static_cast<int32_t>(
+      gti::runtime::detail::joinCThread(handle, result));
+}
+
+extern "C" void gti_rt_cthread_begin_v1(void) {
+  if (gti::runtime::detail::beginCThreadRuntime() !=
+      gti::runtime::detail::CThreadStatus::Success) {
+    std::terminate();
+  }
+}
+
+extern "C" void gti_rt_cthread_end_v1(void) {
+  if (gti::runtime::detail::shutdownCThreadRuntime() !=
+      gti::runtime::detail::CThreadStatus::Success) {
+    std::terminate();
+  }
+}
+
+extern "C" void gti_rt_cthread_enter_v1(gti_cthread_entry_v1 entry) {
+  if (!gti::runtime::detail::enterCThreadCallback(entry)) {
+    std::terminate();
+  }
+}
+
+extern "C" void gti_rt_cthread_leave_v1(gti_cthread_entry_v1 entry) {
+  if (!gti::runtime::detail::leaveCThreadCallback(entry)) {
+    std::terminate();
+  }
+}

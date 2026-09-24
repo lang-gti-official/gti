@@ -9,6 +9,7 @@
 #include "gti/backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <functional>
@@ -100,6 +101,7 @@ public:
         .expected = loweredProgramContainsTypeKind(SemanticType::Expected),
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
+        .cThreads = mir.requiresCThreadRuntime(),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
         .definedFailure = true,
@@ -2671,6 +2673,7 @@ public:
 
   void emitLoweredEmptyStateConstructor(
       const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &declaration,
       const std::vector<const LoweredDeclaration *> &fields) {
     writeIndent();
     output << "explicit " << classRow.name
@@ -2694,7 +2697,11 @@ public:
                << fields[index]->name << ")>>())";
       }
     }
-    output << " {}\n";
+    output << " {";
+    if (declaration.requiresActiveDropState)
+      output << ' ' << loweredLifecycleActiveName(declaration.id)
+             << " = false;";
+    output << " }\n";
   }
 
   void emitLoweredMoveConstructor(
@@ -2719,17 +2726,20 @@ public:
       output << field->name << "(std::move(other." << field->name << "))";
       separator = true;
     }
-    if (separator) {
-      output << ", ";
+    if (declaration.requiresActiveDropState) {
+      if (separator)
+        output << ", ";
+      output << loweredLifecycleActiveName(declaration.id) << "(true) {\n";
+      ++indentation;
+      writeIndent();
+      output << "other." << loweredLifecycleActiveName(declaration.id)
+             << " = false;\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else {
+      output << " {}\n";
     }
-    output << loweredLifecycleActiveName(declaration.id) << "(true) {\n";
-    ++indentation;
-    writeIndent();
-    output << "other." << loweredLifecycleActiveName(declaration.id)
-           << " = false;\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
   }
 
   void emitLoweredMoveAssignment(
@@ -2743,8 +2753,10 @@ public:
     writeIndent();
     output << "if (this != &other) {\n";
     ++indentation;
-    writeIndent();
-    output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+    if (declaration.requiresActiveDropState) {
+      writeIndent();
+      output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+    }
     const auto base = std::find_if(
         declaration.bases.begin(), declaration.bases.end(),
         [](const LoweredClassBase &candidate) { return !candidate.interface; });
@@ -2757,11 +2769,13 @@ public:
       writeIndent();
       output << field->name << " = std::move(other." << field->name << ");\n";
     }
-    writeIndent();
-    output << loweredLifecycleActiveName(declaration.id) << " = true;\n";
-    writeIndent();
-    output << "other." << loweredLifecycleActiveName(declaration.id)
-           << " = false;\n";
+    if (declaration.requiresActiveDropState) {
+      writeIndent();
+      output << loweredLifecycleActiveName(declaration.id) << " = true;\n";
+      writeIndent();
+      output << "other." << loweredLifecycleActiveName(declaration.id)
+             << " = false;\n";
+    }
     --indentation;
     writeIndent();
     output << "}\n";
@@ -2776,6 +2790,13 @@ public:
                                  const LoweredClassDeclaration &declaration) {
     const std::vector<const LoweredDeclaration *> fields =
         loweredClassFields(classRow);
+    const bool incompletePointeeCarrier = std::any_of(
+        fields.begin(), fields.end(), [](const LoweredDeclaration *field) {
+          const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&field->payload);
+          return storage != nullptr &&
+                 storage->type.kind == SemanticType::UniqueOwner;
+        });
     const std::vector<const MirDestructorInstance *> destructors =
         loweredClassDestructorInstances(declaration.id);
     if (declaration.requiresActiveDropState) {
@@ -2803,6 +2824,12 @@ public:
         output << "template <typename, bool> friend class "
                   "::gti_internal::backend::mir_lifetime_slot;\n";
         writeIndent();
+        output
+            << "friend bool "
+               "::gti_internal::backend::mir_unique_owner_drop_with_failure_v1<"
+            << classRow.name << ">(std::unique_ptr<" << classRow.name
+            << "> &, ::gti_failure_record_v1 *);\n";
+        writeIndent();
         output << "bool " << lifecycleFailureDispatchName()
                << "(::gti_failure_record_v1 *);\n";
         writeIndent();
@@ -2825,15 +2852,19 @@ public:
     if (declaration.defaultConstructor != SpecialMemberStatus::Declared) {
       writeIndent();
       output << classRow.name << "()";
-      emitStatus(declaration.defaultConstructor);
+      if (incompletePointeeCarrier &&
+          declaration.defaultConstructor == SpecialMemberStatus::Generated)
+        output << " noexcept {}\n";
+      else
+        emitStatus(declaration.defaultConstructor);
     }
     if (loweredClassNeedsEmptyState(declaration)) {
-      emitLoweredEmptyStateConstructor(classRow, fields);
+      emitLoweredEmptyStateConstructor(classRow, declaration, fields);
     }
     writeIndent();
     output << classRow.name << "(const " << classRow.name << " &)";
     emitStatus(declaration.copyConstructor);
-    if (declaration.requiresActiveDropState &&
+    if ((declaration.requiresActiveDropState || incompletePointeeCarrier) &&
         declaration.moveConstructor == SpecialMemberStatus::Generated) {
       emitLoweredMoveConstructor(classRow, declaration, fields);
     } else {
@@ -2844,7 +2875,7 @@ public:
     writeIndent();
     output << classRow.name << " &operator=(const " << classRow.name << " &)";
     emitStatus(declaration.copyAssignment);
-    if (declaration.requiresActiveDropState &&
+    if ((declaration.requiresActiveDropState || incompletePointeeCarrier) &&
         declaration.moveAssignment == SpecialMemberStatus::Generated) {
       emitLoweredMoveAssignment(classRow, declaration, fields);
     } else {
@@ -2858,7 +2889,16 @@ public:
         output << "virtual ";
       }
       output << '~' << classRow.name << "() noexcept";
-      emitStatus(declaration.destructor);
+      if (declaration.destructor == SpecialMemberStatus::Generated &&
+          incompletePointeeCarrier) {
+        // Keep this representation destructor non-constexpr. C++23's
+        // constexpr unique_ptr destructor otherwise forces the dependent
+        // deleter while mutually recursive pointees are still incomplete.
+        // The empty body preserves the same native member cleanup order.
+        output << " {}\n";
+      } else {
+        emitStatus(declaration.destructor);
+      }
     }
   }
 
@@ -3044,6 +3084,101 @@ public:
     emitAccess(originalAccess);
   }
 
+  void emitUniqueCleanupMember(const LoweredDeclaration &classRow,
+                               const LoweredClassDeclaration &declaration,
+                               const MirClassInstance *concrete) {
+    std::vector<MirDropType> descriptors;
+    for (const auto &instance : mir.classInstances()) {
+      if (instance.declaration != declaration.id ||
+          (concrete != nullptr && concrete->id != instance.id))
+        continue;
+      if (auto descriptor = mirUniqueCleanupType(mir, instance.type))
+        descriptors.push_back(*descriptor);
+    }
+    if (descriptors.empty())
+      return;
+    writeIndent();
+    output << "public:\n";
+    writeIndent();
+    output << "template <std::size_t __gti_cleanup_instance>\n";
+    writeIndent();
+    output << "bool __gti_mir_unique_cleanup_failure(::gti_failure_record_v1 "
+              "*record, bool unwinding) {\n";
+    ++indentation;
+    bool first = true;
+    for (const auto &descriptor : descriptors) {
+      writeIndent();
+      output << (first ? "if" : "else if")
+             << " constexpr (__gti_cleanup_instance == "
+             << *descriptor.classInstance << ") {\n";
+      first = false;
+      ++indentation;
+      writeIndent();
+      output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
+                "record, unwinding, &::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1);\n";
+      if (descriptor.destructor) {
+        const auto *body = mir.findDestructorInstance(*descriptor.destructor);
+        if (body == nullptr)
+          throw std::logic_error("MIR cleanup lost its source destructor");
+        writeIndent();
+        if (body->mayRaiseDefinedFailure) {
+          output << "if (!sequence.step(" << lifecycleFailureDispatchName()
+                 << "(sequence.record()))) return false;\n";
+        } else {
+          output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+        }
+      }
+      for (const auto &step : descriptor.aggregate) {
+        std::string receiver;
+        if (step.uniqueOwnerField != 0) {
+          for (const auto *field : loweredClassFields(classRow)) {
+            const auto *storage =
+                std::get_if<LoweredStorageDeclaration>(&field->payload);
+            if (storage != nullptr &&
+                storage->symbol == step.uniqueOwnerField) {
+              receiver = "this->" + field->name;
+              break;
+            }
+          }
+        } else if (step.uniqueOwnerBase) {
+          const auto *base = mir.findClassInstance(*step.uniqueOwnerBase);
+          if (base != nullptr) {
+            receiver = "(*this)." + loweredConcreteClassName(base->id) + "::";
+          }
+        }
+        if (receiver.empty())
+          throw std::logic_error(
+              "unique cleanup lost its MIR-selected subobject");
+        writeIndent();
+        output << "if (!sequence.step(";
+        if (step.uniqueOwnerBase) {
+          if (!step.classInstance)
+            throw std::logic_error(
+                "unique cleanup lost its next aggregate step");
+          output << receiver << "template __gti_mir_unique_cleanup_failure<"
+                 << *step.classInstance
+                 << ">(sequence.record(), sequence.unwinding())";
+        } else {
+          output << cppMirCleanupValueExpression(
+              mir, step, receiver, "sequence.record()", "sequence.unwinding()");
+        }
+        output << ")) return false;\n";
+      }
+      writeIndent();
+      output << "return sequence.success();\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    writeIndent();
+    output << "else { static_assert(__gti_cleanup_instance != "
+              "__gti_cleanup_instance, \"unknown MIR cleanup instance\"); }\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void emitLoweredClassDefinitionBody(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
@@ -3224,6 +3359,7 @@ public:
     }
     if (!declaration.cAbiRecord && declaration.kind != ClassKind::Union) {
       emitLoweredClassLifecycle(classRow, declaration);
+      emitUniqueCleanupMember(classRow, declaration, concreteInstance);
     }
     --indentation;
     writeIndent();
@@ -3404,6 +3540,7 @@ public:
       std::vector<EnumId> enumerations;
     };
 
+    std::unordered_set<HirClassInstanceId> visitingLayoutArguments;
     const auto collectTypeDependencies = [&](const auto &self,
                                              const SemanticType &type,
                                              TypeDependencies &result) -> void {
@@ -3430,9 +3567,33 @@ public:
             found != sourceClassSchedule.end()) {
           result.classes.push_back(found->second);
         }
-        for (const SemanticType &argument : type.arguments) {
-          self(self, argument, result);
+        if (type.arguments.empty())
+          return;
+        // A generic argument is not necessarily stored by value. Inspect the
+        // exact MIR instance's representation-bearing fields/bases rather
+        // than inventing T layout dependencies for pointer-only wrappers.
+        // Otherwise two classes owning one another through unique_ptr form
+        // a false native layout cycle even though each layout is finite.
+        const MirClassInstance *instance = nullptr;
+        for (const auto &candidate : mir.classInstances()) {
+          if (candidate.type == type) {
+            instance = &candidate;
+            break;
+          }
         }
+        if (instance == nullptr) {
+          // Symbolic source-template spellings have no concrete field graph.
+          for (const auto &argument : type.arguments)
+            self(self, argument, result);
+          return;
+        }
+        if (!visitingLayoutArguments.insert(instance->id).second)
+          return;
+        for (const auto &base : instance->bases)
+          self(self, base.type, result);
+        for (const auto &field : instance->declaredFields)
+          self(self, field.type, result);
+        visitingLayoutArguments.erase(instance->id);
         return;
       }
       case SemanticType::Enum:
@@ -5887,6 +6048,28 @@ public:
             "path");
       }
 
+      const bool attached =
+          adapter.cThreadCallback != CThreadCallbackKind::None;
+      const auto emitAttachment = [&](bool entering) {
+        const char *symbol = nullptr;
+        switch (adapter.cThreadCallback) {
+        case CThreadCallbackKind::None:
+          return;
+        case CThreadCallbackKind::ThreadEntry:
+          symbol =
+              entering ? "gti_rt_cthread_enter_v1" : "gti_rt_cthread_leave_v1";
+          break;
+        case CThreadCallbackKind::OnceInitializer:
+          symbol = entering ? "gti_rt_once_enter_v1" : "gti_rt_once_leave_v1";
+          break;
+        }
+        if (symbol == nullptr) {
+          throw std::logic_error("invalid callback entry policy");
+        }
+        writeIndent();
+        output << "::" << symbol << "(&__gti_native_callback_" << adapter.id
+               << ");\n";
+      };
       writeIndent();
       emitNativeCallbackAdapterSignature(callback, true);
       output << " {\n";
@@ -5894,6 +6077,7 @@ public:
       writeIndent();
       output << "try {\n";
       ++indentation;
+      emitAttachment(true);
       if (target.mayRaiseDefinedFailure) {
         writeIndent();
         output << "::gti_failure_record_v1 __gti_failure_record{};\n";
@@ -5929,19 +6113,28 @@ public:
         --indentation;
         writeIndent();
         output << "}\n";
+        emitAttachment(false);
         if (returnType != SemanticType::Void) {
           writeIndent();
           output << "return __gti_result;\n";
+        } else {
+          writeIndent();
+          output << "return;\n";
         }
       } else {
         writeIndent();
         if (returnType != SemanticType::Void) {
-          output << "return ";
+          output << (attached ? "const auto __gti_result = " : "return ");
         }
         emitNativeCallbackTargetName(callback);
         output << '(';
         emitNativeCallbackArguments(callback);
         output << ");\n";
+        emitAttachment(false);
+        if (attached && returnType != SemanticType::Void) {
+          writeIndent();
+          output << "return __gti_result;\n";
+        }
         if (returnType == SemanticType::Void) {
           writeIndent();
           output << "return;\n";
@@ -6045,7 +6238,7 @@ public:
             cppMirConstructedFieldInitializerBindings(mir, constructor);
     const bool bodyStagedOwnedParameters =
         failureForm && owner != nullptr &&
-        cppMirFailureConstructorEmptyStateEligible(mir, owner->id) &&
+        cppMirFailureConstructorEmptyFieldsEligible(mir, owner->id) &&
         bindings && bindings->empty() && baseBindings &&
         baseBindings->empty() && copiedBindings && copiedBindings->empty();
     if (!bindings || !baseBindings || !copiedBindings ||
@@ -6167,6 +6360,27 @@ public:
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
         output << '(';
+        const MirBlock *entry =
+            constructor.body.findBlock(constructor.body.entry);
+        const MirInstruction *baseStage =
+            failureForm && entry != nullptr && !entry->instructions.empty() &&
+                    entry->instructions.front().kind ==
+                        MirInstructionKind::InitializeBase &&
+                    entry->instructions.front().constructorInitializer ==
+                        initializer.initializer + 1
+                ? &entry->instructions.front()
+                : nullptr;
+        if (baseStage != nullptr) {
+          if (!baseStage->constructorTarget ||
+              !initializer.baseParameters.empty()) {
+            throw std::logic_error(
+                "MIR base initialization lost its exact zero-argument target");
+          }
+          output
+              << cppMirFailureConstructorTagSpelling(
+                     *baseStage->constructorTarget)
+              << "{}, __gti_mir_constructor_success, __gti_mir_failure_record";
+        }
         for (std::size_t argument = 0;
              argument < initializer.baseParameters.size(); ++argument) {
           if (argument != 0) {
@@ -6446,6 +6660,21 @@ public:
           "lowered hosted startup lost its exact entry declaration");
     }
     const bool failure = entry->mayRaiseDefinedFailure;
+    const auto emitCThreadBoundary = [&](bool begin) {
+      const auto targetId = begin ? hosted->cThreadBegin : hosted->cThreadEnd;
+      if (targetId == 0) {
+        return;
+      }
+      const MirFunctionInstance *target = mir.findFunctionInstance(targetId);
+      if (target == nullptr ||
+          target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
+                                             : CThreadRuntimeOperation::End)) {
+        throw std::logic_error(
+            "hosted C-thread boundary lost its exact target");
+      }
+      writeIndent();
+      output << "::" << target->externalSymbol << "();\n";
+    };
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};
     const CppMirBodyEmissionPlan &entryPlan = generalMirBodyPlan(entryAddress);
@@ -6470,11 +6699,13 @@ public:
         output << "try {\n";
         ++indentation;
         emitRuntimeModuleInitializationCall();
+        emitCThreadBoundary(true);
         writeIndent();
         output << "if (";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration, true);
         output << "(&__gti_result, &__gti_failure_record)) {\n";
         ++indentation;
+        emitCThreadBoundary(false);
         writeIndent();
         output << "return __gti_result;\n";
         --indentation;
@@ -6499,7 +6730,7 @@ public:
         throw std::logic_error(
             "lowered no-argument entry has no failure-free startup schedule");
       }
-      if (!moduleRuntimeEmission) {
+      if (!moduleRuntimeEmission && !mir.requiresCThreadRuntime()) {
         output << "\nint main() { return ";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
         output << "(); }\n";
@@ -6526,10 +6757,14 @@ public:
       } else {
         emitRuntimeModuleInitializationCall();
       }
+      emitCThreadBoundary(true);
       writeIndent();
-      output << "return ";
+      output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "();\n";
+      emitCThreadBoundary(false);
+      writeIndent();
+      output << "return __gti_result;\n";
       --indentation;
       output << "}\n";
       return;
@@ -6594,6 +6829,7 @@ public:
               "::gti_internal::backend::numeric_cast<std::int32_t>("
               "__gti_native_argc);\n";
     emitRuntimeModuleInitializationCall();
+    emitCThreadBoundary(true);
 
     if (failure) {
       writeIndent();
@@ -6660,6 +6896,7 @@ public:
       output << "(__gti_stabilized_argc, std::move(__gti_arguments), "
                 "&__gti_result, &__gti_failure_record)) {\n";
       ++indentation;
+      emitCThreadBoundary(false);
       writeIndent();
       output << "return __gti_result;\n";
       --indentation;
@@ -6676,9 +6913,12 @@ public:
       writeIndent();
       output << "}\n";
     } else {
-      output << "return ";
+      output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "(__gti_stabilized_argc, std::move(__gti_arguments));\n";
+      emitCThreadBoundary(false);
+      writeIndent();
+      output << "return __gti_result;\n";
     }
     --indentation;
     output << "}\n";

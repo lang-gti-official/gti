@@ -1,0 +1,8 @@
+#include <std/cthread>
+extern "C" { void once_terminal(); void once_foreign(std::once_initializer_t callback); }
+void initialize() {}
+int main() {
+  once_terminal();
+  unsafe { once_foreign(initialize); }
+  return 1;
+}

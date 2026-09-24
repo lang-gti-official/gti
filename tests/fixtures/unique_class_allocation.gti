@@ -15,10 +15,16 @@ struct Copyable { int32_t number = 12; };
 
 class Value {
   std::string text;
+  std::unique_ptr<Marker> completed;
+  std::unique_ptr<Marker> later;
   int32_t result;
 public:
-  Value(std::string input, Marker argument, Copyable copied, int32_t divisor)
-      : text(std::move(input)), result(9 / divisor + copied.number) {}
+  Value(std::string input, Marker argument, Copyable copied,
+        int32_t divisor, int32_t field_divisor)
+      : text(std::move(input)), completed(std::make_unique<Marker>(4)),
+        later(std::make_unique<Marker>(5 / field_divisor)),
+        result(9 / divisor + copied.number) {}
+  ~Value() { std::println(6); }
   int32_t read() { return this.result; }
 };
 
@@ -45,7 +51,9 @@ int main(int argc, std::vector<std::string> argv) {
     unsafe { gti_test_fail_scalar_allocation(1); }
   }
   int32_t divisor = argc == 3 ? 0 : 3;
+  int32_t field_divisor = argc == 5 ? 0 : 1;
   Copyable copied = Copyable();
-  auto owner = std::make_unique<Value>(std::string("value"), Marker(2), copied, divisor);
+  auto owner = std::make_unique<Value>(std::string("value"), Marker(2), copied,
+                                       divisor, field_divisor);
   return copied.number == 12 && owner->read() == 15 ? 0 : 1;
 }

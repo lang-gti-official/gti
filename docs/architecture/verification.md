@@ -35,8 +35,11 @@ assertions.
 | `runtime_failure_boundary` | C++ ABI shape, allocation-free partial/`EINTR` writer, per-site outcome rejection, runtime-sentinel rules, and every boundary of the generated Unicode 15.1 allowlist |
 | `runtime_io_boundary` | version-one file mode/seek behavior, create/truncate/append/read reopening, embedded-zero preservation, bounded reads, empty-buffer rules, exact offsets, invalid descriptors/origins, embedded-NUL path rejection, deterministic cleanup, and file/stdout broken-pipe failure without `SIGPIPE` escape |
 | `cmath_runtime` | every declared binary32 math operation at O0/O1/O3 under C++20/C++23; independent known results, rounding directions and ties, domains, poles, signed zero, infinities, NaN, overflow and gradual underflow; scalar ABI and verified-MIR witnesses; plus generated-boundary ASan/UBSan execution |
-| `cthread_runtime` | real C-style yield on initial and managed threads, both execution profiles, atomic/join composition, exact native-call retention through a separate boundary oracle, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; no timing or fairness oracle |
-| `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join prerequisite: non-reused handles, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes; no GTI callback permission or public API implied |
+| `cthread_runtime` | real C-style yield; stable initial/managed/manual identities, exact create-handle equality and non-joinable observed identities; total source-defined equality; both profiles, atomic/join composition, exact yield native-call retention, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan and TSAN; no timing or fairness oracle |
+| `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join and identity: non-reused identities across initial/manual and 128 concurrently/sequentially observed foreign threads, stable identity before entry and after leave/shutdown, no identity-derived join or callback permission, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes |
+| `cthread_sleep_boundary` / `cthread_sleep_runtime` | scalar duration validation, zero/positive sleep, real host interruption, normalized bounded remaining time, invalid native output pairs, exact interruption-only publication, safe and unsafe input/output aliasing, null handling, and managed/manual worker composition; actual native runtime plus 24 public GTI executions across C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN, with ordinary verified-MIR native-call witnesses and no elapsed-time threshold |
+| `cthread_semantic_ir` / `cthread_create_join_runtime` / `cthread_lsp` | public unsafe create/join and mutex profile/target admission, registered callback entry, hosted runtime lifecycle, exact native synchronization and verifier mutations; integer results and retained context publication, owned-argument entry, failure cleanup, initial/foreign entry rejection and outstanding-handle termination at C++20/C++23 O0/O1/O3 plus sanitizer modes; shared editor diagnostics and selected create/join/mutex wrapper hover/definition |
+| `cthread_mutex_boundary` / `cthread_mutex_runtime` | plain/recursive/timed mutexes, preserved initialization outputs and injected allocation failure, stale identities, wrong-thread and recursive ownership, blocked and timed acquisitions, failed-wakeup handoff to another waiter, exact deadline bounds, busy/timeout non-acquisition, in-flight destruction rejection and terminal C/GTI violations; four-worker ordinary-data publication, 24 public GTI executions plus actual runtime and terminal tests in eight C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN configurations; no fairness or elapsed-time threshold |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
@@ -87,7 +90,7 @@ assertions.
 | `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
-| `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | 83 manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
+| `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | 84 manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
 | `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
 | `issue_146_class_value_positions_runtime` | generated-copy and explicit-move class parameter field initialization, passive and move-only lambda move-capture, and owning `Expected` payload return/extraction at O0/O3 under C++20/C++23, with no output and exact zero-status completion |
 | `issue_123_cleanup_temporary_argument_runtime` | cleanup-owning direct constructor, ordinary call-result, and owning-`Expected` extraction handoff into exact by-value parameters at O0/O2 under C++20/C++23; empty, body, and generic destructor counts; failure-edge cleanup before exact `GTI-R0009`; named move-only copy rejection with `GTI-S2018`; single prepared-slot extraction/consumption/retirement spelling; and the concurrent `std::thread` extraction handoff |
@@ -104,7 +107,15 @@ assertions.
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
 | `unique_scalar_allocation_runtime` | exact/default primitive allocation, enum/raw-pointer/null/callback values, owner movement/reset/reuse, same-translation-unit `char`/`uint8_t` identity, injected exhaustion and reverse cleanup, and secondary failure at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` owns exact diagnostic spans and malformed allocation contracts, and emitter lifecycle assertions require the status ABI |
-| `unique_class_allocation_runtime` | selected ordinary constructor allocation with copied class, moved string, and observable owned arguments; success, injected exhaustion, exact constructor-failure reporting, previously live owner cleanup, secondary failure during cleanup, and raw-storage publication through verified MIR at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` rejects forged allocation, construction, and retirement protocols |
+| `unique_class_allocation_runtime` | selected ordinary constructor allocation with copied class, moved string, and observable owned arguments; success, injected exhaustion, exact constructor-failure reporting, reverse completed-field cleanup before parameters, no enclosing destructor on failed construction, previously live owner cleanup, secondary failure during cleanup, and raw-storage publication through verified MIR at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` rejects forged allocation, construction, and retirement protocols |
+| `inherited_unique_allocation_runtime` | zero-argument owning abstract base, read-only enum default, and cleanup-free derived fields; success, base/derived failure, exhaustion before base entry, exact original diagnostic and cleanup trace across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates base identity, target, success activation, cleanup, retirement, and aliases, while emitter lifecycle tests require status-only emission and forbid field replacement of the base |
+| `unique_pointee_cleanup_failure_runtime` | generated single-owner field/base chains ending in a lifecycle-guarded leaf destructor; empty/success/first-failure cleanup, primary-failure cleanup, and secondary failure during ordinary, field, and inherited-base cleanup; exact status, trace, and both diagnostic sites in 49 runs across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` rejects forged leaf, destructor, field/base path, and missing `Invoke` contracts |
+| `aggregate_cleanup_failure_runtime` | generated multi-owner field/base/pointee schedules with distinct source destructors and scalar/string ownership; reverse cleanup, first-failure draining, immediate second-failure termination, constructor/field/body failures, moved and empty owners, and the original inherited two-owner regression in 91 runs across C++20/C++23 O0/O1/O3 plus ASan/UBSan; verifier mutations remove, duplicate, reorder, and retarget nested cleanup steps |
+| `source_destructor_cleanup_failure_runtime` | source body before reverse owning-field cleanup; first and secondary failures, inactive/moved guards, nested direct/unique owners, vector/storage removal, partial-construction rollback, and the original temporary-constructor receiver regression; exact trace and diagnostic sites in 259 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan |
+| `recursive_cleanup_failure_runtime` | finite self/mutual ownership recipes; list clear/pop/move/scope cleanup, source-destructor node chains, direct and collection-owned nodes, reset and replacement; empty/live destinations, fresh/named moved values, direct objects, checked owner-field replacement, repeated successful assignment, staged-RHS secondary failure, and nested checked-arrow access/reset/assignment; 294 trace/failure executions plus the original projection reproducer in seven modes at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
+| `checked_owner_replacement_runtime` | fresh and moved unique-owner/direct-class fixed-array replacement; exact old/staged/remaining cleanup, invalid positive and negative indices, first/secondary destructor failure, bounds-only preparation, and both dimensions of a chained destination; 133 executions at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
+| `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, and secondary destructor failure, with exact cleanup order and source sites across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
+| `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -129,6 +140,12 @@ CTest boundary. A hung source is therefore identified only as an aggregate
 timeout rather than by a calibrated worker deadline. This residual
 observability risk avoids replacing the corrected topology with an
 unsubstantiated per-example timing gate.
+
+For resource-limited local project checks, run
+`python3 tests/project_cli_smoke_test.py <gti> --jobs 1`. The default remains four
+jobs, including in CTest and CI. The serial override runs the same workflow and
+artifact/diagnostic assertions, but does not establish parallel scheduling
+parity; the runner reports that limitation explicitly.
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.
@@ -237,8 +254,12 @@ The installed compiler-library consumer additionally runs
 the same supported host layout facts without inheriting its answer from the
 GTI backend.
 `installed_cthread_library` compiles a C11 consumer of `gti/cthread.h`, links
-through the exported `GTI::runtime`, and calls the actual yield entry. It checks
-that the new runtime symbol and header are both present in a clean stage.
+through the exported `GTI::runtime`, and calls yield plus real create/join and
+registered-entry lifecycle, checking exact result/write publication, stable
+initial identity, equality of a worker identity with its create handle, and
+relative sleep success/invalid-input output preservation, and all six manual
+mutex ABI entries with recursive/timed acquisition and explicit destruction. It
+checks that runtime symbols and their C-compatible header are present in a clean stage.
 The internal create/join prerequisite is additionally tested by
 `runtime_cthread_boundary_test.py`. Passing `--cxx <compiler> --sanitizers`
 builds its actual runtime implementation and boundary tests serially at
@@ -250,7 +271,13 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-CI and release jobs run independent CTest targets with four workers. Their C
+CI and release jobs default to two compile jobs and one CTest worker, separately
+overridable through `GTI_JOBS` and `GTI_TEST_JOBS`. Shared-host runner capacity
+and timeout are configured outside the repository. A small native sanitizer
+preflight fails early on a broken runner without skipping any GTI gates.
+Release build-tree tests derive their resource overrides from the final CTest
+inventory, including every CLI/LSP test; installed-consumer checks retain clean,
+relocatable discovery without those overrides. Their C
 and C++ compilation uses `sccache` through CMake's compiler-launcher contract;
 the cache is an exact-input build accelerator and is never an authority for
 test selection, compiler semantics, or release contents. A cold cache must
@@ -261,6 +288,34 @@ cached object reuse does not replace that source or alter the installed static
 archives.
 
 ## Cross-Phase Feature Coverage
+
+`cthread_once_boundary` and `cthread_once_runtime` cover registered synchronous
+initializers and the ordinary source atomic state machine. The eight-mode
+matrix includes 72 public program executions at C++20/C++23 O0/O1/O3 plus
+ASan/UBSan and TSAN, including immutable tagged globals, manual contention,
+managed workers, nested distinct flags, null and foreign-entry rejection, and
+cleanup before terminal defined failure. A post-success failure separately
+proves managed handoff is restored. `cthread_semantic_ir` and `cthread_lsp`
+retain exact callback roles, unsafe/profile diagnostics, and shared declaration
+selection. Fresh immobile values and passive argument snapshots are explicit
+regressions, not C++ copy-elision assumptions.
+
+`cthread_condition_boundary` and `cthread_condition_runtime` own manual
+condition-variable lifetime and synchronization. The native tests establish
+blocked states using enrollment counters rather than delays, prove single
+signal versus broadcast across four waiters, keep both resources live through
+reacquisition, and observe ordinary data only after taking the mutex. They
+cover invalid ownership/deadlines, recursive-depth rejection, stale handles,
+non-sticky notification, allocation and wait-error injection, timeout/error
+reacquisition, and terminal in-use destruction/reacquisition failure. The
+runtime matrix builds the actual native implementation and runs 24 public GTI
+programs across C++20/C++23 O0/O1/O3 plus ASan/UBSan and TSAN. The public client
+alternates two manual workers through predicate loops for 200 protected
+updates. `cthread_semantic_ir` mutates every private declaration identity and
+signature plus wait synchronization/order facts; `cthread_lsp` checks selected
+wait declarations and shared unsafe/profile diagnostics. The installed C
+consumer calls all six condition ABI entries. No elapsed-time threshold or
+scheduler-fairness assumption is a correctness oracle.
 
 For a syntax or semantic feature, consider only applicable layers:
 
@@ -455,10 +510,73 @@ checks require exact cleanup output, terminal status and original failure
 source. `testConstructedArgumentTemporaryBorrow` additionally rejects missing
 inner transfer, missing inner/outer success activation, missing outer cleanup
 and forged read-only temporary storage in both the MIR verifier and backend.
-The separate `temporary_constructor_argument_user_drop_gap.gti` is a retained
-**unresolved reproducer**, not a passing runtime case: fallible construction
-with a source-destructor-bearing owned field still lacks backend rollback
-support. Naming that receiver does not resolve the field rollback boundary.
+The original `temporary_constructor_argument_user_drop_gap.gti` is now a passing
+case in `source_destructor_cleanup_failure_runtime`: fallible construction of
+a source-destructor-bearing owned field uses body-ordered publication and explicit
+rollback. The matrix checks its original temporary receiver, grouped mutable
+receiver, borrowed argument, later-argument failure, and owning output composition.
+
+`inherited_constructor_cleanup_failure.gti` is the regression for a second
+failure in the base's unique-owned leaf destructor after derived construction
+fails. `unique_pointee_cleanup_failure_runtime` requires the `GTI-R0014`
+envelope containing both sites, independently of the ordinary inherited-
+allocation matrix. The same gate covers ordinary and field cleanup through
+generated single-owner shells. It does not prove general multi-subobject
+cleanup or pointees with their own active-cleanup fields.
+
+`inherited_multi_owner_cleanup_failure.gti` is the original two-owner
+regression. `aggregate_cleanup_failure_runtime` requires `GTI-R0014` with both
+sites for that exact program and supplements it with two distinct destructors,
+ordinary scope cleanup, nested generated pointees, mixed scalar/string
+ownership, partial-construction rollback, body failure, and moved/empty owners.
+The verifier checks complete ordered descriptors independently of lowering and
+rejects missing, duplicated, reordered, and retargeted children. These gates do
+not by themselves prove active-element container loops or source-destructor
+classes with their own owning fields; those have separate collection and
+source-destructor gates.
+
+`source_destructor_cleanup_failure_runtime` covers destructor-body-first/reverse-
+field cleanup, distinct body/field failure sites, immediate secondary failure,
+an empty source destructor with a fallible field, moved direct and unique owners,
+nested source-destructor fields, vector/storage removal, and partial-construction
+rollback without enclosing cleanup. Its 31 phases plus the six original temporary-
+receiver cases run under C++20/C++23 O0/O1/O3 and ASan/UBSan (259 executions).
+`failure_metadata` rejects forged own-destructor identity, missing guards, and
+incomplete ordered recipes. Emitter lifecycle tests require real body-ordered
+field publication, private disarmed empty state, and status-only nested
+construction rather than calls to undefined ordinary overloads.
+
+`recursive_cleanup_failure_runtime` adds finite cleanup back-edges and compares
+exact process status, cleanup trace, and diagnostic sites. Its replacement
+case deliberately requires caller cleanup after the old value's destructor
+fails; this gate must not pass by treating early native termination as expected.
+`failure_metadata` separately checks reachable destructor effects against a
+class-graph walk and rejects missing, forged, or expanded back-edges and a root
+masquerading as a reference. Neither gate treats successful list operations as
+proof of every recursive ownership operation.
+The replacement contract also mutates recipe presence, symmetric instruction
+pairs, destructor propagation, root identity, and success routing. Preparation
+must retain non-removable cleanup effects and cannot consume RHS ownership.
+The expanded runtime matrix has 42 phases, including the original phase 17's
+`2, 1, 3, 9` cleanup trace and a distinct failure while destroying the staged RHS.
+Nested checked-arrow cases build mutual ownership through assignment, reset a
+deep owner, access a longer chain, fail on an empty intermediate owner after
+staging the RHS, and propagate recursive destructor failure. Each mode also
+executes the original `recursive_owner_projection_gap.gti` reproducer.
+`failure_metadata` checks the exact projected receiver/parent loan and rejects
+replacing it with its flattened owner origin, even when dependency keys match.
+
+`checked_owner_replacement_runtime` exercises destination validation before
+old-value cleanup and success-only publication. Its 19 phases cover both an
+old-value destructor failure and a second failure cleaning the still-owned RHS,
+unchanged old elements on invalid bounds, signed-negative indices, bounds-only
+preparation, and first/second dimension failures. `failure_metadata` rejects
+removed bounds checks, checks moved back to commit, invalid outcomes, altered
+success routing, early ownership consumption, and a missing pair. The
+preparation must retain trapping, cleanup, and non-reorderable effects.
+The runtime runner also requires `GTI-S2003` for a named copied
+source-destructor value: replacement support does not make those values
+copyable.
 
 `temporary-arguments` covers direct construction, by-value GTI producers,
 transparent grouping, nested and multiple left-to-right arguments,

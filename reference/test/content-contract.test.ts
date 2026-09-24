@@ -65,6 +65,29 @@ test("a page owns its dedicated examples and compiler bindings", () => {
   assert.equal(memberPage.apiDeclarations[0].name, "size");
 });
 
+test("example execution profiles are explicit and restricted to compiler profiles", () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "gti-reference-profile-"));
+  try {
+    cpSync(validProject, temporary, { recursive: true });
+    const metadataPath = path.join(temporary,
+      "content/std/vector/vector/examples/construction-and-iteration/example.json");
+    const original = JSON.parse(readFileSync(metadataPath, "utf8"));
+    const compile = () => compileContentGraph({
+      projectRoot: temporary, contentRoot: "content", apiIndexPath: "api-index.json",
+    });
+    for (const executionProfile of ["single-threaded", "concurrent"] as const) {
+      writeFileSync(metadataPath, JSON.stringify({ ...original, executionProfile }));
+      const page = compile().find((item) => item.route === "std/vector/vector");
+      assert.equal(page?.examples[0].executionProfile, executionProfile);
+    }
+    writeFileSync(metadataPath, JSON.stringify({ ...original, executionProfile: "--other-flag" }));
+    assert.throws(compile, (error: unknown) => error instanceof ContentContractError &&
+      error.message.includes("executionProfile"));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("a type member binding requires one canonical child page", () => {
   const temporary = mkdtempSync(
     path.join(os.tmpdir(), "gti-reference-contract-"),

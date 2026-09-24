@@ -1,0 +1,29 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t zero = 0;
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {
+    std::println("element-cleanup");
+    int32_t secondary = 11 / zero;
+  }
+};
+class Base {
+  mut std::vector<std::unique_ptr<Resource>> resources;
+public:
+  Base() : resources(std::vector<std::unique_ptr<Resource>>()) {
+    resources.push_back(std::make_unique<Resource>());
+    resources.push_back(std::make_unique<Resource>());
+  }
+  virtual int32_t read() = 0;
+};
+class Derived : public Base {
+  int32_t checked;
+public:
+  Derived() : Base(), checked(7 / zero) {}
+  int32_t read() override { return this.checked; }
+};
+int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }

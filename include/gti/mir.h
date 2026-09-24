@@ -252,6 +252,9 @@ enum class MirProjectionKind {
   RawIndex,
   RawDereference,
   PackElement,
+  // A constructor-owned direct base subobject; selection is its concrete
+  // HirClassInstanceId. It is not a field symbol or an independent object.
+  Base,
 };
 
 struct MirPlaceProjection {
@@ -392,6 +395,30 @@ struct MirDropType {
   std::optional<HirLambdaId> lambdaInstance;
   std::optional<HirDestructorInstanceId> destructor;
   std::optional<MirFixedArrayDropSchedule> fixedArray;
+  // Exact pointee cleanup for an owning pointer to a lifecycle-guarded leaf
+  // class. The owner may be empty; otherwise Drop invokes this class's source
+  // destructor through the failure ABI before releasing the allocation.
+  std::optional<HirClassInstanceId> uniquePointeeClass;
+  // Selection of this child within its enclosing aggregate schedule. Root
+  // descriptors have neither selector; a field/base child has exactly one.
+  SymbolId uniqueOwnerField = 0;
+  std::optional<HirClassInstanceId> uniqueOwnerBase;
+  // A finite back-edge to an enclosing class recipe with this exact
+  // classInstance/type. It has no destructor or children of its own. Complete
+  // root recipes still contain every reachable source destructor, so their
+  // effect target inventory does not need to chase a cyclic native type.
+  bool recursiveCleanup = false;
+  // Ordered complete active-subobject cleanup. A class runs its guarded source
+  // destructor, if present, then children in reverse field order, then base
+  // order. A unique owner of an aggregate has
+  // one unprojected pointee child, followed by allocation release. Storage and
+  // prefix storage have one unprojected element child: apply it in reverse
+  // index order to initialized slots/the live prefix, end each element's
+  // representation lifetime, then release the allocation. A first
+  // failure drains remaining children; a second failure terminates immediately
+  // with both records. Entering during failure returns on the first new
+  // failure.
+  std::vector<MirDropType> aggregate;
   bool requiresActiveCleanup = false;
 
   friend bool operator==(const MirDropType &, const MirDropType &) = default;
@@ -453,6 +480,13 @@ enum class MirInstructionKind {
   Lifecycle,
   CallBody,
   AllocateObject,
+  // Invokes a selected base constructor in place. Completion arms only the
+  // base's rollback obligation, never a standalone class result value.
+  InitializeBase,
+  // Drains a represented destination before its paired Assign commits. The
+  // enclosing representation stays live but disarmed/empty, including on
+  // failure. RHS ownership is untouched until the success-path Assign.
+  CleanupBeforeAssign,
   Count,
 };
 
@@ -562,7 +596,7 @@ struct MirInstruction {
   HirValueId callSite = 0;
   // One-based source constructor-initializer stage. This is zero for every
   // instruction outside a constructor prologue and lets verification and a
-  // backend bind a field initialization to its exact MIR schedule without
+  // backend bind a field/base initialization to its exact MIR schedule without
   // reopening AST expressions.
   std::size_t constructorInitializer = 0;
   std::optional<MirCallInputRole> callInputRole;
@@ -600,6 +634,13 @@ struct MirInstruction {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
+  // Exact contained element cleanup for explicit sparse-slot destruction and
+  // prefix pop/erase. The operation retires the slot before executing this
+  // recipe; a destructor failure propagates its original record through Invoke.
+  std::optional<MirDropType> elementCleanup;
+  std::optional<MirDropType> replacementCleanup;
+  // Symmetric exact instruction pair: CleanupBeforeAssign <-> Assign.
+  MirInstructionId replacementPair = 0;
   std::vector<FailureSiteId> localFailureSites;
   std::vector<MirSafetyDischarge> safetyDischarges;
   CallDispatch dispatch = CallDispatch::Static;
@@ -1091,6 +1132,7 @@ struct MirFunctionInstance {
   std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
@@ -1125,6 +1167,7 @@ struct MirNativeCallbackAdapter {
   MirNativeCallbackAdapterId id = 0;
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
   bool targetMayRaiseDefinedFailure = true;
   MirNativeCallbackFailurePolicy failurePolicy =
       MirNativeCallbackFailurePolicy::TerminateInvocation;
@@ -1331,6 +1374,8 @@ enum class MirHostedStartupOperationKind {
   EndFailureCleanup,
   ContainFailure,
   TerminateCleanupFailure,
+  BeginCThreadRuntime,
+  EndCThreadRuntime,
   Count,
 };
 
@@ -1384,6 +1429,8 @@ struct MirHostedStartupPlan {
   MirValueId stabilizedCount = 0;
   MirValueId argumentVector = 0;
   MirValueId entryResult = 0;
+  HirFunctionInstanceId cThreadBegin = 0;
+  HirFunctionInstanceId cThreadEnd = 0;
   std::vector<MirHostedStartupOperation> operations;
 
   [[nodiscard]] const MirHostedStartupOperation *
@@ -1425,6 +1472,22 @@ public:
   [[nodiscard]] bool valid() const { return valid_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
+  }
+  [[nodiscard]] bool requiresCThreadRuntime() const {
+    if (executionProfile_ != ExecutionProfile::Concurrent) {
+      return false;
+    }
+    for (const auto &function : functions) {
+      if (requiresCThreadConcurrency(function.cThreadOperation)) {
+        return true;
+      }
+    }
+    for (const auto &adapter : nativeCallbacks) {
+      if (adapter.cThreadCallback != CThreadCallbackKind::None) {
+        return true;
+      }
+    }
+    return false;
   }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
 

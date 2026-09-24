@@ -1,5 +1,6 @@
 #include "gti/runtime_thread.hpp"
 
+#include "cthread_internal.h"
 #include "thread_internal.h"
 
 #include <atomic>
@@ -48,12 +49,16 @@ public:
   explicit ActiveWorkerScope(gti_thread_state_v1 &state) noexcept
       : previous(activeWorker) {
     activeWorker = &state;
+    gti::runtime::detail::enterCThreadManagedScope();
   }
 
   ActiveWorkerScope(const ActiveWorkerScope &) = delete;
   ActiveWorkerScope &operator=(const ActiveWorkerScope &) = delete;
 
-  ~ActiveWorkerScope() { activeWorker = previous; }
+  ~ActiveWorkerScope() {
+    gti::runtime::detail::leaveCThreadManagedScope();
+    activeWorker = previous;
+  }
 
 private:
   gti_thread_state_v1 *previous;
@@ -139,7 +144,10 @@ void releaseTaskContext(void *context,
 
 namespace gti_runtime_detail {
 
-bool managed_worker_active() noexcept { return activeWorker != nullptr; }
+bool managed_worker_active() noexcept {
+  return activeWorker != nullptr &&
+         !gti::runtime::detail::terminalCThreadCallbackActive();
+}
 
 [[noreturn]] void handoff_managed_worker_failure(
     const gti_failure_record_v1 &record,

@@ -22,6 +22,11 @@ export function ExampleReference({
             <div>
               <h3>{example.title}</h3>
               <p>{example.description}</p>
+              {example.executionProfile !== undefined ? (
+                <p>
+                  Compile with <code>--execution-profile {example.executionProfile}</code>.
+                </p>
+              ) : null}
             </div>
           </header>
           <div className="code-panel">

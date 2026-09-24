@@ -6,12 +6,13 @@ import subprocess
 import sys
 
 
-CANONICAL_ROOT = "https://git2.internal.howetotech.dev/lukeh/gti-internal"
+CANONICAL_ROOT = "https://git.internal.howetotech.dev/lukeh/gti-internal"
 HISTORICAL_EXCEPTIONS = {
     "docs/plans/compiler-structural-baseline.json",
 }
 HISTORICAL_PREFIXES = ("docs/plans/archive/",)
 FORBIDDEN = (
+    "https://git2." + "internal.howetotech.dev",
     "https://" + "github.com/LukeHHA/" + "gti",
     "git@" + "github.com:LukeHHA/" + "gti",
     ".github" + "/workflows/",
@@ -77,7 +78,7 @@ def main() -> None:
             violations.append(f"{relative}: {', '.join(found)}")
     expect(
         not violations,
-        "first-party GitHub repository dependencies remain:\n" + "\n".join(violations),
+        "retired first-party repository dependencies remain:\n" + "\n".join(violations),
     )
 
     readme = text(root, "README.md")
@@ -97,7 +98,7 @@ def main() -> None:
     )
     installer = text(root, "lua/gti/installer.lua")
     expect(
-        'local release_server = "https://git2.internal.howetotech.dev"'
+        'local release_server = "https://git.internal.howetotech.dev"'
         in installer
         and 'local repository = "lukeh/gti-internal"' in installer,
         "toolchain installer is not pinned to canonical Gitea releases",
@@ -140,6 +141,23 @@ def main() -> None:
         ("nightly.yml", nightly),
         ("release.yml", release),
     ):
+        expect(
+            "bash scripts/configure_ci_resources.sh" in contents
+            and "vars.GTI_TEST_JOBS" in contents
+            and "_NPROCESSORS_ONLN" not in contents
+            and 'ctest' in contents
+            and '--parallel "${GTI_TEST_JOBS}"' in contents,
+            f"workflow lost explicit compile/test resource budgets: {workflow}",
+        )
+        expect(
+            "runs-on: ubuntu-24.04" in contents and "ubuntu-latest" not in contents,
+            f"workflow lost its provisioned Ubuntu 24.04 runner label: {workflow}",
+        )
+        expect(
+            "scripts/check_ci_sanitizers.py --sanitizer thread --sanitizer address,undefined"
+            in contents,
+            f"workflow lost native sanitizer execution preflight: {workflow}",
+        )
         actions = ACTION_USE.findall(contents)
         expect(actions, f"Gitea workflow has no auditable action uses: {workflow}")
         for action, revision in actions:

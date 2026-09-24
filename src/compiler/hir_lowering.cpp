@@ -324,6 +324,7 @@ private:
          .internalLinkage = declaration.internalLinkage,
          .constexprFunction = declaration.constexprFunction,
          .requiresUnsafe = declaration.requiresUnsafe,
+         .cThreadOperation = declaration.cThreadOperation,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
          .cArrayCountParameter = declaration.cArrayCountParameter,
@@ -389,7 +390,10 @@ private:
     const HirNativeCallbackAdapterId id =
         output.program.nativeCallbacks.size() + 1;
     output.program.nativeCallbacks.push_back(
-        {.id = id, .target = function, .type = conversion.type});
+        {.id = id,
+         .target = function,
+         .type = conversion.type,
+         .cThreadCallback = conversion.cThreadCallback});
     return id;
   }
 
@@ -3790,6 +3794,7 @@ private:
         }
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {
+          value.synchronization = resolved->synchronization;
           if (const FunctionInfo *target =
                   baseModel->findFunction(resolved->function)) {
             value.functionTarget = enqueueFunction(

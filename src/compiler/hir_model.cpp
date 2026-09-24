@@ -161,7 +161,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &instance : program.functionInstances()) {
     const auto *declaration = semantics.findFunction(instance.declaration);
     if (declaration == nullptr ||
-        instance.requiresUnsafe != declaration->requiresUnsafe) {
+        instance.requiresUnsafe != declaration->requiresUnsafe ||
+        instance.cThreadOperation != declaration->cThreadOperation) {
       result.errors.emplace_back(
           "HIR function unsafe contract differs from its semantic declaration");
     }
@@ -185,7 +186,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         returnType == nullptr || target->returnType != *returnType ||
         target->parameterTypes.size() != parameterTypes.size() ||
         !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameterTypes.begin())) {
+                    target->parameterTypes.end(), parameterTypes.begin()) ||
+        adapter.cThreadCallback !=
+            (program.executionProfile() == ExecutionProfile::Concurrent
+                 ? adapter.type.cThreadCallbackKind()
+                 : CThreadCallbackKind::None) ||
+        (program.executionProfile() == ExecutionProfile::Concurrent &&
+         adapter.cThreadCallback == CThreadCallbackKind::None)) {
       result.errors.emplace_back(
           "native callback adapter has no exact free-function target");
     }
@@ -213,6 +220,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (adapter == nullptr || conversion == nullptr || target == nullptr ||
           !value.operands.empty() || value.info.type != adapter->type ||
           conversion->type != adapter->type ||
+          conversion->cThreadCallback != adapter->cThreadCallback ||
           conversion->function != target->declaration ||
           conversion->declaration != target->source) {
         result.errors.emplace_back(

@@ -421,6 +421,8 @@ target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 add_library(
   "gti_runtime" STATIC
   "runtime/src/cthread.cpp"
+  "runtime/src/cthread_sleep.cpp"
+  "runtime/src/cthread_mutex.cpp"
   "runtime/src/cthread_state.cpp"
   "runtime/src/failure.cpp"
   "runtime/src/io.cpp"

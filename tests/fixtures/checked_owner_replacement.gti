@@ -1,0 +1,66 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+struct Trace {
+  ~Trace() { std::println(9); }
+};
+
+struct Node {
+  int32_t identity;
+  Node(int32_t id) : identity(id) {}
+  ~Node() {
+    std::println(identity);
+    if ((phase == 1 || phase == 4 || phase == 5 || phase == 8 ||
+         phase == 11 || phase == 12) && identity == 1) {
+      int32_t old_failure = 17 / zero;
+    }
+    if ((phase == 5 || phase == 12) && identity == 3) {
+      int32_t staged_failure = 19 / zero;
+    }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Trace trace = Trace();
+  if (phase >= 16) {
+    mut std::unique_ptr<Node> grid[2][2] = {};
+    std::size_t row = phase == 17 ? std::size_t(2) : std::size_t(1);
+    std::size_t column = phase == 18 ? std::size_t(2) : std::size_t(1);
+    grid[row][column] = std::make_unique<Node>(3);
+    return 0;
+  }
+  if (phase >= 14) {
+    mut std::unique_ptr<int32_t> scalars[2] = {
+        std::make_unique<int32_t>(1), std::make_unique<int32_t>(2)};
+    int32_t index = phase == 15 ? -1 : 0;
+    auto replacement = std::make_unique<int32_t>(3);
+    scalars[index] = std::move(replacement);
+    return *scalars[index] - 3;
+  }
+  if (phase >= 7) {
+    mut Node values[2] = {Node(1), Node(2)};
+    std::size_t index = phase == 9 || phase == 13 ? std::size_t(2) : std::size_t(0);
+    if (phase >= 10) {
+      Node replacement = Node(3);
+      values[index] = std::move(replacement);
+    } else {
+      values[index] = Node(3);
+    }
+    return 0;
+  }
+  mut std::unique_ptr<Node> nodes[2] = {
+      std::make_unique<Node>(1), std::make_unique<Node>(2)};
+  std::size_t index = phase == 2 || phase == 6 ? std::size_t(2) : std::size_t(0);
+  if (phase >= 3) {
+    auto replacement = std::make_unique<Node>(3);
+    nodes[index] = std::move(replacement);
+  } else {
+    nodes[index] = std::make_unique<Node>(3);
+  }
+  return 0;
+}

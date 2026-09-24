@@ -1,0 +1,53 @@
+#include <std/cthread>
+
+// The C context remains opaque. Its native owner returns exact typed views;
+// GTI deliberately does not infer or cast a void* pointee layout.
+extern "C" {
+  void* cthread_mutex_context(uint64_t handle);
+  uint64_t cthread_mutex_handle(void* context);
+  int32_t* cthread_mutex_value(void* context);
+}
+
+int32_t contender(void* raw) {
+  unsafe {
+    std::mtx_t mutex = cthread_mutex_handle(raw);
+    if (std::mtx_trylock(mutex) != std::thrd_busy) { return 1; }
+    if (std::mtx_timedlock(mutex, std::timespec()) != std::thrd_timedout) { return 2; }
+    return std::mtx_unlock(mutex) == std::thrd_error ? 0 : 3;
+  }
+}
+
+int32_t worker(void* raw) {
+  unsafe {
+    std::mtx_t mutex = cthread_mutex_handle(raw);
+    int32_t* count = cthread_mutex_value(raw);
+    for (mut int32_t i = 0; i < 200; i++) {
+      if (std::mtx_lock(mutex) != std::thrd_success) { return 1; }
+      *count = *count + 1;
+      if (std::mtx_unlock(mutex) != std::thrd_success) { return 2; }
+    }
+    return 0;
+  }
+}
+
+int main() {
+  mut std::mtx_t mutex = 0;
+  unsafe {
+    if (std::mtx_init(mutex, std::mtx_timed) != std::thrd_success) { return 1; }
+    void* context = cthread_mutex_context(mutex);
+    mut std::thrd_t first = 0;
+    mut std::thrd_t second = 0;
+    mut int32_t result = -1;
+    if (std::mtx_lock(mutex) != std::thrd_success) { return 7; }
+    if (std::thrd_create(first, contender, context) != std::thrd_success) { return 8; }
+    if (std::thrd_join(first, result) != std::thrd_success || result != 0) { return 9; }
+    if (std::mtx_unlock(mutex) != std::thrd_success) { return 10; }
+    if (std::thrd_create(first, worker, context) != std::thrd_success) { return 2; }
+    if (std::thrd_create(second, worker, context) != std::thrd_success) { return 3; }
+    if (std::thrd_join(first, result) != std::thrd_success || result != 0) { return 4; }
+    if (std::thrd_join(second, result) != std::thrd_success || result != 0) { return 5; }
+    if (*cthread_mutex_value(context) != 400) { return 6; }
+    std::mtx_destroy(mutex);
+  }
+  return 0;
+}

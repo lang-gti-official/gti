@@ -1,0 +1,14 @@
+#include <std/cthread>
+
+int main() {
+  std::thrd_t initial = std::thrd_current();
+  std::thrd_t zero = 0;
+  std::thrd_t unknown = 17;
+  std::thrd_t different = 18;
+  std::thrd_yield();
+  if (initial == 0 || std::thrd_equal(initial, std::thrd_current()) != 1) { return 1; }
+  if (std::thrd_equal(initial, zero) != 0 || std::thrd_equal(zero, initial) != 0) { return 2; }
+  // Equality is total value comparison, not validation or a liveness query.
+  if (std::thrd_equal(zero, zero) != 1 || std::thrd_equal(unknown, different) != 0) { return 3; }
+  return 0;
+}

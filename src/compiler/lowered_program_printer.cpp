@@ -657,7 +657,8 @@ private:
            << ':' << value.internalLinkage << ':' << value.constexprFunction
            << ':' << value.virtualMethod << ':' << value.pureVirtual << ':'
            << value.overrideMethod << ':' << value.hasRequiresClause << ':'
-           << value.compilerPrivate << ':' << value.requiresUnsafe << ')';
+           << value.compilerPrivate << ':' << value.requiresUnsafe
+           << ";cthread-operation=" << number(value.cThreadOperation) << ')';
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -754,7 +755,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v6\n";
+  output << "lowered-program-v8\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -1009,7 +1010,9 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
              << (callback->adapter.targetMayRaiseDefinedFailure ? "raise"
                                                                 : "no-raise")
              << ':'
-             << (callback->adapter.catchesNativeExceptions ? "catch" : "leak");
+             << (callback->adapter.catchesNativeExceptions ? "catch" : "leak")
+             << ":cthread-callback="
+             << static_cast<unsigned>(callback->adapter.cThreadCallback);
     } else if (const auto *thread =
                    std::get_if<LoweredThreadTaskAdapterItem>(&item.payload)) {
       output << " payload=thread-task:" << thread->adapter.id << ":type=";

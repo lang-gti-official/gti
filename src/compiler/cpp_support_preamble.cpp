@@ -361,6 +361,9 @@ void writeCppSupportPreamble(std::ostream &output,
     output << "#include <gti/runtime.hpp>\n";
   }
   output << "#include <gti/runtime_failure.h>\n";
+  if (features.cThreads) {
+    output << "#include <gti/cthread.h>\n";
+  }
   if (usesManagedThreads) {
     output << "#include <gti/runtime_thread.hpp>\n";
   }
@@ -467,6 +470,68 @@ static_assert(sizeof(double) == sizeof(std::uint64_t) &&
   std::abort();
 }
 
+// The MIR unique-pointee descriptor proves a lifecycle-guarded leaf class.
+// Run its source cleanup through the explicit record ABI, then destroy the
+// disarmed representation and release its allocation exactly once.
+template <typename T>
+[[nodiscard]] bool mir_unique_owner_drop_with_failure_v1(
+    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *failure_record) {
+  if (!owner) {
+    return true;
+  }
+  bool success = false;
+  try {
+    success = owner->__gti_mir_destruct_failure(failure_record);
+  } catch (...) {
+    owner.reset();
+    throw;
+  }
+  owner.reset();
+  return success;
+}
+
+// The aggregate schedule uses one record cursor across its ordered steps.
+// An incoming failure stops on the next failure; otherwise the first failure
+// is retained while remaining steps drain, and a second one terminates.
+class mir_cleanup_sequence_v1 {
+public:
+  mir_cleanup_sequence_v1(::gti_failure_record_v1 *record, bool unwinding,
+      const ::gti_failure_artifact_descriptor_v1 *artifact)
+      : record_(record), unwinding_(unwinding), artifact_(artifact) {}
+  ::gti_failure_record_v1 *record() { return success_ ? record_ : &secondary_; }
+  bool unwinding() const { return unwinding_ || !success_; }
+  bool step(bool success) {
+    if (!success && unwinding_) return false;
+    if (!success && !success_) {
+      const ::gti_failure_emergency_v1 emergency{
+          GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *record_, secondary_};
+      ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact_, artifact_);
+    }
+    success_ = success_ && success;
+    return true;
+  }
+  bool success() const { return success_; }
+private:
+  ::gti_failure_record_v1 *record_;
+  bool unwinding_;
+  const ::gti_failure_artifact_descriptor_v1 *artifact_;
+  bool success_ = true;
+  ::gti_failure_record_v1 secondary_{};
+};
+
+template <std::size_t Instance, typename T>
+[[nodiscard]] bool mir_unique_aggregate_owner_drop_with_failure_v1(
+    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *record, bool unwinding) {
+  if (!owner) return true;
+  const bool success =
+      owner->template __gti_mir_unique_cleanup_failure<Instance>(record, unwinding);
+  // A second failure terminates at the calling MIR edge. Do not let native
+  // teardown run any remaining subobject cleanup before that terminal edge.
+  if (!success && unwinding) return false;
+  owner.reset();
+  return success;
+}
+
 // A verified MIR body owns the lifetime of values stored here. Unlike a
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
@@ -559,6 +624,82 @@ public:
   destroy_with_failure_if_engaged(
       ::gti_failure_record_v1 *failure_record) {
     return !engaged_ || destroy_with_failure(failure_record);
+  }
+
+  [[nodiscard]] bool destroy_unique_with_failure(
+      ::gti_failure_record_v1 *failure_record) {
+    if (!engaged_) {
+      storage_error("verified MIR unique owner was dropped while empty");
+    }
+    engaged_ = false;
+    T *owner = std::launder(slot());
+    bool success = false;
+    try {
+      success = mir_unique_owner_drop_with_failure_v1(*owner, failure_record);
+    } catch (...) {
+      std::destroy_at(owner);
+      throw;
+    }
+    std::destroy_at(owner);
+    return success;
+  }
+
+  [[nodiscard]] bool destroy_unique_with_failure_if_engaged(
+      ::gti_failure_record_v1 *failure_record) {
+    return !engaged_ || destroy_unique_with_failure(failure_record);
+  }
+
+  template <std::size_t Instance>
+  [[nodiscard]] bool destroy_unique_aggregate_with_failure(
+      ::gti_failure_record_v1 *failure_record, bool conditional, bool unwinding) {
+    if (!engaged_) {
+      if (conditional) return true;
+      storage_error("verified MIR unique aggregate was dropped while empty");
+    }
+    engaged_ = false;
+    T *value = std::launder(slot());
+    bool success = false;
+    try {
+      success = value->template __gti_mir_unique_cleanup_failure<Instance>(failure_record, unwinding);
+    } catch (...) {
+      std::destroy_at(value);
+      throw;
+    }
+    if (!success && unwinding) return false;
+    std::destroy_at(value);
+    return success;
+  }
+
+  template <std::size_t Instance>
+  [[nodiscard]] bool destroy_unique_aggregate_owner_with_failure(
+      ::gti_failure_record_v1 *record, bool conditional, bool unwinding) {
+    if (!engaged_) {
+      if (conditional) return true;
+      storage_error("verified MIR unique aggregate owner was dropped while empty");
+    }
+    engaged_ = false;
+    T *value = std::launder(slot());
+    const bool success = mir_unique_aggregate_owner_drop_with_failure_v1<Instance>(
+        *value, record, unwinding);
+    if (!success && unwinding) return false;
+    std::destroy_at(value);
+    return success;
+  }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_cleanup_with_failure(
+      ::gti_failure_record_v1 *record, bool conditional, bool unwinding,
+      Cleanup cleanup) {
+    if (!engaged_) {
+      if (conditional) return true;
+      storage_error("verified MIR collection was dropped while empty");
+    }
+    engaged_ = false;
+    T *value = std::launder(slot());
+    const bool success = cleanup(*value, record, unwinding);
+    if (!success && unwinding) return false;
+    std::destroy_at(value);
+    return success;
   }
 
   // MIR supplies the exact fixed-array extents. This slot validates those
@@ -665,6 +806,27 @@ public:
 
   ~storage() { release(); }
 
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_elements_with_failure(
+      ::gti_failure_record_v1 *record, bool unwinding,
+      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
+    mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
+    for (std::size_t index = capacity_; index > 0; --index) {
+      if (initialized_[index - 1] == 0) continue;
+      initialized_[index - 1] = 0;
+      T *element = std::launder(slot(index - 1));
+      const bool success = cleanup(*element, sequence.record(), sequence.unwinding());
+      if (!success && sequence.unwinding()) {
+        (void)sequence.step(false);
+        return false;
+      }
+      std::destroy_at(element);
+      if (!sequence.step(success)) return false;
+    }
+    release();
+    return sequence.success();
+  }
+
   [[nodiscard]] std::uint64_t capacity() const {
     return static_cast<std::uint64_t>(capacity_);
   }
@@ -725,6 +887,17 @@ public:
     const std::size_t offset = checked_initialized_index(index);
     std::destroy_at(std::launder(slot(offset)));
     initialized_[offset] = 0;
+  }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_with_failure(std::uint64_t index,
+      ::gti_failure_record_v1 *record, Cleanup cleanup) {
+    const std::size_t offset = checked_initialized_index(index);
+    initialized_[offset] = 0;
+    T *element = std::launder(slot(offset));
+    const bool success = cleanup(*element, record, false);
+    std::destroy_at(element);
+    return success;
   }
 
   void relocate_to(storage &destination, std::uint64_t count) {
@@ -1180,6 +1353,26 @@ public:
   }
   ~prefix_storage() { release(); }
 
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_elements_with_failure(
+      ::gti_failure_record_v1 *record, bool unwinding,
+      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
+    mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
+    while (length_ != 0) {
+      --length_;
+      T *element = std::launder(slot(length_));
+      const bool success = cleanup(*element, sequence.record(), sequence.unwinding());
+      if (!success && sequence.unwinding()) {
+        (void)sequence.step(false);
+        return false;
+      }
+      std::destroy_at(element);
+      if (!sequence.step(success)) return false;
+    }
+    release();
+    return sequence.success();
+  }
+
   [[nodiscard]] std::uint64_t capacity() const noexcept { return capacity_; }
   [[nodiscard]] std::uint64_t length() const noexcept { return length_; }
 
@@ -1202,6 +1395,19 @@ public:
     }
     --length_;
     std::destroy_at(std::launder(slot(length_)));
+  }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool pop_with_failure(::gti_failure_record_v1 *record,
+                                     Cleanup cleanup) {
+    if (length_ == 0) {
+      storage_error("prefix storage pop on an empty prefix");
+    }
+    --length_;
+    T *element = std::launder(slot(length_));
+    const bool success = cleanup(*element, record, false);
+    std::destroy_at(element);
+    return success;
   }
 
   [[nodiscard]] const T &read(std::uint64_t index) const {
@@ -1263,6 +1469,49 @@ public:
       std::destroy_at(std::launder(slot(position)));
     }
     --length_;
+  }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool erase_with_failure(std::uint64_t index,
+      ::gti_failure_record_v1 *record,
+      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
+    if (index >= length_) {
+      storage_error("prefix storage erase outside the live prefix");
+    }
+    const std::size_t removed = static_cast<std::size_t>(index);
+    const std::size_t previous_length = length_;
+    // The prefix before the hole remains caller-owned. This operation owns
+    // the erased element and the detached suffix until it restores the prefix
+    // on success, or drains the suffix after the first cleanup failure.
+    length_ = removed;
+    T *element = std::launder(slot(removed));
+    const bool success = cleanup(*element, record, false);
+    std::destroy_at(element);
+    if (!success) {
+      mir_cleanup_sequence_v1 sequence(record, false, artifact);
+      (void)sequence.step(false);
+      for (std::size_t position = previous_length; position > removed + 1;) {
+        --position;
+        T *remaining = std::launder(slot(position));
+        const bool cleaned = cleanup(*remaining, sequence.record(), true);
+        // A second failure terminates before native teardown can run any
+        // remaining subobject destructor and obscure either failure record.
+        if (!cleaned) {
+          (void)sequence.step(false);
+          return false;
+        }
+        std::destroy_at(remaining);
+      }
+      return false;
+    }
+    // Verified MIR proves these generated moves cannot fail. Moved-from
+    // guards/handles are disarmed before their representation lifetime ends.
+    for (std::size_t position = removed + 1; position < previous_length; ++position) {
+      std::construct_at(slot(position - 1), std::move(*std::launder(slot(position))));
+      std::destroy_at(std::launder(slot(position)));
+    }
+    length_ = previous_length - 1;
+    return true;
   }
 
   void relocate_to(prefix_storage &destination) {

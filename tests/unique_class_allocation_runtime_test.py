@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Class allocation: distinct storage, constructor, and owner lifetimes."""
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -8,7 +9,13 @@ import tempfile
 
 
 def run(command):
-    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+    environment = os.environ.copy()
+    # Successful output cannot excuse a recoverable sanitizer report.
+    for variable in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
+        previous = environment.get(variable, "")
+        environment[variable] = (previous + ":" if previous else "") + "halt_on_error=1"
+    return subprocess.run(command, capture_output=True, text=True, timeout=120,
+                          env=environment)
 
 
 def main():
@@ -22,6 +29,8 @@ def main():
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
     constructor_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
                             if "result(9 / divisor" in line)
+    field_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
+                      if "5 / field_divisor" in line)
     cleanup_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
                         if "return 7 / divisor;" in line)
     modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
@@ -42,13 +51,19 @@ def main():
             assert "mir_object_allocation_v1<::__gti_program::Value>" in generated
             assert ".allocate();" in generated and ".release());" in generated
             assert "::backend::make_unique<::__gti_program::Value>" not in generated
-            cases = [([], (0, "2\n3\n1\n", "")),
+            # Constructor parameters outlive completed fields on failure.
+            # The enclosing Value destructor runs only after success.
+            cases = [([], (0, "2\n6\n5\n4\n3\n1\n", "")),
                      (["oom"], (70, "2\n3\n1\n",
                       f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
-                     (["constructor", "failure"], (70, "2\n3\n1\n",
+                     (["constructor", "failure"], (70, "5\n4\n2\n3\n1\n",
                       f"{source.name}:{constructor_site}: runtime error[GTI-R0002]: "
                       "division_by_zero in integer_division\n")),
+                     (["partial", "field", "construction", "failure"],
+                      (70, "4\n2\n3\n1\n",
+                       f"{source.name}:{field_site}: runtime error[GTI-R0002]: "
+                       "division_by_zero in integer_division\n")),
                      (["secondary", "allocation", "failure"], (70, "cleanup\n",
                       f"<std/memory>:{allocation_site}: runtime error[GTI-R0014]: "
                       "failure_during_cleanup; primary [GTI-R0002] at "

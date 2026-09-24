@@ -2437,20 +2437,22 @@ or MIR prerequisite.
   on the initial or a managed worker. It uses existing native-call MIR effects
   and supplies no synchronization edge, resource, failure result, delay, or
   fairness guarantee. Focused runtime and exact-call-retention tests own it.
-- **Next outcome:** create one C-style worker from a named `int32_t(void*)`
-  callback and join it, observing its integer result. Before exposing that
-  call, extend the accepted native-entry boundary with runtime attachment,
-  concurrent-profile/target checks, exact callback identity, initialized and
-  shutting-down runtime checks, in-flight lifetime, and failure containment.
-  Raw context retention and manual handle lifetime need explicit unsafe
-  obligations; a native thread must not bypass GTI's transfer/share or global
-  policy merely by receiving a function pointer.
+- **Create/join outcome:** ordinary unsafe wrappers now create one C-style
+  worker from a named `int32_t(void*)` callback and join its integer result.
+  Exact trusted native identities and resolved call-graph requirements enforce
+  concurrent-profile/target admission. HIR/MIR retain registered callback
+  attachment, spawn/join synchronization, and hosted startup/shutdown calls.
+  Raw context retention and manual join lifetime are explicit unsafe
+  obligations. The generated callback terminates with the original defined
+  failure after verified cleanup; it does not adopt managed-thread failure
+  re-raising. Remaining lifecycle/synchronization families below still prevent
+  declaring the module complete.
 - **Caller-contract prerequisite:** namespace-scope GTI `[[unsafe]]` functions
   make the raw-context/manual-lifetime obligation visible at direct calls and
   forbid erasing it through safe callable conversion. This does not complete
-  create/join: runtime attachment, concurrent callback entry, synchronization,
-  shutdown, and lifetime/failure containment remain required before that API
-  can ship.
+  create/join by itself: attachment, concurrent entry, synchronization,
+  shutdown, and lifetime/failure containment are supplied by the integration
+  above, not by an unsafe annotation alone.
 - **Native runtime prerequisite implemented:** source-private create/join now
   has never-reused handle identities, retained context obligations, integer
   results and join publication, recoverable creation/join errors, exact
@@ -2460,13 +2462,137 @@ or MIR prerequisite.
   tests cover repeated/nested/competing joins, stale and self handles,
   unregistered/mismatched/replayed entry, in-flight shutdown, and native
   exception/incomplete-adapter firewalls under C++20/C++23 O0/O1/O3 plus
-  ASan/UBSan and TSAN on macOS. The private header is not installed; this does
-  **not** expose a new GTI operation or relax concurrent callbacks. Next,
-  connect this runtime through the stable C boundary and exact trusted
-  declarations, hosted and callback MIR plans, synchronization verification,
-  and ordinary unsafe GTI create/join wrappers with end-to-end failure tests.
-- **Following families:** identity/equality and sleep; C-style mutexes and
-  condition-variable wait/reacquisition; once and thread-specific storage;
+  ASan/UBSan and TSAN on macOS. The private header is not installed; this
+  foundation did **not** itself expose a new GTI operation or relax concurrent callbacks.
+  The create/join integration above now connects that foundation through the
+  stable C boundary, exact trusted declarations, hosted/callback MIR contracts,
+  synchronization verification, and ordinary unsafe wrappers. Focused public
+  tests cover result/context publication, nested workers, owned-argument entry,
+  callback failure cleanup, unregistered entry, and outstanding-handle shutdown.
+- **Local integration evidence:** the public create/join matrix passes at
+  C++20/C++23 O0/O1/O3 plus ASan/UBSan and TSAN, including a fresh installed
+  compiler with resource overrides removed. The actual runtime implementation
+  passes its separate instrumented matrix. All nine installed-library consumers,
+  C-thread semantic/MIR/LSP checks, the 3,907-body emitter corpus, and the
+  82-example native corpus pass. The new conditional runtime-header dependency
+  and textual MIR operation ordinals have focused regressions. These are macOS
+  results, not cross-host evidence. Publication remains pending the inherited
+  class-allocation regression recorded below; the stdlib campaign is not done.
+- **Identity/equality implemented locally:** safe ordinary GTI wrappers now
+  expose stable `thrd_current()` and total `thrd_equal()` in both profiles.
+  Manual workers observe their exact create handle; initial, managed, and
+  foreign native threads share the never-reused identity space without gaining
+  callback-entry or manual-join permission. No compiler opcode, new syntax,
+  backend public-name recognition, or synchronization meaning is added.
+  The 40-case public yield/identity matrix passes at C++20/C++23 O0/O1/O3
+  plus ASan/UBSan and TSAN, both in-tree and through a fresh installed compiler
+  with workspace resource overrides removed. The actual native runtime passes
+  the same eight modes; all nine installed-library consumers pass, including
+  the C11 identity/create-handle check. Ten focused regression gates pass,
+  including the compiler aggregate, default-profile/no-thread-capability
+  identity admission, concurrent-profile forged-join rejection, complete stdlib
+  surface run, include sweep, and C-thread editor checks. The independent
+  create/join matrix also passes after the shared identity allocator change.
+  The stale yield-only README/reference descriptions are corrected; all 68
+  page-owned examples, 11 content/highlighting tests, type checking, and the
+  single-worker static-site build/render checks pass. These are local macOS
+  results, not Linux/Windows evidence or completion of the C-thread/stdlib
+  campaign. Full campaign publication and branch reconciliation remain pending.
+- **Relative sleep implemented locally:** ordinary `std::timespec` values and
+  value/reference plus unsafe pointer `thrd_sleep` overloads use existing
+  verified-MIR native calls. Input is snapshotted for in-place retry; only
+  interruption publishes a normalized remainder. Invalid duration, null input,
+  unrepresentable host time, and host errors return -2 without changing the
+  output. Zero duration needs no host wait. No new synchronization, callback,
+  compiler intrinsic, or profile requirement is introduced. The separate scalar
+  runtime ABI uses one POSIX sleep attempt or a Windows alertable relative
+  timer; it never exports native `timespec` layout.
+  The local macOS matrix passes eight native configurations and 24 GTI
+  executions across C++20/C++23 O0/O1/O3 plus ASan/UBSan and TSAN. It covers real
+  host interruption as well as deterministic native/result-publication oracles,
+  safe/raw aliasing, null handling, invalid inputs, and managed/manual workers.
+  Six focused CTest gates pass, including semantic admission without thread
+  creation support, unsafe-pointer rejection, C ABI, manifest, and CMake
+  ownership. The same eight-mode sleep matrix passes using a fresh installed
+  compiler with all workspace resource overrides removed, and all nine
+  installed-library consumers pass, including C11 sleep calls. Seven broader
+  regression gates pass: yield/identity, native runtime boundary/firewall,
+  create/join, complete stdlib surface, include sweep, and C-thread LSP.
+  Reference API generation, type checking, all 11 content/highlighting tests,
+  all 69 page-owned examples, and the single-worker static build/render checks
+  pass. The real signal-interruption test drains pending signals before
+  restoring the caller's handler, and Windows test headers suppress `min/max`
+  macros. Windows and Linux execution are not established by these macOS
+  results. Full campaign release gates, publication, and branch reconciliation
+  remain outstanding.
+- **Manual mutex family implemented and locally verified:**
+  `mtx_init`/`mtx_destroy`, `mtx_lock`, `mtx_trylock`, `mtx_timedlock`, and
+  `mtx_unlock` now cover plain, recursive, timed, and combined flags. Exact
+  trusted native identities enforce concurrent-profile/target admission and
+  retain acquire/release records through HIR/MIR and detached declarations.
+  Program serialization advances to v68; the ordinary native-call body schema
+  remains v59. The runtime registry prevents reuse and in-flight retirement,
+  checks recursive ownership, handles spurious wakes, and validates exact
+  signed-nanosecond UTC deadlines. Output-preserving allocation failure and
+  invalid/busy destruction are independently tested. No native `mtx_t` layout,
+  public-name intrinsic, automatic manual-resource cleanup, or backend-only
+  synchronization semantics are introduced.
+  The final eight-mode matrix passes actual native runtime and terminal
+  destruction tests plus 24 public GTI runs at C++20/C++23 O0/O1/O3 with
+  ASan/UBSan and TSAN, both in-tree and through the installed toolchain with
+  resource overrides unset. Deterministic blocked-waiter tests cover ordinary
+  and timed acquisition, and injected post-wakeup failure hands notification
+  to another waiter without claiming ownership. Semantic/verifier gates cover
+  unsafe/profile/target admission and erased/reversed/forged synchronization.
+  All 20 selected cross-phase/regression CTests and all nine clean-stage
+  library consumers pass; the final wakeup fix was followed by rerunning the
+  native/public mutex matrices and all installed consumers. Reference API
+  generation, type checking, all 12 content/highlighting tests, all 70
+  page-owned examples, and static build/render checks pass. The page-owned
+  mutex example selects an
+  explicit concurrent execution profile; the reference runner now accepts only
+  the two compiler profile values and displays the selected option. These are
+  macOS results, not Linux or Windows execution evidence. Full campaign
+  release gates, publication, and branch reconciliation remain outstanding.
+  Condition variables and the other full-library families below remain incomplete.
+- **Manual condition variables implemented and locally verified:**
+  `cnd_init`/`cnd_destroy`, signal/broadcast, and wait/timed-wait now have ordinary
+  unsafe GTI wrappers over exact private native declarations. Program v69/body
+  v60 retain `ConditionWait` and `ConditionNotify` identities and optimizer
+  barriers. Waiting atomically enrolls/releases exactly one mutex acquisition
+  and reacquires before success, timeout, or recoverable wait-error return.
+  Native waiters retain both resources through reacquisition; invalid input
+  preserves ownership, notifications are not saved, and in-use destruction or
+  failed reacquisition terminates. No scoped-owner or automatic-unlock contract
+  is implied. Seven initial focused checks pass, including semantic/verifier,
+  optimizer, LSP, C ABI, manifest, native boundary, and the eight-mode native
+  plus 24-public-program matrix. The final matrix includes injected terminal
+  reacquisition failure and runs both in-tree and through a fresh installed
+  toolchain with resource overrides unset. All 21 selected compiler/concurrency/
+  stdlib regression CTests and all nine external library consumers pass.
+  Reference API generation, type checking, 12 content/highlighting tests, all
+  71 page-owned examples, and the one-worker static build/render checks pass.
+  Formatting checks cover 335 first-party C/C++ files. These are local macOS
+  results; Linux/Windows execution and the remaining full-campaign release
+  gates are not established here. No syntax, AST, formatter grammar, Tree-sitter
+  grammar, or backend-only execution path was added. Once/TSS and explicit
+  thread lifecycle remain unfinished. Publication and branch reconciliation
+  remain outstanding, with the canonical host's TLS error recorded below.
+- **Once implementation locally verified (2026-09-24):** `once_flag` owns an
+  ordinary GTI atomic state machine, with a separate verified callback role for
+  `() -> void` initializers. Semantic/verifier, native registration, C ABI, LSP,
+  and all eight runtime modes pass locally: C++20/C++23 O0/O1/O3, ASan/UBSan,
+  and TSAN, covering 72 public-program executions plus native boundary probes.
+  Global `ONCE_FLAG_INIT`, nested distinct flags, initial/manual/managed callers,
+  null/foreign/unregistered callbacks, and original-diagnostic terminal cleanup
+  are covered. Successful callback return restores managed failure handoff.
+  Fresh immobile construction, canonical module-storage views, and passive
+  by-value argument staging remain MIR-owned; a later argument mutation cannot
+  change the earlier copied value. Checked scalar conversions in nested
+  constructed-field initializers remain a separate backend admission gap.
+  This is not completion of the C-thread or full standard-library campaign;
+  installed/release and other-platform evidence is tracked separately.
+- **Following families:** thread-specific storage;
   explicit exit/detach with their adopted ownership and shutdown contracts.
   `thrd_exit` must not call native termination in a way that bypasses GTI's
   verified cleanup schedule. Thread-specific destructors and callback failures
@@ -2519,9 +2645,10 @@ C-style thread creation/join, mutexes, condition variables, and thread-specific
 storage alongside the existing safe `std::thread` API. Native thread entry,
 callbacks, lifetimes, synchronization,
 failure containment, and execution-profile rules must remain consistent with
-ADR 008 and the concurrency contract. In particular, concurrent GTI callback
-conversion currently rejects with `GTI-S2076`; native attachment and cleanup
-must precede exposing GTI callbacks to C-style workers. An empty include or
+ADR 008 and the concurrency contract. Concurrent GTI callback conversion now
+admits only the exact registered C-thread entry shape; unsupported signatures
+and missing runtime declarations still reject with `GTI-S2076`. Native
+attachment and cleanup must precede entry. An empty include or
 unchecked forwarding to native thread functions is not completion evidence.
 
 The first local executable slice adds `std::thrd_yield()` for cooperative
@@ -2536,9 +2663,10 @@ surface cases, the include sweep, direct CLI workflow, eight installed-library
 consumers, 66 reference examples, content/type checks, and single-worker static
 site build/render checks pass locally on macOS. Other host platforms still
 need their own execution evidence. The rest of the requested
-C-style thread surface remains in this campaign, including sleep/identity,
-once, explicit lifecycle, mutex/condition operations, and thread-specific
-storage; yielding alone is not module completion.
+C-style thread surface remains in this campaign: subsequent create/join,
+identity, sleep, mutex, and condition evidence is recorded in `C-CTHREAD-01` above; once,
+explicit lifecycle and thread-specific storage are still
+pending. Yielding alone is not module completion.
 
 Binary32 mathematics is the first completed slice: all 18 previously
 bodyless `<std/cmath>` functions now have ordinary GTI wrappers over a scalar
@@ -2601,7 +2729,7 @@ acceptance baseline. Production compiler and runtime code were unchanged by
 that merge.
 
 The canonical remote is now
-`https://git2.internal.howetotech.dev/lukeh/gti-internal.git`. Its prepared
+`https://git.internal.howetotech.dev/lukeh/gti-internal.git`. Its prepared
 `codex/gitea-primary-migration` branch is integrated with the newer stdlib
 checkpoints, retaining their changes and advancing the installer/release fix
 to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea owns release
@@ -2691,6 +2819,38 @@ engine ABI design and dormant compiler/driver roots, not redundant stdlib work.
 It remains intact pending the user's integration decision and its own review
 and validation. This cleanup does not complete that integration or the stdlib
 campaign, including the explicitly requested full C-style thread API.
+
+The 2026-09-22 condition-variable pass could not refresh this branch audit:
+`git fetch origin` and a separate HTTPS HEAD request to the configured Gitea
+host both failed during TLS negotiation with `tlsv1 unrecognized name`, before
+authentication. No TLS verification override, remote rewrite, push, or branch
+deletion was performed. The retained local tracking ref still contains four
+unmerged engine-embedding commits, but is not evidence of current server state.
+Local stdlib implementation and validation continue; remote reconciliation and
+publication need a working canonical HTTPS endpoint.
+
+The 2026-09-24 publication follow-up uses the user's replacement canonical
+endpoint, `https://git.internal.howetotech.dev/lukeh/gti-internal.git`.
+Fetching now succeeds and the destination was reconciled before publication;
+the retained engine-embedding branch remains untouched. Repository CI fixes
+cover build-tree resource discovery in release tests, Linux linker wrapping
+for the C-thread yield oracle, the scalar CFG `char8_t` expectation, and bounded
+compile/test worker counts. Sanitizer preflights now fail early on incompatible
+runner hosts rather than disabling the checks. The reported Linux TSan mapping
+failure still requires runner-side resolution; no host configuration or
+security policy was changed. The supplied runner's capacity four and three-hour
+timeout also need operator review (recommended capacity one and six hours).
+
+The local macOS Neovim installer stages a checksummed toolchain through the
+existing plugin installer and writes a backed-up local Lazy specification.
+Its unit checks and dry run passed; its end-to-end installation was not run,
+at the user's request. The serial Release build, focused C-thread/CLI checks,
+macOS sanitizer preflights, formatting, and workflow syntax checks passed.
+The broader serial CTest run passed its first 90 of 217 selected tests before
+being stopped to wrap up at the user's request; this is not a complete-suite
+pass. Fresh installed-consumer and reference-site gates were not repeated in
+this follow-up. These delivery fixes do not complete the stdlib campaign or
+establish a successful Linux CI run.
 
 The temporary-receiver/backend failure reproduced by constructing a path and
 calling an owning-string-returning method in one expression has a local repair
@@ -2844,6 +3004,507 @@ not admit arbitrary user-destructor/subobject rollback, migrate targetless
 generated default/copy/move allocation, or complete the full C-style thread API
 and remaining standard-library campaign. The separate engine-embedding branch
 remains preserved pending the user's scope decision.
+
+The subsequent C-thread validation exposed a concrete remaining allocation
+regression in `examples/game-engine/gti`: `std::make_unique<game::App>()`
+reached the new split allocation/constructor MIR schedule, but the C++ status
+constructor proof rejected its owning `psych::Application` base. The project
+CLI gate therefore failed with `GTI-B0001`. Supporting the base's fallible
+initialization and rollback was required to restore this existing application;
+relaxing the backend gate or silently terminating instead of consuming the MIR
+failure edge is not a fix. This prerequisite remained open at that checkpoint;
+the bounded base-status follow-up below resolves the reproduced project failure.
+
+Investigation of that prerequisite also found and fixed an existing field
+rollback ordering defect: the C++ emitter deferred completed-field `Drop`s
+until caller-side representation destruction, after constructor parameters had
+already been cleaned. It now consumes the exact MIR field drops in place and
+recreates only their proved empty native states. The shared field-state proof
+also permits body-ordered owned parameters with a disarmed enclosing source
+destructor, without granting an empty-value constructor to that class.
+The strengthened class-allocation matrix covers success, exhaustion, failure
+after two completed fields, failure before the second field completes, and
+the existing secondary-allocation-failure case: 35 runs across C++20/C++23
+O0/O1/O3 plus strict ASan/UBSan. The enclosing destructor runs only on success;
+completed fields clean in reverse order before earlier-created parameters.
+The MIR lifecycle gate checks both generated and declared enclosing cleanup
+and rejects a missing lifecycle guard. All 20 selected local gates pass,
+including the compiler aggregate, allocation/failure metadata, constructor and
+temporary-owner matrices, forward-list cleanup, C-thread create/join, and the
+driver. This is field-schedule evidence, not completion of base rollback or
+arbitrary fallible subobject cleanup.
+
+The project runner now accepts `--jobs 1`, including its cached multi-target
+build; default CTest/CI runs retain the four-job scheduling comparison. A
+serial project rerun reproduced the same game-engine failure. The next
+compiler step at that checkpoint was explicit base initialization and success-only rollback,
+including cleanup before earlier-created parameters. The field replacement
+helper cannot be applied to C++ base subobjects. No publication or branch
+cleanup has occurred; the fresh installed/corpus evidence recorded above
+predates this field fix and must be refreshed before delivery.
+
+The next local slice introduces explicit `InitializeBase` MIR and its
+success-only rollback obligation (program v58/body v50). It admits the
+parameterless owning-base/cleanup-free-derived-field family needed by
+`std::make_unique<game::App>()`, including passive integral-enum defaults.
+The C++ backend consumes the exact native base status and does not construct
+a standalone base value or apply field placement replacement to a base
+subobject. The admitted family has no earlier owning constructor parameters
+or owning derived fields, so caller-side destruction of the unpublished
+representation finishes the last base cleanup without crossing their order.
+Base arguments, owning derived fields, declared base/derived destructors, and
+general secondary failure during aggregate cleanup remain separate work.
+
+The inherited-allocation runtime matrix passes success, base failure, derived
+failure, and exhaustion before base entry across C++20/C++23 O0/O1/O3 plus
+ASan/UBSan (28 runs), with exact original failure sites and cleanup traces.
+The headless game-engine application now builds and completes successfully,
+and the complete project workflow passes with `--jobs 1`. Independent MIR
+mutations and emitter tests bind the base identity, constructor, status-only
+route, activation, cleanup, retirement, and absence of a field alias. The older
+terminal-only derived-constructor expectation is updated to require its new
+explicit failure edge. Broader and installed/corpus validation must use the
+refreshed compiler before publication; no commit, push, or branch deletion
+has occurred in this slice.
+
+Review additionally found that the new base operation was missing from exact
+interprocedural effect composition. It now follows the selected constructor,
+and the independent mutation matrix rejects a derived summary that hides the
+base's allocation effect. The initial broad batch passed 39 of 40 gates; its
+only failure was the missing registration of the new lifecycle test in the
+emitter manifest, now corrected. Those results predate this effect fix, which
+was then rebuilt successfully. All 12 refreshed compiler, optimizer, failure
+metadata, lowered-contract, backend-rejection, emitter, and inherited-allocation
+gates pass, including all 17 malformed-base mutations and the 28 native runtime
+runs. Formatting and patch checks are clean. Installed and corpus evidence
+were then refreshed as recorded below.
+
+The refreshed emitter corpus passes all 82 sources and 3,907 ready bodies;
+the native corpus passes all 82 examples at C++20/O0 and C++23/O3 with unchanged
+ownership. A targeted probe of the documented secondary-cleanup gap then
+confirmed an admitted miscompile, retained as
+`tests/fixtures/inherited_constructor_cleanup_failure_gap.gti`: derived
+construction fails, then its base's unique-owned pointee destructor fails, but
+the report contains only the secondary `GTI-R0002` instead of `GTI-R0014` with
+both records. The generated allocation caller invokes `std::destroy_at` on
+the unpublished object without passing the primary failure into the nested
+destructor wrapper. This must be fixed before publishing the constructor slice;
+the success/first-failure matrices and corpus do not establish this contract.
+The next implementation step is failure-aware aggregate rollback that consumes
+the MIR cleanup obligation and preserves the primary record through nested
+subobject destruction, not another relaxation of backend admission.
+
+The same cleanup-record failure reproduces at all four C++20/C++23 O0/O3
+endpoints with the freshly installed compiler. All nine external installed-
+library consumers pass, including the C11 C-thread runtime consumer. Their
+initial configure needed the same explicit local LLVM/Clang package paths as
+the build tree; configuration, serial compilation, and all consumer tests
+then succeeded. These are macOS local results, not CI or other-platform
+evidence. The new failed-runtime reproducer is intentionally not registered as
+a passing gate; the constructor change remains unpublished and incomplete.
+
+The follow-up introduces a MIR v59/body v51 cleanup descriptor for a
+generated single-owner field/base chain ending in a lifecycle-guarded leaf
+destructor. The actual stdlib path includes a source-defined `unique_ptr`
+class wrapper, so handling only the primitive unique owner was insufficient.
+Each shell now retains its immediate subobject identity; independent MIR
+derivation checks the complete descriptor, and `Drop` uses the existing
+`Invoke` and primary/secondary failure protocol. C++ only spells those steps
+and tears down empty native owners. No AST/HIR fallback or ambient failure
+context was introduced.
+
+The full serial build passes. `failure_metadata` passes six malformed-
+descriptor/control-flow mutations per selected drop. The newly registered
+`unique_pointee_cleanup_failure_runtime` passes all 49 runtime cases across
+C++20/C++23 O0/O1/O3 plus ASan/UBSan, including empty owners, first cleanup
+failure, primary failure with successful cleanup, and double failure through
+ordinary, field, and inherited-base cleanup. The original reproducer is now
+`tests/fixtures/inherited_constructor_cleanup_failure.gti` and is a passing
+regression. This does not establish multi-owner aggregate cleanup or pointees
+with their own active-cleanup fields. Broader validation and an admission
+probe for the multi-owner base boundary are in progress; publication remains
+pending, and the full stdlib/C-thread campaign remains active.
+
+The refreshed 38-gate serial batch passes, including compiler/driver,
+optimizer, failure metadata, lowered/backend contracts, emitter lifecycle and
+census, C-thread runtime/semantic/LSP, class and inherited allocation,
+temporary constructor arguments, stdlib surface/include sweep, and repository
+release-policy checks. Formatting and patch checks pass. The adjacent admission
+probe then confirms that a two-owner base still loses the primary record at
+all four C++20/C++23 O0/O3 endpoints. The exact regression is retained as
+`tests/fixtures/inherited_multi_owner_cleanup_failure_gap.gti`; every run
+exits 70 with `cleanup` and only the destructor's `GTI-R0002`.
+
+The next required implementation replaces the single-target assumption with
+an ordered MIR-owned aggregate cleanup schedule. It must represent every
+active field/base step and each step's effects, preserve the first failure
+while draining remaining cleanup, and terminate immediately with both records
+on a second failure. The existing `MirClassInstance::fieldDropOrder` supplies
+field order, but a list of types alone is not the failure CFG or proof that
+the backend consumes it. Keep leaf cleanup, owner release, and native
+representation teardown distinct; do not reuse the first leaf's destructor
+identity to stand for a multi-target cleanup or solve this by narrowing the
+requested library outcome. The ordinary/field/base matrices and independent
+missing/reordered/retargeted-step mutations must cover the resulting protocol.
+No commit, push, or branch deletion occurred. A new corpus/project/installed
+refresh is deferred until this known cleanup defect is fixed, since it would
+otherwise have to be repeated after the required compiler change.
+
+The next local implementation replaces that single-target assumption with
+MIR v60/body v52 ordered aggregate descriptors. Generated field/base and
+unique-pointee steps retain their exact types, identities, order, and all leaf
+destructor targets. Lowering constructs the tree from concrete HIR; program
+verification independently derives it from MIR declarations. The backend
+consumes its immediate steps, keeps the first failure while draining remaining
+cleanup, and avoids native destruction of unfinished subobjects after a second
+failure. Scalar unique owners are included as non-failing cleanup leaves;
+primitive storage/prefix-storage leaves also admit ordinary string ownership
+beside fallible resources. Generated hosted-string obligations and their
+independent verifier use the same exact descriptors.
+
+Before the final string/hosted extension, all five focused gates pass:
+`failure_metadata`, class allocation, inherited allocation, the 49-case
+single-owner regression, and the new 91-case aggregate runtime gate. The last
+includes two distinct destructor targets, mixed scalar ownership, ordinary
+first-failure draining, constructor/field/body double failure, nested generated
+pointees, moved/empty owners, and the exact original two-owner reproducer at
+C++20/C++23 O0/O1/O3 plus ASan/UBSan. The original fixture is promoted to
+`inherited_multi_owner_cleanup_failure.gti`. Independent mutations remove,
+duplicate, reorder, and retarget nested steps, including substitution of a
+different valid destructor identity. The final string/hosted extension then
+passed a full serial build and all 45 selected compiler, optimizer, MIR/backend,
+runtime, stdlib, boundary, and C-thread editor gates, including the 91-case
+aggregate matrix. A subsequent effect-summary review found that allocation
+release must remain a runtime effect even when every source destructor is
+empty. The correction passed a fresh full incremental build, the focused
+`failure_metadata` regression, and all 12 selected compiler, optimizer,
+MIR/backend, C-thread semantic, cleanup-runtime, and issue-regression gates.
+This rerun includes the 49-case single-owner and 91-case aggregate matrices.
+The earlier 45-gate result predates the effect correction. The refreshed
+emitter corpus passes for all 82 sources: 3,907 bodies are ready and all 2,179
+general-emitter comparisons match. A fresh installation at
+`/private/tmp/gti-aggregate-install.IswxCd/stage` passes all nine external
+library consumers and the full 91-case aggregate runtime matrix, with build-tree
+stdlib/runtime/vendor path overrides removed. The native two-endpoint example
+corpus then passed all 82 examples and 3,904 reviewed body identities; the
+serial project-workflow refresh also passed, including the game-engine
+application. Full formatting and patch checks passed. These are local
+macOS/AppleClang results, not cross-host or CI evidence, and predate the
+prepared-call correction below.
+
+An adjacent `vector<unique_ptr<Resource>>` cleanup probe demonstrated a real
+remaining defect: a checked failure in the body followed by failure in an
+element destructor reports only the destructor's `GTI-R0002`, rather than
+retaining both records in `GTI-R0014`. The prior installed pre-aggregate build
+shows the same result; this is not evidence about the clean HEAD build.
+The native prefix-storage element loop still needs a MIR-owned cleanup
+descriptor and explicit primary/secondary record protocol. A vector-owning
+base constructor also exposed an independent verifier disagreement: ordinary
+call `PreparedParameter` transfers were mistaken for unarmed subobjects.
+
+The local correction exempts the exact ordered-call parameter handoff, while
+retaining the independent unique-input/transfer verification. A failing-then-
+passing `failure_metadata` regression covers both constructors and field
+initializers, with missing/duplicate/cross-call transfer mutations. The
+original vector-owning base now compiles. A stronger runtime regression then
+exposed the status constructor's missing admission of ordinary prepared
+argument cleanup when a later argument fails; its representation now reuses
+the existing exact class-result staging proof. The full serial build now
+passes, as do `failure_metadata` and all 42
+`constructor_owned_call_runtime` cases across C++20/C++23 O0/O1/O3 plus
+ASan/UBSan. The runtime trace proves prepared-argument cleanup before field
+rollback, callee ownership after handoff, later constructor cleanup, and exact
+double-failure reporting. The final matrix also combines a later-argument
+failure with a second failure in the still-caller-owned argument's destructor.
+The full 14-gate compiler/optimizer/backend/allocation/cleanup refresh passes
+(293 seconds), including the 49-case single-owner and 91-case aggregate
+matrices. At that checkpoint the vector element-loop failure was still
+unresolved, so publication was not ready. The prior corpus, project, and installed-consumer refreshes predate
+this constructor correction and must be refreshed before final publication.
+
+The next local implementation adds MIR v61/body v53 collection-drop recipes:
+one unprojected element cleanup, reverse live-prefix/initialized-slot traversal,
+and allocation release after the elements drain. Generated helpers use the
+same explicit failure cursor as field/base aggregates; source-leaf class
+elements disarm their lifecycle guard before native representation teardown.
+Both compiler and backend build. The new collection runtime matrix passes all
+105 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan, including the original
+inherited vector-base regression, sparse holes, nested first-failure draining,
+empty/moved owners, direct leaf objects, and aggregate/string elements.
+The full serial build and independent malformed-element mutations pass.
+All 25 selected compiler/optimizer/backend/allocator/cleanup/include checks
+now pass across the batch and a focused rerun. The initial compiler-pipeline
+failure was an old assertion expecting the class-only verifier message; the
+forged destructor now reaches the shared canonical descriptor check. Updating
+the expected message retained the rejection assertion, and the rebuilt
+pipeline passes. The sparse-storage fixture now also constructs out of slot
+order; its final 105-case matrix refresh and `failure_metadata` both pass.
+Earlier corpus/project/installed evidence predates v61 and is not final
+publication evidence.
+
+Full clang-format checking passes for all 324 first-party C/C++ files, and
+`git diff --check` passes. A final C++20/O0 probe confirms the next live defect:
+`pop_back()` on a vector holding resource owners 1 and 2 terminates immediately
+when resource 2's destructor fails. It prints only `2`, not the required
+remaining-vector/outer cleanup trace `2, 1, 9`. The source destructor's
+`GTI-R0002` is reported, but the explicit prefix-pop intrinsic has no contained
+failure handoff to its MIR caller. Collection scope destruction is now proved;
+explicit removal must carry the element recipe and status/record through its
+own operation before this part of the library can be called complete.
+
+The next local change (MIR v62/body v54) closes that explicit pop defect and
+the corresponding sparse-slot destruction defect. Both calls now carry an
+independently verified element recipe, exact destructor effects, and the
+original propagated record alongside their existing local bounds/state
+status. The slot is retired before cleanup and its disarmed representation
+ends once. Public vector/storage `clear()` composes the same operations.
+The expanded fixture first failed at C++20/O0 phase 15 with the original
+`2`-only trace, then passed all 189 cases across C++20/C++23 O0/O1/O3 and
+ASan/UBSan. It covers successful removal, first/secondary failure, direct
+leaves, sparse holes, nested collection pop, clear, empty public pop, and
+invalid-slot errors retaining their own source. The initial invalid-slot
+expectation used a physical filename; the observed canonical logical source
+is `<std/memory>`, and the exact expected spelling was corrected. The focused
+`failure_metadata` gate passes, including twelve forged removal recipe/effect
+mutations. The full serial build and 31 selected final-tree checks now pass
+(618 seconds): compiler/library boundaries, pipeline, optimizer, metadata,
+initialization/startup, C-thread semantic/create-join, lowered/backend contracts,
+emitter structure, forward-list, allocation/cleanup matrices, allocator/storage,
+stdlib manifest/surface/include sweep, and issue regressions. The collection
+matrix passed all 189 cases again in that final-tree run. Clang-format checks
+all 324 first-party C/C++ files successfully, and `git diff --check` passes.
+Final publication
+still requires refreshed corpus/project/installed-consumer evidence and the
+remaining implementation closure; nothing is published.
+
+The next local extension (MIR v63/body v55) adds the same exact recipe to
+arbitrary-index prefix erase. Its baseline runtime regression failed at
+C++20/O0 phase 27 with only `2` printed rather than `2, 3, 1, 9`. The operation
+now detaches the suffix while destroying the selected element. Success uses
+independently proved generated relocation to close the hole; failure drains
+the detached suffix backwards before returning the original record to caller
+prefix cleanup. A second suffix failure terminates before representation
+teardown, retaining the distinct primary and secondary source sites.
+All 308 expanded runtime cases pass across C++20/C++23 O0/O1/O3 and ASan/UBSan,
+including first/middle/last erase, bounds failure, successful append after
+erase, direct guarded leaves, nested collections, mixed string/resource
+aggregates, and inherited owning elements. One new verifier mutation initially
+selected a generated wrapper without a guard, making its guard-removal change
+a no-op; the test now requires a guarded source-destructor class. The rebuilt
+verifier passes, including eighteen removal-recipe/effect mutations and two
+generated-move/guard mutations. The full serial build and all 27 selected
+compiler/optimizer/backend/allocator/cleanup/include/issue checks pass
+(264 seconds), including all 308 collection cases again. The refreshed serial
+emitter corpus also passes: 82 sources, 3,907 ready bodies, and 2,179 matching
+general-body emissions. Clang-format passes for all 324 first-party C/C++ files,
+and `git diff --check` passes. This refresh does not substitute for the still-pending
+final native corpus, project, and installed-consumer refreshes or the remaining
+implementation work; nothing is published.
+
+The next local extension (MIR v64/body v56) composes source-destructor bodies
+with their represented owning fields. A baseline reproduced lost primary
+failure reporting when the owner body and a field destructor failed during
+caller unwinding. The exact MIR recipe now runs the guarded body first,
+followed by reverse fields/base, with independent descriptor verification and
+the shared primary/secondary sequence. A failure-free body does not hide its
+fields' failure effects. Private empty-state construction can represent a
+guarded source-destructor field only with a complete recipe, generated move
+assignment, recursively empty fields, and an explicitly inactive guard.
+
+The original `temporary_constructor_argument_user_drop_gap.gti` exposed two
+additional backend defects during this extension: a partial native initializer
+proof suppressed body publication even when no native field binding was
+selected, and a nested status-only construction acquired an invalid ordinary
+overload call. Publication now uses the same complete binding as move emission,
+and plain constructor calls must prove their ordinary representation exists.
+The original reproducer now returns the correct values and body-before-field
+cleanup trace at C++20/O0. It is part of the required new runtime matrix, not an
+unresolved or skipped fixture. The initial 217 source-body/field, nested,
+collection-removal, move, and partial-construction cases passed all six
+C++20/C++23 O0/O1/O3 modes plus ASan/UBSan. After the full serial build, the
+final expanded 259-case runtime matrix, MIR verifier, and emitter lifecycle
+tests pass (59 seconds). The broader checks initially caught a test-registration
+ordering mismatch between the new lifecycle test and its manifest; the manifest
+order is corrected without changing the test or its assertions. Final review
+also tightened ordinary-constructor admission: an initializer-only tagged
+containment overload does not authorize an ordinary body call. After rebuilding,
+all 30 selected compiler/library/optimizer/verifier/backend/allocation/cleanup/
+include/issue tests pass (289 seconds), including the 259 new cases and the
+existing 308 collection cases again. The final serial emitter corpus passes
+with all 82 sources, 3,907 ready bodies, and 2,179 matching general emissions.
+Clang-format checks all 324 first-party C/C++ files successfully, and
+`git diff --check` passes.
+This does not replace the pending final native corpus, project, and installed-
+consumer refreshes, or prove the remaining stdlib implementation complete.
+
+This is not the end of aggregate failure work: cyclic ownership-type graphs,
+other unrepresented cleanup families, and the broader base-construction
+combinations still need their full protocols. The stdlib completion and full
+C-thread objectives remain active; no publication or branch deletion has
+occurred in this slice.
+
+The next local extension (MIR v65/body v57) represents recursive ownership
+with finite exact class back-edges. The original `forward_list<Value>` probe
+lost both remaining caller cleanup and an earlier primary error when a node's
+destructor failed. The root recipe now contains every reachable destructor
+while re-entries reference an enclosing class. Independent MIR derivation and
+six back-edge mutations enforce the contract; an independent class-graph walk
+checks that effect targets are not lost through either self or mutual recursion.
+
+`unique_ptr::reset()` now detaches the old capability into a local public owner
+before destruction, so its source body uses ordinary MIR cleanup. A raw
+capability local was insufficient: existing passive-pointee/reset backend gates
+rejected it. The public-owner form passes those gates without changing their
+assertions. A trial ordinary assignment overload was not retained: ordinary
+method calls cannot replace the compiler's moved-place reinitialization rule
+used by list algorithms.
+
+Mutually owning node types also exposed two native-representation defects.
+Generic type arguments were incorrectly counted as by-value layout
+dependencies even for pointer-only carriers. Planning now follows the exact
+MIR fields/bases instead. C++23 additionally instantiated constexpr defaulted
+carrier special members while pointees were incomplete; generated unique-owner
+carrier default/move/destruction now has explicit non-constexpr spelling with
+the same field order and guard policy. C++20/C++23 and sanitizer executions
+then agree on 26 of 27 phases (182 of 189 executions). The mandatory
+`recursive_cleanup_failure_runtime` gate remains failing, not waived.
+
+The remaining phase 17 at that checkpoint was **live-owner assignment**: replacing a nonempty
+owner with a newly allocated node still destroys the old value through native
+assignment without an explicit MIR failure/commit protocol. It prints only
+`2`, rather than cleaning the rest of the old chain, the uncommitted new value,
+and the caller (`2, 1, 3, 9`). The next slice must retain the staged RHS until
+old-value cleanup succeeds, propagate failure before publication, and verify
+that ordering independently. Do not reinterpret terminal native cleanup as a
+passing outcome or bypass this with a public-name backend special case.
+
+`recursive_owner_projection_gap.gti` separately preserves a reduced accepted
+program rejected by C++ representation planning at `root->next->next`. The
+recursive destruction oracle builds the same mutual chain through constructors,
+so it can test destruction independently without hiding the projection defect.
+The projection gap, general replacement, remaining cleanup families, full
+stdlib/C-thread completion, and branch reconciliation/cleanup remain required.
+The final full serial build passes. In the 26-gate affected regression set,
+24 passed initially; the compiler aggregate's remaining assertion expected the
+old `= default` native move spelling. It now checks the explicit field move,
+non-constexpr default/destructor, deleted copy, and owned-result publication,
+and the rebuilt aggregate passes. Thus 25 gates pass and only the new recursive
+runtime gate remains red for phase 17 in all seven modes. The same final
+runtime matrix also includes default field initializers on the mutually owning
+types. Existing allocation, inherited allocation, source-destructor cleanup,
+collection cleanup, owner access, and 30,000-node iterative list gates pass.
+The serial emitter corpus passes all 82 sources, 3,907 ready bodies, and 2,179
+matching general emissions. This is partial verification, not a release claim:
+live replacement and the projection reproducer remain wrong, and final native
+corpus/project/installed-consumer refreshes remain pending. No commit, push,
+or branch deletion has been performed.
+Clang-format checks all 324 first-party C/C++ files successfully and
+`git diff --check` passes.
+
+The next local extension (MIR v66/body v58) separates old-value cleanup from
+replacement commit. `CleanupBeforeAssign` carries the independently derived
+recipe and has a symmetric exact pair with `Assign`. Fallible preparation
+routes through `Invoke`; the RHS remains owned on failure, while only the
+unique success edge publishes it. Generated assignment after cleanup is
+independently proved non-failing. Six verifier mutations cover recipe/pair/
+effect/success-edge corruption. The backend's moved and constructed temporary
+representations now follow the pair, retaining failure-path drops rather than
+requiring unconditional instruction adjacency. Storage-handle stages also
+drain explicitly on that path.
+
+The original 27-phase regression now passes all 189 executions. Ten added
+phases cover empty/live destinations, successful and repeated replacement,
+named moved RHS values, direct source-destructor objects, checked owner fields,
+and a second failure while cleaning the uncommitted RHS. All 259 executions
+pass across C++20/C++23 O0/O1/O3 plus ASan/UBSan. Those cases additionally exposed
+and fixed generated empty owning arguments passed directly into a status
+constructor; the representation proof checks the literal-only field initializer
+and its MIR `Exit`, not an invented `Return`.
+
+The full serial build passes. The 30-gate affected regression run initially
+passed 28 gates; two structural assertions still demanded the old adjacent
+move/assign/drop schedule. They now require the explicit preparation pair,
+exact success edge, loan ending, and normal-path shell drop, and both rebuilt
+tests pass. The final four-gate rerun (metadata, preflight, lifecycle, recursive
+runtime) passes, including all 259 runtime executions after tightening the
+generated-empty argument proof to passive fields and native owner/storage
+handles. The expanded regression run also passes the public C-thread
+create/join and yield gates, all existing stdlib-surface cases, include sweep,
+allocation/owner-access/constructor-owned calls, collection cleanup, source
+destructor cleanup, and iterative forward-list tests. The final serial emitter
+corpus passes 82 sources, 3,907 ready bodies, and 2,179 matching general
+emissions. Formatting checks all 324 files; `git diff --check` passes.
+The remaining Python MIR-header assertion now expects v66, and
+`issues_117_120_regressions` passes on the final compiler.
+
+This remains partial release verification: final native corpus, project, and
+clean-stage installed-consumer refreshes have not run for this extension.
+Checked-place assignments that still
+carry local bounds detectors do not yet use the split, and unrepresented
+cleanup families, recursive owner projection, full stdlib/C-thread completion,
+and branch reconciliation/cleanup remain required. No publication or branch
+deletion has occurred.
+
+The subsequent nested-owner projection repair fixes the original
+`root->next->next` reproducer in MIR lowering. Borrow-source canonicalization
+had appended a pointee's field to the call's owner dependency instead of
+retaining the returned referent. Projected call-result sources now keep their
+loan root and parent chain; independent program verification rejects the old
+flattened-origin form even when its dependency key compares equal. No backend
+admission relaxation, source-wrapper name matching, syntax change, or new MIR
+operation is involved.
+
+The focused verifier gate and expanded recursive runtime gate pass. All 42
+trace/failure phases run at C++20/C++23 O0/O1/O3 plus ASan/UBSan (294 runs),
+alongside the original minimal projection reproducer in all seven modes.
+The added cases cover deep assignment/reset/read, a longer mutual chain,
+empty-intermediate-owner failure with staged-RHS cleanup, and recursive
+destructor failure. The full serial build also passes. This removes the
+preserved projection blocker, not the remaining checked-place assignment,
+cleanup-family, stdlib/C-thread, release-validation, or branch-cleanup work.
+All 18 additional affected gates pass: compiler aggregate, optimizer foundation/
+safety/analyses, lowered-program contract/rejection/boundary, C++ plan/control
+flow/preflight/text/lifecycle/representation, forward-list and owner-access
+runtime, include sweep, reference-parameter ranges, and mutable stored borrows.
+The serial emitter corpus again passes 82 sources, 3,907 ready bodies, and
+2,179 matching general emissions. Changed C++ files pass clang-format and
+`git diff --check` passes. Native corpus, project, installed-consumer, and
+release gates remain pending; nothing has been committed, pushed, or deleted.
+
+MIR v67/body v59 extend replacement preparation to built-in fixed-array
+elements. The exact bounds origin now belongs to `CleanupBeforeAssign`, which
+validates the destination before touching the old value, then runs its complete
+cleanup recipe. Both bounds-only and destructor-propagating preparations use
+`Invoke`. The paired `Assign` is detector-free and only commits on success;
+the RHS remains active on either failure. Independent verification requires
+the checked recipe/pair, exact bounds outcome, and success-only publication.
+The C++ representation checks each dimension before forming its next subscript
+and retains the original failure site. Fresh ordinary-call results, direct
+constructed objects, and named moved values use the same explicit staged
+ownership as non-indexed replacement.
+
+The new `checked_owner_replacement_runtime` fixture passes its initial
+19-phase matrix in all seven C++20/C++23 O0/O1/O3 and ASan/UBSan modes (133
+executions). It covers success, unchanged old elements on invalid bounds,
+positive/negative indices, first and secondary cleanup failures, non-failing
+old cleanup, and both dimensions of a chained destination. The metadata gate
+checks bounds-only and bounds-plus-cleanup effects and mutates detector
+presence/placement, outcome, success routing, publication, and pair identity.
+The full serial build and all 28 affected regression gates pass, including
+the compiler aggregate, verifier mutations, optimizer and backend contracts,
+old/new cleanup families, owning array lifecycle, scalar/out-of-bounds/chained
+array access, polymorphic arrays, and existing array assignment regressions.
+A copied source-destructor probe is rejected by the existing `GTI-S2003`
+noncopyable-type rule, not by the backend; it is retained as a negative test.
+Final release validation remains pending; this does not finish unrepresented
+cleanup families, the full stdlib/C-thread surface, or branch reconciliation/
+cleanup.
+The final serial emitter corpus passes all 82 sources (3,907 ready bodies and
+2,179 matching general emissions). The final checked-replacement rerun passes
+all 133 executions plus the negative-copy assertion, and CMake test ownership
+passes. Changed C++ formatting and `git diff --check` pass. No commit, push,
+or branch deletion has been performed; native corpus, project, installed
+consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-GEN-01: Production Generic Function System
 

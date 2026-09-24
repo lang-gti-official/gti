@@ -109,8 +109,8 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             )
             return False
     if (
-        "_print__gti_mir_failure(std::uint8_t" not in generated
-        or "_println__gti_mir_failure(std::uint8_t" not in generated
+        "_print__gti_mir_failure(char8_t" not in generated
+        or "_println__gti_mir_failure(char8_t" not in generated
         or f"{FAILURE_MARKER} function-instance" not in function_definition(
             generated, "entry__gti_mir_failure"
         )
