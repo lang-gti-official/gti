@@ -13,8 +13,11 @@ checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
 GLFW version, GLAD loader state, SQLite prepared statements, a headless cimgui
 frame, zlib compression, and libpng encode/decode plus invalid input/capacity
-handling. This separate integration gate needs the pinned native sources and
-does not run network acquisition implicitly during the compiler test suite.
+handling. The separate `packages/examples/assimp` project tests model import,
+mesh and node access, local transforms, malformed input, null handles and
+out-of-range output preservation through bindgen-generated declarations.
+These integration gates need the pinned native sources and
+do not run network acquisition implicitly during the compiler test suite.
 
 | CTest target | Owns |
 | --- | --- |

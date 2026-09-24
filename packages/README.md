@@ -13,6 +13,8 @@ From the repository root, with GTI on your PATH:
 python3 packages/prepare.py
 cd packages/examples/smoke
 gti test
+cd ../assimp
+gti test
 ```
 
 For an uninstalled compiler, pass its path:
@@ -22,17 +24,20 @@ python3 packages/prepare.py --gti out/stdlib-release-ZEdrCj/gti
 ```
 
 Preparation requires Python 3.10+, GTI with bindgen/libclang, a C/C++ compiler,
-and CMake for GLFW. GLAD gets an isolated local virtual environment with exact
-Jinja2/MarkupSafe versions. On macOS install Xcode command-line tools. Linux's
+and CMake for GLFW and Assimp. GLAD gets an isolated local virtual environment
+with exact Jinja2/MarkupSafe versions. On macOS install Xcode command-line tools. Linux's
 GLFW build selects X11, not Wayland; it needs X11, Xrandr, Xinerama, Xcursor and
 Xi development headers (on Debian/Ubuntu: `libx11-dev libxrandr-dev
 libxinerama-dev libxcursor-dev libxi-dev`). Preparation currently accepts native
 64-bit macOS/Linux hosts; Windows and cross-compilation are not supported by
 this preparation script. Only macOS arm64 execution has been checked locally.
 
-`--jobs N` controls GLFW compilation and defaults to the logical CPU count.
+`--jobs N` controls native preparation builds and defaults to the logical CPU count.
 Preparing an individual package is supported, for example
-`python3 packages/prepare.py libpng`; its zlib dependency is prepared too.
+`python3 packages/prepare.py assimp`; its zlib dependency is prepared too (as
+for libpng). Assimp downloads a roughly 160 MiB archive and has a substantially
+larger first build than the other packages; its test models, documentation and
+unused tools are omitted from extraction. Use `--jobs 2` to limit build load.
 `--offline` reuses verified downloaded archives and an already prepared GLAD
 environment. Missing cached inputs fail instead of contacting the network.
 Pinned URLs, revisions, checksums and license locations are recorded in
@@ -41,8 +46,9 @@ Pinned URLs, revisions, checksums and license locations are recorded in
 Native sources, archives, public generated bindings and build outputs are
 ignored local products. Preparation verifies archive hashes, rejects unsafe
 archive entries/symlink destinations, and refuses to overwrite modified
-upstream or generated files. To deliberately regenerate after changing pins,
-move the relevant old `vendor`/`native/generated` directories aside first.
+upstream sources or generated bindings. Native archives and CMake-generated
+headers are republished from build results. To deliberately regenerate after
+changing pins, move the relevant old `vendor`/`native/generated` directories aside first.
 
 Declare only the packages your application needs:
 
@@ -54,6 +60,7 @@ sqlite3 = { path = "../gti/packages/sqlite3" }
 cimgui = { path = "../gti/packages/cimgui" }
 zlib = { path = "../gti/packages/zlib" }
 libpng = { path = "../gti/packages/libpng" }
+assimp = { path = "../gti/packages/assimp" }
 ```
 
 Paths are relative to your application's `gti.toml`. Then use a direct package
@@ -66,11 +73,14 @@ declarations from the earlier `glfw-gti` package at commit
 `8c766034e8f352e5f0c8af91eccf248a06bc41b2`.
 
 GTI compiles the declared C/C++ sources and links dependencies through their
-manifests. GLFW alone is prepared as a host static archive with upstream CMake,
-because its macOS implementation includes Objective-C. Libpng composes zlib
+manifests. GLFW and Assimp are prepared as host static archives with upstream
+CMake: GLFW needs Objective-C on macOS, and Assimp needs upstream configuration
+and generated headers for its C++ implementation. Libpng composes zlib
 through a real path dependency; copied, checksum-pinned zlib **headers** stay
 local to libpng's isolated native group, while its implementation is linked
-only once from the zlib package.
+only once from the zlib package. Assimp also depends on that same zlib package.
+Its preparation builds a pinned zlib archive for CMake discovery, while the GTI
+consumer links the zlib package's implementation, not a second system zlib.
 
 This repository folder is not a package registry or a set of independently
 published Git repositories. A bare GTI Git dependency cannot select a subfolder
@@ -87,14 +97,33 @@ local paths. Publishing standalone prepared packages is a separate step.
 | `cimgui/cimgui` | cimgui pinned with Dear ImGui 1.92.9b | Context/frame lifecycle, basic widgets and mouse/text input adapters in namespace `imgui` |
 | `zlib/zlib` | zlib 1.3.2 | One-shot compression/decompression, CRC32, Adler32, version/error queries in namespace `zlib` |
 | `libpng/libpng` | libpng 1.6.58 | PNG information and tightly packed RGBA8 memory encode/decode in namespace `png` |
+| `assimp/assimp` | Assimp 6.0.5 | File/memory import, release/errors, mesh positions/normals/UVs/face indices, material indices, node hierarchy/local transforms and selected post-processing flags in namespace `assimp` |
 
-GLAD, cimgui, zlib and libpng are deliberate initial API subsets, not claims of
+GLAD, cimgui, zlib, libpng and Assimp are deliberate initial API subsets, not claims of
 complete upstream coverage. GLAD exposes C function-pointer variables and C
 macros rather than callable link symbols; its native adapter turns the selected
 operations into ordinary C functions for bindgen. Cimgui's adapter normalizes
 C `bool` to `int32_t` and uses nonvariadic text functions. Libpng uses the
 simplified API so its error jumps stay entirely in C, never across GTI frames.
 Zlib's streaming and gzip-file APIs are not part of the initial package.
+
+Assimp's 24-function C adapter is generated into GTI by `gti bindgen`; it does
+not hand-write GTI declarations or expose the complete upstream API. The pinned
+build uses single-precision geometry and the default importers (including OBJ,
+FBX and glTF), with export, USD and Draco disabled. Materials/textures, animation
+and bones are not exposed yet. Scene/node/mesh handles are opaque; vectors and
+row-major 4x4 matrices are passive C ABI records. Initialize output records with
+`gti_assimp_zero_vector()` / `gti_assimp_zero_matrix()`. Getters with an output
+parameter return 1 on success, 0 on invalid indices, null handles/outputs, or
+missing data, leaving the output unchanged on failure. Pointer getters return
+null and count getters return zero for invalid input; a null mesh's material
+index is `UINT32_MAX`. Node transforms are local, not accumulated world transforms.
+
+To use Assimp alone, prepare it, add the dependency above, and directly include
+`#include <assimp/assimp>`. The complete consumer in
+[`examples/assimp/src/main.gti`](examples/assimp/src/main.gti) demonstrates import,
+geometry access and cleanup. Run `gti test` in `packages/examples/assimp` to build
+and execute it independently of the other binding smoke tests.
 
 ## Native safety and lifetime rules
 
@@ -123,22 +152,32 @@ Zlib's streaming and gzip-file APIs are not part of the initial package.
   output may be partially written on decoding failure. Encoding with a null
   output queries the required encoded capacity. The adapter imposes the signed
   row-stride bound but no application-specific image memory budget.
+- Assimp imports return an owned scene or null. Call `gti_assimp_release` exactly
+  once after a successful import; all mesh/node/name pointers become invalid
+  immediately. Getter checks cannot detect stale or foreign pointers. Error
+  strings belong to Assimp and can change on later calls. File paths and format
+  hints must be valid C strings; memory lengths must fit the actual input.
+  File import may open external resources; memory import has no custom sidecar
+  resource loader. Post-process flag combinations must obey Assimp's rules.
+  Native parsing is not sandboxed or given an application-specific resource budget.
 
 The smoke examples are executable documentation. They do not need a display:
 GLFW version, unloaded GLAD state, SQLite prepared query, cimgui frame creation,
-zlib round trip, and libpng round trip/error cases. They do not establish real
-OpenGL rendering or Linux/Windows runtime behavior.
+zlib round trip, and libpng round trip/error cases. The separate Assimp test
+checks triangle import, geometry/hierarchy/transforms, invalid input and bounds.
+They do not establish real OpenGL rendering or Linux/Windows runtime behavior.
 
 `packages/examples/window` combines GLFW and GLAD into an OpenGL 3.3 window.
 Run `gti build` there to compile it, or `gti run` from a graphical session to
 open it; closing the window exits. This example does not yet render cimgui.
-After the smoke build, check that every exposed C function has a native symbol,
+After both smoke projects are built, check that every exposed C function has a native symbol,
 including optional SQLite filtering (substitute the actual host paths):
 
 ```sh
 python3 tests/native_package_symbols_test.py \
   packages/examples/smoke/build/gti/dev/arm64-apple-macos/zlib \
-  packages/glfw/native/lib/macos-arm64/libglfw3.a
+  packages/glfw/native/lib/macos-arm64/libglfw3.a \
+  packages/examples/assimp/build/gti/dev/arm64-apple-macos/import-model
 ```
 
 The archive is included because an unreferenced GLFW object is legitimately
@@ -152,5 +191,6 @@ GLFW binding whose MIT notice and GLFW notice are included in `glfw/`.
 Downloaded sources retain their upstream notices: GLFW and zlib use zlib-style
 licenses; cimgui and Dear ImGui use MIT; GLAD includes its generator and Khronos
 specification licensing; libpng carries the PNG Reference Library license;
-SQLite's source header records its public-domain dedication. Consult each
+SQLite's source header records its public-domain dedication. Assimp uses
+BSD-3-Clause and includes notices for bundled third-party components. Consult each
 locked source's `license` file before redistributing a prepared package.

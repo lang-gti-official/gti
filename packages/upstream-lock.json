@@ -1,4 +1,14 @@
 {
+  "assimp": {
+    "version": "6.0.5",
+    "revision": "392a658f9c271be965271f45e7521a1b80ea4392",
+    "url": "https://codeload.github.com/assimp/assimp/tar.gz/392a658f9c271be965271f45e7521a1b80ea4392",
+    "sha256": "448f007b0fd0be3dedd106269e5eb10f6a9a6385836bf53ac3a02c7cc29bc1f1",
+    "destination": "assimp/vendor/assimp",
+    "license": "LICENSE",
+    "max-download-bytes": 268435456,
+    "exclude-directories": ["test", "doc", "samples", "port", "tools"]
+  },
   "glfw": {
     "version": "3.4",
     "revision": "7b6aead9fb88b3623e3b3725ebb42670cbe4c579",

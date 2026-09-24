@@ -20,7 +20,7 @@ def main():
     if darwin:
         symbols = {name.removeprefix("_") for name in symbols}
     missing = []
-    for package in ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng"):
+    for package in ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp"):
         source = (root / package / "src" / f"{package}.gti").read_text()
         # Public units are deliberately declarations only. Require at least one
         # signature so a formatting/parser mismatch cannot give a vacuous pass.

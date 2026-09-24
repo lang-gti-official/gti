@@ -34,7 +34,7 @@ def archive(entries, *, link=False):
 
 class PackagesTest(unittest.TestCase):
     def test_inventory(self):
-        self.assertEqual(set(prepare.PACKAGES), {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng"})
+        self.assertEqual(set(prepare.PACKAGES), {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp"})
         lock = json.loads((prepare.ROOT / "upstream-lock.json").read_text())
         self.assertEqual(set(lock), set(prepare.PACKAGES) | {"imgui"})
         for name, entry in lock.items():
@@ -67,6 +67,43 @@ class PackagesTest(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 prepare.archive_files(data)
 
+    def test_large_source_archive_exclusions(self):
+        data = archive([("root/code/api.c", b"code"), ("root/test/huge.model", b"model"),
+                        ("root/doc/readme.txt", b"docs")])
+        self.assertEqual(prepare.archive_files(data, exclude_directories=("test", "doc")),
+                         {"code/api.c": b"code"})
+        with self.assertRaises(ValueError):
+            prepare.archive_files(archive([("root/test/../../outside", b"bad")]),
+                                  exclude_directories=("test",))
+
+    def test_native_publication_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.a"
+            source.write_bytes(b"archive")
+            (root / "target.a").symlink_to(source)
+            with patch.object(prepare, "ROOT", root), self.assertRaisesRegex(ValueError, "symlink"):
+                prepare.publish_native_file(source, "target.a")
+            self.assertEqual(source.read_bytes(), b"archive")
+
+    def test_assimp_build_uses_pinned_zlib(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "assimp/build/zlib-test-host/libz.a"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"archive")
+            with patch.object(prepare, "ROOT", root), patch.object(prepare, "run") as run, \
+                    patch.object(prepare, "publish_native_file") as publish:
+                prepare.prepare_assimp(2, "test-host")
+            commands = [call.args[0] for call in run.call_args_list]
+            configure = commands[2]
+            for key in ("ZLIB_LIBRARY", "ZLIB_LIBRARY_REL", "ZLIB_LIBRARY_DBG"):
+                self.assertIn(f"-D{key}={archive}", configure)
+            self.assertIn(f"-DZLIB_INCLUDE_DIR={root / 'zlib/vendor/zlib'}", configure)
+            self.assertIn("-DASSIMP_BUILD_ZLIB=OFF", configure)
+            self.assertIn("-DASSIMP_BUILD_MINIZIP=ON", configure)
+            self.assertEqual(len(publish.call_args_list), 3)
+
     def test_offline_checksum_idempotence_and_modified_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -82,6 +119,8 @@ class PackagesTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "checksum mismatch"):
                     prepare.acquire(entry, cache, True)
                 (cache / entry["sha256"]).write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "size limit"):
+                    prepare.acquire({**entry, "max-download-bytes": len(data) - 1}, cache, True)
                 prepare.acquire(entry, cache, True)
                 prepare.acquire(entry, cache, True)
                 header = root / entry["destination"] / "api.h"
