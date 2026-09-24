@@ -933,6 +933,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/examples/47-binary64.gti"
   )
   add_test(
+    NAME numeric_boundaries_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/numeric_boundaries_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(numeric_boundaries_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME constexpr_aggregate_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_aggregate_runtime_test.py"

@@ -1,4 +1,5 @@
 #include <std/cthread>
+#include <std/atomic>
 
 std::once_flag flag{std::ONCE_FLAG_INIT};
 std::atomic<int32_t> initialized{0};

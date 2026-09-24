@@ -8,6 +8,13 @@ assertions.
 
 ## Primary Targets
 
+`numeric_boundaries_runtime` checks source-defined gcd/lcm/midpoint against
+independent native arithmetic oracles: exhaustive 8-bit input pairs, wider
+fixed-width boundary and deterministic bit-pattern pairs, and float/double
+extrema, subnormals, signed zeros, infinities, and NaNs. Its C++20/C++23
+O0/O1/O3 and ASan/UBSan matrix also verifies 14 unrepresentable-result failures
+with exact caller cleanup, constexpr gcd, and invalid generic arguments.
+
 `toy_engine_initializers` covers Gitea #1 and the 0.337 null-owner regression:
 temporary class construction in a member initializer, float/double field
 publication, empty and populated owners with fallible pointee cleanup, and
