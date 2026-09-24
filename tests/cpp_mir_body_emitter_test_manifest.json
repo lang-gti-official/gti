@@ -190,6 +190,14 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testToyEngineConstructorInitializers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFallibleFieldInitializerLimitation",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDependentFieldInitializerSchedule",
       "suite": "lifecycle"
     },

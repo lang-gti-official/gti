@@ -7697,6 +7697,8 @@ verifyMirProgramContracts(const MirProgram &program) {
       case SemanticType::UInt16:
       case SemanticType::UInt32:
       case SemanticType::UInt64:
+      case SemanticType::Float:
+      case SemanticType::Double:
       case SemanticType::Bool:
       case SemanticType::Char:
         return true;

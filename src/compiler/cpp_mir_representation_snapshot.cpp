@@ -909,7 +909,9 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
       for (const CppMirBodyEmissionIssue &issue : emission.issues) {
         retainMostSpecificIssue(issue);
         if (issue.kind == CppMirBodyEmissionIssueKind::
-                              MissingPartialConstructionRollbackMir) {
+                              MissingPartialConstructionRollbackMir ||
+            issue.kind == CppMirBodyEmissionIssueKind::
+                              MissingFieldInitializerFailureRouting) {
           sawKnownLimitation = true;
         } else if (issue.kind !=
                    CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary) {
@@ -926,7 +928,9 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
           for (const CppMirBodyEmissionIssue &issue : body.issues) {
             retainMostSpecificIssue(issue);
             if (issue.kind == CppMirBodyEmissionIssueKind::
-                                  MissingPartialConstructionRollbackMir) {
+                                  MissingPartialConstructionRollbackMir ||
+                issue.kind == CppMirBodyEmissionIssueKind::
+                                  MissingFieldInitializerFailureRouting) {
               sawKnownLimitation = true;
             } else if (issue.kind !=
                        CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary) {

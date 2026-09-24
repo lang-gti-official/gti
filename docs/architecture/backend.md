@@ -679,6 +679,12 @@ declared field must have its own explicit initializer in declaration order, each
 construction argument must be either an exact copy-load of one scalar
 constructor parameter or an exact source scalar literal, and the entry block
 must contain nothing but the named instructions and metadata boundaries.
+A failure-free scalar parameter-to-field constructor is also a valid ordinary
+target: its complete Load/Initialize/full-expression schedule proves the native
+overload, even when its conservative failure summary is set. Floating fields,
+like integer fields, must have explicit MIR Initialize stages; constructor
+metadata alone is not a substitute for that publication.
+
 A sibling field may share the schedule only through the exact parameter-copy
 proof, which publishes natively as well. A cleanup-free field carries no drop
 obligation and publishes through initializer metadata alone; an active-cleanup
@@ -699,6 +705,23 @@ defaults fail this proof. Folded or synthesized literals,
 other computations, call results, borrowed sources, concrete generic targets,
 base initializers, and partially claimed schedules stay in the MIR body
 schedule.
+
+Declaration-time owner initialization may retain a cleanup-only failure branch
+for an earlier completed field. Once the initializer schedule proves that its
+producer succeeds or contains failure, that branch is unreachable. The exact
+drop target, ownership transfer, Invoke/secondary-failure routing and cleanup
+boundary still require validation, but a pointee destructor's ability to fail
+does not make the dead branch executable. This permits multiple null owners of
+resources with fallible destructors without weakening live cleanup rules.
+
+Fallible ordinary function calls returning class values in declaration-time
+field initializers, including `std::make_unique<T>()`, remain unsupported. Their
+field MIR records the call, result publication and rollback, but the C++
+representation does not yet connect this failure to the enclosing construction
+boundary. They report `GTI-B0003`, not an internal compiler error. For an
+assignable nullable owner, initialize it to null and allocate in an explicit
+initialization method after construction. This is not full support for that
+initializer form and is tracked under M-FAIL/M-BACK in the implementation queue.
 
 Obligation-free class values in a move capture or an owning `Expected` payload
 remain concrete MIR values rather than backend-recognized library types. The

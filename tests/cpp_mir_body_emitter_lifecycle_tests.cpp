@@ -2,6 +2,144 @@
 
 namespace {
 
+void testToyEngineConstructorInitializers() {
+  const auto frontend =
+      analyzeWithStandardLibrary("toy-engine-initializers.gti", R"(
+#include <std/memory>
+mut int destroyed = 0;
+class Resource { public: Resource() {} ~Resource() { destroyed += 1; } };
+class Point { float x; public: Point(float value) : x(value) {} };
+class Camera { Point position; public: Camera() : position(Point(5.0)) {} };
+class Engine {
+  std::unique_ptr<Resource> first = nullptr;
+  std::unique_ptr<Resource> second = nullptr;
+public: Engine() {}
+};
+int main() { Camera camera = Camera(); Engine engine = Engine(); return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "toy engine initializer cases pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t constructedFields = 0;
+  std::size_t floatingStages = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+        frontend.mir, constructor);
+    constructedFields += bindings.size();
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            instruction.info.type != lang::SemanticType::Float)
+          continue;
+        ++floatingStages;
+        auto malformed = frontend.mir;
+        auto *changed = lang::findMirBody(
+            malformed,
+            {.kind = lang::MirBodyKind::Constructor, .owner = constructor.id});
+        for (auto &candidate : changed->blocks) {
+          std::erase_if(candidate.instructions, [&](const auto &item) {
+            return item.id == instruction.id;
+          });
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "removing an explicit floating field publication must "
+               "invalidate MIR");
+      }
+    }
+  }
+  expect(constructedFields == 1 && floatingStages == 1,
+         "the nested Point initializer must retain one exact floating "
+         "publication");
+  std::size_t cleanupMutations = 0;
+  for (const auto &owner : frontend.mir.classInstances()) {
+    bool mutated = false;
+    auto malformed = frontend.mir;
+    const lang::MirBodyAddress address{
+        .kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id};
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::Destructor) {
+          instruction.definedFailure.propagation =
+              lang::FailurePropagationKind::DirectCall;
+          mutated = true;
+        }
+      }
+    }
+    if (mutated) {
+      ++cleanupMutations;
+      expect(!lang::CppMirBodyEmitter(malformed, map)
+                  .initializerSchedule(address)
+                  .supported,
+             "unreachable owner cleanup must still reject forged propagation "
+             "metadata");
+    }
+  }
+  expect(cleanupMutations != 0,
+         "the null-owner case must exercise unreachable fallible cleanup");
+  expect(emitter.analyzeProgram().ready(),
+         "toy engine field and constructor initializers have complete MIR "
+         "emission");
+}
+
+void testFallibleFieldInitializerLimitation() {
+  const auto frontend =
+      analyzeWithStandardLibrary("fallible-field-initializer.gti", R"(
+#include <std/memory>
+class Resource { public: Resource() {} };
+class Application {
+  std::unique_ptr<Resource> resource = std::make_unique<Resource>();
+public: Application() {}
+};
+int main() { Application application = Application(); return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a fallible field initializer is valid GTI");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  bool found = false;
+  for (const auto &owner : frontend.mir.classInstances()) {
+    const lang::MirBodyAddress address{
+        .kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id};
+    const auto analysis =
+        lang::CppMirBodyEmitter(frontend.mir, map).analyze(address);
+    if (!hasIssue(analysis, lang::CppMirBodyEmissionIssueKind::
+                                MissingFieldInitializerFailureRouting))
+      continue;
+    found = true;
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget) {
+          instruction.functionTarget = 999999;
+        }
+      }
+    }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a corrupt call target remains invalid MIR, not a known limitation");
+  }
+  expect(found, "the unsupported field-call family must have a specific "
+                "limitation reason");
+  bool unsupported = false;
+  try {
+    (void)gti_test::emitCpp(frontend);
+  } catch (const lang::BackendUnsupportedError &error) {
+    unsupported =
+        std::string(error.what()).find("declaration-time field initializer") !=
+        std::string::npos;
+  }
+  expect(unsupported,
+         "the complete backend must report the limitation rather than an ICE");
+}
+
 void testOwningCheckedBodyEmitsWholeCleanupProof() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-owning-failure.gti", R"(
@@ -5597,6 +5735,10 @@ constexpr NamedTest kTests[] = {
     {"testOwningCheckedBodyEmitsWholeCleanupProof",
      testOwningCheckedBodyEmitsWholeCleanupProof},
     {"testRichFieldInitializerSchedule", testRichFieldInitializerSchedule},
+    {"testToyEngineConstructorInitializers",
+     testToyEngineConstructorInitializers},
+    {"testFallibleFieldInitializerLimitation",
+     testFallibleFieldInitializerLimitation},
     {"testDependentFieldInitializerSchedule",
      testDependentFieldInitializerSchedule},
     {"testContainedOwningFieldConstructor",

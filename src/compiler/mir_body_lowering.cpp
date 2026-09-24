@@ -202,6 +202,8 @@ public:
               initializer.arguments.size() == 1 &&
               field->info.type == initializer.targetType &&
               (isMirFixedWidthIntegerType(initializer.targetType) ||
+               initializer.targetType == SemanticType::Float ||
+               initializer.targetType == SemanticType::Double ||
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char) &&
               field->info.traits.drop == DropKind::Trivial &&
