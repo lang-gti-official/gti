@@ -276,6 +276,34 @@ platforms. Native `errno`, floating-point status flags, NaN payloads, and
 signaling-NaN behavior are not public APIs. These functions are runtime
 operations, not `constexpr`; binary64 overloads are not currently declared.
 
+### 7.3.2 Greatest Common Divisor, Least Common Multiple, And Midpoint
+
+`<std/numeric>` supplies source-defined `gcd<T>`, `lcm<T>`, and `midpoint<T>`.
+`gcd` and `lcm` accept each of the eight fixed-width integer types; their two
+arguments have the same exact type. `gcd` returns the nonnegative greatest
+common divisor, with `gcd(0, 0) == 0`. Negative inputs and signed minima are
+valid when the result fits `T`; for example, `gcd(INT_MIN, 2)` is 2. `gcd`
+remains usable in supported constant-evaluation contexts.
+
+`lcm` returns the nonnegative least common multiple; either zero input yields
+zero, including `lcm(0, 0)`. It divides by the gcd before multiplying. If a
+nonnegative gcd or lcm cannot fit `T`, ordinary checked arithmetic or conversion
+reports a defined failure after caller cleanup, rather than wrapping or
+returning a negative value. A failed required constant evaluation is diagnosed
+at compile time.
+
+Integral `midpoint(a, b)` returns the halfway value rounded toward `a`, without
+an overflowing intermediate, including opposite extrema. Float and double
+midpoints avoid spurious overflow for finite arguments and preserve subnormal
+accuracy; IEEE round-to-nearest/ties-to-even applies. Two negative zeros give
+negative zero, mixed zero signs give positive zero, equal-sign infinities give
+that infinity, opposite infinities give NaN, and a NaN input gives NaN without
+a payload guarantee. Inferred and explicit generic calls share this contract.
+`bool` and `char` are not numeric arguments for these templates.
+
+The existing `std::MAX_UINT64` constant is exactly 18446744073709551615, not
+the signed 64-bit maximum.
+
 ## 7.4 Allocation And Containers
 
 Public ownership and container classes retain logical state and policy in

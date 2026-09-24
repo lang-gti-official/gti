@@ -16,7 +16,7 @@
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "e1fb604aa2118418ee039a3e35f66674eb9ceba60b11fe20e63c5dd42f1786ed",
+    "stdlib/std/numeric.gti": "43b2aa059b32e75e94fbe672840c0cbff11e1f9e71bae235082c34bb048ef804",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
@@ -290,6 +290,14 @@
       "id": "numeric",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_numeric.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "numeric-boundaries",
+      "mode": "run",
+      "source": "tests/fixtures/numeric_boundaries.gti",
+      "native_sources": ["tests/fixtures/numeric_boundaries_oracle.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -838,6 +846,7 @@
       "source": "stdlib/std/numeric.gti",
       "status": "executable",
       "operations": [
+        "std::MAX_UINT64",
         "std::accumulate",
         "std::checked_add",
         "std::checked_mul",
@@ -856,9 +865,9 @@
         "std::wrapping_mul",
         "std::wrapping_sub"
       ],
-      "case_ids": ["numeric"],
-      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int32_t", "uint8_t"],
-      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py"]
+      "case_ids": ["numeric", "numeric-boundaries"],
+      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "float", "double"],
+      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py", "tests/numeric_boundaries_runtime_test.py", "tests/fixtures/numeric_boundaries.gti", "tests/fixtures/numeric_boundaries_oracle.cpp", "tests/fixtures/numeric_boundaries_failure.gti"]
     },
     {
       "id": "numeric.unsupported-hash-specializations",

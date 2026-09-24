@@ -1,0 +1,28 @@
+#include <std/numeric>
+#include <std/string>
+#include <std/vector>
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("cleaned"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard = Guard();
+  if (argc == 2) { std::println(std::gcd(int8_t(-128), int8_t(0))); }
+  if (argc == 3) { std::println(std::gcd(int16_t(-32768), int16_t(0))); }
+  if (argc == 4) { std::println(std::gcd(int32_t(-2147483648), int32_t(0))); }
+  if (argc == 5) { std::println(std::gcd(int64_t(-9223372036854775808), int64_t(0))); }
+  if (argc == 6) { std::println(std::lcm(int8_t(127), int8_t(2))); }
+  if (argc == 7) { std::println(std::lcm(int16_t(32767), int16_t(2))); }
+  if (argc == 8) { std::println(std::lcm(int32_t(2147483647), int32_t(2))); }
+  if (argc == 9) { std::println(std::lcm(int64_t(9223372036854775807), int64_t(2))); }
+  if (argc == 10) { std::println(std::lcm(uint8_t(255), uint8_t(2))); }
+  if (argc == 11) { std::println(std::lcm(uint16_t(65535), uint16_t(2))); }
+  if (argc == 12) { std::println(std::lcm(uint32_t(4294967295), uint32_t(2))); }
+  if (argc == 13) { std::println(std::lcm(uint64_t(18446744073709551615), uint64_t(2))); }
+  if (argc == 14) { std::println(std::lcm(int64_t(-9223372036854775808), int64_t(1))); }
+  if (argc == 15) { std::println(std::gcd(int64_t(-9223372036854775808), int64_t(-9223372036854775808))); }
+  return 42;
+}

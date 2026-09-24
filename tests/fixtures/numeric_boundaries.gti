@@ -1,0 +1,207 @@
+#include <std/numeric>
+
+// Independent native arithmetic oracles; no host function implements a GTI
+// operation. The byte-sized domains are exhaustive; wider domains mix edges
+// and deterministic full-width bit patterns.
+extern "C" {
+int8_t numeric_input_int8_t(int32_t index);
+int8_t numeric_gcd_int8_t(int8_t a, int8_t b);
+int8_t numeric_lcm_int8_t(int8_t a, int8_t b);
+int32_t numeric_gcd_fits_int8_t(int8_t a, int8_t b);
+int32_t numeric_lcm_fits_int8_t(int8_t a, int8_t b);
+int8_t numeric_midpoint_int8_t(int8_t a, int8_t b);
+uint8_t numeric_input_uint8_t(int32_t index);
+uint8_t numeric_gcd_uint8_t(uint8_t a, uint8_t b);
+uint8_t numeric_lcm_uint8_t(uint8_t a, uint8_t b);
+int32_t numeric_gcd_fits_uint8_t(uint8_t a, uint8_t b);
+int32_t numeric_lcm_fits_uint8_t(uint8_t a, uint8_t b);
+uint8_t numeric_midpoint_uint8_t(uint8_t a, uint8_t b);
+int16_t numeric_input_int16_t(int32_t index);
+int16_t numeric_gcd_int16_t(int16_t a, int16_t b);
+int16_t numeric_lcm_int16_t(int16_t a, int16_t b);
+int32_t numeric_gcd_fits_int16_t(int16_t a, int16_t b);
+int32_t numeric_lcm_fits_int16_t(int16_t a, int16_t b);
+int16_t numeric_midpoint_int16_t(int16_t a, int16_t b);
+uint16_t numeric_input_uint16_t(int32_t index);
+uint16_t numeric_gcd_uint16_t(uint16_t a, uint16_t b);
+uint16_t numeric_lcm_uint16_t(uint16_t a, uint16_t b);
+int32_t numeric_gcd_fits_uint16_t(uint16_t a, uint16_t b);
+int32_t numeric_lcm_fits_uint16_t(uint16_t a, uint16_t b);
+uint16_t numeric_midpoint_uint16_t(uint16_t a, uint16_t b);
+int32_t numeric_input_int32_t(int32_t index);
+int32_t numeric_gcd_int32_t(int32_t a, int32_t b);
+int32_t numeric_lcm_int32_t(int32_t a, int32_t b);
+int32_t numeric_gcd_fits_int32_t(int32_t a, int32_t b);
+int32_t numeric_lcm_fits_int32_t(int32_t a, int32_t b);
+int32_t numeric_midpoint_int32_t(int32_t a, int32_t b);
+uint32_t numeric_input_uint32_t(int32_t index);
+uint32_t numeric_gcd_uint32_t(uint32_t a, uint32_t b);
+uint32_t numeric_lcm_uint32_t(uint32_t a, uint32_t b);
+int32_t numeric_gcd_fits_uint32_t(uint32_t a, uint32_t b);
+int32_t numeric_lcm_fits_uint32_t(uint32_t a, uint32_t b);
+uint32_t numeric_midpoint_uint32_t(uint32_t a, uint32_t b);
+int64_t numeric_input_int64_t(int32_t index);
+int64_t numeric_gcd_int64_t(int64_t a, int64_t b);
+int64_t numeric_lcm_int64_t(int64_t a, int64_t b);
+int32_t numeric_gcd_fits_int64_t(int64_t a, int64_t b);
+int32_t numeric_lcm_fits_int64_t(int64_t a, int64_t b);
+int64_t numeric_midpoint_int64_t(int64_t a, int64_t b);
+uint64_t numeric_input_uint64_t(int32_t index);
+uint64_t numeric_gcd_uint64_t(uint64_t a, uint64_t b);
+uint64_t numeric_lcm_uint64_t(uint64_t a, uint64_t b);
+int32_t numeric_gcd_fits_uint64_t(uint64_t a, uint64_t b);
+int32_t numeric_lcm_fits_uint64_t(uint64_t a, uint64_t b);
+uint64_t numeric_midpoint_uint64_t(uint64_t a, uint64_t b);
+float numeric_input_float(int32_t index);
+double numeric_input_double(int32_t index);
+int32_t numeric_midpoint_float(float a, float b, float actual);
+int32_t numeric_midpoint_double(double a, double b, double actual);
+}
+
+constexpr int32_t negative_gcd = std::gcd(int32_t(-54), int32_t(-24));
+constexpr int32_t minimum_gcd = std::gcd(int32_t(-2147483648), int32_t(2));
+constexpr int32_t zero_gcd = std::gcd(int32_t(0), int32_t(0));
+
+bool check_int8_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    int8_t a = numeric_input_int8_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      int8_t b = numeric_input_int8_t(j);
+      if (std::midpoint<int8_t>(a, b) != numeric_midpoint_int8_t(a, b)) { return false; }
+      if (numeric_gcd_fits_int8_t(a, b) != 0 &&
+          std::gcd<int8_t>(a, b) != numeric_gcd_int8_t(a, b)) { return false; }
+      if (numeric_lcm_fits_int8_t(a, b) != 0 &&
+          std::lcm<int8_t>(a, b) != numeric_lcm_int8_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_uint8_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    uint8_t a = numeric_input_uint8_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      uint8_t b = numeric_input_uint8_t(j);
+      if (std::midpoint<uint8_t>(a, b) != numeric_midpoint_uint8_t(a, b)) { return false; }
+      if (numeric_gcd_fits_uint8_t(a, b) != 0 &&
+          std::gcd<uint8_t>(a, b) != numeric_gcd_uint8_t(a, b)) { return false; }
+      if (numeric_lcm_fits_uint8_t(a, b) != 0 &&
+          std::lcm<uint8_t>(a, b) != numeric_lcm_uint8_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_int16_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    int16_t a = numeric_input_int16_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      int16_t b = numeric_input_int16_t(j);
+      if (std::midpoint<int16_t>(a, b) != numeric_midpoint_int16_t(a, b)) { return false; }
+      if (numeric_gcd_fits_int16_t(a, b) != 0 &&
+          std::gcd<int16_t>(a, b) != numeric_gcd_int16_t(a, b)) { return false; }
+      if (numeric_lcm_fits_int16_t(a, b) != 0 &&
+          std::lcm<int16_t>(a, b) != numeric_lcm_int16_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_uint16_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    uint16_t a = numeric_input_uint16_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      uint16_t b = numeric_input_uint16_t(j);
+      if (std::midpoint<uint16_t>(a, b) != numeric_midpoint_uint16_t(a, b)) { return false; }
+      if (numeric_gcd_fits_uint16_t(a, b) != 0 &&
+          std::gcd<uint16_t>(a, b) != numeric_gcd_uint16_t(a, b)) { return false; }
+      if (numeric_lcm_fits_uint16_t(a, b) != 0 &&
+          std::lcm<uint16_t>(a, b) != numeric_lcm_uint16_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_int32_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    int32_t a = numeric_input_int32_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      int32_t b = numeric_input_int32_t(j);
+      if (std::midpoint<int32_t>(a, b) != numeric_midpoint_int32_t(a, b)) { return false; }
+      if (numeric_gcd_fits_int32_t(a, b) != 0 &&
+          std::gcd<int32_t>(a, b) != numeric_gcd_int32_t(a, b)) { return false; }
+      if (numeric_lcm_fits_int32_t(a, b) != 0 &&
+          std::lcm<int32_t>(a, b) != numeric_lcm_int32_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_uint32_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    uint32_t a = numeric_input_uint32_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      uint32_t b = numeric_input_uint32_t(j);
+      if (std::midpoint<uint32_t>(a, b) != numeric_midpoint_uint32_t(a, b)) { return false; }
+      if (numeric_gcd_fits_uint32_t(a, b) != 0 &&
+          std::gcd<uint32_t>(a, b) != numeric_gcd_uint32_t(a, b)) { return false; }
+      if (numeric_lcm_fits_uint32_t(a, b) != 0 &&
+          std::lcm<uint32_t>(a, b) != numeric_lcm_uint32_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_int64_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    int64_t a = numeric_input_int64_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      int64_t b = numeric_input_int64_t(j);
+      if (std::midpoint<int64_t>(a, b) != numeric_midpoint_int64_t(a, b)) { return false; }
+      if (numeric_gcd_fits_int64_t(a, b) != 0 &&
+          std::gcd<int64_t>(a, b) != numeric_gcd_int64_t(a, b)) { return false; }
+      if (numeric_lcm_fits_int64_t(a, b) != 0 &&
+          std::lcm<int64_t>(a, b) != numeric_lcm_int64_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+bool check_uint64_t() {
+  for (mut int32_t i = 0; i < 256; i++) {
+    uint64_t a = numeric_input_uint64_t(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      uint64_t b = numeric_input_uint64_t(j);
+      if (std::midpoint<uint64_t>(a, b) != numeric_midpoint_uint64_t(a, b)) { return false; }
+      if (numeric_gcd_fits_uint64_t(a, b) != 0 &&
+          std::gcd<uint64_t>(a, b) != numeric_gcd_uint64_t(a, b)) { return false; }
+      if (numeric_lcm_fits_uint64_t(a, b) != 0 &&
+          std::lcm<uint64_t>(a, b) != numeric_lcm_uint64_t(a, b)) { return false; }
+    }
+  }
+  return true;
+}
+
+int main() {
+  if (std::MAX_UINT64 != uint64_t(18446744073709551615)) { return 21; }
+  if (negative_gcd != 6 || minimum_gcd != 2 || zero_gcd != 0) { return 20; }
+  if (!check_int8_t()) { return 1; }
+  if (!check_uint8_t()) { return 2; }
+  if (!check_int16_t()) { return 3; }
+  if (!check_uint16_t()) { return 4; }
+  if (!check_int32_t()) { return 5; }
+  if (!check_uint32_t()) { return 6; }
+  if (!check_int64_t()) { return 7; }
+  if (!check_uint64_t()) { return 8; }
+  for (mut int32_t i = 0; i < 256; i++) {
+    float a = numeric_input_float(i);
+    double x = numeric_input_double(i);
+    for (mut int32_t j = 0; j < 256; j++) {
+      float b = numeric_input_float(j);
+      double y = numeric_input_double(j);
+      if (numeric_midpoint_float(a, b, std::midpoint<float>(a, b)) == 0) { return 30; }
+      if (numeric_midpoint_double(x, y, std::midpoint<double>(x, y)) == 0) { return 31; }
+    }
+  }
+  return 0;
+}

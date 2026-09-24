@@ -35,7 +35,17 @@ and unsigned integer type. Checked arithmetic returns
 `expected<T, std::arithmetic_errc>` instead of invoking undefined behavior or
 silently changing overflow policy.
 
-`gcd`, `lcm`, and `midpoint` are constrained integral utilities. `accumulate`,
+`gcd` and `lcm` return nonnegative results for signed or unsigned integer
+inputs. `gcd(0, 0)` is zero, and either zero input makes `lcm` zero. A result
+that cannot fit the argument type reports a checked failure after cleanup.
+
+`midpoint` supports integers, `float`, and `double`. Integer ties round toward
+the first argument without overflowing an intermediate; floating midpoints
+avoid spurious overflow and retain subnormal accuracy. For example,
+`midpoint(int32_t(5), int32_t(2))` is 4, while reversing the inputs gives 3.
+The `MAX_UINT64` constant is 18446744073709551615.
+
+`accumulate`,
 `inner_product`, and `transform_reduce` consume structural input iterators and
 exact callables. The `lerp` overload family includes built-in floating-point
 arithmetic and source-defined vector-space values.

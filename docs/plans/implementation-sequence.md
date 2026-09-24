@@ -2640,6 +2640,19 @@ name recognition.
 
 ### Active Request: Complete The Existing Standard Library
 
+The numeric-boundary repair completes the existing gcd/lcm/midpoint operations'
+edge semantics in ordinary GTI: signed inputs, zero lcm, full-width midpoint,
+floating overflow/subnormals, and unrepresentable-result cleanup. It also
+corrects the existing MAX_UINT64 constant. The independent boundary oracle,
+surface fixture, and failure matrix own this evidence; this is not completion
+of the remaining ownership, container, iterator, utility, or hash families.
+Local macOS validation passed all seven numeric configurations in both the
+build tree and a fresh installed toolchain, 20 selected compiler/library
+CTest gates, the CLI workflow, and all 72 reference examples plus the static
+site checks. The project workflow passed in an isolated HEAD snapshot with
+the numeric changes overlaid; its original worktree run could not find the
+user-deleted game-engine example. Linux/Windows execution is not claimed.
+
 The current user-requested campaign includes **every operation already present
 in the shipped stdlib, except further C-style thread completion**, not merely
 the executable entries in the surface manifest. Declaration-only functions,

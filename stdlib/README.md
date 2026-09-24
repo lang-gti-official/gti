@@ -349,6 +349,15 @@ supported boundary. A future explicitly opt-in low-level API may expose
 selected capabilities, but its spelling and manual-lifetime contract remain
 undecided.
 
+## Numeric boundary utilities
+
+The ordinary `<std/numeric>` gcd/lcm/midpoint templates handle their full
+fixed-width domains: gcd and lcm return nonnegative results, zero inputs are
+defined, and an unrepresentable result takes checked failure after cleanup.
+Integral midpoint avoids intermediate overflow and rounds toward its first
+argument; float/double midpoint preserves finite and subnormal results without
+spurious overflow. See [Standard Library §7.3.2](../docs/language/standard-library.md#732-greatest-common-divisor-least-common-multiple-and-midpoint).
+
 ## Binary32 mathematics
 
 `<std/cmath>` implements its complete declared `float` surface: `abs`,

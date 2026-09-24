@@ -16,7 +16,7 @@ Result integer_checked_mul<Result, T>(T left, T right);
 }
 
 namespace std {
-  constexpr uint64_t MAX_UINT64 = 9223372036854775807;
+  constexpr uint64_t MAX_UINT64 = uint64_t(18446744073709551615);
 
   enum class arithmetic_errc {
     result_out_of_range,
@@ -330,25 +330,52 @@ namespace std {
     return initial;
   }
 
+  /// Nonnegative greatest common divisor; gcd(0, 0) is zero. The result must
+  /// fit T. Keep signed remainders until the end so a minimum signed input
+  /// does not fail when its greatest common divisor is representable.
   constexpr T gcd<std::integral T>(mut T left, mut T right) {
-    if (left == T(0) && right == T(0)) {
-      return T(0);
-    }
     while (right != T(0)) {
       T remainder = T(left % right);
       left = right;
       right = remainder;
     }
 
+    if (left < T(0)) { return T(T(0) - left); }
     return left;
   }
 
+  /// Nonnegative least common multiple; either zero input gives zero.
+  /// A result outside T takes the ordinary checked numeric failure path.
   T lcm<std::integral T>(T left, T right) {
-    return (left / std::gcd(left, right)) * right;
+    if (left == T(0) || right == T(0)) { return T(0); }
+    T product = T((left / std::gcd(left, right)) * right);
+    if (product < T(0)) { return T(T(0) - product); }
+    return product;
   }
 
+  /// Overflow-free halfway value. Integral ties round toward left. Floating
+  /// inputs follow GTI IEEE arithmetic, including signed zero and nonfinites.
   T midpoint<std::numeric T>(T left, T right) {
-    return (left + right) / 2;
+    // This ordinary constant condition keeps explicit midpoint<T> valid for
+    // every numeric T without requiring type reflection or specialization.
+    if (T(T(1) / T(2)) == T(0)) {
+      T left_half = T(left / T(2));
+      T right_half = T(right / T(2));
+      T remainder = T((left - left_half * T(2)) +
+                      (right - right_half * T(2)));
+      T remainder_half = T(remainder / T(2));
+      T result = T(left_half + right_half + remainder_half);
+      T odd = T(remainder - remainder_half * T(2));
+      if (odd > T(0) && left > right) { return T(result + T(1)); }
+      if (odd < T(0) && left < right) { return T(result - T(1)); }
+      return result;
+    }
+    // A finite sum can be halved directly, preserving subnormal accuracy.
+    // If addition overflows, halving each finite input is exact. Floating
+    // status flags are not observable GTI state; no integer uses this branch.
+    T sum = T(left + right);
+    if (T(sum - sum) == T(0)) { return T(sum / T(2)); }
+    return T(left / T(2) + right / T(2));
   }
 
   namespace detail {
