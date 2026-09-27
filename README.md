@@ -1,9 +1,9 @@
 # GTI
 
 <p align="center">
-  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/lukeh/gti-internal/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
-  <a href="https://git.internal.howetotech.dev/lukeh/gti-internal/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -136,7 +136,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://git.internal.howetotech.dev/lukeh/gti-internal.git gti
+git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
 cd gti
 cmake -S . -B build -G Ninja
 cmake --build build --parallel 4
@@ -357,7 +357,7 @@ language server, standard library, runtime, and native Tree-sitter parser:
 ```lua
 return {
   {
-    "https://git.internal.howetotech.dev/lukeh/gti-internal.git",
+    "https://git.internal.howetotech.dev/gti-lang/gti.git",
     name = "gti",
     version = "*",
   },

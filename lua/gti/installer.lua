@@ -1,7 +1,7 @@
 local M = {}
 
 local release_server = "https://git.internal.howetotech.dev"
-local repository = "lukeh/gti-internal"
+local repository = "gti-lang/gti"
 
 local function release_url(tag, asset)
   return string.format(

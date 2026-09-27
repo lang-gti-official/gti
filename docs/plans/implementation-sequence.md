@@ -2778,7 +2778,7 @@ acceptance baseline. Production compiler and runtime code were unchanged by
 that merge.
 
 The canonical remote is now
-`https://git.internal.howetotech.dev/lukeh/gti-internal.git`. Its prepared
+`https://git.internal.howetotech.dev/gti-lang/gti.git`. Its prepared
 `codex/gitea-primary-migration` branch is integrated with the newer stdlib
 checkpoints, retaining their changes and advancing the installer/release fix
 to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea owns release
@@ -2879,7 +2879,7 @@ Local stdlib implementation and validation continue; remote reconciliation and
 publication need a working canonical HTTPS endpoint.
 
 The 2026-09-24 publication follow-up uses the user's replacement canonical
-endpoint, `https://git.internal.howetotech.dev/lukeh/gti-internal.git`.
+endpoint, `https://git.internal.howetotech.dev/gti-lang/gti.git`.
 Fetching now succeeds and the destination was reconciled before publication;
 the retained engine-embedding branch remains untouched. Repository CI fixes
 cover build-tree resource discovery in release tests, Linux linker wrapping
