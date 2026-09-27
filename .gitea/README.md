@@ -1,7 +1,7 @@
 # GTI on Gitea Actions
 
 The repository at
-`https://git.internal.howetotech.dev/lukeh/gti-internal` is GTI's canonical
+`https://git.internal.howetotech.dev/gti-lang/gti` is GTI's canonical
 Git host. Gitea owns branches, pull requests, CI, tags, nightly builds, stable
 releases, and release assets. The workflows in `.gitea/workflows/` do not rely
 on a GitHub mirror or on GitHub-created tags.

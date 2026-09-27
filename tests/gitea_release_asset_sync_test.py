@@ -56,21 +56,21 @@ def main() -> None:
                 return {"id": 91, "assets": published}
             return None
 
-        stale = module.sync_assets("lukeh/gti-internal", "nightly", root, request)
+        stale = module.sync_assets("gti-lang/gti", "nightly", root, request)
         expect(
             calls
             == [
                 (
                     "GET",
-                    "/repos/lukeh/gti-internal/releases/tags/nightly",
+                    "/repos/gti-lang/gti/releases/tags/nightly",
                 ),
                 (
                     "DELETE",
-                    "/repos/lukeh/gti-internal/releases/91/assets/4",
+                    "/repos/gti-lang/gti/releases/91/assets/4",
                 ),
                 (
                     "DELETE",
-                    "/repos/lukeh/gti-internal/releases/91/assets/5",
+                    "/repos/gti-lang/gti/releases/91/assets/5",
                 ),
             ],
             "only stale Gitea assets may be removed, in deterministic order",
@@ -89,7 +89,7 @@ def main() -> None:
         empty_calls: list[tuple[str, str]] = []
         try:
             module.sync_assets(
-                "lukeh/gti-internal",
+                "gti-lang/gti",
                 "nightly",
                 empty,
                 lambda method, path: empty_calls.append((method, path)),

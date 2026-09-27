@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 
-CANONICAL_ROOT = "https://git.internal.howetotech.dev/lukeh/gti-internal"
+CANONICAL_ROOT = "https://git.internal.howetotech.dev/gti-lang/gti"
 HISTORICAL_EXCEPTIONS = {
     "docs/plans/compiler-structural-baseline.json",
 }
@@ -100,7 +100,7 @@ def main() -> None:
     expect(
         'local release_server = "https://git.internal.howetotech.dev"'
         in installer
-        and 'local repository = "lukeh/gti-internal"' in installer,
+        and 'local repository = "gti-lang/gti"' in installer,
         "toolchain installer is not pinned to canonical Gitea releases",
     )
 
