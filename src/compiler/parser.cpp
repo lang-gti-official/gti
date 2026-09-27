@@ -370,64 +370,107 @@ private:
   }
 
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
-    consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before declaration attributes.");
-    consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before declaration attributes.");
-    if (match({TokenKind::UNSAFE})) {
-      Token attribute = previous();
-      consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after unsafe attribute.");
-      consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after unsafe attribute.");
-      if (linkage != LanguageLinkage::Gti || currentClassName ||
-          !isTypedDeclaration()) {
-        throw error(attribute,
-                    "[[unsafe]] requires a namespace-scope GTI function.");
+    std::optional<NativeCArrayAttribute> nativeCArray;
+    std::optional<NativeLinkNameAttribute> nativeLinkName;
+    bool parsedNativeFunctionAttribute = false;
+    while (true) {
+      consume(TokenKind::LEFT_BRACKET,
+              "Expect '[[' before declaration attributes.");
+      consume(TokenKind::LEFT_BRACKET,
+              "Expect '[[' before declaration attributes.");
+      if (match({TokenKind::UNSAFE})) {
+        Token attribute = previous();
+        if (parsedNativeFunctionAttribute) {
+          throw error(attribute,
+                      "[[unsafe]] cannot be combined with a native function "
+                      "attribute.");
+        }
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after unsafe attribute.");
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after unsafe attribute.");
+        if (linkage != LanguageLinkage::Gti || currentClassName ||
+            !isTypedDeclaration()) {
+          throw error(attribute,
+                      "[[unsafe]] requires a namespace-scope GTI function.");
+        }
+        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                                std::nullopt, std::nullopt,
+                                std::move(attribute));
       }
-      return typedDeclaration(true, std::nullopt, false, false, true, linkage,
-                              std::nullopt, std::move(attribute));
-    }
-    Token first =
-        consume(TokenKind::IDENTIFIER, "Expect an attribute name after '[['.");
-    if (match({TokenKind::LEFT_PAREN})) {
-      if (first.lexeme != "c_array") {
+      Token first = consume(TokenKind::IDENTIFIER,
+                            "Expect an attribute name after '[['.");
+      if (first.lexeme == "c_array" || first.lexeme == "link_name") {
+        parsedNativeFunctionAttribute = true;
+        consume(TokenKind::LEFT_PAREN,
+                "Expect '(' after native function attribute '" + first.lexeme +
+                    "'.");
+        if (first.lexeme == "c_array") {
+          if (nativeCArray) {
+            throw error(first, "Duplicate [[c_array(...)]] attribute.");
+          }
+          Token count = consume(
+              TokenKind::IDENTIFIER,
+              "Expect the count out-parameter name in '[[c_array(...)]]'.");
+          nativeCArray =
+              NativeCArrayAttribute{.attribute = std::move(first),
+                                    .countParameter = std::move(count)};
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the c_array count parameter.");
+        } else {
+          if (nativeLinkName) {
+            throw error(first, "Duplicate [[link_name(...)]] attribute.");
+          }
+          Token symbol =
+              consume(TokenKind::STRING_LITERAL,
+                      "Expect a quoted native symbol in '[[link_name(...)]]'.");
+          nativeLinkName = NativeLinkNameAttribute{
+              .attribute = std::move(first), .symbol = std::move(symbol)};
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the link_name symbol.");
+        }
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after the native function attribute.");
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after the native function attribute.");
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          continue;
+        }
+        if (!isTypedDeclaration()) {
+          throw error(peek(), "A native function attribute must annotate a "
+                              "function declaration.");
+        }
+        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                                std::move(nativeCArray),
+                                std::move(nativeLinkName));
+      }
+      if (check(TokenKind::LEFT_PAREN)) {
         throw error(first, "Unknown function attribute '[[" + first.lexeme +
                                "(...)]]'.");
       }
-      Token count =
-          consume(TokenKind::IDENTIFIER,
-                  "Expect the count out-parameter name in '[[c_array(...)]]'.");
-      consume(TokenKind::RIGHT_PAREN,
-              "Expect ')' after the c_array count parameter.");
-      consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after the c_array attribute.");
-      consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after the c_array attribute.");
-      if (!isTypedDeclaration()) {
-        throw error(peek(), "[[c_array(...)]] must annotate a function "
-                            "declaration.");
+      if (parsedNativeFunctionAttribute) {
+        throw error(first, "Only [[c_array(...)]] and [[link_name(...)]] may "
+                           "be combined on a native function.");
       }
-      return typedDeclaration(
-          true, std::nullopt, false, false, true, linkage,
-          NativeCArrayAttribute{.attribute = std::move(first),
-                                .countParameter = std::move(count)});
-    }
 
-    std::vector<Token> attributes;
-    attributes.emplace_back(std::move(first));
-    while (match({TokenKind::COMMA})) {
-      attributes.emplace_back(consume(TokenKind::IDENTIFIER,
-                                      "Expect an attribute name after '[['."));
+      std::vector<Token> attributes;
+      attributes.emplace_back(std::move(first));
+      while (match({TokenKind::COMMA})) {
+        attributes.emplace_back(consume(
+            TokenKind::IDENTIFIER, "Expect an attribute name after '[['."));
+      }
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after class or interface attributes.");
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after class or interface attributes.");
+      if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+                  TokenKind::UNION})) {
+        throw error(peek(), "These attributes apply only to class, "
+                            "struct, interface, or union declarations.");
+      }
+      return classDeclaration(std::move(attributes), previous());
     }
-    consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after class or interface attributes.");
-    consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after class or interface attributes.");
-    if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
-                TokenKind::UNION})) {
-      throw error(peek(), "These attributes apply only to class, "
-                          "struct, interface, or union declarations.");
-    }
-    return classDeclaration(std::move(attributes), previous());
   }
 
   StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
@@ -543,6 +586,7 @@ private:
       bool allowMutableReceiver = false, bool allowOperators = false,
       bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeAttribute = std::nullopt) {
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
@@ -610,7 +654,8 @@ private:
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
-          std::move(nativeCArray), std::move(unsafeAttribute));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeAttribute));
     }
 
     if (operatorName) {
@@ -628,6 +673,10 @@ private:
     if (nativeCArray) {
       throw error(nativeCArray->attribute,
                   "[[c_array(...)]] must annotate a function declaration.");
+    }
+    if (nativeLinkName) {
+      throw error(nativeLinkName->attribute,
+                  "[[link_name(...)]] must annotate a function declaration.");
     }
     if (unsafeAttribute) {
       throw error(*unsafeAttribute,
@@ -656,6 +705,7 @@ private:
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeAttribute = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
@@ -736,7 +786,8 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray), std::move(unsafeAttribute));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeAttribute));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -747,7 +798,8 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::nullopt, linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray), std::move(unsafeAttribute));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeAttribute));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -759,7 +811,8 @@ private:
         std::move(staticKeyword), std::move(virtualKeyword),
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
-        std::move(nativeCArray), std::move(unsafeAttribute));
+        std::move(nativeCArray), std::move(nativeLinkName),
+        std::move(unsafeAttribute));
   }
 
   StmtPtr conversionOperatorDeclaration(

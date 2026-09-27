@@ -64,11 +64,12 @@ the plan's one-active-implementation rule.
    a native error, since Clang does not always mark recovered declarations —
    is skipped with its native error surfaced verbatim, keeping
    per-declaration fail-soft reading without trusting recovery output. The
-   same conservatism applies to ABI-affecting facts the bounded surface
-   cannot yet carry: assembler labels rename the link symbol, so importing
-   the C name would bind a different function; non-C calling conventions
-   change the call ABI; layout attributes change what Clang computed. Each
-   refuses with its reason until C-06 preserves such facts as model data.
+   same conservatism applies to ABI-affecting facts. A portable assembler
+   label is preserved through GTI's `[[link_name]]` contract; a label that is
+   not a portable C identifier still refuses rather than being approximated.
+   Non-C calling conventions change the call ABI, and layout attributes change
+   what Clang computed, so those forms continue to refuse with their exact
+   reasons until a language surface can preserve them.
 
 ## License
 

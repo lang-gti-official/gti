@@ -237,22 +237,22 @@ int with_const_array(const int values[], int count);
          "parameter array decay should preserve the element's const");
 }
 
-// ABI-affecting native facts the bounded surface cannot express are refused,
-// never silently misread: packed layouts degrade, assembler labels skip, and
-// typedef'd array parameters decay exactly as C does.
+// ABI-affecting native facts are either preserved or refused, never silently
+// misread: packed layouts degrade, portable assembler labels become link-name
+// metadata, and typedef'd array parameters decay exactly as C does.
 void testReaderAbiSafetyGates() {
   const lang::bindgen::ReadResult read = readC(R"(
 struct Squeezed { int a; int b; } __attribute__((packed));
-int renamed_symbol(int value) __asm__("_actual_symbol");
+int renamed_symbol(int value) __asm__("actual_symbol");
 typedef int Row[4];
 int sum_row(Row row);
 )");
   expect(read.usable(), "the ABI-safety header should read");
   const std::string printed = lang::bindgen::printNativeModel(read.model);
-  // C-06: the assembler label is a model fact; the planner owns the
-  // rejection so nothing is silently misread and nothing is lost.
+  // C-06: the assembler label is a model fact; link_name preserves it instead
+  // of silently calling the header spelling.
   expect(contains(printed, "function renamed_symbol(value: i32) -> i32 "
-                           "[asm \"_actual_symbol\"]"),
+                           "[asm \"actual_symbol\"]"),
          "an assembler label should model as a function fact");
   expect(contains(printed, "function sum_row(row: ptr(i32)) -> i32"),
          "a typedef'd array parameter should decay to its element pointer");
@@ -260,10 +260,10 @@ int sum_row(Row row);
       lang::bindgen::planBindings(read.model, {});
   const lang::bindgen::BindingItem *renamed = findItem(plan, "renamed_symbol");
   expect(renamed != nullptr &&
-             renamed->kind == lang::bindgen::BindingItemKind::Skipped &&
-             contains(renamed->reason, "assembler label '_actual_symbol'"),
-         "the planner should skip the assembler-labeled function with its "
-         "reason");
+             renamed->kind == lang::bindgen::BindingItemKind::Function &&
+             renamed->linkName == "actual_symbol",
+         "the planner should retain a portable assembler label as the exact "
+         "link symbol");
   // C-06: the layout attribute is a model fact, so the degradation reason
   // names which attribute rather than saying "an attribute".
   expect(contains(printed, "record Squeezed [packed]"),
@@ -897,8 +897,9 @@ void testSourceProvenanceAndImportPolicy() {
 
 // C-07: opt-in policy. Allow/deny narrow the import by name while excluded
 // declarations still resolve uses exactly like out-of-policy ones; a rename
-// gives a type whose C spelling GTI cannot use a usable name; and a declared
-// pointer-plus-count contract emits `[[c_array(count)]]`, including the
+// gives a declaration a usable GTI source name while functions retain their C
+// symbol through `[[link_name]]`; and a declared pointer-plus-count contract
+// emits `[[c_array(count)]]`, including the
 // two-level result form the bounded surface otherwise refuses.
 void testOptInImportPolicy() {
   const std::string header = R"(
@@ -945,21 +946,18 @@ int lib_public(int value);
            "uses of the renamed record should spell the new name");
   }
   {
-    // A function's GTI name is its link symbol, so renaming one is refused
-    // rather than silently binding a different symbol.
+    // A function rename changes only its GTI source spelling; link_name keeps
+    // the original C symbol exact.
     lang::bindgen::BindingOptions options;
     options.renames.emplace("lib_public", "lib_renamed");
     const lang::bindgen::BindgenResult result =
         lang::bindgen::runCBindgen(header, "lib.h", options);
-    expect(contains(result.gtiSource, "int32_t lib_public(int32_t value)"),
-           "a function keeps its C name regardless of a rename entry");
-    bool refused = false;
-    for (const lang::bindgen::ReaderDiagnostic &diagnostic :
-         result.diagnostics) {
-      refused = refused ||
-                contains(diagnostic.message, "'lib_public' names a function");
-    }
-    expect(refused, "renaming a function should report why it cannot apply");
+    expect(contains(result.gtiSource, "[[link_name(\"lib_public\")]] int32_t "
+                                      "lib_renamed(int32_t value)"),
+           "a renamed function should expose its GTI name and retain its C "
+           "link symbol");
+    expect(result.plan.policyProblems.empty(),
+           "a matched function rename should be accepted policy");
   }
   {
     lang::bindgen::BindingOptions options;
@@ -1013,6 +1011,7 @@ int lib_public(int value);
   lang::bindgen::BindingOptions options;
   options.deny.push_back({"lib_internal_*"});
   options.renames.emplace("lib__internal", "LibInternal");
+  options.renames.emplace("lib_points", "points");
   options.arrayReturns.push_back({"lib_points", "count"});
   options.arrayReturns.push_back({"lib_handles", "count"});
   const lang::bindgen::BindgenResult configured =

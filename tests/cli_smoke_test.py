@@ -437,15 +437,17 @@ def main():
             "namespace native {\n"
             "struct gti_c_string_view {};\n"
             'extern "C" {\n'
-            "  int32_t gti_test_add(int32_t left, int32_t right);\n"
-            "  int32_t gti_test_length(std::string_view value);\n"
-            "  double gti_test_scale(double value);\n"
+            '  [[link_name("gti_test_add")]] int32_t add('
+            "int32_t left, int32_t right);\n"
+            '  [[link_name("gti_test_length")]] int32_t length('
+            "std::string_view value);\n"
+            '  [[link_name("gti_test_scale")]] double scale(double value);\n'
             "}\n"
             "}\n"
             "int main() {\n"
-            "  if (native::gti_test_add(20, 22) == 42 and "
-            'native::gti_test_length("hello") == 5 and '
-            "native::gti_test_scale(2.0d) == 3.0d) { return 0; }\n"
+            "  if (native::add(20, 22) == 42 and "
+            'native::length("hello") == 5 and '
+            "native::scale(2.0d) == 3.0d) { return 0; }\n"
             "  return 1;\n"
             "}\n",
             encoding="utf-8",

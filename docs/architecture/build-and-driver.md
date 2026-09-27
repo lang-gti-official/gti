@@ -518,17 +518,19 @@ undefines = ["COUNTER_TRACE"]     # -U likewise
 # Opt-in import policy (C-07); every entry joins the model identity.
 allow = ["counter_*"]                 # import only matching declarations
 deny = ["counter_internal_*"]         # never import matching declarations
-rename = { counter__impl = "CounterImpl" }   # types and constants only
+rename = { counter_open = "open", counter__impl = "CounterImpl" }
 array-returns = [{ function = "counter_all", count = "count" }]
 ```
 
 `allow`/`deny` patterns are an exact name or one trailing `*`. An excluded
 declaration still resolves uses exactly like a system-provenance one.
-`rename` gives a type or constant whose C spelling GTI cannot use a usable
-name; functions are refused because a function's GTI name is its link
-symbol. `array-returns` declares the pointer-plus-count contract a C header
-cannot state, emitting `[[c_array(count)]]` after the planner validates the
-language's rule. A configured entry that matches nothing is reported.
+`rename` gives a declaration a usable GTI source name. A renamed function
+retains its original C symbol through `[[link_name("...")]]`; types and
+constants continue to replace their source spelling directly. Portable
+assembler labels use the same function metadata. `array-returns` declares the
+pointer-plus-count contract a C header cannot state, emitting
+`[[c_array(count)]]` after the planner validates the language's rule. A
+configured entry that matches nothing is reported.
 
 During `gti build`, `check`, `run`, and `test`, the driver generates GTI
 declarations from the header with the same pipeline as `gti bindgen`

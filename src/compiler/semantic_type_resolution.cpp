@@ -5579,6 +5579,24 @@ auto SemanticVisitor::Impl::validateNativeCArrayAttribute(
   }
 }
 
+auto SemanticVisitor::Impl::validateNativeLinkNameAttribute(
+    const FunctionDecl &function) -> void {
+  if (!function.nativeLinkName()) {
+    return;
+  }
+  const NativeLinkNameAttribute &attribute = *function.nativeLinkName();
+  if (!function.hasCLinkage()) {
+    report(attribute.attribute,
+           "[[link_name(\"symbol\")]] is valid only on an extern \"C\" "
+           "function declaration.",
+           "GTI-S2054");
+    return;
+  }
+  (void)validateNativeCIdentifierSpelling(attribute.name(), attribute.symbol,
+                                          "GTI-S2054", "extern C link name",
+                                          true, true, true);
+}
+
 auto SemanticVisitor::Impl::validateExternCFunction(
     const FunctionDecl &function, bool methodDeclaration,
     const SemanticType &returnType) -> void {
@@ -5589,15 +5607,24 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   const auto fail = [&](const Token &location, std::string message) {
     report(location, std::move(message), "GTI-S2054");
   };
-  (void)validateNativeCIdentifier(function.name(), "GTI-S2054",
-                                  "extern C symbol", true, true, true);
+  const FunctionInfo *functionInfo = semanticModel.findFunction(function);
+  const std::string_view externalSymbol =
+      functionInfo == nullptr ? std::string_view(function.name().lexeme)
+                              : std::string_view(functionInfo->externalSymbol);
+  const Token &externalLocation = function.nativeLinkName()
+                                      ? function.nativeLinkName()->symbol
+                                      : function.name();
+  if (!function.nativeLinkName()) {
+    (void)validateNativeCIdentifier(function.name(), "GTI-S2054",
+                                    "extern C symbol", true, true, true);
+  }
   if (methodDeclaration || currentClass) {
     fail(function.name(),
          "extern \"C\" declarations must be namespace-scope free "
          "functions.");
   }
-  if (function.name().lexeme == "main") {
-    fail(function.name(),
+  if (externalSymbol == "main") {
+    fail(externalLocation,
          "The C symbol 'main' is reserved for the GTI entry point.");
   }
   if (function.body() || function.isPure()) {
@@ -5661,25 +5688,29 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   }
 
   const auto [previous, inserted] =
-      externCSymbols.emplace(function.name().lexeme, &function);
+      externCSymbols.emplace(std::string(externalSymbol), &function);
   if (!inserted && previous->second != &function) {
     Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2054", DiagnosticPhase::Semantics, function.name(),
-        "C symbol '" + function.name().lexeme +
+        "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
+        "C symbol '" + std::string(externalSymbol) +
             "' is declared more than once; extern \"C\" functions "
             "cannot be overloaded or redeclared.");
-    diagnostic.related.push_back({tokenSpan(previous->second->name()),
+    const Token &previousLocation =
+        previous->second->nativeLinkName()
+            ? previous->second->nativeLinkName()->symbol
+            : previous->second->name();
+    diagnostic.related.push_back({tokenSpan(previousLocation),
                                   "Previous C-linkage declaration is here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
   if (const auto storage =
-          rootNativeStorageSymbols.find(function.name().lexeme);
+          rootNativeStorageSymbols.find(std::string(externalSymbol));
       storage != rootNativeStorageSymbols.end()) {
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2054", DiagnosticPhase::Semantics, function.name(),
-                       "C symbol '" + function.name().lexeme +
-                           "' conflicts with a root namespace GTI variable.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
+        "C symbol '" + std::string(externalSymbol) +
+            "' conflicts with a root namespace GTI variable.");
     diagnostic.related.push_back(
         {tokenSpan(storage->second->name()),
          "Conflicting GTI variable is declared here."});

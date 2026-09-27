@@ -31,8 +31,10 @@ GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
-the default C++ surface exposes familiar GTI source namespaces and names under
-`extern "C"` function linkage. A consumer may define
+the default C++ surface exposes familiar GTI source namespaces and record names
+under `extern "C"` function linkage. Functions use their selected external
+symbol, including when `link_name` makes that differ from the GTI call name. A
+consumer may define
 `GTI_NATIVE_HEADER_NO_SOURCE_NAMES` before including the header to suppress the
 optional C++ record aliases and place C-function declarations only in GTI's
 isolated namespace. Opaque handles retain their exact incomplete source
@@ -49,23 +51,42 @@ only bodyless free-function declarations ending in `;`. A declaration cannot
 be a definition, method, operator, generic, overload, runtime binding, or use
 `static`, `virtual`, `override`, a mutable receiver, or a writable return.
 
-Each declaration binds the exact source identifier as its native C symbol.
-GTI does not mangle that symbol or prefix it with the containing GTI namespace.
-The namespace still controls source lookup, so a declaration inside
-`namespace posix` is called as `posix::socket`, but its native symbol remains
-exactly `socket`. C symbols are program-global: the same symbol cannot be
-redeclared, overloaded, or introduced by a second namespace. A C-linkage
+By default, each declaration binds the exact source identifier as its native C
+symbol. `[[link_name("symbol")]]` instead binds the decoded `symbol` while the
+declared function name remains the GTI lookup name:
+
+```gti
+namespace cli11 {
+[[c_opaque]] struct GtiCli11App;
+
+extern "C" {
+  [[link_name("gti_cli11_app_create")]]
+  GtiCli11App* app_create(std::string_view description);
+}
+}
+```
+
+GTI code calls `cli11::app_create`, while the object file refers to
+`gti_cli11_app_create`. The link name must be one portable ASCII C identifier;
+the current contract does not admit arbitrary object-format spellings. GTI
+does not mangle the selected symbol or prefix it with the containing GTI
+namespace. `link_name` is valid only on a bodyless `extern "C"` function, may
+occur at most once, and may be stacked with `[[c_array(count)]]`. C symbols are
+program-global: the same selected symbol cannot be redeclared, overloaded, or
+introduced by a second namespace. A C-linkage
 function also cannot share its GTI overload set with an ordinary GTI function.
 The symbol `main` is reserved for the GTI entry point, and an external symbol
 cannot reuse the name of root-namespace GTI storage. Invalid ABI declarations
 use semantic diagnostic `GTI-S2054`.
 
-Native-facing source names must also remain valid after the compiler places
-them in the generated C17/C++ bridge header. Semantics rejects a C17 keyword
-where the source spelling is emitted as an exact C name, an
-implementation-reserved spelling such as `__name` or `_Name` on either emitted
-language surface, and a leading-underscore root type or C symbol because that
-spelling is reserved at C file scope. It also rejects actual collisions with the
+Native-facing names must also remain valid after the compiler places them in
+the generated C17/C++ bridge header. For a function this validation applies to
+the selected link name; without `link_name`, that is the source identifier.
+Semantics rejects a C17 keyword where a spelling is emitted as an exact C name,
+an implementation-reserved spelling such as `__name` or `_Name` on either
+emitted language surface, and a leading-underscore root type or C symbol
+because that spelling is reserved at C file scope. It also rejects actual
+collisions with the
 `<stddef.h>`, `<stdint.h>`, and `<gti/c_abi.h>` surface included by the header:
 object-like macros where the name is emitted, function-like macros when an
 external function name is followed by `(`, and root ordinary identifiers that
@@ -92,8 +113,9 @@ name because a function-like macro is not invoked without a following `(`.
 Likewise, a lower-case leading underscore remains valid for a field, parameter,
 or namespaced type that is not emitted at C file scope. `GTI-S2054` owns these
 conflicts on C function declarations, `GTI-S2064` owns them on native records,
-and `GTI-S2065` owns them on opaque handles; each points at the exact source
-identifier before header generation.
+and `GTI-S2065` owns them on opaque handles. A link-name failure points at its
+string literal; other failures point at the exact source identifier before
+header generation.
 
 The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
@@ -163,10 +185,13 @@ records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
 enum becomes its `constexpr int32_t` constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
-block. Record import covers the documented field set, including callback
-fields and fixed arrays with multiple extents or record, pointer, callback,
-and scalar elements; `restrict` qualifiers are read and dropped because they
-do not change the caller's contract. Field positions the record surface
+block. A configured function rename emits its GTI source spelling plus
+`[[link_name("original_symbol")]]`; a portable assembler label recorded by
+Clang uses the same representation. Record import covers the documented field
+set, including callback fields and fixed arrays with multiple extents or record,
+pointer, callback, and scalar elements; `restrict` qualifiers are read and
+dropped because they do not change the caller's contract. Field positions the
+record surface
 rejects — `char` pointers and nested pointers — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything

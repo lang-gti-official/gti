@@ -6791,7 +6791,8 @@ def test_native_record_tooling(executable, root):
         "NativePoint point_roundtrip(NativePoint value); "
         "c_string native_name(); "
         "int32_t native_length(c_string value); "
-        "[[c_array(count)]] NativeHandle** native_handles(int32_t* count); }\n"
+        '[[c_array(count)]] [[link_name("gti_native_handles")]] '
+        "NativeHandle** handles(int32_t* count); }\n"
         "int main() { return native_length(\"gti\") - 3 + "
         "int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
     )
@@ -6945,7 +6946,7 @@ def test_native_record_tooling(executable, root):
             c_string_hover
         )
 
-        native_handles_name = source.index("native_handles")
+        native_handles_name = source.index("handles(int32_t")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -6962,6 +6963,9 @@ def test_native_record_tooling(executable, root):
         )["result"]
         assert native_array_hover and "[[c_array(count)]]" in json.dumps(
             native_array_hover
+        ), native_array_hover
+        assert "link_name" in json.dumps(native_array_hover) and (
+            "gti_native_handles" in json.dumps(native_array_hover)
         ), native_array_hover
 
         count_attribute = source.index("count)")
@@ -7011,6 +7015,10 @@ def test_native_record_tooling(executable, root):
         ]["type"] == attribute_type
         c_array_position = lsp_position(source, source.index("c_array"))
         assert tokens[(c_array_position["line"], c_array_position["character"])][
+            "type"
+        ] == attribute_type
+        link_name_position = lsp_position(source, source.index("link_name"))
+        assert tokens[(link_name_position["line"], link_name_position["character"])][
             "type"
         ] == attribute_type
         count_attribute_position = lsp_position(source, count_attribute)

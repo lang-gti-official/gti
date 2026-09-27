@@ -2331,6 +2331,8 @@ private:
   void validateNativeCArrayAttribute(const FunctionDecl &function,
                                      const SemanticType &returnType);
 
+  void validateNativeLinkNameAttribute(const FunctionDecl &function);
+
   void validateExternCFunction(const FunctionDecl &function,
                                bool methodDeclaration,
                                const SemanticType &returnType);
@@ -2638,6 +2640,17 @@ private:
   [[nodiscard]] static std::optional<std::string> nativeCIdentifierConflict(
       std::string_view spelling, bool exposedWithExactCSpelling,
       bool occupiesCOrdinaryNamespace, bool followedByLeftParen);
+
+  [[nodiscard]] static bool
+  isPortableNativeCIdentifier(std::string_view spelling);
+
+  bool validateNativeCIdentifierSpelling(std::string_view spelling,
+                                         const Token &location,
+                                         std::string_view diagnosticCode,
+                                         std::string_view entity,
+                                         bool exposedWithExactCSpelling,
+                                         bool occupiesCOrdinaryNamespace,
+                                         bool followedByLeftParen = false);
 
   bool validateNativeCIdentifier(const Token &identifier,
                                  std::string_view diagnosticCode,

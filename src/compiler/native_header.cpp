@@ -648,8 +648,9 @@ private:
     // A using-declaration that imports a C-linkage function from the isolated
     // namespace is not a portable definition point: GCC binds a later public
     // definition back to the imported declaration and performs body lookup in
-    // the private namespace. Declare the function at its source name directly
-    // unless the consumer explicitly requests the isolated surface.
+    // the private namespace. Declare the selected external symbol directly
+    // unless the consumer explicitly requests the isolated surface. A GTI
+    // `[[link_name]]` alias is not an implementation definition point.
     output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
     for (const NativeFunction &function : functions) {
       emitCppFunction(output, function, true);

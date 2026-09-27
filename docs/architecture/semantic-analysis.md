@@ -242,6 +242,14 @@ cleanup-owning or symbolic fields with `GTI-S2064`. The resulting immutable
 layout is also the authority used by `extern "C"` signature validation and by
 recursive unsafe-call classification when a record contains a raw pointer.
 
+An `extern "C"` function retains two identities when it uses
+`[[link_name("symbol")]]`: namespace lookup and tooling use the declared GTI
+name, while `CallableDeclaration::externalSymbol` stores the validated portable
+C identifier. Program-global duplicate-symbol, reserved-`main`, generated
+header, and root-storage collision checks use the external symbol. HIR and MIR
+copy that resolved fact; they do not reparse the attribute or derive the symbol
+from the source name.
+
 Native-union validation is a separate semantic family. It accepts a nonempty,
 nongeneric, baseless public field-only declaration and computes maximum-field
 size/alignment from target facts, nested valid unions, and admitted passive

@@ -37,6 +37,10 @@ SignaturePrinter::function(const FunctionInfo &info,
     result += "[[c_array(" +
               declaration->nativeCArray()->countParameter.lexeme + ")]] ";
   }
+  if (declaration != nullptr && declaration->nativeLinkName()) {
+    result += "[[link_name(\"" +
+              std::string(declaration->nativeLinkName()->name()) + "\")]] ";
+  }
   if (info.declaration != nullptr && info.declaration->isStatic()) {
     result += "static ";
   }

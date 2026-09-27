@@ -3041,7 +3041,7 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
         previous.declaration != nullptr && previous.declaration->hasCLinkage();
     const bool candidateC = candidate.declaration != nullptr &&
                             candidate.declaration->hasCLinkage();
-    if (previousC != candidateC) {
+    if (previousC || candidateC) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2054", DiagnosticPhase::Semantics, name,
           "extern \"C\" functions cannot be overloaded or share their "

@@ -236,7 +236,12 @@ module.exports = grammar({
 
     extern_c_function_prototype: ($) =>
       seq(
-        optional(field("attribute", $.native_c_array_attribute)),
+        repeat(
+          field(
+            "attribute",
+            choice($.native_c_array_attribute, $.native_link_name_attribute),
+          ),
+        ),
         field("return_type", $.type),
         field("name", $.identifier),
         field("parameters", $.parameter_clause),
@@ -440,6 +445,16 @@ module.exports = grammar({
         field("attribute", alias("c_array", $.identifier)),
         "(",
         field("count", $.identifier),
+        ")",
+        "]]",
+      ),
+
+    native_link_name_attribute: ($) =>
+      seq(
+        "[[",
+        field("attribute", alias("link_name", $.identifier)),
+        "(",
+        field("symbol", $.string_literal),
         ")",
         "]]",
       ),
@@ -654,10 +669,14 @@ module.exports = grammar({
 
     function_declaration: ($) =>
       seq(
-        optional(
+        repeat(
           field(
             "attribute",
-            choice($.native_c_array_attribute, $.unsafe_function_attribute),
+            choice(
+              $.native_c_array_attribute,
+              $.native_link_name_attribute,
+              $.unsafe_function_attribute,
+            ),
           ),
         ),
         optional(field("binding", $.runtime_binding)),

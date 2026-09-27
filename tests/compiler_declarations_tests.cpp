@@ -8305,6 +8305,46 @@ int main() {
          "resolved C calls should use exact native symbols without GTI name "
          "mangling");
 
+  const lang::FrontendResult linkedName =
+      lang::Frontend().analyze("extern-c-link-name.gti", R"(
+namespace cli11 {
+extern "C" {
+  [[link_name("gti_cli11_app_create")]]
+  int32_t app_create(int32_t value);
+}
+}
+int main() { return cli11::app_create(42) - 42; }
+)");
+  expect(linkedName.canGenerateCode() && linkedName.diagnostics.empty(),
+         "link_name should separate GTI source lookup from a portable C "
+         "symbol");
+  const auto linkedHir =
+      std::find_if(linkedName.hir.functionInstances().begin(),
+                   linkedName.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.externalSymbol == "gti_cli11_app_create";
+                   });
+  const lang::MirFunctionInstance *linkedMir =
+      linkedHir == linkedName.hir.functionInstances().end()
+          ? nullptr
+          : linkedName.mir.findFunctionInstance(linkedHir->id);
+  expect(linkedHir != linkedName.hir.functionInstances().end() &&
+             linkedHir->source != nullptr &&
+             linkedHir->source->name().lexeme == "app_create" &&
+             linkedHir->linkage == lang::LanguageLinkage::C &&
+             linkedMir != nullptr &&
+             linkedMir->externalSymbol == "gti_cli11_app_create",
+         "semantic, HIR, and MIR identities should retain the source and link "
+         "names independently");
+  const std::string linkedCpp = gti_test::emitCppText(linkedName);
+  expect(linkedCpp.find("std::int32_t gti_cli11_app_create(") !=
+                 std::string::npos &&
+             linkedCpp.find("::__gti_program::cli11::gti_cli11_app_create(") !=
+                 std::string::npos &&
+             linkedCpp.find(" app_create(") == std::string::npos,
+         "the backend should declare and call only the selected native link "
+         "symbol");
+
   const lang::FrontendResult lateDeclaration =
       lang::Frontend().analyze("late-extern-c.gti", R"(
 namespace platform {
@@ -8479,6 +8519,22 @@ int main() { return 0; }
                            "may contain only function declarations"),
          "extern C blocks should reject native variables in the bounded ABI");
 
+  auto duplicateAttributeTokens = lexer.scan(R"(
+extern "C" {
+  [[link_name("first")]] [[link_name("second")]] int32_t renamed();
+  int32_t recovered();
+}
+int main() { return 0; }
+)");
+  lang::Parser duplicateAttributeParser(std::move(duplicateAttributeTokens));
+  lang::Program duplicateAttributeProgram = duplicateAttributeParser.parse();
+  expect(duplicateAttributeParser.hadError() &&
+             hasDiagnostic(duplicateAttributeParser.errors(),
+                           "Duplicate [[link_name") &&
+             findTopLevelFunction(duplicateAttributeProgram, "main") != nullptr,
+         "duplicate link_name attributes should diagnose and recover through "
+         "the enclosing linkage block");
+
   auto nestedTokens = lexer.scan(R"(
 extern "C" {
   extern "C" { int32_t nested(); }
@@ -8519,9 +8575,9 @@ int main() {
   const lang::FrontendResult externalMain =
       lang::Frontend().analyze("external-main.gti", R"(
 namespace native {
-extern "C" { int32_t main(); }
+extern "C" { [[link_name("main")]] int32_t native_main(); }
 }
-int main() { return native::main(); }
+int main() { return native::native_main(); }
 )");
   expect(!externalMain.semanticValid &&
              hasDiagnostic(externalMain.diagnostics,
@@ -8533,7 +8589,9 @@ int main() { return native::main(); }
       lang::Frontend().analyze("external-storage-collision.gti", R"(
 int32_t native_counter = 0;
 namespace native {
-extern "C" { int32_t native_counter(); }
+extern "C" {
+  [[link_name("native_counter")]] int32_t read_counter();
+}
 }
 int main() { return 0; }
 )");
@@ -8544,11 +8602,11 @@ int main() { return 0; }
          "source namespace");
 
   const std::string formatted = lang::Formatter().format(
-      "extern \"C\"{int32_t socket(int32_t domain,int32_t type,int32_t "
-      "protocol);int32_t close(int32_t descriptor);}");
+      "extern \"C\"{[[c_array(count)]][[link_name(\"native_values\")]]"
+      "int32_t* values(int32_t* count);int32_t close(int32_t descriptor);}");
   expect(formatted == "extern \"C\" {\n"
-                      "  int32_t socket(int32_t domain, int32_t type, int32_t "
-                      "protocol);\n"
+                      "  [[c_array(count)]][[link_name(\"native_values\")]] "
+                      "int32_t* values(int32_t* count);\n"
                       "  int32_t close(int32_t descriptor);\n"
                       "}\n" &&
              lang::Formatter().format(formatted) == formatted,
@@ -8558,7 +8616,13 @@ int main() { return 0; }
       analyzeTrustedPreludeFixture("invalid-extern-c.gti", R"(
 class Handle {};
 enum class Mode { One };
+[[link_name("native_plain")]] int32_t plain();
 extern "C" {
+  [[link_name("bad-symbol")]] int32_t bad_link_name();
+  [[link_name("shared_symbol")]] int32_t first_name();
+  [[link_name("shared_symbol")]] int32_t second_name();
+  [[link_name("overload_i32")]] int32_t overloaded_name(int32_t value);
+  [[link_name("overload_i64")]] int32_t overloaded_name(int64_t value);
   bool bad_bool(bool value);
   char bad_char(char value);
   int32_t bad_reference(int32_t& value);
@@ -8577,12 +8641,21 @@ extern "C" { int32_t duplicate(uint32_t value); }
 }
 int main() { return 0; }
 )");
-  expect(!invalid.semanticValid &&
-             countDiagnosticCode(invalid.diagnostics, "GTI-S2054") >= 11 &&
-             hasDiagnostic(invalid.diagnostics,
-                           "C symbol 'duplicate' is declared more than once"),
-         "semantics should reject unsafe ABI types, modifiers, generics, and "
-         "global C-symbol collisions before backend emission");
+  expect(
+      !invalid.semanticValid &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2054") >= 15 &&
+          hasDiagnostic(invalid.diagnostics, "valid only on an extern \"C\"") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "is not a portable C identifier") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "C symbol 'shared_symbol' is declared more than "
+                        "once") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "extern \"C\" functions cannot be overloaded") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "C symbol 'duplicate' is declared more than once"),
+      "semantics should reject unsafe ABI types, modifiers, generics, and "
+      "global C-symbol collisions before backend emission");
 }
 
 void testScopedEnums() {

@@ -244,6 +244,12 @@ decorator token, and invalid declarations publish the shared `GTI-S2064`
 diagnostic; the protocol layer neither computes layout nor keeps a second field
 allowlist.
 
+`[[link_name("symbol")]]` follows the same boundary for C-linkage functions.
+The attribute is a syntax-owned decorator, hover renders it through the
+compiler's canonical function signature, and invalid placement, spelling, or
+program-global symbol collisions publish `GTI-S2054`. The LSP never substitutes
+the link symbol for source lookup or maintains a second native-symbol table.
+
 `mut { ... }` field groups have no document symbol or protocol-owned semantic
 rule. The compiler query flattens their enclosed fields into the containing
 class/struct outline, hover renders each field's effective mutable binding, and

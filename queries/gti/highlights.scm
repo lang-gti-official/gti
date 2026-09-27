@@ -39,6 +39,9 @@
 (native_c_array_attribute
   attribute: (identifier) @attribute
   count: (identifier) @variable.parameter)
+(native_link_name_attribute
+  attribute: (identifier) @attribute
+  symbol: (string_literal) @string)
 (enum_declaration
   name: (identifier) @type.definition)
 (enumerator

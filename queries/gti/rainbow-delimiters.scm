@@ -90,6 +90,14 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(native_link_name_attribute
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
+(native_link_name_attribute
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (array_extent_parenthesized_expression
   "(" @delimiter
   ")" @delimiter) @container

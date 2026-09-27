@@ -1694,6 +1694,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       validateConstexprFunction(stmt, methodDeclaration, intrinsicDeclaration,
                                 declaredReturnType, isEntryPoint);
   validateNativeCArrayAttribute(stmt, declaredReturnType);
+  validateNativeLinkNameAttribute(stmt);
   validateExternCFunction(stmt, methodDeclaration, declaredReturnType);
   if (isEntryPoint) {
     const SemanticType returnType =

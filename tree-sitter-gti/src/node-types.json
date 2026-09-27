@@ -2163,11 +2163,15 @@
     "named": true,
     "fields": {
       "attribute": {
-        "multiple": false,
+        "multiple": true,
         "required": false,
         "types": [
           {
             "type": "native_c_array_attribute",
+            "named": true
+          },
+          {
+            "type": "native_link_name_attribute",
             "named": true
           }
         ]
@@ -2279,11 +2283,15 @@
     "named": true,
     "fields": {
       "attribute": {
-        "multiple": false,
+        "multiple": true,
         "required": false,
         "types": [
           {
             "type": "native_c_array_attribute",
+            "named": true
+          },
+          {
+            "type": "native_link_name_attribute",
             "named": true
           },
           {
@@ -3286,6 +3294,32 @@
         "types": [
           {
             "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "native_link_name_attribute",
+    "named": true,
+    "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "symbol": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
             "named": true
           }
         ]
