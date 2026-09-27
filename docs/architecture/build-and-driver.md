@@ -916,6 +916,14 @@ checkout is still checksum-verified and `gti.lock` remains the coverage
 authority, so an unmaterialized or unlocked git dependency is reported as a
 diagnostic rather than acquired.
 
+`gti_lsp` consumes these facts before analysis and completion. It passes the
+published analysis configuration and package source-root graph to the same
+frontend APIs as project compilation, while canonical-path open-document
+overlays remain authoritative over disk. A project-resolution failure is
+published as the driver's structured diagnostic; a discovery miss retains
+standalone-file behavior. Watching `gti.toml` and `gti.lock` invalidates all
+open project snapshots without allowing the editor to fetch or build.
+
 The package source-root graph is the fact that makes this a shared answer
 rather than a convenience. It cannot be reconstructed from one manifest, so a
 consumer that reads `gti.toml` itself resolves no package includes at all
@@ -1134,9 +1142,6 @@ host target, and `gti run`/`gti test` refuse a non-host target rather than
 modelling a runner or emulator.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
-The driver publishes resolved project facts, but the LSP does not consume them
-yet: it still reads the manifest directly for configuration flags and the
-default profile's execution profile, and analyzes with no package source
-roots, so package includes an editor opens do not resolve the way `gti check`
-resolves them. Consuming `ProjectFacts` without fetching or building, with
-dirty buffers authoritative, remains `T-LSP-04`.
+The LSP consumes the driver-published project facts for its default host-target
+analysis. Explicit editor selection of another workspace package, target,
+profile, or cross target is not implemented.

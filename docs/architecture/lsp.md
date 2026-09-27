@@ -366,9 +366,10 @@ compiler work.
 - Completed analysis is published only if the document and dependency
   generations still match. Only then may its source digests be learned. Stale
   semantic requests and stale digest publications are rejected.
-- The dynamic file watcher covers both `**/*.gti` and `**/gti.toml`. A manifest
-  change invalidates semantic-token caches and reanalyses every open document,
-  so changing `[build].defines` flips the selected/inactive branches.
+- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
+  A manifest or lockfile change invalidates semantic-token caches and
+  reanalyses every open document, so configuration, package aliases, and
+  materialized locked dependencies cannot leave a stale project snapshot.
 
 ### Reusable frontend work
 
@@ -417,15 +418,34 @@ symbolic semantics made valid editor snapshots omit diagnostics that
 `static_assert` declarations. The LSP does not query HIR directly, and it still
 does not build failure metadata or MIR; retaining the HIR result is the current
 cost of publishing the compiler's complete source-level semantic diagnostic
-set. Code generation remains disabled. Before analysis, the LSP uses the
-driver's canonical nearest-manifest discovery and parser plus the immutable
-driver-owned `AnalysisConfiguration`. It seeds configuration flags from
-`[build].defines`, selects the default `dev` execution profile, and derives
-runtime capabilities from the installed hosted runtime profile; it does not
-reimplement TOML, target, or capability policy. A startup
+set. Code generation remains disabled.
+
+Before analysis and completion, the LSP asks the driver for immutable
+`ProjectFacts` for the package containing the entry document. The facts select
+the nearest workspace member/package, the default profile's analysis
+configuration, and the exact `PackageSourceRoot` closure used by `gti check`.
+Package angle includes therefore use only declared direct aliases, including
+already-materialized checksum-verified Git dependencies. Resolution runs no
+process, performs no fetch or build, and creates no project state. A missing
+manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
+or checksum-mismatched project publishes the driver's structured diagnostics
+and never invents a partial package graph.
+
+Every open GTI document is still passed to the frontend as a canonical-path
+source override. An unsaved dependency buffer is therefore authoritative over
+the verified on-disk package root for diagnostics, hover, completion,
+definition, and semantic tokens, while generation checks prevent an analysis
+captured before that edit from publishing. The protocol adapter does not parse
+TOML, reconstruct workspace membership, or resolve dependency aliases itself.
+
+The selected project configuration seeds `[build].defines`, uses the default
+profile's execution model, and derives runtime capabilities from the installed
+hosted runtime profile. A startup
 `--execution-profile single-threaded|concurrent` option overrides the manifest
 profile and also configures standalone documents. Omission selects the
-manifest `dev` profile when present and otherwise remains single-threaded.
+driver-selected default profile when present and otherwise remains
+single-threaded.
+
 This keeps standalone and concurrent-project diagnostics and the public
 `<std/thread>`, `<std/atomic>`, and `<std/mutex>` surfaces aligned with
 compiler-driver workflows. Analysis work
@@ -525,17 +545,11 @@ meaning from punctuation.
 - Semantic analysis and HIR remain whole-program work on every accepted edit.
   They are the largest remaining repeated-edit cost; no semantic checkpoint or
   durable symbol identity is implemented.
-- `Frontend`/`LanguageQueries` can consume the same explicit
-  `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
-  manifest's configuration flags and default `dev` execution profile, with an
-  explicit standalone execution-profile startup override, but does not yet
-  resolve its workspace graph, selected package, or a named non-default
-  manifest profile. Consequently, package angle includes are not resolved in
-  editor snapshots yet. A project whose `dev` profile selects `concurrent`, or
-  a standalone server launched with `--execution-profile concurrent`, receives
-  the same managed-thread and concurrent-global semantic checks as the matching
-  compiler-driver workflow; richer project selection still awaits the shared
-  project-facts model.
+- Project analysis follows the package containing the opened document and the
+  driver's default profile on the host target. The protocol has no explicit
+  workspace-package, target, non-default-profile, or cross-target selection
+  request yet; adding one requires a client-facing configuration contract,
+  not another manifest parser.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.
