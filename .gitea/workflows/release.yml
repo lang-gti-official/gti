@@ -17,7 +17,7 @@ permissions:
 jobs:
   metadata:
     name: Resolve release source
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       tag: ${{ steps.release.outputs.tag }}
