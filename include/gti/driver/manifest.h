@@ -100,8 +100,9 @@ struct ProjectBindgenImport {
   // Validated `-D<name>[=<value>]` / `-U<name>` preprocessor arguments in
   // declaration order.
   std::vector<std::string> macroArguments;
-  // Opt-in import policy (C-07): name selectors, type/constant renames, and
-  // declared pointer-plus-count results. Sorted for deterministic identity.
+  // Opt-in import policy (C-07): name selectors, GTI source renames, and
+  // declared pointer-plus-count results. Function renames retain their C
+  // symbol through [[link_name]]. Sorted for deterministic identity.
   std::vector<std::string> allowPatterns;
   std::vector<std::string> denyPatterns;
   std::vector<std::pair<std::string, std::string>> renames;

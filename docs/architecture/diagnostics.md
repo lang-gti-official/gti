@@ -162,9 +162,11 @@ diagnostics or letting a backend message choose either identity.
   do not attach a fix-it because choosing a target function, parameter access,
   or pack is not mechanical. Parser-owned incomplete folds remain
   `GTI-P0001` and must recover the surrounding function.
-- `GTI-S2054` owns an invalid `extern "C"` declaration, including an exact
-  symbol or parameter spelling that cannot be represented portably in the
-  generated C17/C++ header. It also owns a containing namespace component that
+- `GTI-S2054` owns an invalid `extern "C"` declaration, including misplaced
+  or invalid `[[link_name]]` metadata and an exact symbol or parameter spelling
+  that cannot be represented portably in the generated C17/C++ header. A link
+  name points at its string literal; an ordinary symbol points at its source
+  identifier. It also owns a containing namespace component that
   would collide with the generated C++ support surface when that namespace
   contains a public native record, opaque handle, or C-linkage declaration.
   Point at the offending identifier, distinguish a keyword, reserved spelling,

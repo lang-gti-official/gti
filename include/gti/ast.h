@@ -397,6 +397,16 @@ struct NativeCArrayAttribute {
   Token countParameter;
 };
 
+struct NativeLinkNameAttribute {
+  Token attribute;
+  Token symbol;
+
+  [[nodiscard]] std::string_view name() const {
+    const auto *value = std::get_if<std::string>(&symbol.literal);
+    return value == nullptr ? std::string_view{} : std::string_view(*value);
+  }
+};
+
 struct PureSpecifier {
   Token equal;
   Token zero;
@@ -1996,6 +2006,7 @@ public:
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<RequiresClause> requiresClause = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeAttribute = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
@@ -2011,6 +2022,7 @@ public:
         constexprKeyword_(std::move(constexprKeyword)),
         requiresClause_(std::move(requiresClause)),
         nativeCArray_(std::move(nativeCArray)),
+        nativeLinkName_(std::move(nativeLinkName)),
         unsafeAttribute_(std::move(unsafeAttribute)) {}
 
   void accept(StmtVisitor &visitor) const override {
@@ -2071,6 +2083,10 @@ public:
   nativeCArray() const {
     return nativeCArray_;
   }
+  [[nodiscard]] const std::optional<NativeLinkNameAttribute> &
+  nativeLinkName() const {
+    return nativeLinkName_;
+  }
   [[nodiscard]] const std::optional<Token> &unsafeAttribute() const {
     return unsafeAttribute_;
   }
@@ -2093,6 +2109,7 @@ private:
   std::optional<Token> constexprKeyword_;
   std::optional<RequiresClause> requiresClause_;
   std::optional<NativeCArrayAttribute> nativeCArray_;
+  std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::optional<Token> unsafeAttribute_;
 };
 

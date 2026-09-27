@@ -111,9 +111,10 @@ its native error surfaced verbatim — Clang's recovery types are never
 imported, because recovery would bind the wrong ABI. ABI-affecting native
 facts are model data (C-06): an assembler label that renames the link symbol
 and a non-C calling convention are recorded on the function declaration and
-printed by the model printer, and the planner rejects both explicitly with
-their reasons; a record bearing a layout attribute degrades to an opaque
-handle carrying its reason exactly as before.
+printed by the model printer. The planner emits a portable assembler label as
+`[[link_name]]`; it rejects a non-identifier label and every non-C calling
+convention explicitly with its reason. A record bearing a layout attribute
+degrades to an opaque handle carrying its reason exactly as before.
 
 Direct library callers may pass unpreprocessed text, which has its full
 native meaning: macros expand, conditionals evaluate, and pragmas apply.
@@ -332,13 +333,13 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    integers through the exact int64 expression evaluator, floating literals
    as `double`, and backslash-free string literals (including C adjacent
    concatenation) as `std::string_view`, which the language's own conversion
-   carries into a `c_string` parameter. Assembler labels, non-C calling
-   conventions, and record layout attributes (`packed`, explicit
-   over-alignment) are all model facts the planner rejects explicitly with
-   reasons that name the specific attribute. Making renamed symbols, other
-   conventions, or packed layouts *importable* requires new language surface
-   (a symbol-rename attribute, convention spellings, layout spellings) and is
-   deliberately out of bindgen's scope.
+   carries into a `c_string` parameter. Portable assembler labels now emit the
+   implemented `[[link_name]]` language contract. Non-identifier labels,
+   non-C calling conventions, and record layout attributes (`packed`, explicit
+   over-alignment) remain model facts the planner rejects explicitly with
+   reasons that name the specific attribute. Making other conventions or
+   packed layouts importable still requires corresponding language surface and
+   is deliberately out of bindgen's scope.
 7. **BUILD-01: manifest and cache integration (implemented).**
    `[bindgen.<alias>]` manifest tables resolve into immutable
    `BindgenImportPlan` values on every project build plan; the driver owns
@@ -363,12 +364,12 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
      `*`). An excluded declaration behaves exactly like an out-of-policy
      system one: it still resolves uses, and a referenced record still pulls
      in as an opaque handle.
-   - **rename** gives a type or constant whose C spelling GTI cannot use a
-     usable GTI name, which is what makes reserved-spelling records such as
-     `__sFILE` (and every function taking one) importable. Functions are
-     excluded and report why: a function's GTI name is its link symbol, so
-     renaming one would bind a different function — the same boundary C-06
-     records for assembler labels.
+   - **rename** gives a declaration a usable GTI source name. This makes
+     reserved-spelling records such as `__sFILE` (and every function taking
+     one) importable. A renamed function emits
+     `[[link_name("original_symbol")]]`, so GTI lookup uses the configured
+     name without changing the ABI. A portable assembler label uses the same
+     representation without requiring a configured rename.
    - **array-returns** declares the pointer-plus-count contract a C header
      cannot state, emitting `[[c_array(count)]]`. The planner validates the
      language's rule (an admitted one-level result, or the exact two-level
@@ -387,6 +388,5 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    Deliberately not implemented: **ownership-transfer annotations**. GTI has
    no ownership-transfer surface for native results at all — the interop
    contract lists it among the unsupported forms — so there is nothing for
-   the tool to emit. Adding it is a language change first, exactly like the
-   symbol-rename attribute C-06 identified, and belongs to that work rather
-   than to bindgen.
+   the tool to emit. Adding it is a language change first, exactly as
+   `link_name` was, and belongs to that language work rather than to bindgen.

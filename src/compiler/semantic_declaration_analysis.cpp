@@ -2562,7 +2562,11 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .requiresUnsafe = function->unsafeAttribute().has_value(),
           .linkage = function->linkage(),
           .externalSymbol =
-              function->hasCLinkage() ? function->name().lexeme : std::string{},
+              function->hasCLinkage()
+                  ? function->nativeLinkName()
+                        ? std::string(function->nativeLinkName()->name())
+                        : function->name().lexeme
+                  : std::string{},
           .cArrayCountParameter = nativeCArrayCountParameter(*function),
           .intrinsic = intrinsic,
           .compilerPrivate =
@@ -3500,15 +3504,50 @@ auto SemanticVisitor::Impl::validateNativeCIdentifier(
     const Token &identifier, std::string_view diagnosticCode,
     std::string_view entity, bool exposedWithExactCSpelling,
     bool occupiesCOrdinaryNamespace, bool followedByLeftParen) -> bool {
+  return validateNativeCIdentifierSpelling(
+      identifier.lexeme, identifier, diagnosticCode, entity,
+      exposedWithExactCSpelling, occupiesCOrdinaryNamespace,
+      followedByLeftParen);
+}
+
+auto SemanticVisitor::Impl::isPortableNativeCIdentifier(
+    std::string_view spelling) -> bool {
+  const auto initial = [](char value) {
+    return value == '_' || (value >= 'A' && value <= 'Z') ||
+           (value >= 'a' && value <= 'z');
+  };
+  const auto continuation = [&](char value) {
+    return initial(value) || (value >= '0' && value <= '9');
+  };
+  return !spelling.empty() && initial(spelling.front()) &&
+         std::all_of(spelling.begin() + 1, spelling.end(), continuation);
+}
+
+auto SemanticVisitor::Impl::validateNativeCIdentifierSpelling(
+    std::string_view spelling, const Token &location,
+    std::string_view diagnosticCode, std::string_view entity,
+    bool exposedWithExactCSpelling, bool occupiesCOrdinaryNamespace,
+    bool followedByLeftParen) -> bool {
+  if (!isPortableNativeCIdentifier(spelling)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        std::string(diagnosticCode), DiagnosticPhase::Semantics, location,
+        std::string(entity) + " '" + std::string(spelling) +
+            "' is not a portable C identifier.");
+    diagnostic.hints.emplace_back(
+        "Use an ASCII identifier beginning with a letter or underscore and "
+        "containing only letters, digits, and underscores.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
   const std::optional<std::string> conflict = nativeCIdentifierConflict(
-      identifier.lexeme, exposedWithExactCSpelling, occupiesCOrdinaryNamespace,
+      spelling, exposedWithExactCSpelling, occupiesCOrdinaryNamespace,
       followedByLeftParen);
   if (!conflict) {
     return true;
   }
   Diagnostic diagnostic = makeDiagnostic(
-      std::string(diagnosticCode), DiagnosticPhase::Semantics, identifier,
-      std::string(entity) + " '" + identifier.lexeme + "' conflicts with " +
+      std::string(diagnosticCode), DiagnosticPhase::Semantics, location,
+      std::string(entity) + " '" + std::string(spelling) + "' conflicts with " +
           *conflict + ".");
   diagnostic.hints.emplace_back(
       "Rename this native-facing identifier; generated native declarations "

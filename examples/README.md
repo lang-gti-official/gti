@@ -67,7 +67,7 @@ own `main` function.
 | `59-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
 | `60-configuration-and-comments.gti` | configuration flags, ordinary comments, and `///` hover documentation |
 | `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
-| `62-native-c-boundaries.gti` | fixed-array C records, NUL-terminated strings, pointer-count results, and exact callbacks |
+| `62-native-c-boundaries.gti` | fixed-array C records, link-name aliases, NUL-terminated strings, pointer-count results, and exact callbacks |
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |

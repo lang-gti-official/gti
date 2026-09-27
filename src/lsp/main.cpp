@@ -928,6 +928,17 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return SemanticClassification{Decorator, 0};
   }
 
+  if (token.lexeme == "link_name" && index >= 2 && index + 5 < tokens.size() &&
+      tokens[index - 2].kind == LEFT_BRACKET &&
+      tokens[index - 1].kind == LEFT_BRACKET &&
+      tokens[index + 1].kind == LEFT_PAREN &&
+      tokens[index + 2].kind == STRING_LITERAL &&
+      tokens[index + 3].kind == RIGHT_PAREN &&
+      tokens[index + 4].kind == RIGHT_BRACKET &&
+      tokens[index + 5].kind == RIGHT_BRACKET) {
+    return SemanticClassification{Decorator, 0};
+  }
+
   std::size_t attributeBegin = index;
   while (attributeBegin > 0 && (tokens[attributeBegin - 1].kind == IDENTIFIER ||
                                 tokens[attributeBegin - 1].kind == COMMA)) {

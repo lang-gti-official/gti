@@ -104,6 +104,11 @@ const nativeArrayRow = fixtureLines.findIndex((line) =>
 );
 requireCapture(nativeArrayRow, "c_array", "attribute");
 requireCapture(nativeArrayRow, "count", "variable.parameter");
+const nativeLinkNameRow = fixtureLines.findIndex((line) =>
+  line.includes("[[link_name(\"gti_native_handles\")]]"),
+);
+requireCapture(nativeLinkNameRow, "link_name", "attribute");
+requireCapture(nativeLinkNameRow, '"gti_native_handles"', "string");
 const nativeCallbackRow = fixtureLines.findIndex((line) =>
   line.includes("using NativeCallback"),
 );
@@ -529,12 +534,22 @@ requireRainbowDelimiter(
 requireRainbowDelimiter("[[c_abi]] struct NativePoint {", "[[");
 requireRainbowDelimiter("[[c_opaque]] struct NativeHandle;", "[[");
 requireRainbowDelimiter(
-  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
   "[[",
 );
 requireRainbowDelimiter(
-  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
   "(",
+);
+requireRainbowDelimiter(
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
+  "[[",
+  2,
+);
+requireRainbowDelimiter(
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
+  "(",
+  2,
 );
 requireRainbowDelimiter(
   "constexpr uint64_t scalar_layout = sizeof(int32_t);",

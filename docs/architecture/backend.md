@@ -977,7 +977,11 @@ verified success and failure orders, including the exact nine legal pairs.
 `NativeHeaderBackend` derives public records, opaque handles, callback aliases,
 external signatures, namespace scopes, field names, and target-resolved record
 layouts from lowered declarations and symbols. It has no frontend collector.
-Malformed lowered values are rejected before header emission.
+Malformed lowered values are rejected before header emission. A C-linkage
+function's lowered `externalSymbol` is authoritative even when its GTI source
+name differs through `[[link_name]]`; emitted prototypes and MIR call targets
+use the external symbol, while source lookup has already completed in the
+frontend.
 
 ## Boundary Enforcement
 

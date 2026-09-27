@@ -59,7 +59,7 @@ struct Pair {
 };
 
 extern "C" {
-  Context* cpp_context_create();
+  [[link_name("cpp_context_create")]] Context* context_create();
   void cpp_context_destroy(Context* context);
   Pair cpp_pair_scale(Pair value, float scale);
 }
@@ -102,14 +102,16 @@ int main() { return 0; }
           header.find("uint8_t bytes[4];") != std::string::npos &&
           header.find("::graphics::Context* cpp_context_create(") !=
               std::string::npos &&
+          header.find("::graphics::Context* context_create(") ==
+              std::string::npos &&
           header.find("::graphics::Pair cpp_pair_scale(") !=
               std::string::npos &&
           header.find("extern \"C\"") != std::string::npos &&
           header.find("using ::__gti_program::graphics::cpp_context_create") ==
               std::string::npos,
       "the C++ branch should preserve source namespaces, exact record "
-      "identity, directly declared public C linkage, and portable "
-      "definition lookup");
+      "identity, selected C link names, directly declared public C linkage, "
+      "and portable definition lookup");
   expect(header.find("typedef struct RootRecord RootRecord;") !=
                  std::string::npos &&
              header.find("typedef struct RootHandle RootHandle;") !=

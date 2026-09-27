@@ -180,19 +180,6 @@ public:
         usedNames_.insert(enumerator.name);
       }
     }
-    for (const NativeDeclarationId id : model_.order) {
-      const NativeDeclaration *declaration = model_.findDeclaration(id);
-      if (declaration == nullptr ||
-          declaration->kind != NativeDeclarationKind::Function) {
-        continue;
-      }
-      if (options_.renames.count(declaration->name) != 0) {
-        // A function's GTI name is its link symbol; renaming one would bind
-        // a different function than the header declares.
-        matchedRenames_.insert(declaration->name);
-        renamedFunctions_.insert(declaration->name);
-      }
-    }
     classifyRecords();
     commitSynthesis_ = true;
     BindingPlan plan;
@@ -304,16 +291,10 @@ public:
                                       "' matched no declaration");
       }
     }
-    for (const std::string &name : renamedFunctions_) {
-      plan.policyProblems.push_back(
-          "rename '" + name +
-          "' names a function; a function's GTI name is its link symbol and "
-          "cannot be renamed");
-    }
     for (const auto &[from, to] : options_.renames) {
       if (matchedRenames_.count(from) == 0) {
         plan.policyProblems.push_back("rename '" + from +
-                                      "' matched no imported type or constant");
+                                      "' matched no imported declaration");
       }
     }
     for (const BindingArrayReturn &entry : options_.arrayReturns) {
@@ -360,7 +341,6 @@ private:
   mutable std::set<std::string> matchedPatterns_;
   mutable std::set<std::string> matchedRenames_;
   std::set<std::string> matchedArrayReturns_;
-  std::set<std::string> renamedFunctions_;
 
   // -- Opt-in policy (C-07) -------------------------------------------------
 
@@ -389,13 +369,11 @@ private:
     return false;
   }
 
-  // The GTI spelling of a declaration's name: a configured rename, or the C
-  // name. Functions never rename — their name is the link symbol.
+  // The GTI source spelling of a declaration's name: a configured rename, or
+  // the C name. A renamed function retains its separate native symbol in the
+  // emitted `[[link_name]]` attribute.
   [[nodiscard]] const std::string &
   spelled(const NativeDeclaration &declaration) const {
-    if (declaration.kind == NativeDeclarationKind::Function) {
-      return declaration.name;
-    }
     const auto rename = options_.renames.find(declaration.name);
     if (rename == options_.renames.end()) {
       return declaration.name;
@@ -957,21 +935,24 @@ private:
 
   [[nodiscard]] BindingItem planFunction(const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, true)) {
+            identifierProblem(item.name, false)) {
       return skipped(declaration, *problem);
+    }
+    const std::string &nativeSymbol =
+        declaration.asmLabel.empty() ? declaration.name : declaration.asmLabel;
+    if (const std::optional<std::string> problem =
+            identifierProblem(nativeSymbol, true)) {
+      return skipped(declaration, "link symbol: " + *problem);
+    }
+    if (item.name != nativeSymbol) {
+      item.linkName = nativeSymbol;
     }
     const NativeType *type = model_.findType(declaration.type);
     if (type == nullptr || type->kind != NativeTypeKind::Function) {
       return skipped(declaration, "the function type is invalid");
-    }
-    if (!declaration.asmLabel.empty()) {
-      return skipped(declaration,
-                     "the assembler label '" + declaration.asmLabel +
-                         "' renames the link symbol; importing the C name "
-                         "would bind a different function");
     }
     if (!declaration.callingConvention.empty()) {
       return skipped(declaration, "the '" + declaration.callingConvention +

@@ -73,7 +73,7 @@ declaration            = conditional-declaration
                        | namespace-declaration
                        | type-alias-declaration
                        | extern-c-declaration
-                       | native-c-array-attribute function-declaration
+                       | native-function-attributes function-declaration
                        | unsafe-function-attribute function-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
@@ -236,19 +236,33 @@ extern-c-declaration   = "extern" STRING_LITERAL "{"
                          { extern-c-function-declaration } "}" ;
 
 extern-c-function-declaration
-                       = [ native-c-array-attribute ]
+                       = [ native-function-attributes ]
                          [ "static" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause ";" ;
 
+native-function-attributes
+                       = native-function-attribute
+                         { native-function-attribute } ;
+
+native-function-attribute
+                       = native-c-array-attribute
+                       | native-link-name-attribute ;
+
 native-c-array-attribute
                        = "[[" "c_array" "(" IDENTIFIER ")" "]]" ;
 
+native-link-name-attribute
+                       = "[[" "link_name" "(" STRING_LITERAL ")" "]]" ;
+
 (* The linkage string must decode to exactly `"C"`. The block is valid only at
    namespace scope and may contain only bodyless free-function declarations.
-   Semantic analysis rejects generics, `static`, writable returns, overloading
-   or redeclaration of a program-global C symbol, and every parameter or return
-   type outside the bounded native ABI.
+   Semantic analysis rejects generics, `static`, writable returns, duplicate
+   native attributes, overloading or redeclaration of a program-global C
+   symbol, and every parameter or return type outside the bounded native ABI.
+   `[[link_name("symbol")]]` keeps source lookup on the declared IDENTIFIER
+   while binding the decoded portable C identifier `symbol`; without it the
+   source identifier is the link symbol.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
    types, `float`, `double`, valid `[[c_abi]]` records, `c_string`, exact named
