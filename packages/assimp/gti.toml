@@ -5,8 +5,8 @@ name = "gti-assimp"
 version = "0.1.0"
 
 [package.build-script]
-command = ["python3", "build.py"]
-inputs = ["build.py", "vendor/assimp", "vendor/zlib"]
+source = "build.gti"
+inputs = ["vendor/assimp", "vendor/zlib"]
 
 [dependencies]
 zlib = { path = "../zlib" }

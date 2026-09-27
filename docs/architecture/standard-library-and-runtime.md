@@ -174,6 +174,23 @@ declaration and its exact type relationship. It does not recognize those public
 names or `std::accumulate`, and application source cannot name the underlying
 `gti_internal` capability.
 
+## Package Build-Program Boundary
+
+`<std/build>` is an ordinary source-defined, host-only library surface for
+approved package `build.gti` programs. `std::build::context` owns the exact
+driver-supplied host/target/toolchain facts, `std::build::command` constructs an
+exact argv without shell expansion, and `std::build::outputs` serializes the
+versioned native-output description. The compiler recognizes none of these
+public names.
+
+The only irreducible host operation is the narrow counted runtime entry
+`gti_rt_run_process_v1`. It accepts a NUL-separated argument blob, rejects a
+missing/empty executable or malformed encoding, and uses `fork`/`execvp` plus
+`waitpid` on supported POSIX hosts. It returns the ordinary child exit status;
+Windows fails closed with status 127. Environment selection, working directory,
+consumer approval, caching, and output containment remain driver policy rather
+than runtime policy. This boundary provides exact execution, not sandboxing.
+
 ## Managed Concurrency Boundary
 
 The public managed-thread type is the ordinary source-defined `std::thread`

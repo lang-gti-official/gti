@@ -7,7 +7,7 @@
 
 namespace lang::cli {
 
-inline constexpr int projectMetadataSchemaVersion = 10;
+inline constexpr int projectMetadataSchemaVersion = 11;
 
 [[nodiscard]] int optimizationNumber(OptimizationLevel optimization);
 [[nodiscard]] std::string_view cppStandardName(CppStandard standard);

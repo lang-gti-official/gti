@@ -344,7 +344,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 10
+        assert configuration_metadata["schemaVersion"] == 11
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -492,7 +492,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 10
+        assert metadata_document["schemaVersion"] == 11
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -565,7 +565,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 10
+        assert test_metadata["schemaVersion"] == 11
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -776,7 +776,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 10
+        assert native_document["schemaVersion"] == 11
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1100,7 +1100,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 10
+        assert workspace_metadata["schemaVersion"] == 11
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2300,8 +2300,8 @@ def main():
             'name = "scripted-native"\n'
             'version = "0.1.0"\n\n'
             "[package.build-script]\n"
-            f"command = [{json.dumps(sys.executable)}, \"build.py\"]\n"
-            'inputs = ["build.py"]\n',
+            'source = "build.gti"\n'
+            'inputs = []\n',
             encoding="utf-8",
         )
         (scripted / "src/scripted.gti").write_text(
@@ -2312,16 +2312,31 @@ def main():
             "}\n",
             encoding="utf-8",
         )
-        (scripted / "build.py").write_text(
-            "import os\n"
-            "from pathlib import Path\n\n"
-            'output = Path(os.environ["GTI_BUILD_OUT_DIR"])\n'
-            'result = Path(os.environ["GTI_BUILD_OUTPUT"])\n'
-            "output.mkdir(parents=True, exist_ok=True)\n"
-            '(output / "scripted.c").write_text('
-            '"int scripted_value(void) { return 42; }\\n", encoding="utf-8")\n'
-            'result.write_text("version = 1\\nc-sources = '
-            '[\\\"scripted.c\\\"]\\n", encoding="utf-8")\n',
+        (scripted / "build.gti").write_text(
+            "#include <std/build>\n"
+            "#include <std/cstdio>\n"
+            "#include <std/string>\n"
+            "#include <std/vector>\n\n"
+            "int main(int argc, std::vector<std::string> argv) {\n"
+            "  if (argc != 11) { return 64; }\n"
+            "  mut std::build::context context = "
+            "std::build::context_from_args(argv);\n"
+            "  mut std::string source = "
+            "std::string(context.output_dir().view());\n"
+            "  source.append(\"/scripted.c\");\n"
+            "  mut auto file = std::fopen(source.view(), "
+            "std::file_mode::write);\n"
+            "  if (!file) { return 74; }\n"
+            "  auto written = file.value()->write(\n"
+            "      \"int scripted_value(void) { return 42; }\\n\");\n"
+            "  if (!written) { return 74; }\n"
+            "  auto closed = file.value()->close();\n"
+            "  if (!closed) { return 74; }\n"
+            "  mut std::build::outputs outputs = "
+            "std::build::outputs();\n"
+            "  outputs.c_source(\"scripted.c\");\n"
+            "  return outputs.publish(context);\n"
+            "}\n",
             encoding="utf-8",
         )
         scripted_app = root / "scripted-app"
@@ -2352,7 +2367,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 10
+        assert scripted_metadata["schemaVersion"] == 11
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2361,11 +2376,13 @@ def main():
             for package in scripted_metadata["workspace"]["packages"]
             if package["name"] == "scripted-native"
         )
-        assert dependency_metadata["buildScript"]["command"][-1] == "build.py"
+        assert dependency_metadata["buildScript"]["command"] == []
+        assert dependency_metadata["buildScript"]["source"] == "build.gti"
         script_plan = scripted_metadata["targets"][0]["outputs"][0][
             "buildScripts"
         ][0]
         assert script_plan["package"] == "scripted-native@0.1.0"
+        assert script_plan["source"].endswith("/build.gti")
         assert not (scripted_app / "build").exists()
         built_scripted = run(
             [gti, "test", "--jobs", "2"], cwd=scripted_app
@@ -2503,7 +2520,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 10
+        assert composed_metadata["schemaVersion"] == 11
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

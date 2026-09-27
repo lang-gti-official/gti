@@ -128,6 +128,7 @@ struct BuildScriptPlan {
   std::string packageIdentity;
   std::filesystem::path packageRoot;
   std::vector<std::string> command;
+  std::optional<std::filesystem::path> source;
   std::vector<std::filesystem::path> inputs;
   std::vector<std::string> declaredInputs;
   std::filesystem::path outputDirectory;

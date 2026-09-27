@@ -1,6 +1,7 @@
 #include "gti/driver/build_script.h"
 
 #include "build_source_identity.h"
+#include "gti/driver/build.h"
 #include "gti/driver/process.h"
 #include "gti/target.h"
 
@@ -76,6 +77,10 @@ scriptIdentity(const ProjectBuildPlan &project, const BuildScriptPlan &plan,
   identity.add("profile", project.profileName());
   identity.add("cc", options.cCompiler);
   identity.add("cxx", options.cppCompiler);
+  if (plan.source) {
+    identity.add("gti-compiler", options.compilerIdentity);
+    identity.add("host-cxx", options.hostCppCompiler);
+  }
   for (const std::string &argument : plan.command) {
     identity.add("argv", argument);
   }
@@ -482,6 +487,69 @@ void appendOutput(NativeInputs &inputs, const BuildScriptPlan &plan,
   }
 }
 
+std::optional<std::vector<std::string>> buildScriptCommand(
+    const ProjectBuildPlan &project, const BuildScriptPlan &script,
+    const BuildScriptExecutionOptions &options,
+    const std::filesystem::path &output, BuildScriptExecutionResult &result) {
+  if (!script.source) {
+    return script.command;
+  }
+  if (!options.hostToolchain || options.hostCppCompiler.empty()) {
+    result.diagnostics.push_back(scriptDiagnostic(
+        script, "GTI-B2003",
+        "Cannot compile GTI build script for '" + script.packageIdentity +
+            "': the host GTI toolchain is unavailable."));
+    return std::nullopt;
+  }
+
+  const std::filesystem::path generated =
+      script.outputDirectory / ".build-script.gti.cpp";
+  const std::filesystem::path executable =
+      script.outputDirectory / "build-script-host";
+  const ExecutableBuildResult built = buildExecutable(ExecutableBuildRequest(
+      CompilationRequest(*script.source, options.hostToolchain->standardLibrary,
+                         TargetInfo::host(), OptimizationLevel::O0,
+                         CppStandard::Cpp20),
+      *options.hostToolchain, generated, executable, options.hostCppCompiler,
+      {}, false, true, options.verbose,
+      ManagedOutputPolicy{.trustedRoot = project.workspaceRoot(),
+                          .outputRoot =
+                              project.workspaceRoot() / "build" / "gti"}));
+  if (!built.succeeded()) {
+    if (!built.compilation.diagnostics.empty()) {
+      result.diagnosticSources = built.compilation.sources;
+      result.diagnostics = built.compilation.diagnostics;
+    } else {
+      Diagnostic diagnostic =
+          scriptDiagnostic(script, "GTI-B2003",
+                           "Failed to compile GTI build script for '" +
+                               script.packageIdentity + "'.");
+      if (built.driverDiagnostic) {
+        diagnostic.hints.push_back(*built.driverDiagnostic);
+      }
+      if (built.nativeProcess && !built.nativeProcess->output.empty()) {
+        diagnostic.hints.push_back(built.nativeProcess->output);
+      }
+      result.diagnostics.push_back(std::move(diagnostic));
+    }
+    return std::nullopt;
+  }
+
+  return std::vector<std::string>{
+      executable.string(),
+      output.string(),
+      script.packageRoot.string(),
+      script.outputDirectory.string(),
+      targetTriple(TargetInfo::host()),
+      targetTriple(project.target()),
+      project.target().os,
+      project.profileName(),
+      std::to_string(options.jobs),
+      options.cCompiler,
+      options.cppCompiler,
+  };
+}
+
 } // namespace
 
 BuildScriptExecutionResult
@@ -538,6 +606,11 @@ executeBuildScripts(const ProjectBuildPlan &plan,
       return result;
     }
 
+    const std::optional<std::vector<std::string>> command =
+        buildScriptCommand(plan, script, options, output, result);
+    if (!command) {
+      return result;
+    }
     ProcessInvocationOptions processOptions{
         .outputMode = ProcessOutputMode::Capture,
         .captureSuccessfulOutput = options.verbose,
@@ -552,7 +625,7 @@ executeBuildScripts(const ProjectBuildPlan &plan,
                         {"GTI_BUILD_JOBS", std::to_string(options.jobs)},
                         {"CC", options.cCompiler},
                         {"CXX", options.cppCompiler}}};
-    const ProcessResult process = invokeProcess(script.command, processOptions);
+    const ProcessResult process = invokeProcess(*command, processOptions);
     if (!process.succeeded()) {
       Diagnostic diagnostic =
           scriptDiagnostic(script, "GTI-B2003",

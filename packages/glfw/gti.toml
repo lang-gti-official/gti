@@ -5,5 +5,5 @@ name = "gti-glfw"
 version = "0.1.0"
 
 [package.build-script]
-command = ["python3", "build.py"]
-inputs = ["build.py", "vendor/glfw"]
+source = "build.gti"
+inputs = ["vendor/glfw"]

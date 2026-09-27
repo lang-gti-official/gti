@@ -68,6 +68,11 @@ source. An optional unit does not automatically re-export its own dependencies.
 
 The current implemented foundation includes:
 
+- `<std/build>` host-side package build-program support through
+  `std::build::context`, exact-argv `std::build::command`, and structured
+  `std::build::outputs`. This unit is intended for consumer-approved
+  `build.gti` programs; command execution is not sandboxed, and Windows fails
+  closed in the current implementation; and
 - `<std/memory>` `std::unique_ptr<T>` as a nominal move-only unique owner with
   explicit null construction, reset, null assignment, and checked explicit
   base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct

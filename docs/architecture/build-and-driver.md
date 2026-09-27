@@ -642,7 +642,17 @@ discovery covers group sources.
 ### Approved Package Build Scripts
 
 A package that must configure or compile an upstream native library may declare
-one exact host command and its complete contained input set:
+either a GTI build program or an exact external host command, plus its complete
+contained input set. The GTI-authored form is the preferred package surface:
+
+```toml
+[package.build-script]
+source = "build.gti"
+inputs = ["vendor/upstream"]
+```
+
+The external-command form remains supported for existing packages and for
+tools that are more naturally maintained in another language:
 
 ```toml
 [package.build-script]
@@ -664,7 +674,14 @@ by `gti.lock`. Missing approval is `GTI-B2002` during project resolution, before
 any process starts. A selected root package may run its own script without a
 self-entry because selecting that package is already an explicit trust action.
 
-Build scripts run dependency-first, with the package root as their working
+Exactly one of `source` and `command` is required. A source path must name a
+contained `.gti` file and is automatically part of the content cache inputs.
+The driver compiles it as an ordinary hosted GTI executable for the build host,
+using the installed standard library/runtime and host C++ toolchain; the
+package's requested target still governs the native artifacts it publishes.
+Compilation diagnostics retain `build.gti` source locations.
+
+Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
 `GTI_BUILD_HOST`, `GTI_BUILD_TARGET`, `GTI_BUILD_PROFILE`, `GTI_BUILD_JOBS`,
@@ -675,26 +692,63 @@ and may declare `include-dirs`, `c-sources`, `cpp-sources`, `library-dirs`,
 directories. C and C++ source extensions and native names are validated before
 the outputs enter the resolved package-native group.
 
+`<std/build>` is the source-defined API for GTI build programs. Their entry
+point uses the normal owned argument form, checks `argc == 11`, and creates a
+`std::build::context` with `std::build::context_from_args(argv)`. The context
+exposes the output manifest, package/output directories, host/target facts,
+profile, parallelism budget, and selected target C/C++ compilers.
+`std::build::command` constructs and executes one exact argument vector without
+shell parsing. `std::build::outputs` records include directories, C and C++
+sources, library directories/files/names, and frameworks, then `publish`
+writes the versioned output manifest consumed by the same validation path as
+an external command.
+
+```gti
+#include <std/build>
+#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 11) { return 64; }
+  mut std::build::context context = std::build::context_from_args(argv);
+  mut std::build::command configure = std::build::command("cmake");
+  configure.arg("-S");
+  configure.arg("vendor/upstream");
+  configure.arg("-B");
+  configure.arg(context.output_dir().view());
+  int32_t status = configure.run();
+  if (status != 0) { return status; }
+
+  mut std::build::outputs outputs = std::build::outputs();
+  outputs.link_file("lib/libupstream.a");
+  return outputs.publish(context);
+}
+```
+
 The output tree is managed below
 `build/gti/build-scripts/<package>/<version>/<target>/<profile>/<project-target>`.
-The cache identity includes the command, host/target/profile, selected C/C++
-compilers, and content of every declared input. A matching state is reused only
-when its structured output still validates; changed or missing inputs rerun the
-script. `--jobs N` is forwarded as the script's parallelism budget and defaults
-to at most four jobs. `gti check`, `fetch`, `metadata`, and project resolution
-never execute scripts or create their output directories; executable-producing
-`build`, `run`, `test`, and `verify` do.
+The cache identity includes the command or GTI source, host/target/profile,
+selected C/C++ compilers, and content of every declared input. GTI-authored
+programs additionally include the GTI compiler identity and host C++ compiler.
+A matching state is reused only when its structured output still validates;
+changed or missing inputs rerun the program. `--jobs N` is forwarded as the
+program's parallelism budget and defaults to at most four jobs. `gti check`,
+`fetch`, `metadata`, and project resolution never compile or execute build
+programs or create their output directories; executable-producing `build`,
+`run`, `test`, and `verify` do.
 
-This first implementation deliberately does not claim process sandboxing or
-network isolation: the child inherits the host environment except for the
-documented overrides. Approval therefore means permission to run arbitrary
-code from that reviewed, locked package revision. For correct cache reuse, a
-script must derive its outputs only from its declared inputs and the documented
-environment; ambient environment values and undeclared host files are not part
-of the cache identity. Declared input trees must contain only ordinary files
-and directories; symbolic links and special files are rejected. Script
-execution is supported on macOS and Linux; Windows process overrides and
-package scripts remain unsupported.
+This implementation deliberately does not claim process sandboxing or network
+isolation: both GTI-authored and external programs inherit the host environment
+except for the documented overrides. Approval therefore means permission to
+run arbitrary code from that reviewed, locked package revision. GTI syntax and
+ownership checks make the program safer to author; they do not make executing a
+third-party build program a sandbox. For correct cache reuse, a program must
+derive its outputs only from its declared inputs and the documented context;
+ambient environment values and undeclared host files are not part of the cache
+identity. Declared input trees must contain only ordinary files and
+directories; symbolic links and special files are rejected. Execution is
+supported on macOS and Linux; Windows process overrides and package build
+programs remain unsupported.
 
 ### Vendored Native Dependencies
 

@@ -31,7 +31,8 @@ install Xcode command-line tools. GLFW's consumer build selects X11, not
 Wayland on Linux; it needs CMake plus X11, Xrandr, Xinerama, Xcursor and Xi
 development headers (on Debian/Ubuntu: `libx11-dev libxrandr-dev
 libxinerama-dev libxcursor-dev libxi-dev`). Consumer builds of GLFW, Assimp,
-and libgit2 require CMake and a C/C++ compiler. Preparation accepts native
+and libgit2 compile their checked-in `build.gti` programs and require CMake and
+a C/C++ compiler. Preparation accepts native
 64-bit macOS/Linux hosts; Windows and cross-compilation are not supported by
 this preparation script. Only macOS arm64 execution has been checked locally.
 
@@ -88,10 +89,13 @@ declarations from the earlier `glfw-gti` package at commit
 `8c766034e8f352e5f0c8af91eccf248a06bc41b2`.
 
 GTI compiles the declared C/C++ sources and links dependencies through their
-manifests. GLFW, Assimp, and libgit2 invoke pinned upstream CMake builds in
-GTI-managed output directories and publish only validated native outputs back
-to the driver. Unchanged commands and declared input contents reuse those
-outputs. GLFW needs Objective-C on macOS, and Assimp needs upstream configuration
+manifests. GLFW, Assimp, and libgit2 use GTI-authored `build.gti` programs to
+invoke pinned upstream CMake builds in GTI-managed output directories and
+publish only validated native outputs back to the driver. The previous
+`build.py` implementations remain in each package as examples of the compatible
+external-command form, but their manifests select `source = "build.gti"`.
+Unchanged program/compiler/toolchain identities and declared input contents
+reuse those outputs. GLFW needs Objective-C on macOS, and Assimp needs upstream configuration
 and generated headers for its C++ implementation. Libpng composes zlib
 through a real path dependency; copied, checksum-pinned zlib **headers** stay
 local to libpng's isolated native group, while its implementation is linked

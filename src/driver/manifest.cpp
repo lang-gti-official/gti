@@ -2033,16 +2033,68 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
             buildDiagnostic("GTI-B1004", script.declaration,
                             "Package field 'build-script' must be a table."));
       } else {
-        validateFields(*scriptTable, {"command", "inputs"},
+        validateFields(*scriptTable, {"command", "source", "inputs"},
                        "package build-script", sourceName, source,
                        result.diagnostics);
-        script.command = stringArray(
-            *scriptTable, "command", "Package build-script", sourceName, source,
-            result.diagnostics, &script.commandDeclarations);
-        if (script.command.empty()) {
+        if (scriptTable->contains("command")) {
+          script.command = stringArray(
+              *scriptTable, "command", "Package build-script", sourceName,
+              source, result.diagnostics, &script.commandDeclarations);
+        }
+        const toml::node *sourceNode = scriptTable->get("source");
+        if (sourceNode != nullptr) {
+          script.sourceDeclaration =
+              sourceSpan(sourceName, source, *sourceNode);
+          const std::optional<std::string> spelling =
+              sourceNode->value<std::string>();
+          if (!spelling) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", script.sourceDeclaration,
+                "Package build-script field 'source' must be a string."));
+          } else {
+            const std::filesystem::path declared(*spelling);
+            if (declared.empty() ||
+                isAbsoluteOnSupportedHost(*spelling, declared)) {
+              result.diagnostics.push_back(buildDiagnostic(
+                  "GTI-B1103", script.sourceDeclaration,
+                  "Package build-script source must be a non-empty path "
+                  "relative to gti.toml."));
+            } else {
+              std::error_code sourceError;
+              const std::filesystem::path resolved =
+                  std::filesystem::weakly_canonical(packageRoot / declared,
+                                                    sourceError);
+              if (sourceError ||
+                  !std::filesystem::is_regular_file(resolved, sourceError)) {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B2001", script.sourceDeclaration,
+                    "Package build-script source does not name an existing "
+                    "regular file: " +
+                        *spelling + "."));
+              } else if (!pathIsWithin(packageRoot, resolved)) {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B1104", script.sourceDeclaration,
+                    "Package build-script source escapes the package "
+                    "directory: " +
+                        *spelling + "."));
+              } else if (resolved.extension() != ".gti") {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B2001", script.sourceDeclaration,
+                    "Package build-script source must use the '.gti' "
+                    "extension: " +
+                        *spelling + "."));
+              } else {
+                script.source = resolved;
+                script.declaredSource = *spelling;
+              }
+            }
+          }
+        }
+        if (script.command.empty() == !script.source.has_value()) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1002", script.declaration,
-              "Package build-script requires a non-empty 'command' array."));
+              "Package build-script requires exactly one of a non-empty "
+              "'command' array or a GTI 'source' file."));
         }
 
         std::vector<SourceSpan> inputDeclarations;
@@ -2081,6 +2133,12 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
           }
           script.inputs.push_back(resolved);
           script.inputDeclarations.push_back(inputDeclarations[index]);
+        }
+        if (script.source &&
+            std::find(script.inputs.begin(), script.inputs.end(),
+                      *script.source) == script.inputs.end()) {
+          script.inputs.push_back(*script.source);
+          script.inputDeclarations.push_back(script.sourceDeclaration);
         }
         if (script.inputs.size() != script.declaredInputs.size()) {
           script.declaredInputs.clear();

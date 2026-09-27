@@ -48,6 +48,13 @@ int64_t gti_rt_seek_file_v1(int64_t descriptor, int64_t offset,
                             gti_file_seek_origin_v1 origin);
 int32_t gti_rt_close_file(int64_t descriptor);
 
+// Host process execution used by GTI-authored package build programs. The
+// counted payload is one or more NUL-terminated argv elements, including a
+// non-empty executable at index zero. The child inherits the caller's working
+// directory, environment, and standard streams. Windows support is deferred
+// with the rest of package build-script execution.
+int32_t gti_rt_run_process_v1(gti_c_string_view arguments);
+
 #ifdef __cplusplus
 }
 #endif

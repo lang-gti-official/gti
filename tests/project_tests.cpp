@@ -2755,6 +2755,56 @@ void testCrossToolchainManifestDiagnostics() {
 }
 
 void testPackageBuildScripts() {
+  {
+    TemporaryDirectory sourcePackage;
+    expect(writeFile(sourcePackage.root() / "src/main.gti",
+                     "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "build.gti",
+                         "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.gti\"\n"
+                                       "inputs = []\n")),
+           "GTI build-script manifest fixture should be writable");
+    const lang::driver::ManifestLoadResult loaded =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(loaded.succeeded() && loaded.manifest &&
+               loaded.manifest->package().buildScript &&
+               loaded.manifest->package().buildScript->source ==
+                   std::filesystem::canonical(sourcePackage.root() /
+                                              "build.gti") &&
+               loaded.manifest->package().buildScript->command.empty() &&
+               loaded.manifest->package().buildScript->inputs.size() == 1,
+           "a GTI source build program should parse and automatically enter "
+           "its own content into the cache inputs");
+
+    expect(writeFile(sourcePackage.root() / "gti.toml",
+                     validManifest("\n[package.build-script]\n"
+                                   "source = \"build.gti\"\n"
+                                   "command = [\"true\"]\n"
+                                   "inputs = []\n")),
+           "ambiguous build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult ambiguous =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!ambiguous.succeeded() &&
+               findDiagnostic(ambiguous.diagnostics, "GTI-B1002") != nullptr,
+           "a package must choose either a GTI source program or an external "
+           "command, never both");
+
+    expect(writeFile(sourcePackage.root() / "build.txt", "not GTI\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.txt\"\n"
+                                       "inputs = []\n")),
+           "wrong-extension build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult wrongExtension =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!wrongExtension.succeeded() &&
+               findDiagnostic(wrongExtension.diagnostics, "GTI-B2001") !=
+                   nullptr,
+           "a GTI build-program source must use the .gti extension");
+  }
+
   TemporaryDirectory temporary;
   const std::filesystem::path app = temporary.root() / "app";
   const std::filesystem::path native = temporary.root() / "native";

@@ -1728,18 +1728,28 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
   if (!plan.buildScripts().empty()) {
     const unsigned defaultJobs =
         std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+    const std::string hostCppCompiler =
+        lang::driver::targetTriple(plan.target()) ==
+                lang::driver::targetTriple(lang::TargetInfo::host())
+            ? cppCompiler
+            : lang::driver::discoverNativeCompiler();
     const lang::driver::BuildScriptExecutionResult scripts =
         lang::driver::executeBuildScripts(
             plan, {.cCompiler = cCompiler.value_or("cc"),
                    .cppCompiler = cppCompiler,
+                   .hostCppCompiler = hostCppCompiler,
+                   .compilerIdentity = std::string(version),
+                   .hostToolchain = toolchain,
                    .jobs = options.jobs ? static_cast<unsigned>(*options.jobs)
                                         : defaultJobs,
                    .verbose = options.verbose});
     if (!scripts.succeeded()) {
       const lang::SourceManager emptySources;
-      reportDiagnostics(scripts.diagnostics, diagnosticSources == nullptr
-                                                 ? emptySources
-                                                 : *diagnosticSources);
+      const lang::SourceManager &sources =
+          scripts.diagnosticSources      ? *scripts.diagnosticSources
+          : diagnosticSources == nullptr ? emptySources
+                                         : *diagnosticSources;
+      reportDiagnostics(scripts.diagnostics, sources);
       return exitCode(ExitStatus::Compilation);
     }
     nativeInputs = *scripts.nativeInputs;
