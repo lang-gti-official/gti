@@ -1,0 +1,236 @@
+// <std/build> — host-side package build-program support.
+//
+// A build.gti program is an ordinary hosted GTI executable compiled for the
+// build host. The driver supplies one exact context argument vector, and the
+// program may run native tools through exact argv execution before publishing
+// a versioned native-output manifest.
+
+#include <std/cstdio>
+#include <std/string>
+#include <std/vector>
+
+namespace gti_internal {
+namespace build_runtime {
+extern "C" {
+int32_t gti_rt_run_process_v1(gti_internal::text_view arguments);
+}
+}
+}
+
+namespace std {
+namespace build {
+
+/// Immutable invocation facts supplied by the GTI project driver.
+class context {
+  std::string output_file_value;
+  std::string package_dir_value;
+  std::string output_dir_value;
+  std::string host_value;
+  std::string target_value;
+  std::string target_os_value;
+  std::string profile_value;
+  std::string jobs_value;
+  std::string cc_value;
+  std::string cxx_value;
+
+public:
+  context(std::string_view output_file, std::string_view package_dir,
+          std::string_view output_dir, std::string_view host,
+          std::string_view target, std::string_view target_os,
+          std::string_view profile, std::string_view jobs,
+          std::string_view cc, std::string_view cxx)
+      : output_file_value(std::string(output_file)),
+        package_dir_value(std::string(package_dir)),
+        output_dir_value(std::string(output_dir)),
+        host_value(std::string(host)), target_value(std::string(target)),
+        target_os_value(std::string(target_os)),
+        profile_value(std::string(profile)), jobs_value(std::string(jobs)),
+        cc_value(std::string(cc)), cxx_value(std::string(cxx)) {}
+
+  std::string& output_file() { return this.output_file_value; }
+  std::string& package_dir() { return this.package_dir_value; }
+  std::string& output_dir() { return this.output_dir_value; }
+  std::string& host() { return this.host_value; }
+  std::string& target() { return this.target_value; }
+  std::string& target_os() { return this.target_os_value; }
+  std::string& profile() { return this.profile_value; }
+  std::string& jobs() { return this.jobs_value; }
+  std::string& cc() { return this.cc_value; }
+  std::string& cxx() { return this.cxx_value; }
+};
+
+/// Decodes the exact argument vector supplied to a build.gti entry point.
+/// Callers must first require argc == 11.
+context context_from_args(std::vector<std::string>& arguments) {
+  return context(
+      arguments[std::size_t(1)].view(), arguments[std::size_t(2)].view(),
+      arguments[std::size_t(3)].view(), arguments[std::size_t(4)].view(),
+      arguments[std::size_t(5)].view(), arguments[std::size_t(6)].view(),
+      arguments[std::size_t(7)].view(), arguments[std::size_t(8)].view(),
+      arguments[std::size_t(9)].view(), arguments[std::size_t(10)].view());
+}
+
+/// One exact host command. No shell parses or expands its arguments.
+class command {
+  mut std::string encoded;
+  mut bool valid;
+  mut std::size_t argument_count;
+
+  void append(std::string_view value) mut {
+    for (mut std::size_t index = 0; index < value.size(); index++) {
+      if (value[index] == '\0') {
+        this.valid = false;
+        return;
+      }
+    }
+    this.encoded.append(value);
+    this.encoded.push_back('\0');
+    this.argument_count++;
+  }
+
+public:
+  command(std::string_view executable)
+      : encoded(std::string("")), valid(true), argument_count(0) {
+    if (executable.empty()) {
+      this.valid = false;
+    } else {
+      this.append(executable);
+    }
+  }
+
+  void arg(std::string_view value) mut {
+    this.append(value);
+  }
+
+  /// Runs the command and returns its ordinary process exit status.
+  /// Invalid empty/NUL-containing argv data returns 127 without spawning.
+  int32_t run() {
+    if (!this.valid || this.argument_count == 0) {
+      return 127;
+    }
+    unsafe {
+      return gti_internal::build_runtime::gti_rt_run_process_v1(
+          this.encoded.view());
+    }
+  }
+};
+
+namespace detail {
+
+bool append_toml_string(mut std::string& document, std::string_view value) {
+  document.append("\"");
+  for (mut std::size_t index = 0; index < value.size(); index++) {
+    char character = value[index];
+    if (character == '\\') {
+      document.append("\\\\");
+    } else if (character == '"') {
+      document.append("\\\"");
+    } else if (character == '\n') {
+      document.append("\\n");
+    } else if (character == '\r') {
+      document.append("\\r");
+    } else if (character == '\t') {
+      document.append("\\t");
+    } else if (uint8_t(character) < uint8_t(32) ||
+               uint8_t(character) == uint8_t(127)) {
+      return false;
+    } else {
+      document.push_back(character);
+    }
+  }
+  document.append("\"");
+  return true;
+}
+
+bool append_value(mut std::string& encoded, std::string_view value) {
+  if (!encoded.empty()) {
+    encoded.append(", ");
+  }
+  return append_toml_string(encoded, value);
+}
+
+void append_array(mut std::string& document, std::string_view name,
+                  std::string& encoded) {
+  if (encoded.empty()) {
+    return;
+  }
+  document.append(name);
+  document.append(" = [");
+  document.append(encoded.view());
+  document.append("]\n");
+}
+
+}
+
+/// Native artifacts and inputs contributed by one package build program.
+class outputs {
+  mut std::string include_dirs;
+  mut std::string c_source_files;
+  mut std::string cpp_source_files;
+  mut std::string library_dirs;
+  mut std::string link_files_value;
+  mut std::string libraries_value;
+  mut std::string frameworks_value;
+  mut bool valid;
+
+public:
+  outputs()
+      : include_dirs(std::string("")), c_source_files(std::string("")),
+        cpp_source_files(std::string("")), library_dirs(std::string("")),
+        link_files_value(std::string("")), libraries_value(std::string("")),
+        frameworks_value(std::string("")), valid(true) {}
+
+  void include_dir(std::string_view path) mut {
+    this.valid = detail::append_value(this.include_dirs, path) && this.valid;
+  }
+  void c_source(std::string_view path) mut {
+    this.valid = detail::append_value(this.c_source_files, path) && this.valid;
+  }
+  void cpp_source(std::string_view path) mut {
+    this.valid = detail::append_value(this.cpp_source_files, path) && this.valid;
+  }
+  void library_dir(std::string_view path) mut {
+    this.valid = detail::append_value(this.library_dirs, path) && this.valid;
+  }
+  void link_file(std::string_view path) mut {
+    this.valid = detail::append_value(this.link_files_value, path) && this.valid;
+  }
+  void library(std::string_view name) mut {
+    this.valid = detail::append_value(this.libraries_value, name) && this.valid;
+  }
+  void framework(std::string_view name) mut {
+    this.valid = detail::append_value(this.frameworks_value, name) && this.valid;
+  }
+
+  /// Publishes through the driver's private output path. The driver validates
+  /// containment, existence, extensions, and native names after this returns.
+  /// Status 0 is success, 65 is invalid text, and 74 is an I/O failure.
+  int32_t publish(context& build_context) {
+    if (!this.valid) {
+      return 65;
+    }
+    mut std::string document = std::string("version = 1\n");
+    detail::append_array(document, "include-dirs", this.include_dirs);
+    detail::append_array(document, "c-sources", this.c_source_files);
+    detail::append_array(document, "cpp-sources", this.cpp_source_files);
+    detail::append_array(document, "library-dirs", this.library_dirs);
+    detail::append_array(document, "link-files", this.link_files_value);
+    detail::append_array(document, "libraries", this.libraries_value);
+    detail::append_array(document, "frameworks", this.frameworks_value);
+
+    mut auto opened = std::fopen(build_context.output_file().view(),
+                                 std::file_mode::write);
+    if (!opened) {
+      return 74;
+    }
+    auto written = opened.value()->write(document.view());
+    if (!written || written.value() != document.size()) {
+      return 74;
+    }
+    auto closed = opened.value()->close();
+    return closed ? 0 : 74;
+  }
+};
+
+}
+}

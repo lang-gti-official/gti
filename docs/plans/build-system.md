@@ -943,7 +943,7 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
-target/profile output and generated-C++ path. Metadata schema version 10 reports
+target/profile output and generated-C++ path. Metadata schema version 11 reports
 every declared execution profile and effective GTI configuration flag set plus
 every effective native category, C source, C++ source, C standard, C argument,
 and ordered link operand, the
@@ -997,11 +997,15 @@ subcommand.
 
 ### Build hooks
 
-Status: initial consumer-approved native package build scripts are complete.
+Status: consumer-approved native package build programs are complete, including
+GTI-authored `build.gti` programs and the original external-command form.
 
-The implemented hook uses an exact argv command, declared contained inputs,
-content-based cache identity, a managed output directory, and a versioned TOML
-output contract. Dependency scripts require an exact `name@version` entry in
+The implemented hook accepts exactly one GTI source file or exact argv command,
+declared contained inputs, content-based cache identity, a managed output
+directory, and a versioned TOML output contract. GTI programs use the ordinary
+compiler and the source-defined `<std/build>` context, exact-command, and
+structured-output API; external commands remain compatible. Dependency scripts
+require an exact `name@version` entry in
 the selected package's `[build].allow-build-scripts`; resolution, metadata,
 fetch, and check do not execute code. The implementation currently provides:
 
@@ -1159,7 +1163,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 10 while
+- Report the resolved C and C++ inputs through metadata schema version 11 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1465,7 +1469,7 @@ need them.
    root. If resolution fails, it retains the recovery path for a broken
    manifest and validates/removes only the nearest literal
    `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
-6. Metadata JSON schema version 10 is a read-only enumeration of every current
+6. Metadata JSON schema version 11 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
    effective GTI configuration flags, resolved native C and C++ sources, C
    policy, other native inputs, ordered link operands, and composed

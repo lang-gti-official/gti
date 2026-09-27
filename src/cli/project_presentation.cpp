@@ -86,6 +86,12 @@ void writeBuildScriptDeclaration(
   }
   stream << "{\"command\": ";
   writeJsonStrings(stream, script->command);
+  stream << ", \"source\": ";
+  if (script->declaredSource) {
+    writeJsonString(stream, *script->declaredSource);
+  } else {
+    stream << "null";
+  }
   stream << ", \"inputs\": ";
   writeJsonStrings(stream, script->declaredInputs);
   stream << '}';
@@ -102,6 +108,12 @@ void writeBuildScriptPlans(
     writeJsonString(stream, scripts[index].packageIdentity);
     stream << ", \"command\": ";
     writeJsonStrings(stream, scripts[index].command);
+    stream << ", \"source\": ";
+    if (scripts[index].source) {
+      writeJsonString(stream, scripts[index].source->string());
+    } else {
+      stream << "null";
+    }
     stream << ", \"inputs\": ";
     writeJsonPaths(stream, scripts[index].inputs);
     stream << ", \"outputDirectory\": ";

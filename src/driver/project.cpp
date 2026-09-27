@@ -481,6 +481,7 @@ composeBuildScriptPlans(const ProjectWorkspace &workspace,
     plans.push_back({.packageIdentity = package->identity(),
                      .packageRoot = package->manifest.packageRoot(),
                      .command = script->command,
+                     .source = script->source,
                      .inputs = script->inputs,
                      .declaredInputs = script->declaredInputs,
                      .outputDirectory = std::move(output),
@@ -676,6 +677,11 @@ ProjectBuildPlan makeBuildPlan(
   }
   for (const BuildScriptPlan &script : buildScripts) {
     modelIdentity += "\nbuild-script:" + script.packageIdentity;
+    if (script.source) {
+      modelIdentity += "|source=" + std::filesystem::relative(
+                                        *script.source, script.packageRoot)
+                                        .generic_string();
+    }
     for (const std::string &argument : script.command) {
       modelIdentity += "|argv=" + argument;
     }

@@ -102,26 +102,28 @@ class PackagesTest(unittest.TestCase):
         for name, (vendor, option) in expected.items():
             with self.subTest(package=name):
                 package = prepare.ROOT / name
-                script = (package / "build.py").read_text(encoding="utf-8")
-                ast.parse(script)
+                legacy_script = (package / "build.py").read_text(encoding="utf-8")
+                ast.parse(legacy_script)
+                script = (package / "build.gti").read_text(encoding="utf-8")
                 manifest = (package / "gti.toml").read_text(encoding="utf-8")
                 self.assertIn("[package.build-script]", manifest)
-                self.assertIn('command = ["python3", "build.py"]', manifest)
+                self.assertIn('source = "build.gti"', manifest)
                 self.assertIn(vendor, manifest)
                 self.assertIn(option, script)
-                self.assertIn("GTI_BUILD_OUT_DIR", script)
-                self.assertIn("GTI_BUILD_OUTPUT", script)
-                self.assertIn("GTI_BUILD_JOBS", script)
-                self.assertIn("gti-build-output-", script)
+                self.assertIn("std::build::context_from_args", script)
+                self.assertIn("std::build::command", script)
+                self.assertIn("std::build::outputs", script)
+                self.assertIn("context.jobs()", script)
+                self.assertIn("outputs.publish(context)", script)
         for name in ("assimp", "libgit2"):
             manifest = (prepare.ROOT / name / "gti.toml").read_text(
                 encoding="utf-8"
             )
             self.assertIn("vendor/zlib", manifest)
-            script = (prepare.ROOT / name / "build.py").read_text(
+            script = (prepare.ROOT / name / "build.gti").read_text(
                 encoding="utf-8"
             )
-            self.assertIn('package / "vendor/zlib"', script)
+            self.assertIn('"/vendor/zlib"', script)
 
     def test_offline_checksum_idempotence_and_modified_sources(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -5,8 +5,8 @@ name = "gti-libgit2"
 version = "0.1.0"
 
 [package.build-script]
-command = ["python3", "build.py"]
-inputs = ["build.py", "vendor/libgit2", "vendor/zlib"]
+source = "build.gti"
+inputs = ["vendor/libgit2", "vendor/zlib"]
 
 [dependencies]
 zlib = { path = "../zlib" }

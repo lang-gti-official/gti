@@ -53,9 +53,12 @@ struct ProjectNativeSettings {
 // outputs are reported by the program through GTI_BUILD_OUTPUT.
 struct ProjectBuildScript {
   std::vector<std::string> command;
+  std::optional<std::filesystem::path> source;
+  std::optional<std::string> declaredSource;
   std::vector<std::filesystem::path> inputs;
   std::vector<std::string> declaredInputs;
   SourceSpan declaration;
+  SourceSpan sourceDeclaration;
   std::vector<SourceSpan> commandDeclarations;
   std::vector<SourceSpan> inputDeclarations;
 };
