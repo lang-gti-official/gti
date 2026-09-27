@@ -257,6 +257,11 @@ checksums before loading source, and `--offline`/`--locked` keep compilation
 network-free. Branch and tag selectors are deliberately rejected, and a
 registry remains a later phase.
 
+The language server reads this same resolved package graph without fetching or
+building. Once `gti fetch` has materialized a locked Git dependency, package
+diagnostics, hover, definition, semantic tokens, and member completion use it;
+unsaved GTI dependency buffers override the stored source for editor analysis.
+
 Project `build`, `run`, and `test` commands use a verified local whole-program
 cache under `build/gti/cache/v2`. An unchanged eligible build restores the
 executable without rerunning the frontend/backend or native compiler. Declared

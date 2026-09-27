@@ -7514,6 +7514,7 @@ def test_watched_dependency_reanalysis(executable, root):
         assert watchers == [
             {"globPattern": "**/*.gti"},
             {"globPattern": "**/gti.toml"},
+            {"globPattern": "**/gti.lock"},
         ]
         session.send(
             {

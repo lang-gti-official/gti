@@ -1088,6 +1088,8 @@ public:
     }
 
     FrontendOptions options;
+    options.target = input.target;
+    options.configurationFlags = input.configurationFlags;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;
     options.workMetrics = input.workMetrics;

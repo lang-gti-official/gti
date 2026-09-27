@@ -1266,16 +1266,17 @@ composition addition below extends this to package-scope native inputs.
 - **Complete:** test missing direct dependencies, dependency cycles, duplicate
   roots/loads, cache identity, CLI selection, and diagnostics in dependency
   units. The compiler query API accepts the same graph, and the driver now
-  publishes that graph as read-only `ProjectFacts`; wiring those facts into
-  LSP snapshots remains T-LSP-04.
+  publishes that graph as read-only `ProjectFacts`;
+- **Complete (T-LSP-04):** editor analysis and completion consume those facts
+  without fetching/building, preserve standalone analysis, and apply dirty
+  source overlays over the resolved graph.
 
 Acceptance criteria:
 
 - **Passed:** undeclared filesystem access is rejected;
 - **Passed:** transitive and sibling package declarations do not leak;
-- **Pending T-LSP-04:** CLI and LSP resolve the same package source graph. The
-  driver publishes that graph through read-only `ProjectFacts`; the LSP does
-  not consume it yet and still analyzes with no package source roots;
+- **Passed:** CLI and LSP resolve the same package source graph through
+  driver-owned `ProjectFacts`, including structured locked-Git failures;
 - **Passed at the compiler-library boundary:** direct compilation requests can
   receive explicit package-root mappings when needed without a
   manifest.
