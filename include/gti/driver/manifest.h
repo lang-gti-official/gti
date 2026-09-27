@@ -47,12 +47,26 @@ struct ProjectNativeSettings {
   std::vector<ProjectNativePlatform> platforms;
 };
 
+// A host-side package build program. The command is an exact argv vector run
+// with the package directory as its working directory. Inputs are declared as
+// package-contained paths so the driver can form a deterministic identity;
+// outputs are reported by the program through GTI_BUILD_OUTPUT.
+struct ProjectBuildScript {
+  std::vector<std::string> command;
+  std::vector<std::filesystem::path> inputs;
+  std::vector<std::string> declaredInputs;
+  SourceSpan declaration;
+  std::vector<SourceSpan> commandDeclarations;
+  std::vector<SourceSpan> inputDeclarations;
+};
+
 struct ProjectPackage {
   std::string name;
   std::string version;
   std::filesystem::path sourceRoot;
   SourceSpan sourceRootDeclaration;
   ProjectNativeSettings native;
+  std::optional<ProjectBuildScript> buildScript;
 };
 
 // A pinned git dependency source as spelled in the manifest: an exact URL
@@ -176,6 +190,11 @@ struct ProjectProfile {
 struct ProjectBuildSettings {
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
+  // Consumer-owned permission list. Dependency packages cannot authorize
+  // their own build programs: only the selected root/member's [build] table
+  // is consulted when plans are assembled.
+  std::vector<std::string> allowedBuildScripts;
+  std::vector<SourceSpan> allowedBuildScriptDeclarations;
   SourceSpan declaration;
 };
 

@@ -4,31 +4,13 @@ manifest-version = 1
 name = "gti-assimp"
 version = "0.1.0"
 
+[package.build-script]
+command = ["python3", "build.py"]
+inputs = ["build.py", "vendor/assimp", "vendor/zlib"]
+
 [dependencies]
 zlib = { path = "../zlib" }
 
 [package.native]
-include-dirs = ["native", "native/generated", "vendor/assimp/include"]
+include-dirs = ["native", "vendor/assimp/include"]
 c-sources = ["native/adapter.c"]
-
-[[package.native.platforms]]
-os = "macos"
-arch = "arm64"
-link-files = ["native/lib/macos-arm64/libassimp.a"]
-
-[[package.native.platforms]]
-os = "macos"
-arch = "x86_64"
-link-files = ["native/lib/macos-x86_64/libassimp.a"]
-
-[[package.native.platforms]]
-os = "linux"
-arch = "arm64"
-link-files = ["native/lib/linux-arm64/libassimp.a"]
-libraries = ["m", "pthread"]
-
-[[package.native.platforms]]
-os = "linux"
-arch = "x86_64"
-link-files = ["native/lib/linux-x86_64/libassimp.a"]
-libraries = ["m", "pthread"]

@@ -121,6 +121,20 @@ struct BindgenImportPlan {
   SourceSpan declaration;
 };
 
+// One approved host build program, resolved before frontend entry but not run
+// by metadata/check/fetch operations. Dependency scripts are ordered
+// dependency-first so generated native artifacts exist before dependents run.
+struct BuildScriptPlan {
+  std::string packageIdentity;
+  std::filesystem::path packageRoot;
+  std::vector<std::string> command;
+  std::vector<std::filesystem::path> inputs;
+  std::vector<std::string> declaredInputs;
+  std::filesystem::path outputDirectory;
+  SourceSpan declaration;
+  bool selectedPackage = false;
+};
+
 class ProjectBuildPlan final {
 public:
   ProjectBuildPlan(std::filesystem::path manifestPath,
@@ -136,6 +150,7 @@ public:
                    ConfigurationFlags configurationFlags,
                    std::string projectModelIdentity,
                    std::vector<BindgenImportPlan> bindgenImports = {},
+                   std::vector<BuildScriptPlan> buildScripts = {},
                    ResolvedProjectToolchain toolchain = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
@@ -158,6 +173,7 @@ public:
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
   [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
+  [[nodiscard]] const std::vector<BuildScriptPlan> &buildScripts() const;
   [[nodiscard]] const ResolvedProjectToolchain &toolchain() const;
 
 private:
@@ -181,6 +197,7 @@ private:
   ConfigurationFlags resolvedConfigurationFlags;
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
+  std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
 };
 

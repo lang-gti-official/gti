@@ -1,0 +1,38 @@
+#include <libgit2/libgit2>
+
+int main() {
+  unsafe {
+    if (git::gti_git_init() < 1) { return 1; }
+
+    mut int32_t major = 0;
+    mut int32_t minor = 0;
+    mut int32_t revision = 0;
+    git::gti_git_version(&major, &minor, &revision);
+    if (major != 1 || minor != 9 || revision != 6) { return 2; }
+
+    mut git::GtiGitRepository* repository = nullptr;
+    if (git::gti_git_repository_init(&repository, "build/libgit2-smoke.git", 1) != git::GTI_GIT_OK) { return 3; }
+    if (repository == nullptr) { return 4; }
+    if (git::gti_git_repository_is_bare(repository) != 1) { return 5; }
+    if (git::gti_git_repository_is_empty(repository) != 1) { return 6; }
+    if (git::gti_git_repository_path(repository) == nullptr) { return 7; }
+    if (git::gti_git_repository_workdir(repository) != nullptr) { return 8; }
+    if (git::gti_git_repository_state(repository) != git::GTI_GIT_REPOSITORY_STATE_NONE) { return 9; }
+
+    mut git::GtiGitCommit* commit = nullptr;
+    if (git::gti_git_head_commit(repository, &commit) != git::GTI_GIT_EUNBORNBRANCH) { return 10; }
+    if (commit != nullptr) { return 11; }
+    git::gti_git_repository_free(repository);
+
+    mut git::GtiGitRepository* reopened = nullptr;
+    if (git::gti_git_repository_open(&reopened, "build/libgit2-smoke.git") != git::GTI_GIT_OK) { return 12; }
+    if (reopened == nullptr || git::gti_git_repository_is_bare(reopened) != 1) { return 13; }
+    git::gti_git_repository_free(reopened);
+
+    mut git::GtiGitRepository* missing = nullptr;
+    if (git::gti_git_repository_open(&missing, "build/definitely-missing.git") != git::GTI_GIT_ENOTFOUND) { return 14; }
+    if (missing != nullptr || git::gti_git_last_error_message() == nullptr) { return 15; }
+    if (git::gti_git_shutdown() != 0) { return 16; }
+  }
+  return 0;
+}

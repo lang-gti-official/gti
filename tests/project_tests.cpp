@@ -1,3 +1,4 @@
+#include "gti/driver/build_script.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
@@ -2753,6 +2754,88 @@ void testCrossToolchainManifestDiagnostics() {
   }
 }
 
+void testPackageBuildScripts() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.root() / "app";
+  const std::filesystem::path native = temporary.root() / "native";
+  expect(writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(native / "src/.gitkeep", "") &&
+             writeFile(native / "build.cmake",
+                       R"(file(MAKE_DIRECTORY "$ENV{GTI_BUILD_OUT_DIR}/include")
+file(WRITE "$ENV{GTI_BUILD_OUT_DIR}/libnative.a" "")
+file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ninclude-dirs = [\"include\"]\nlink-files = [\"libnative.a\"]\n")
+)") &&
+             writeFile(native / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"native_pkg\"\nversion = \"0.1.0\"\n\n"
+                       "[package.build-script]\n"
+                       "command = [\"cmake\", \"-P\", \"build.cmake\"]\n"
+                       "inputs = [\"build.cmake\"]\n") &&
+             writeFile(app / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                       "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                       "[build]\nallow-build-scripts = "
+                       "[\"native_pkg@0.1.0\"]\n\n"
+                       "[targets.app]\nkind = \"executable\"\n"
+                       "root = \"src/main.gti\"\n"),
+         "build-script fixtures should be writable");
+
+  lang::driver::ProjectResolutionResult resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(resolved.succeeded() && resolved.plan &&
+             resolved.plan->buildScripts().size() == 1 &&
+             resolved.plan->nativeInputs().dependencyGroups.size() == 1,
+         "an explicitly approved dependency build script should enter the "
+         "resolved plan without executing during resolution");
+  if (resolved.plan) {
+    expect(!std::filesystem::exists(
+               resolved.plan->buildScripts().front().outputDirectory /
+               "gti-build-output.toml"),
+           "project resolution must not execute a build script");
+    const lang::driver::BuildScriptExecutionResult execution =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(execution.succeeded() && execution.nativeInputs &&
+               execution.nativeInputs->dependencyGroups.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .includeDirectories.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .linkOperands.size() == 1,
+           "a successful build script should contribute validated native "
+           "outputs to its dependency group");
+    expect(execution.outcomes.size() == 1 && !execution.outcomes.front().reused,
+           "the first build-script execution should report a native build");
+    const lang::driver::BuildScriptExecutionResult reused =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(reused.succeeded() && reused.outcomes.size() == 1 &&
+               reused.outcomes.front().reused,
+           "unchanged declared inputs should reuse validated build-script "
+           "outputs");
+  }
+
+  expect(writeFile(app / "gti.toml",
+                   "manifest-version = 1\n\n[package]\n"
+                   "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                   "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                   "[targets.app]\nkind = \"executable\"\n"
+                   "root = \"src/main.gti\"\n"),
+         "unapproved build-script fixture should be writable");
+  resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(!resolved.succeeded() &&
+             findDiagnostic(resolved.diagnostics, "GTI-B2002") != nullptr,
+         "a dependency build script must be rejected until the selected "
+         "package explicitly approves it");
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -2778,6 +2861,7 @@ int main() {
   testCrossToolchainManifest();
   testCrossToolchainFailClosed();
   testCrossToolchainManifestDiagnostics();
+  testPackageBuildScripts();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";
