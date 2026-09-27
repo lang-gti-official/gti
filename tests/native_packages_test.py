@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Offline safety and inventory checks for the native package preparation tool."""
+"""Offline safety, inventory, and source-build checks for native packages."""
 
 import importlib.util
+import ast
 import io
 import json
 from pathlib import Path
@@ -34,7 +35,7 @@ def archive(entries, *, link=False):
 
 class PackagesTest(unittest.TestCase):
     def test_inventory(self):
-        self.assertEqual(set(prepare.PACKAGES), {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp"})
+        self.assertEqual(set(prepare.PACKAGES), {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp", "libgit2"})
         lock = json.loads((prepare.ROOT / "upstream-lock.json").read_text())
         self.assertEqual(set(lock), set(prepare.PACKAGES) | {"imgui"})
         for name, entry in lock.items():
@@ -76,33 +77,51 @@ class PackagesTest(unittest.TestCase):
             prepare.archive_files(archive([("root/test/../../outside", b"bad")]),
                                   exclude_directories=("test",))
 
-    def test_native_publication_rejects_symlink(self):
+    def test_consumer_zlib_copy_is_contained_and_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.a"
-            source.write_bytes(b"archive")
-            (root / "target.a").symlink_to(source)
-            with patch.object(prepare, "ROOT", root), self.assertRaisesRegex(ValueError, "symlink"):
-                prepare.publish_native_file(source, "target.a")
-            self.assertEqual(source.read_bytes(), b"archive")
+            source = root / "zlib/vendor/zlib"
+            source.mkdir(parents=True)
+            (source / "zlib.h").write_text("pinned", encoding="utf-8")
+            with patch.object(prepare, "ROOT", root):
+                prepare.prepare_consumer_zlib("assimp")
+                copied = root / "assimp/vendor/zlib/zlib.h"
+                self.assertEqual(copied.read_text(encoding="utf-8"), "pinned")
+                copied.write_text("local", encoding="utf-8")
+                prepare.prepare_consumer_zlib("assimp")
+                self.assertEqual(copied.read_text(encoding="utf-8"), "local")
+                with self.assertRaisesRegex(ValueError, "unsafe relative path"):
+                    prepare.prepare_consumer_zlib("../outside")
 
-    def test_assimp_build_uses_pinned_zlib(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = root / "assimp/build/zlib-test-host/libz.a"
-            archive.parent.mkdir(parents=True)
-            archive.write_bytes(b"archive")
-            with patch.object(prepare, "ROOT", root), patch.object(prepare, "run") as run, \
-                    patch.object(prepare, "publish_native_file") as publish:
-                prepare.prepare_assimp(2, "test-host")
-            commands = [call.args[0] for call in run.call_args_list]
-            configure = commands[2]
-            for key in ("ZLIB_LIBRARY", "ZLIB_LIBRARY_REL", "ZLIB_LIBRARY_DBG"):
-                self.assertIn(f"-D{key}={archive}", configure)
-            self.assertIn(f"-DZLIB_INCLUDE_DIR={root / 'zlib/vendor/zlib'}", configure)
-            self.assertIn("-DASSIMP_BUILD_ZLIB=OFF", configure)
-            self.assertIn("-DASSIMP_BUILD_MINIZIP=ON", configure)
-            self.assertEqual(len(publish.call_args_list), 3)
+    def test_configured_packages_declare_source_builds(self):
+        expected = {
+            "glfw": ("vendor/glfw", "GLFW_BUILD_TESTS=OFF"),
+            "assimp": ("vendor/assimp", "ASSIMP_BUILD_TESTS=OFF"),
+            "libgit2": ("vendor/libgit2", "BUILD_TESTS=OFF"),
+        }
+        for name, (vendor, option) in expected.items():
+            with self.subTest(package=name):
+                package = prepare.ROOT / name
+                script = (package / "build.py").read_text(encoding="utf-8")
+                ast.parse(script)
+                manifest = (package / "gti.toml").read_text(encoding="utf-8")
+                self.assertIn("[package.build-script]", manifest)
+                self.assertIn('command = ["python3", "build.py"]', manifest)
+                self.assertIn(vendor, manifest)
+                self.assertIn(option, script)
+                self.assertIn("GTI_BUILD_OUT_DIR", script)
+                self.assertIn("GTI_BUILD_OUTPUT", script)
+                self.assertIn("GTI_BUILD_JOBS", script)
+                self.assertIn("gti-build-output-", script)
+        for name in ("assimp", "libgit2"):
+            manifest = (prepare.ROOT / name / "gti.toml").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("vendor/zlib", manifest)
+            script = (prepare.ROOT / name / "build.py").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('package / "vendor/zlib"', script)
 
     def test_offline_checksum_idempotence_and_modified_sources(self):
         with tempfile.TemporaryDirectory() as directory:

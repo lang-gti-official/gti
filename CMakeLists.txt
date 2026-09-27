@@ -447,6 +447,7 @@ add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
   "src/driver/bindgen_import.cpp"
+  "src/driver/build_script.cpp"
   "src/driver/build.cpp"
   "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"

@@ -1,9 +1,9 @@
 # Build And Driver Architecture
 
 Status: Current implementation. Local and pinned-Git dependencies,
-deterministic workspaces, lockfiles, and explicit dependency acquisition are
-implemented. Finer-grained incremental compilation and a package registry
-remain plans.
+deterministic workspaces, lockfiles, explicit dependency acquisition, and
+consumer-approved native package build scripts are implemented. Finer-grained
+GTI compilation and a package registry remain plans.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -289,7 +289,7 @@ An optional top-level `[build]` table accepts
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
 are added to the manifest set. The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 9 reports that effective `defines`
+the shared frontend request. Metadata schema 10 reports that effective `defines`
 array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
@@ -639,16 +639,75 @@ only when that package is built directly. Plans that carry dependency native
 groups bypass the whole-program cache with an explicit reason until dependency
 discovery covers group sources.
 
+### Approved Package Build Scripts
+
+A package that must configure or compile an upstream native library may declare
+one exact host command and its complete contained input set:
+
+```toml
+[package.build-script]
+command = ["python3", "build.py"]
+inputs = ["build.py", "vendor/upstream"]
+```
+
+The selected application owns the trust decision for dependency scripts. A
+dependency cannot approve itself:
+
+```toml
+[build]
+allow-build-scripts = ["gti-glfw@0.1.0"]
+```
+
+The identity is the dependency's manifest `name@version`; a pinned Git
+dependency's exact source revision and checksum remain enforced independently
+by `gti.lock`. Missing approval is `GTI-B2002` during project resolution, before
+any process starts. A selected root package may run its own script without a
+self-entry because selecting that package is already an explicit trust action.
+
+Build scripts run dependency-first, with the package root as their working
+directory, through exact argv execution rather than a shell. The driver exports
+`GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
+`GTI_BUILD_HOST`, `GTI_BUILD_TARGET`, `GTI_BUILD_PROFILE`, `GTI_BUILD_JOBS`,
+`CC`, and `CXX`. `GTI_BUILD_OUTPUT` must be written as TOML with `version = 1`
+and may declare `include-dirs`, `c-sources`, `cpp-sources`, `library-dirs`,
+`link-files`, `libraries`, and `frameworks`. Paths are relative to
+`GTI_BUILD_OUT_DIR`, must remain inside it, and must name existing files or
+directories. C and C++ source extensions and native names are validated before
+the outputs enter the resolved package-native group.
+
+The output tree is managed below
+`build/gti/build-scripts/<package>/<version>/<target>/<profile>/<project-target>`.
+The cache identity includes the command, host/target/profile, selected C/C++
+compilers, and content of every declared input. A matching state is reused only
+when its structured output still validates; changed or missing inputs rerun the
+script. `--jobs N` is forwarded as the script's parallelism budget and defaults
+to at most four jobs. `gti check`, `fetch`, `metadata`, and project resolution
+never execute scripts or create their output directories; executable-producing
+`build`, `run`, `test`, and `verify` do.
+
+This first implementation deliberately does not claim process sandboxing or
+network isolation: the child inherits the host environment except for the
+documented overrides. Approval therefore means permission to run arbitrary
+code from that reviewed, locked package revision. For correct cache reuse, a
+script must derive its outputs only from its declared inputs and the documented
+environment; ambient environment values and undeclared host files are not part
+of the cache identity. Declared input trees must contain only ordinary files
+and directories; symbolic links and special files are rejected. Script
+execution is supported on macOS and Linux; Windows process overrides and
+package scripts remain unsupported.
+
 ### Vendored Native Dependencies
 
 The repository's optional `packages/` collection exercises this contract with
-GLFW, GLAD, SQLite3, cimgui, zlib, libpng and Assimp. Its explicit preparation
-command verifies pinned upstream archives, generates public GTI units with
-`gti bindgen`, and prepares GLFW's and Assimp's platform archives through upstream
-CMake. Ordinary project builds compile the other native C/C++ inputs through
-isolated package groups; libpng and Assimp compose their shared zlib dependency
-through the normal package graph. These are prepared local path packages, not
-registry entries or automatic build hooks.
+GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp, and libgit2. Its explicit
+repository-maintainer preparation command verifies pinned upstream archives and
+generates reviewed public GTI units with `gti bindgen`. GLFW, Assimp, and
+libgit2 then compile their vendored upstream sources through approved package
+build scripts during an ordinary consumer build; no platform archive is checked
+into the package. Other native C/C++ inputs compile through isolated package
+groups. Libpng, Assimp, and libgit2 compose their zlib dependency through the
+normal package graph. Published standalone Git packages carry their vendored
+inputs, so their consumers do not run the repository preparation command.
 Generated public bindings are direct source units because including a private
 bindgen unit does not re-export its declarations. See
 [`packages/README.md`](../../packages/README.md) for commands and API limits.
@@ -720,7 +779,7 @@ refuse the build with `GTI-B17xx` diagnostics. A plain build may materialize
 a lock-covered missing checkout; `--offline` and `--locked` never run git,
 so `gti fetch && gti build --locked` is the reproducible-pipeline shape.
 `gti metadata` and `gti clean` never acquire dependencies, and metadata
-schema 9 publishes each package's source as `path` or
+schema 10 publishes each package's source as `path` or
 `git+<url>#<rev>#<checksum>`. A fetched package's own path dependencies must
 stay inside its checkout; its git dependencies join the same locked closure
 transitively. The workspace model identity carries the git source identity,
@@ -992,7 +1051,7 @@ Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved through the shared analysis configuration into the plan's
 `TargetInfo`, and the command-line option is an explicit project override.
-Metadata schema 9 publishes the declared value for every profile plus the
+Metadata schema 10 publishes the declared value for every profile plus the
 selected workspace and sorted package/dependency graph. This build profile
 field selects static language policy only; the independently selected runtime
 profile derives the target/runtime `threads` capability. Public managed-thread

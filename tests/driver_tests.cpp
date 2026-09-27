@@ -464,6 +464,24 @@ void testProcessInvocation(const std::filesystem::path &testExecutable) {
              empty.driverDiagnostic->find("test child command is empty") !=
                  std::string::npos,
          "empty process requests should fail before attempting execution");
+
+#if !defined(_WIN32)
+  TemporaryDirectory directory;
+  const lang::driver::ProcessResult configured = lang::driver::invokeProcess(
+      {std::filesystem::absolute(testExecutable).string(),
+       "--process-child-context"},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "configured test child",
+       .workingDirectory = directory.root(),
+       .environment = {{"GTI_DRIVER_PROCESS_TEST", "exact value"}}});
+  expect(configured.succeeded() &&
+             configured.output ==
+                 std::filesystem::weakly_canonical(directory.root()).string() +
+                     "\nexact value\n",
+         "the reusable process runner should apply an exact working directory "
+         "and environment overrides in the child only");
+#endif
 }
 
 void testNativeCommandConstruction() {
@@ -2517,6 +2535,12 @@ int main(int argc, char *argv[]) {
   }
   if (argc > 1 && std::string_view(argv[1]) == "--process-child-exit") {
     return 23;
+  }
+  if (argc > 1 && std::string_view(argv[1]) == "--process-child-context") {
+    std::cout << std::filesystem::current_path().string() << '\n';
+    const char *value = std::getenv("GTI_DRIVER_PROCESS_TEST");
+    std::cout << (value != nullptr ? value : "<missing>") << '\n';
+    return 0;
   }
   if (argc > 1 && std::string_view(argv[1]) == "--render-command-child") {
     const std::vector<std::string_view> expected{
