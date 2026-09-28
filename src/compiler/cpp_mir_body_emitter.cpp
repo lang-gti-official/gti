@@ -29303,6 +29303,28 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::PrefixStorageCString ||
+         instruction.intrinsic == IntrinsicKind::PrefixStorageTryCString)) {
+      const MirPlace *storage =
+          instruction.operands.size() == 1
+              ? storageStagedPlace(facts.body, instruction.operands.front())
+              : nullptr;
+      if (storage == nullptr || !instruction.result) {
+        throw std::logic_error(
+            "verified MIR C-string construction lost its staged character "
+            "storage place");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::"
+             << (instruction.intrinsic == IntrinsicKind::PrefixStorageCString
+                     ? "prefix_storage_c_string"
+                     : "prefix_storage_try_c_string")
+             << '(';
+      emitStoragePlaceValue(facts, *storage);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::StorageCapacity ||
          instruction.intrinsic == IntrinsicKind::StorageInitialized)) {
       const MirPlace *storage =
@@ -35736,7 +35758,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           *returnKind == CppMirTypeRepresentationKind::RawPointer &&
           ((function->returnType.kind == SemanticType::RawPointer &&
             function->returnType.arguments.size() == 1) ||
-           function->returnType.hasNativeFunctionShape());
+           function->returnType.hasNativeFunctionShape() ||
+           function->returnType.kind == SemanticType::CString);
       const bool failureFreeVirtualOverride =
           !function->mayRaiseDefinedFailure && function->virtualMethod &&
           function->overrideMethod &&
@@ -35893,7 +35916,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            (*returnKind == CppMirTypeRepresentationKind::RawPointer &&
             ((lambda->returnType.kind == SemanticType::RawPointer &&
               lambda->returnType.arguments.size() == 1) ||
-             lambda->returnType.hasNativeFunctionShape())) ||
+             lambda->returnType.hasNativeFunctionShape() ||
+             lambda->returnType.kind == SemanticType::CString)) ||
            *returnKind == CppMirTypeRepresentationKind::StringView ||
            (*returnKind == CppMirTypeRepresentationKind::Enum &&
             cppMirEnumBoundaryRow(representations_, lambda->returnType)) ||
@@ -39291,6 +39315,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (instruction.intrinsic == IntrinsicKind::PrefixStorageCString ||
+            instruction.intrinsic == IntrinsicKind::PrefixStorageTryCString) {
+          // Both C-string observers capture the staged character prefix by
+          // value. The checked form may produce null, but its possible
+          // non-null result retains the same exact storage dependency.
+          const MirPlace *storage =
+              instruction.operands.size() == 1
+                  ? storageStagedPlace(body, instruction.operands.front())
+                  : nullptr;
+          if (instruction.functionTarget || !instruction.result ||
+              !instruction.localFailureSites.empty() || storage == nullptr ||
+              storage->type.kind != SemanticType::PrefixStorage ||
+              storage->type.arguments !=
+                  std::vector<SemanticType>{SemanticType::Char} ||
+              instruction.info.type.kind != SemanticType::CString ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        }
         if (instruction.intrinsic == IntrinsicKind::StorageCapacity ||
             instruction.intrinsic == IntrinsicKind::StorageInitialized) {
           const bool initialized =
@@ -40126,7 +40170,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 returnReady =
                     ((target->returnType.kind == SemanticType::RawPointer &&
                       target->returnType.arguments.size() == 1) ||
-                     target->returnType.hasNativeFunctionShape()) &&
+                     target->returnType.hasNativeFunctionShape() ||
+                     target->returnType.kind == SemanticType::CString) &&
                     typeRow(target->returnType);
                 break;
               case CppMirTypeRepresentationKind::Expected:
@@ -41458,7 +41503,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             kind && *kind == CppMirTypeRepresentationKind::RawPointer &&
             ((block.terminator.value->type.kind == SemanticType::RawPointer &&
               block.terminator.value->type.arguments.size() == 1) ||
-             block.terminator.value->type.hasNativeFunctionShape());
+             block.terminator.value->type.hasNativeFunctionShape() ||
+             block.terminator.value->type.kind == SemanticType::CString);
         if (!kind ||
             (*kind != CppMirTypeRepresentationKind::Scalar &&
              !passivePointer) ||

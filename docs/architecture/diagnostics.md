@@ -185,6 +185,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   ownership-transfer diagnostic, while assignment remains the ordinary
   unavailable-assignment diagnostic. Do not suggest changing `mut` as a
   mechanical fix because that changes aliasing and API semantics.
+  Owner-dependent `std::string_view` and `c_string` values use this same family
+  for unsupported storage and escape; mutation or movement of their source
+  owner while live remains `GTI-S2017`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value

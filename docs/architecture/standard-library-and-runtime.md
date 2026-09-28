@@ -116,6 +116,18 @@ source-defined `std::storage<T>` wrapper expose checked `capacity()` and
 `initialized(index)` without exposing an address, bitmap, raw mutation, or
 deallocation operation.
 
+Allocated character `prefix_storage<char>` reserves one additional
+representation-private slot and maintains NUL at the logical length. A
+zero-capacity empty string uses an immutable process-lifetime NUL sentinel
+instead. The hidden slot is not included in the public length or capacity and
+does not change generic prefix-storage semantics for other element types. The
+trusted
+`prefix_storage_c_string` and `prefix_storage_try_c_string` intrinsics reach the
+backend only through verified MIR: both attach the storage dependency, while
+the checked helper scans the logical prefix and returns null on an embedded
+terminator. Public `std::string` methods remain ordinary source wrappers over
+those narrow capabilities.
+
 The first public typed-allocation slice is the ordinary source-defined
 `std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`

@@ -8300,12 +8300,13 @@ private:
             const bool exactStoredCarrierEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && retainedLoan.designatedField != 0;
-            const bool exactStringViewEntry =
+            const bool exactDynamicTextEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && retainedLoan.designatedField == 0 &&
-                value->info.type.kind == SemanticType::StringView &&
-                output.returnType.kind == SemanticType::StringView;
-            if ((exactStoredCarrierEntry || exactStringViewEntry) &&
+                (value->info.type.kind == SemanticType::StringView ||
+                 value->info.type.kind == SemanticType::CString) &&
+                value->info.type.kind == output.returnType.kind;
+            if ((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 returnedValue == 0) {
               valid = false;
             }
@@ -8314,7 +8315,7 @@ private:
                  .hirValue = *statement.value,
                  .operands = {{.kind = MirOperandKind::Loan,
                                .value = exactStoredCarrierEntry ||
-                                                exactStringViewEntry
+                                                exactDynamicTextEntry
                                             ? returnedValue
                                             : 0,
                                .loan = retained,

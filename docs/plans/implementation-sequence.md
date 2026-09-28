@@ -1952,8 +1952,8 @@ do not expose C++ object layout as GTI semantics.
       now proves layout plus C-to-GTI and GTI-to-C element access at O0/O3
       under C++20/C++23, while native-header tests prove direct C declarators
       and reject a `std::array` representation.
-  - **F2 — the C-string boundary (bounded boundary core complete; owner
-    borrowing remains).** `char` stays excluded from `[[c_abi]]`
+  - **F2 — the C-string boundary (bounded boundary and owner-production
+    slices complete).** `char` stays excluded from `[[c_abi]]`
     records for the implementation-defined-signedness reason already recorded
     in `R-NATIVE-RECORDS`. The gap is that a C API's `const char*` means
     *pointer to NUL-terminated bytes*, and spelling it `const uint8_t*` loses
@@ -1964,22 +1964,24 @@ do not expose C++ object layout as GTI semantics.
     parameters, preserves exact-overload preference, and exposes no unchecked
     dereference or index operation. C17/C++20/C++23 oracle coverage exercises
     all of those forms.
-    - *Remaining diagnostics.* `GTI-S2071` a `c_string` is constructed from a source
-      with no proven NUL terminator; `GTI-S2072` a `c_string` borrow outlives
-      the storage it views. The second reuses the existing loan machinery and
-      its wording should match the current borrow diagnostics rather than
-      introduce a second vocabulary for the same rule.
-    - *Remaining owner obligations.* Initialization from an owner is never
+    - *Diagnostics.* Owner-derived values reuse the existing retained-loan and
+      invalidation diagnostics (`GTI-S2017`) and owner-dependent storage/escape
+      diagnostic (`GTI-S2045`) rather than introducing a second vocabulary for
+      the same rule. `try_c_string()` reports an embedded terminator as a null
+      value instead of a compile-time diagnostic.
+    - *Owner obligations.* Initialization from an owner is never
       inferred from its C++ representation and never from a bare pointer
       outside `unsafe`. Retention is a borrow, and its loan is tracked
       against the owner, so the dangling `c_str()` that C++ permits silently
-      becomes `GTI-S2072`. Aliasing: read-only, with no mutation through the
+      is rejected. Aliasing: read-only, with no mutation through the
       view. Nullability: a `c_string` received from C may be null and reading
-      one is a defined failure, not undefined behaviour; a GTI-produced one
-      never is. Cleanup: none, as it is non-owning. Unsafe: required to build
-      one from a raw pointer, not required to obtain one from a GTI string.
-      The current core intentionally rejects retained string-view conversion;
-      it does not claim these owner obligations before they exist.
+      one remains outside this bounded read-free surface;
+      `std::string::c_string()` never returns null, while
+      `std::string::try_c_string()` uses null to reject an embedded terminator.
+      Cleanup: none, as it is non-owning. Unsafe: required to build one from a
+      raw pointer, not required to obtain one from a GTI string. A native
+      callee's hidden retention cannot be inferred and remains a binding-level
+      contract.
     - *Acceptance.* `glfwGetVersionString`, `glfwGetMonitorName`,
       `glfwGetWindowTitle`, `glfwSetWindowTitle`, `glfwCreateWindow`,
       `glfwWindowHintString`, `glfwGetKeyName`, `glfwGetJoystickName`,

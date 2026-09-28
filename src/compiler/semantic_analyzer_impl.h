@@ -1174,14 +1174,15 @@ private:
                  AccessMode access = AccessMode::ReadOnly) const;
 
   [[nodiscard]] ExpressionInfo
-  ownerDependentStringViewInfo(ValueCategory category = ValueCategory::Value,
-                               AccessMode access = AccessMode::ReadOnly) const;
+  ownerDependentTextInfo(SemanticType type,
+                         ValueCategory category = ValueCategory::Value,
+                         AccessMode access = AccessMode::ReadOnly) const;
 
   [[nodiscard]] bool
-  isOwnerDependentStringViewExpression(const ExprPtr &expression) const;
+  isOwnerDependentTextExpression(const ExprPtr &expression) const;
 
-  void reportDynamicStringViewStorage(const ExprPtr &expression,
-                                      std::string_view destination);
+  void reportOwnerDependentTextStorage(const ExprPtr &expression,
+                                       std::string_view destination);
 
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
@@ -2162,8 +2163,8 @@ private:
                                   const SemanticType &valueType,
                                   const ExprPtr &value);
 
-  void validateOwnerDependentStringViewReturn(const SemanticType &valueType,
-                                              const ExprPtr &value);
+  void validateOwnerDependentTextReturn(const SemanticType &valueType,
+                                        const ExprPtr &value);
 
   void validateReferenceReturn(const SemanticType &reference,
                                const SemanticType &valueType,
@@ -2759,19 +2760,19 @@ private:
   collectBorrowReturnExpressions(const Stmt *statement,
                                  std::vector<const ExprPtr *> &returns) const;
 
-  struct PredeclaredStringViewBorrowSource {
+  struct PredeclaredTextBorrowSource {
     bool known = false;
     bool ownerDependent = false;
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
   };
 
-  [[nodiscard]] PredeclaredStringViewBorrowSource
-  predeclaredStringViewBorrowSource(const ExprPtr &expression,
-                                    const FunctionInfo &function) const;
+  [[nodiscard]] PredeclaredTextBorrowSource
+  predeclaredTextBorrowSource(const ExprPtr &expression,
+                              const FunctionInfo &function) const;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
-  dynamicStringViewReturnBorrowSummary(const FunctionInfo &function);
+  dynamicTextReturnBorrowSummary(const FunctionInfo &function);
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);

@@ -3436,7 +3436,8 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
 auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
   if (!isDirectStoredReferenceType(type) &&
-      type.kind != SemanticType::StringView) {
+      type.kind != SemanticType::StringView &&
+      type.kind != SemanticType::CString) {
     report(expressionToken(initializer),
            "Borrowed state cannot be nested inside another stored value in "
            "the current lifetime model.",
@@ -3508,7 +3509,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
                                     "GTI-S2045");
 }
 
-auto SemanticVisitor::Impl::validateOwnerDependentStringViewReturn(
+auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
     const SemanticType &valueType, const ExprPtr &value) -> void {
   if (valueType == SemanticType::Unknown) {
     return;
@@ -3519,24 +3520,30 @@ auto SemanticVisitor::Impl::validateOwnerDependentStringViewReturn(
     return;
   }
   const FunctionInfo *function = currentFunctionInfo();
+  const bool cString = info->type.kind == SemanticType::CString;
+  const std::string description =
+      cString ? "owner-dependent c_string" : "dynamic std::string_view";
+  const std::string subject =
+      cString ? "An " + description : "A " + description;
   if (function == nullptr ||
       function->returnBorrowOrigin == BorrowOriginKind::None) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(value),
-        "A dynamic std::string_view cannot escape without one exact owner "
-        "dependency.");
+        subject + " cannot escape without one exact owner dependency.");
     diagnostic.hints.emplace_back(
-        "Return a literal-backed view, or relay a view tied to this "
-        "method's receiver or one exact read-only parameter.");
+        cString
+            ? "Return an ownerless native C string, or relay a C string tied "
+              "to this method's receiver or one exact read-only parameter."
+            : "Return a literal-backed view, or relay a view tied to this "
+              "method's receiver or one exact read-only parameter.");
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
-  if (rejectEscapingLocalChildLoan(value,
-                                   "a dynamic std::string_view return")) {
+  if (rejectEscapingLocalChildLoan(value, (cString ? "an " : "a ") +
+                                              description + " return")) {
     return;
   }
-  validateCurrentReturnBorrowSource(value, "dynamic std::string_view",
-                                    "GTI-S2045");
+  validateCurrentReturnBorrowSource(value, description, "GTI-S2045");
 }
 
 auto SemanticVisitor::Impl::validateReferenceReturn(

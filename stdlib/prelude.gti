@@ -49,6 +49,8 @@ namespace gti_internal {
   void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
   gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
+  gti_internal::c_string prefix_storage_c_string(gti_internal::prefix_storage<char>& storage);
+  gti_internal::c_string prefix_storage_try_c_string(gti_internal::prefix_storage<char>& storage);
 
   namespace runtime {
     extern "C" {

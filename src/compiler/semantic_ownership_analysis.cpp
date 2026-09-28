@@ -892,10 +892,11 @@ auto SemanticVisitor::Impl::expressionInfo(SemanticType type,
                         .traits = traits};
 }
 
-auto SemanticVisitor::Impl::ownerDependentStringViewInfo(
-    ValueCategory category, AccessMode access) const -> ExpressionInfo {
-  ExpressionInfo info =
-      expressionInfo(SemanticType::StringView, category, access);
+auto SemanticVisitor::Impl::ownerDependentTextInfo(SemanticType type,
+                                                   ValueCategory category,
+                                                   AccessMode access) const
+    -> ExpressionInfo {
+  ExpressionInfo info = expressionInfo(std::move(type), category, access);
   info.traits.ownership = OwnershipKind::Borrowed;
   info.traits.copyAssignable = false;
   info.traits.moveAssignable = false;
@@ -905,23 +906,37 @@ auto SemanticVisitor::Impl::ownerDependentStringViewInfo(
   return info;
 }
 
-auto SemanticVisitor::Impl::isOwnerDependentStringViewExpression(
+auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
     const ExprPtr &expression) const -> bool {
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
-  return info != nullptr && info->type.kind == SemanticType::StringView &&
+  return info != nullptr &&
+         (info->type.kind == SemanticType::StringView ||
+          info->type.kind == SemanticType::CString) &&
          info->traits.containsBorrowedState;
 }
 
-auto SemanticVisitor::Impl::reportDynamicStringViewStorage(
+auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
     const ExprPtr &expression, std::string_view destination) -> void {
+  const ExpressionInfo *info =
+      expression ? semanticModel.findExpression(*expression) : nullptr;
+  const bool cString =
+      info != nullptr && info->type.kind == SemanticType::CString;
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(expression),
-      "A dynamic std::string_view cannot be " + std::string(destination) +
-          " in the single-owner view model.");
-  diagnostic.hints.emplace_back(
-      "Initialize a new local view binding in a narrow lexical scope; "
-      "stored and reassignable dependency graphs are not supported yet.");
+      (cString ? "An owner-dependent c_string" : "A dynamic std::string_view") +
+          std::string(" cannot be ") + std::string(destination) +
+          (cString ? " in the single-owner text-borrow model."
+                   : " in the single-owner view model."));
+  diagnostic.hints.emplace_back(cString
+                                    ? "Initialize a new local C-string binding "
+                                      "in a narrow lexical scope; stored and "
+                                      "reassignable dependency graphs are not "
+                                      "supported yet."
+                                    : "Initialize a new local view binding in "
+                                      "a narrow lexical scope; stored and "
+                                      "reassignable dependency graphs are not "
+                                      "supported yet.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -1490,6 +1505,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "prefix_storage_text_view") {
     return IntrinsicKind::PrefixStorageTextView;
+  }
+  if (name == "prefix_storage_c_string") {
+    return IntrinsicKind::PrefixStorageCString;
+  }
+  if (name == "prefix_storage_try_c_string") {
+    return IntrinsicKind::PrefixStorageTryCString;
   }
   return IntrinsicKind::None;
 }
@@ -2990,10 +3011,11 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
           function->declaration->parameters().size() &&
       &function->declaration->parameters()[function->returnBorrowParameter] ==
           &parameter;
-  const bool dynamicStringViewCarrier =
-      carrier->type.kind == SemanticType::StringView;
+  const bool dynamicTextCarrier =
+      carrier->type.kind == SemanticType::StringView ||
+      carrier->type.kind == SemanticType::CString;
   const bool storedValueCarrier =
-      isDirectStoredReferenceType(carrier->type) || dynamicStringViewCarrier;
+      isDirectStoredReferenceType(carrier->type) || dynamicTextCarrier;
   if (!referenceCarrier && !storedValueCarrier) {
     return;
   }
@@ -3011,7 +3033,7 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
                                              : borrowAccess(carrier->type);
   SymbolId designatedField = 0;
-  if (storedValueCarrier && !dynamicStringViewCarrier) {
+  if (storedValueCarrier && !dynamicTextCarrier) {
     const ClassInfo *owner = classInfo(carrier->type);
     if (owner != nullptr && owner->storedReference) {
       const auto member =
@@ -4701,7 +4723,9 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::PrefixStorageRelocate ||
       intrinsic == IntrinsicKind::PrefixStorageInsert ||
       intrinsic == IntrinsicKind::PrefixStorageErase ||
-      intrinsic == IntrinsicKind::PrefixStorageTextView) {
+      intrinsic == IntrinsicKind::PrefixStorageTextView ||
+      intrinsic == IntrinsicKind::PrefixStorageCString ||
+      intrinsic == IntrinsicKind::PrefixStorageTryCString) {
     analyzePrefixStorageIntrinsicCall(expr, intrinsic);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
@@ -5396,12 +5420,13 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     if (argumentTypes.size() < argumentOffset) {
       return;
     }
-    if (elementType.kind == SemanticType::StringView) {
+    if (elementType.kind == SemanticType::StringView ||
+        elementType.kind == SemanticType::CString) {
       for (std::size_t index = argumentOffset; index < argumentTypes.size();
            ++index) {
-        if (isOwnerDependentStringViewExpression(expr.arguments()[index])) {
-          reportDynamicStringViewStorage(expr.arguments()[index],
-                                         "nested in dynamic storage");
+        if (isOwnerDependentTextExpression(expr.arguments()[index])) {
+          reportOwnerDependentTextStorage(expr.arguments()[index],
+                                          "nested in dynamic storage");
         }
       }
     }
@@ -5529,26 +5554,48 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     }
     currentType = SemanticType::StringView;
     break;
+  case IntrinsicKind::PrefixStorageCString:
+  case IntrinsicKind::PrefixStorageTryCString:
+    if (argumentTypes.size() != 1 || elementType != SemanticType::Char) {
+      report(expr.paren(),
+             std::string(intrinsic == IntrinsicKind::PrefixStorageCString
+                             ? "prefix_storage_c_string"
+                             : "prefix_storage_try_c_string") +
+                 " requires exactly one read-only "
+                 "gti_internal::prefix_storage<char> argument.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::CString;
+    break;
   default:
     currentType = SemanticType::Unknown;
     break;
   }
   const bool borrows = intrinsic == IntrinsicKind::PrefixStorageRead ||
                        intrinsic == IntrinsicKind::PrefixStorageReadMut ||
-                       intrinsic == IntrinsicKind::PrefixStorageTextView;
+                       intrinsic == IntrinsicKind::PrefixStorageTextView ||
+                       intrinsic == IntrinsicKind::PrefixStorageCString ||
+                       intrinsic == IntrinsicKind::PrefixStorageTryCString;
+  const bool returnsTextView =
+      intrinsic == IntrinsicKind::PrefixStorageTextView;
+  const bool returnsCString =
+      intrinsic == IntrinsicKind::PrefixStorageCString ||
+      intrinsic == IntrinsicKind::PrefixStorageTryCString;
   semanticModel.record(
       expr,
       ResolvedCallInfo{
           .returnType =
-              intrinsic == IntrinsicKind::PrefixStorageTextView
+              returnsTextView
                   ? SemanticType::StringView
-                  : (borrows
-                         ? SemanticType::referenceTo(
-                               elementType,
-                               intrinsic == IntrinsicKind::PrefixStorageReadMut
-                                   ? AccessMode::Mutable
-                                   : AccessMode::ReadOnly)
-                         : currentType),
+                  : (returnsCString
+                         ? SemanticType::CString
+                         : (borrows ? SemanticType::referenceTo(
+                                          elementType,
+                                          intrinsic == IntrinsicKind::
+                                                           PrefixStorageReadMut
+                                              ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
+                                    : currentType)),
           .parameterTypes = std::move(argumentTypes),
           .typeArguments = {elementType},
           .intrinsic = intrinsic,
@@ -5791,11 +5838,12 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
     if (argumentTypes.size() >= 2) {
       requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
     }
-    if (elementType.kind == SemanticType::StringView) {
+    if (elementType.kind == SemanticType::StringView ||
+        elementType.kind == SemanticType::CString) {
       for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-        if (isOwnerDependentStringViewExpression(expr.arguments()[index])) {
-          reportDynamicStringViewStorage(expr.arguments()[index],
-                                         "nested in dynamic storage");
+        if (isOwnerDependentTextExpression(expr.arguments()[index])) {
+          reportOwnerDependentTextStorage(expr.arguments()[index],
+                                          "nested in dynamic storage");
         }
       }
     }

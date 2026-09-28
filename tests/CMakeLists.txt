@@ -764,6 +764,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(string_index_range_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME string_c_string_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/string_c_string_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(string_c_string_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME forward_list_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/forward_list_runtime_test.py"
