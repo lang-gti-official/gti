@@ -1,5 +1,5 @@
 #include "gti/driver/compilation.h"
-#include "gti/driver/manifest.h"
+#include "gti/driver/project_facts.h"
 #include "gti/format_config.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
@@ -1539,6 +1539,61 @@ struct DiagnosticPublication {
   std::vector<LspDiagnostic> diagnostics;
 };
 
+// Immutable driver-owned inputs for one editor analysis. Project resolution is
+// deliberately read-only: it never fetches, builds, or mutates the workspace.
+// A discovery miss preserves standalone-file behavior; every other project
+// failure is retained as a structured diagnostic while frontend recovery
+// continues without inventing a partial package graph.
+struct ProjectAnalysisInputs {
+  lang::driver::AnalysisConfiguration configuration;
+  std::vector<lang::PackageSourceRoot> packageSourceRoots;
+  lang::SourceManager sources;
+  std::vector<lang::Diagnostic> diagnostics;
+};
+
+ProjectAnalysisInputs resolveProjectAnalysisInputs(
+    const std::filesystem::path &entryPath,
+    std::optional<lang::ExecutionProfile> executionProfileOverride) {
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  ProjectAnalysisInputs result{
+      .configuration = lang::driver::AnalysisConfiguration(
+          host,
+          executionProfileOverride.value_or(
+              lang::ExecutionProfile::SingleThreaded),
+          lang::driver::RuntimeProfile::Hosted)};
+
+  lang::driver::ProjectFactsResult project =
+      lang::driver::resolveProjectFacts(entryPath.parent_path());
+  if (!project.succeeded()) {
+    if (project.status != lang::driver::ProjectFactsStatus::DiscoveryFailure) {
+      result.sources = std::move(project.sources);
+      result.diagnostics = std::move(project.diagnostics);
+    }
+    return result;
+  }
+
+  const lang::driver::ProjectFacts &facts = *project.facts;
+  const std::optional<lang::driver::AnalysisConfiguration>
+      projectConfiguration =
+          facts.analysisConfiguration(facts.defaultProfileName(), host,
+                                      lang::driver::RuntimeProfile::Hosted);
+  if (projectConfiguration) {
+    result.configuration = *projectConfiguration;
+  } else {
+    result.configuration = lang::driver::AnalysisConfiguration(
+        host, lang::ExecutionProfile::SingleThreaded,
+        lang::driver::RuntimeProfile::Hosted, facts.configurationFlags());
+  }
+  if (executionProfileOverride) {
+    result.configuration = lang::driver::AnalysisConfiguration(
+        result.configuration.target(), *executionProfileOverride,
+        lang::driver::RuntimeProfile::Hosted,
+        result.configuration.configurationFlags());
+  }
+  result.packageSourceRoots = facts.packageSourceRoots();
+  return result;
+}
+
 class LanguageServer {
 public:
   explicit LanguageServer(lang::StandardLibraryLayout standardLibrary,
@@ -1884,7 +1939,7 @@ private:
     {
       const std::lock_guard lock(stateMutex);
       std::unordered_set<std::string> affected;
-      bool manifestChanged = false;
+      bool projectModelChanged = false;
       for (const JsonValue &change : *changedFiles) {
         const std::string clientUri = stringMember(&change, "uri");
         if (clientUri.empty()) {
@@ -1893,8 +1948,9 @@ private:
         const std::string uri = documentKeyFromUri(clientUri);
         const std::optional<std::filesystem::path> changedPath =
             filePathFromUri(clientUri);
-        if (changedPath && changedPath->filename() == "gti.toml") {
-          manifestChanged = true;
+        if (changedPath && (changedPath->filename() == "gti.toml" ||
+                            changedPath->filename() == "gti.lock")) {
+          projectModelChanged = true;
           continue;
         }
         // Dirty open buffers remain authoritative over filesystem events.
@@ -1908,7 +1964,7 @@ private:
         affected.insert(uri);
         invalidateDependentsLocked(uri, affected, requests);
       }
-      if (manifestChanged) {
+      if (projectModelChanged) {
         requests.clear();
         for (const auto &[documentUri, documentSource] : documents) {
           (void)documentSource;
@@ -1938,6 +1994,7 @@ private:
     JsonArray watchers;
     watchers.push_back(JsonObject{{"globPattern", "**/*.gti"}});
     watchers.push_back(JsonObject{{"globPattern", "**/gti.toml"}});
+    watchers.push_back(JsonObject{{"globPattern", "**/gti.lock"}});
     JsonArray registrations;
     registrations.push_back(JsonObject{
         {"id", "gti-source-watcher"},
@@ -2672,7 +2729,8 @@ private:
     sendJson(response(id, JsonValue(std::move(edits))));
   }
 
-  DocumentAnalysis analyzeDocument(const AnalysisRequest &request) const {
+  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
+                                   const ProjectAnalysisInputs &project) const {
     const std::string &uri = request.uri;
     const std::string &source = request.source;
     DocumentAnalysis result;
@@ -2701,33 +2759,19 @@ private:
     frontendOptions.cache = request.frontendSources.cache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
-    lang::ExecutionProfile executionProfile =
-        lang::ExecutionProfile::SingleThreaded;
-    lang::ConfigurationFlags configurationFlags;
-    const lang::driver::ManifestDiscoveryResult discovery =
-        lang::driver::discoverProjectManifest(filePath->parent_path());
-    if (discovery.succeeded()) {
-      const lang::driver::ManifestLoadResult manifest =
-          lang::driver::loadProjectManifest(*discovery.path);
-      if (manifest.succeeded()) {
-        configurationFlags = manifest.manifest->build().defines;
-        if (const lang::driver::ProjectProfile *profile =
-                manifest.manifest->findProfile("dev")) {
-          executionProfile = profile->executionProfile;
-        }
-      }
+    frontendOptions.target = project.configuration.target();
+    frontendOptions.configurationFlags =
+        project.configuration.configurationFlags();
+    for (const lang::Diagnostic &diagnostic : project.diagnostics) {
+      result.diagnostics.push_back(convertDiagnostic(
+          diagnostic, project.sources, rootPath, uri, source));
     }
-    const lang::driver::AnalysisConfiguration configuration(
-        lang::TargetInfo::host(),
-        executionProfileOverride.value_or(executionProfile),
-        lang::driver::RuntimeProfile::Hosted, std::move(configurationFlags));
-    frontendOptions.target = configuration.target();
-    frontendOptions.configurationFlags = configuration.configurationFlags();
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
-                     request.sourceOverrides, {standardLibrary.root}));
+                     request.sourceOverrides, {standardLibrary.root},
+                     project.packageSourceRoots));
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
@@ -3017,13 +3061,18 @@ private:
         lang::FrontendWorkMetrics workMetrics;
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
+          ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
+              request.entryPath, executionProfileOverride);
           completion = lang::LanguageQueries().complete(
               {.entryPath = request.entryPath,
                .source = request.source,
                .byteOffset = request.byteOffset,
+               .target = project.configuration.target(),
+               .configurationFlags = project.configuration.configurationFlags(),
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,
                .standardLibraryRoots = {standardLibrary.root},
+               .packageSourceRoots = project.packageSourceRoots,
                .workMetrics = &workMetrics,
                .cache = request.frontendSources.cache,
                .sourceGenerations = request.frontendSources.generations,
@@ -3109,10 +3158,25 @@ private:
         }
       }
 
-      // Compiler work is isolated inside the crash guard; publication runs
-      // here, outside it, so shared state is only touched on a normally
-      // unwound path. See docs/architecture/lsp.md.
-      GuardedAnalysis guarded = runIsolatedAnalysis(request);
+      // Driver resolution runs on the worker but outside the crash guard. The
+      // guard remains the narrow compiler-only boundary documented in the LSP
+      // architecture, and neither step holds shared state.
+      GuardedAnalysis guarded;
+      try {
+        ProjectAnalysisInputs project;
+        if (const std::optional<std::filesystem::path> path =
+                filePathFromUri(request.uri)) {
+          project =
+              resolveProjectAnalysisInputs(*path, executionProfileOverride);
+        }
+        guarded = runIsolatedAnalysis(request, project);
+      } catch (const std::exception &error) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = error.what();
+      } catch (...) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = "unknown exception during project resolution";
+      }
       switch (guarded.status) {
       case GuardedAnalysisStatus::Completed:
         recordFrontendWork("analysis", request.uri, request.generation,
@@ -3171,12 +3235,13 @@ private:
   // none crosses LLVM's no-exception frame. Publication happens afterwards
   // on the normal path, where unwinding and locking behave normally.
   [[nodiscard]] GuardedAnalysis
-  runIsolatedAnalysis(const AnalysisRequest &request) const {
+  runIsolatedAnalysis(const AnalysisRequest &request,
+                      const ProjectAnalysisInputs &project) const {
     GuardedAnalysis result;
     const bool completed = lang::runGuarded([&] {
       try {
-        result.analysis =
-            std::make_unique<DocumentAnalysis>(analyzeDocument(request));
+        result.analysis = std::make_unique<DocumentAnalysis>(
+            analyzeDocument(request, project));
         result.status = GuardedAnalysisStatus::Completed;
       } catch (const std::exception &error) {
         result.status = GuardedAnalysisStatus::Failed;

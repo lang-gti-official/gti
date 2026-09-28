@@ -1684,6 +1684,12 @@ if(Python3_Interpreter_FOUND)
 
   if(TARGET gti_lsp)
     add_test(
+      NAME lsp_project_facts
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_project_facts_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    add_test(
       NAME lsp_protocol
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>"
