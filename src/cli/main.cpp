@@ -4,6 +4,7 @@
 #include "gti/driver/bindgen_import.h"
 #include "gti/driver/build.h"
 #include "gti/driver/build_report.h"
+#include "gti/driver/build_script.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -209,7 +210,7 @@ void printUsage(std::ostream &stream) {
          "      --release        Shorthand for --profile release.\n"
          "      --all            Build every declared target (gti build "
          "only).\n"
-         "      --jobs <count>   Bound concurrent target builds with --all.\n"
+         "      --jobs <count>   Bound native build-script and --all jobs.\n"
          "      --cxx <path>     Override the native C++ compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
@@ -720,7 +721,7 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       continue;
     }
     if (argument == "--jobs") {
-      if (options.command != ProjectCommand::Build) {
+      if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --jobs is not supported by gti "
                   << projectCommandName(options.command) << '\n';
         return ArgumentResult::ExitFailure;
@@ -900,10 +901,6 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.buildAll && options.emitMir) {
     std::cerr << "gti: --all and --emit-mir cannot be used together\n";
-    return ArgumentResult::ExitFailure;
-  }
-  if (options.jobs && !options.buildAll) {
-    std::cerr << "gti: --jobs requires --all\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.buildReport && options.emitMir) {
@@ -1694,6 +1691,7 @@ projectProvenance(const lang::driver::ProjectBuildPlan &plan) {
 int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                      const ProjectOptions &options,
                      const lang::driver::ToolchainLayout &toolchain,
+                     const lang::SourceManager *diagnosticSources = nullptr,
                      const char *driver = nullptr,
                      std::optional<lang::driver::BuildProvenance>
                          *capturedProvenance = nullptr) {
@@ -1720,8 +1718,48 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                   [](const lang::driver::NativeDependencyGroup &group) {
                     return !group.cSources.empty();
                   });
-  if (!plan.nativeInputs().cSources.empty() || dependencyCSources) {
+  if (!plan.buildScripts().empty() || !plan.nativeInputs().cSources.empty() ||
+      dependencyCSources) {
     cCompiler = lang::driver::discoverCCompiler(selectedCc);
+  }
+  const std::string cppCompiler =
+      lang::driver::discoverNativeCompiler(selectedCxx);
+  lang::driver::NativeInputs nativeInputs = plan.nativeInputs();
+  if (!plan.buildScripts().empty()) {
+    const unsigned defaultJobs =
+        std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+    const std::string hostCppCompiler =
+        lang::driver::targetTriple(plan.target()) ==
+                lang::driver::targetTriple(lang::TargetInfo::host())
+            ? cppCompiler
+            : lang::driver::discoverNativeCompiler();
+    const lang::driver::BuildScriptExecutionResult scripts =
+        lang::driver::executeBuildScripts(
+            plan, {.cCompiler = cCompiler.value_or("cc"),
+                   .cppCompiler = cppCompiler,
+                   .hostCppCompiler = hostCppCompiler,
+                   .compilerIdentity = std::string(version),
+                   .hostToolchain = toolchain,
+                   .jobs = options.jobs ? static_cast<unsigned>(*options.jobs)
+                                        : defaultJobs,
+                   .verbose = options.verbose});
+    if (!scripts.succeeded()) {
+      const lang::SourceManager emptySources;
+      const lang::SourceManager &sources =
+          scripts.diagnosticSources      ? *scripts.diagnosticSources
+          : diagnosticSources == nullptr ? emptySources
+                                         : *diagnosticSources;
+      reportDiagnostics(scripts.diagnostics, sources);
+      return exitCode(ExitStatus::Compilation);
+    }
+    nativeInputs = *scripts.nativeInputs;
+    for (const lang::driver::BuildScriptOutcome &outcome : scripts.outcomes) {
+      if (options.verbose && !outcome.output.empty()) {
+        std::cerr << outcome.output;
+      }
+      std::cerr << (outcome.reused ? "Reused" : "Built")
+                << " native dependency " << outcome.packageIdentity << '\n';
+    }
   }
   std::optional<lang::driver::BuildCachePolicy> cache;
   if (options.useCache) {
@@ -1752,9 +1790,8 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
               plan.entry(), toolchain.standardLibrary, plan.target(),
               plan.optimization(), plan.cppStandard(), plan.packageSources(),
               plan.configurationFlags()),
-          toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(selectedCxx),
-          plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
+          toolchain, plan.generatedSource(), plan.output(), cppCompiler,
+          nativeInputs, plan.keepCpp(), true, options.verbose,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
                                             .outputRoot = plan.workspaceRoot() /
                                                           "build" / "gti"},
@@ -1811,8 +1848,9 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   }
 
   const auto childCommand = [&](const lang::driver::ProjectBuildPlan &plan) {
-    std::vector<std::string> command{driver, "build", plan.targetName(),
-                                     "--profile", options.profile};
+    std::vector<std::string> command{
+        driver,   "build", plan.targetName(), "--profile", options.profile,
+        "--jobs", "1"};
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
@@ -2049,8 +2087,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   std::optional<lang::driver::BuildProvenance> provenance;
-  const int status =
-      buildProjectPlan(plan, options, toolchain, driver, &provenance);
+  const int status = buildProjectPlan(plan, options, toolchain,
+                                      &resolution.sources, driver, &provenance);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -2184,8 +2222,8 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
   std::optional<lang::driver::BuildProvenance> rebuilt;
-  const int status =
-      buildProjectPlan(plan, options, toolchain, driver, &rebuilt);
+  const int status = buildProjectPlan(plan, options, toolchain,
+                                      &resolution.sources, driver, &rebuilt);
   if (status != exitCode(ExitStatus::Success)) {
     std::cerr << "gti: the recorded build no longer completes; '"
               << reportPath.string() << "' cannot be reproduced\n";
@@ -2270,7 +2308,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
       reportProjectPlan(plan, ProjectCommand::Test);
     }
     std::cerr << "Building test " << plan.targetName() << '\n';
-    const int buildStatus = buildProjectPlan(plan, options, toolchain);
+    const int buildStatus =
+        buildProjectPlan(plan, options, toolchain, &resolution.sources);
     if (buildStatus != exitCode(ExitStatus::Success)) {
       return buildStatus;
     }

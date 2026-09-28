@@ -39,9 +39,16 @@ GLFW version, GLAD loader state, SQLite prepared statements, a headless cimgui
 frame, zlib compression, and libpng encode/decode plus invalid input/capacity
 handling. The separate `packages/examples/assimp` project tests model import,
 mesh and node access, local transforms, malformed input, null handles and
-out-of-range output preservation through bindgen-generated declarations.
-These integration gates need the pinned native sources and
-do not run network acquisition implicitly during the compiler test suite.
+out-of-range output preservation through bindgen-generated declarations. The
+`packages/examples/libgit2` project opens a repository and validates repository
+and error handles. GLFW, Assimp, and libgit2 compile their pinned vendored
+sources through consumer-approved package build scripts; a second build proves
+content-cache reuse. These integration gates need the pinned native sources and
+do not run network acquisition implicitly during the compiler test suite. The
+ordinary offline CTest covers script approval, non-executing metadata, exact
+child working-directory/environment behavior, validated output composition,
+cache reuse, and the `GTI-B2002` unapproved-script failure without acquiring
+upstream code.
 
 | CTest target | Owns |
 | --- | --- |

@@ -5,6 +5,7 @@
     "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
+    "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
     "stdlib/std/cstdio.gti": "3bc53122406a8e5f22fec798ab82f8701898f36b1229974120dd020bf3e024b3",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
@@ -77,6 +78,13 @@
       "mode": "run",
       "source": "tests/fixtures/atomic_orders.gti",
       "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "build",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_build.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -496,6 +504,40 @@
       "case_ids": ["atomic", "atomic-fetch", "atomic-orders"],
       "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction", "every legal explicit load/store/exchange order", "all nine legal strong-CAS success/failure order pairs", "all five integer fetch families under every read-modify-write order", "narrow fixed-width fetch conversion", "checked fetch_add overflow before publication"],
       "evidence": ["docs/language/concurrency.md", "examples/76-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
+    },
+    {
+      "id": "build.executable",
+      "source": "stdlib/std/build.gti",
+      "status": "executable",
+      "operations": [
+        "std::build::command::arg",
+        "std::build::command::command",
+        "std::build::command::run",
+        "std::build::context::cc",
+        "std::build::context::context",
+        "std::build::context::cxx",
+        "std::build::context::host",
+        "std::build::context::jobs",
+        "std::build::context::output_dir",
+        "std::build::context::output_file",
+        "std::build::context::package_dir",
+        "std::build::context::profile",
+        "std::build::context::target",
+        "std::build::context::target_os",
+        "std::build::context_from_args",
+        "std::build::outputs::c_source",
+        "std::build::outputs::cpp_source",
+        "std::build::outputs::framework",
+        "std::build::outputs::include_dir",
+        "std::build::outputs::library",
+        "std::build::outputs::library_dir",
+        "std::build::outputs::link_file",
+        "std::build::outputs::outputs",
+        "std::build::outputs::publish"
+      ],
+      "case_ids": ["build"],
+      "required_instantiations": ["exact host argv and nonzero exit status", "all structured native output categories"],
+      "evidence": ["tests/fixtures/stdlib_surface_build.gti", "tests/project_cli_smoke_test.py", "stdlib/std/build.gti", "runtime/src/process.cpp"]
     },
     {
       "id": "cmath.executable",

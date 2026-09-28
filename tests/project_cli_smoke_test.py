@@ -344,7 +344,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 9
+        assert configuration_metadata["schemaVersion"] == 11
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -492,7 +492,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 9
+        assert metadata_document["schemaVersion"] == 11
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -565,7 +565,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 9
+        assert test_metadata["schemaVersion"] == 11
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -776,7 +776,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 9
+        assert native_document["schemaVersion"] == 11
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1100,7 +1100,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 9
+        assert workspace_metadata["schemaVersion"] == 11
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2268,7 +2268,8 @@ def main():
         assert serial_failure.stdout == parallel_failure.stdout
         assert serial_failure.stderr == parallel_failure.stderr
 
-        # Option surface errors stay focused usage failures.
+        # Option surface errors stay focused. --jobs also controls dependency
+        # build scripts, so it no longer requires --all.
         all_with_target = run(
             [gti, "build", "--all", "alpha"], expected=64, cwd=multi_project
         )
@@ -2276,9 +2277,9 @@ def main():
             all_with_target.stderr
         )
         jobs_without_all = run(
-            [gti, "build", "--jobs", "2"], expected=64, cwd=multi_project
+            [gti, "build", "--jobs", "2"], expected=65, cwd=multi_project
         )
-        assert "--jobs requires --all" in jobs_without_all.stderr
+        assert "declares multiple targets" in jobs_without_all.stderr
         invalid_jobs = run(
             [gti, "build", "--all", "--jobs", "0"],
             expected=64,
@@ -2289,6 +2290,121 @@ def main():
             [gti, "check", "--all"], expected=64, cwd=multi_project
         )
         assert "--all is not supported by gti check" in all_on_check.stderr
+
+        # --- Consumer-approved dependency build scripts ---
+        scripted = root / "scripted-native"
+        (scripted / "src").mkdir(parents=True)
+        (scripted / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "scripted-native"\n'
+            'version = "0.1.0"\n\n'
+            "[package.build-script]\n"
+            'source = "build.gti"\n'
+            'inputs = []\n',
+            encoding="utf-8",
+        )
+        (scripted / "src/scripted.gti").write_text(
+            "namespace scripted {\n"
+            'extern "C" {\n'
+            "int scripted_value();\n"
+            "}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (scripted / "build.gti").write_text(
+            "#include <std/build>\n"
+            "#include <std/cstdio>\n"
+            "#include <std/string>\n"
+            "#include <std/vector>\n\n"
+            "int main(int argc, std::vector<std::string> argv) {\n"
+            "  if (argc != 11) { return 64; }\n"
+            "  mut std::build::context context = "
+            "std::build::context_from_args(argv);\n"
+            "  mut std::string source = "
+            "std::string(context.output_dir().view());\n"
+            "  source.append(\"/scripted.c\");\n"
+            "  mut auto file = std::fopen(source.view(), "
+            "std::file_mode::write);\n"
+            "  if (!file) { return 74; }\n"
+            "  auto written = file.value()->write(\n"
+            "      \"int scripted_value(void) { return 42; }\\n\");\n"
+            "  if (!written) { return 74; }\n"
+            "  auto closed = file.value()->close();\n"
+            "  if (!closed) { return 74; }\n"
+            "  mut std::build::outputs outputs = "
+            "std::build::outputs();\n"
+            "  outputs.c_source(\"scripted.c\");\n"
+            "  return outputs.publish(context);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        scripted_app = root / "scripted-app"
+        (scripted_app / "src").mkdir(parents=True)
+        scripted_manifest = (
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "scripted-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            'scripted = { path = "../scripted-native" }\n\n'
+            "[build]\n"
+            'allow-build-scripts = ["scripted-native@0.1.0"]\n\n'
+            "[targets.scripted]\n"
+            'kind = "test"\n'
+            'root = "src/main.gti"\n'
+        )
+        (scripted_app / "gti.toml").write_text(
+            scripted_manifest, encoding="utf-8"
+        )
+        (scripted_app / "src/main.gti").write_text(
+            "#include <scripted/scripted>\n\n"
+            "int main() {\n"
+            "  unsafe { return scripted::scripted_value() == 42 ? 0 : 1; }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        scripted_metadata = json.loads(
+            run([gti, "metadata"], cwd=scripted_app).stdout
+        )
+        assert scripted_metadata["schemaVersion"] == 11
+        assert scripted_metadata["build"]["allowBuildScripts"] == [
+            "scripted-native@0.1.0"
+        ]
+        dependency_metadata = next(
+            package
+            for package in scripted_metadata["workspace"]["packages"]
+            if package["name"] == "scripted-native"
+        )
+        assert dependency_metadata["buildScript"]["command"] == []
+        assert dependency_metadata["buildScript"]["source"] == "build.gti"
+        script_plan = scripted_metadata["targets"][0]["outputs"][0][
+            "buildScripts"
+        ][0]
+        assert script_plan["package"] == "scripted-native@0.1.0"
+        assert script_plan["source"].endswith("/build.gti")
+        assert not (scripted_app / "build").exists()
+        built_scripted = run(
+            [gti, "test", "--jobs", "2"], cwd=scripted_app
+        )
+        assert "Built native dependency scripted-native@0.1.0" in (
+            built_scripted.stderr
+        )
+        reused_scripted = run(
+            [gti, "test", "--jobs", "2"], cwd=scripted_app
+        )
+        assert "Reused native dependency scripted-native@0.1.0" in (
+            reused_scripted.stderr
+        )
+        (scripted_app / "gti.toml").write_text(
+            scripted_manifest.replace(
+                'allow-build-scripts = ["scripted-native@0.1.0"]',
+                "allow-build-scripts = []",
+            ),
+            encoding="utf-8",
+        )
+        unapproved_script = run([gti, "check"], expected=65, cwd=scripted_app)
+        assert "error[GTI-B2002]" in unapproved_script.stderr
 
 
         # --- Native dependency composition ---
@@ -2404,7 +2520,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 9
+        assert composed_metadata["schemaVersion"] == 11
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

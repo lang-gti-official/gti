@@ -365,7 +365,7 @@ std::optional<std::vector<NativeDependencyGroup>> composeDependencyNativeGroups(
         !scratch.compilerArguments.empty() ||
         !scratch.cCompilerArguments.empty() ||
         !scratch.linkerArguments.empty() || !scratch.trailingArguments.empty();
-    if (!declaresAnything) {
+    if (!declaresAnything && !(*package)->manifest.package().buildScript) {
       continue;
     }
     const std::string identity = (*package)->identity();
@@ -421,6 +421,77 @@ std::optional<std::vector<NativeDependencyGroup>> composeDependencyNativeGroups(
     return std::nullopt;
   }
   return groups;
+}
+
+std::optional<std::vector<BuildScriptPlan>>
+composeBuildScriptPlans(const ProjectWorkspace &workspace,
+                        const ResolvedProjectPackage &selected,
+                        const TargetInfo &target, std::string_view profile,
+                        std::vector<Diagnostic> &diagnostics) {
+  std::vector<const ResolvedProjectPackage *> ordered;
+  std::set<std::string> visited;
+  const std::function<void(const ResolvedProjectPackage &)> visit =
+      [&](const ResolvedProjectPackage &package) {
+        if (!visited.insert(package.identity()).second) {
+          return;
+        }
+        for (const ResolvedProjectDependency &dependency :
+             package.dependencies) {
+          if (const ResolvedProjectPackage *targetPackage =
+                  workspace.findPackage(dependency.targetIdentity)) {
+            visit(*targetPackage);
+          }
+        }
+        ordered.push_back(&package);
+      };
+  visit(selected);
+
+  const std::vector<std::string> &allowed =
+      selected.manifest.build().allowedBuildScripts;
+  std::vector<BuildScriptPlan> plans;
+  bool valid = true;
+  for (const ResolvedProjectPackage *package : ordered) {
+    const std::optional<ProjectBuildScript> &script =
+        package->manifest.package().buildScript;
+    if (!script) {
+      continue;
+    }
+    const bool isSelected = package->identity() == selected.identity();
+    if (!isSelected && std::find(allowed.begin(), allowed.end(),
+                                 package->identity()) == allowed.end()) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B2002", script->declaration,
+          "Dependency package '" + package->identity() +
+              "' declares a host build script that the selected package has "
+              "not approved.");
+      diagnostic.hints.push_back(
+          "Add '" + package->identity() +
+          "' to [build].allow-build-scripts after reviewing the pinned "
+          "dependency and its build command.");
+      diagnostics.push_back(std::move(diagnostic));
+      valid = false;
+      continue;
+    }
+
+    std::filesystem::path output =
+        workspace.root() / "build" / "gti" / "build-scripts" /
+        portableProjectNameKey(package->manifest.package().name) /
+        package->manifest.package().version / targetTriple(target) /
+        std::string(profile);
+    plans.push_back({.packageIdentity = package->identity(),
+                     .packageRoot = package->manifest.packageRoot(),
+                     .command = script->command,
+                     .source = script->source,
+                     .inputs = script->inputs,
+                     .declaredInputs = script->declaredInputs,
+                     .outputDirectory = std::move(output),
+                     .declaration = script->declaration,
+                     .selectedPackage = isSelected});
+  }
+  if (!valid) {
+    return std::nullopt;
+  }
+  return plans;
 }
 
 const ProjectProfile *selectProfile(const ProjectManifest &manifest,
@@ -544,9 +615,13 @@ ProjectBuildPlan makeBuildPlan(
     const ProjectWorkspace &workspace, const ProjectManifest &manifest,
     const ProjectTarget &selectedTarget, const ProjectProfile &selectedProfile,
     const TargetInfo &target, NativeInputs nativeInputs,
+    std::vector<BuildScriptPlan> buildScripts,
     const ProjectBuildOverrides &overrides = {},
     RuntimeProfile runtimeProfile = RuntimeProfile::None,
     ResolvedProjectToolchain toolchain = {}) {
+  for (BuildScriptPlan &script : buildScripts) {
+    script.outputDirectory /= portableProjectNameKey(selectedTarget.name);
+  }
   const OptimizationLevel optimization =
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
@@ -599,6 +674,20 @@ ProjectBuildPlan makeBuildPlan(
   }
   for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
+  }
+  for (const BuildScriptPlan &script : buildScripts) {
+    modelIdentity += "\nbuild-script:" + script.packageIdentity;
+    if (script.source) {
+      modelIdentity += "|source=" + std::filesystem::relative(
+                                        *script.source, script.packageRoot)
+                                        .generic_string();
+    }
+    for (const std::string &argument : script.command) {
+      modelIdentity += "|argv=" + argument;
+    }
+    for (const std::string &input : script.declaredInputs) {
+      modelIdentity += "|input=" + input;
+    }
   }
 
   // Bindgen imports become synthetic package source roots: the generated
@@ -679,7 +768,7 @@ ProjectBuildPlan makeBuildPlan(
       generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
       std::move(nativeInputs), std::move(packageSourceRoots),
       configuration.configurationFlags(), std::move(modelIdentity),
-      std::move(bindgenImports), std::move(toolchain));
+      std::move(bindgenImports), std::move(buildScripts), std::move(toolchain));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -830,6 +919,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags, std::string projectModelIdentity,
     std::vector<BindgenImportPlan> bindgenImports,
+    std::vector<BuildScriptPlan> buildScripts,
     ResolvedProjectToolchain toolchain)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
@@ -847,6 +937,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedConfigurationFlags(std::move(configurationFlags)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
+      resolvedBuildScripts(std::move(buildScripts)),
       resolvedToolchain(std::move(toolchain)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
@@ -925,6 +1016,10 @@ const std::string &ProjectBuildPlan::projectModelIdentity() const {
 
 const std::vector<BindgenImportPlan> &ProjectBuildPlan::bindgenImports() const {
   return resolvedBindgenImports;
+}
+
+const std::vector<BuildScriptPlan> &ProjectBuildPlan::buildScripts() const {
+  return resolvedBuildScripts;
 }
 
 ProjectMetadata::ProjectMetadata(ProjectWorkspace workspace, TargetInfo target,
@@ -1098,12 +1193,20 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan =
-      makeBuildPlan(workspace, manifest, *selectedTarget, *selectedProfile,
-                    request.target(), std::move(*nativeInputs),
-                    request.overrides(), request.runtimeProfile(), *toolchain);
+  result.plan = makeBuildPlan(
+      workspace, manifest, *selectedTarget, *selectedProfile, request.target(),
+      std::move(*nativeInputs), std::move(*buildScripts), request.overrides(),
+      request.runtimeProfile(), *toolchain);
   return result;
 }
 
@@ -1209,6 +1312,14 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
 
   result.plans.reserve(selectedTargets.size());
   for (const ProjectTarget *selectedTarget : selectedTargets) {
@@ -1230,8 +1341,8 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     }
     result.plans.push_back(makeBuildPlan(
         workspace, manifest, *selectedTarget, *selectedProfile,
-        request.target(), std::move(*nativeInputs), request.overrides(),
-        request.runtimeProfile(), *toolchain));
+        request.target(), std::move(*nativeInputs), *buildScripts,
+        request.overrides(), request.runtimeProfile(), *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1303,10 +1414,28 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
   }
 
   result.plans.reserve(manifest.targets().size());
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
+  std::optional<std::vector<NativeDependencyGroup>> composed =
+      composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
+                                    request.target(), result.diagnostics);
+  if (!composed) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
   for (const ProjectTarget &target : manifest.targets()) {
     std::optional<NativeInputs> nativeInputs =
         resolveNativeInputs(manifest, target, *selectedProfile,
                             request.target(), result.diagnostics);
+    if (nativeInputs) {
+      nativeInputs->dependencyGroups = *composed;
+    }
     if (!nativeInputs ||
         !checkToolchainCCoverage(
             *toolchain, *nativeInputs, request.toolchainPolicy(),
@@ -1317,8 +1446,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     }
     result.plans.push_back(makeBuildPlan(
         workspace, manifest, target, *selectedProfile, request.target(),
-        std::move(*nativeInputs), request.overrides(), request.runtimeProfile(),
-        *toolchain));
+        std::move(*nativeInputs), *buildScripts, request.overrides(),
+        request.runtimeProfile(), *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1374,6 +1503,13 @@ ProjectMetadataResult resolveProjectMetadata(
   plans.reserve(manifest.targets().size() * manifest.profiles().size());
   for (const ProjectTarget &projectTarget : manifest.targets()) {
     for (const ProjectProfile &profile : manifest.profiles()) {
+      std::optional<std::vector<BuildScriptPlan>> buildScripts =
+          composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                                  target, profile.name, result.diagnostics);
+      if (!buildScripts) {
+        result.status = ProjectMetadataStatus::ManifestFailure;
+        return result;
+      }
       std::optional<NativeInputs> nativeInputs = resolveNativeInputs(
           manifest, projectTarget, profile, target, result.diagnostics);
       if (!nativeInputs) {
@@ -1382,7 +1518,8 @@ ProjectMetadataResult resolveProjectMetadata(
       }
       nativeInputs->dependencyGroups = *composed;
       plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
-                                    target, std::move(*nativeInputs), {},
+                                    target, std::move(*nativeInputs),
+                                    std::move(*buildScripts), {},
                                     runtimeProfile, metadataToolchain));
     }
   }
