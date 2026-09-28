@@ -313,12 +313,12 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       argument = substituteType(argument, substitution);
     }
   }
-  if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
-          dynamicStringViewReturnBorrowSummary(concreteFunction)) {
-    concreteFunction.returnBorrowOrigin = dynamicView->origin;
-    concreteFunction.returnBorrowParameter = dynamicView->parameter;
-    concreteFunction.returnBorrowAccess = dynamicView->access;
-    concreteFunction.returnBorrowPlace = dynamicView->place;
+  if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+          dynamicTextReturnBorrowSummary(concreteFunction)) {
+    concreteFunction.returnBorrowOrigin = dynamicText->origin;
+    concreteFunction.returnBorrowParameter = dynamicText->parameter;
+    concreteFunction.returnBorrowAccess = dynamicText->access;
+    concreteFunction.returnBorrowPlace = dynamicText->place;
   } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
     const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
         concreteFunction.returnType, concreteFunction.parameterTypes,
@@ -815,8 +815,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
                                        : AccessMode::ReadOnly);
-    if (parameterType.kind == SemanticType::StringView) {
-      parameterInfo.traits = ownerDependentStringViewInfo().traits;
+    if (parameterType.kind == SemanticType::StringView ||
+        parameterType.kind == SemanticType::CString) {
+      parameterInfo.traits = ownerDependentTextInfo(parameterType).traits;
     }
     parameterInfo.symbol = parameterSymbol;
     semanticModel.record(parameter, std::move(parameterInfo));
@@ -1737,8 +1738,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
                                        : AccessMode::ReadOnly);
-    if (parameterType.kind == SemanticType::StringView) {
-      parameterInfo.traits = ownerDependentStringViewInfo().traits;
+    if (parameterType.kind == SemanticType::StringView ||
+        parameterType.kind == SemanticType::CString) {
+      parameterInfo.traits = ownerDependentTextInfo(parameterType).traits;
     }
     parameterInfo.symbol = parameterSymbol;
     semanticModel.record(parameter, std::move(parameterInfo));
@@ -2159,8 +2161,9 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
   }
-  if (currentReturnType.kind == SemanticType::StringView) {
-    validateOwnerDependentStringViewReturn(valueType, stmt.value());
+  if (currentReturnType.kind == SemanticType::StringView ||
+      currentReturnType.kind == SemanticType::CString) {
+    validateOwnerDependentTextReturn(valueType, stmt.value());
   }
   if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     if (isMoveOnlyOwnerType(currentReturnType) &&
@@ -2953,20 +2956,29 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const ExpressionInfo *initializerInfo =
       stmt.initializer() ? semanticModel.findExpression(*stmt.initializer())
                          : nullptr;
-  const bool ownerDependentStringView =
-      declaredType.kind == SemanticType::StringView &&
+  const bool ownerDependentText =
+      (declaredType.kind == SemanticType::StringView ||
+       declaredType.kind == SemanticType::CString) &&
       initializerInfo != nullptr &&
       initializerInfo->traits.containsBorrowedState;
-  if (ownerDependentStringView) {
+  if (ownerDependentText) {
+    const bool cString = declaredType.kind == SemanticType::CString;
     if (globalStorage) {
       report(stmt.name(),
-             "A dynamic std::string_view cannot have global or static "
-             "storage duration because its owner dependency is local.",
+             cString ? "An owner-dependent c_string cannot have "
+                       "global or static storage duration because "
+                       "its owner dependency is local."
+                     : "A dynamic std::string_view cannot have "
+                       "global or static storage duration because "
+                       "its owner dependency is local.",
              "GTI-S2045");
     } else if (instanceField) {
       report(stmt.name(),
-             "A dynamic std::string_view cannot be stored in a field in "
-             "the single-owner view model.",
+             cString ? "An owner-dependent c_string cannot be stored "
+                       "in a field in the single-owner text-borrow "
+                       "model."
+                     : "A dynamic std::string_view cannot be stored "
+                       "in a field in the single-owner view model.",
              "GTI-S2045");
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
@@ -3010,8 +3022,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       recordRetainedBorrow(stmt, stmt.initializer());
     }
   } else if (stmt.initializer()) {
-    if (typeTraits(declaredType).containsBorrowedState ||
-        ownerDependentStringView) {
+    if (typeTraits(declaredType).containsBorrowedState || ownerDependentText) {
       validateStoredBorrowInitialization(declaredType, stmt.initializer());
       recordRetainedBorrow(stmt, stmt.initializer());
     }
@@ -3235,10 +3246,12 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
-  if (simpleAssignment && targetType.kind == SemanticType::StringView &&
-      isOwnerDependentStringViewExpression(expr.value())) {
-    reportDynamicStringViewStorage(expr.value(),
-                                   "assigned into an existing binding");
+  if (simpleAssignment &&
+      (targetType.kind == SemanticType::StringView ||
+       targetType.kind == SemanticType::CString) &&
+      isOwnerDependentTextExpression(expr.value())) {
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned into an existing binding");
   }
   // Recursive RHS analysis can merge short-circuit branch scopes and move
   // their Symbol storage. Re-resolve the assignment place before retaining
@@ -3439,9 +3452,10 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
                 "when necessary.");
       valid = false;
     }
-    if (elementType.kind == SemanticType::StringView &&
-        isOwnerDependentStringViewExpression(element)) {
-      reportDynamicStringViewStorage(element, "stored in a collection");
+    if ((elementType.kind == SemanticType::StringView ||
+         elementType.kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(element)) {
+      reportOwnerDependentTextStorage(element, "stored in a collection");
       valid = false;
     }
   }
@@ -3514,9 +3528,10 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 
   for (const ExprPtr &element : expr.elements()) {
     const SemanticType valueType = analyzeInitializer(element, elementType);
-    if (elementType.kind == SemanticType::StringView &&
-        isOwnerDependentStringViewExpression(element)) {
-      reportDynamicStringViewStorage(element, "nested in a fixed array");
+    if ((elementType.kind == SemanticType::StringView ||
+         elementType.kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(element)) {
+      reportOwnerDependentTextStorage(element, "nested in a fixed array");
     }
     if (!isAssignable(elementType, valueType, element.get())) {
       report(expressionToken(element),
@@ -4799,9 +4814,10 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
       diagnostics.push_back(std::move(diagnostic));
       valid = false;
     }
-    if (types[index].kind == SemanticType::StringView &&
-        isOwnerDependentStringViewExpression(expr.arguments()[i])) {
-      reportDynamicStringViewStorage(expr.arguments()[i], "stored in a field");
+    if ((types[index].kind == SemanticType::StringView ||
+         types[index].kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(expr.arguments()[i])) {
+      reportOwnerDependentTextStorage(expr.arguments()[i], "stored in a field");
       valid = false;
     }
     const auto &member = owner->members.at(name.lexeme);
@@ -6603,9 +6619,10 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
       simpleAssignment ? analyzeInitializer(expr.value(), resolvedMember.type)
                        : analyze(expr.value());
   if (simpleAssignment &&
-      resolvedMember.type.kind == SemanticType::StringView &&
-      isOwnerDependentStringViewExpression(expr.value())) {
-    reportDynamicStringViewStorage(expr.value(), "stored in a field");
+      (resolvedMember.type.kind == SemanticType::StringView ||
+       resolvedMember.type.kind == SemanticType::CString) &&
+      isOwnerDependentTextExpression(expr.value())) {
+    reportOwnerDependentTextStorage(expr.value(), "stored in a field");
   }
   const bool directSelfMove =
       samePlace(targetPlace, movedSourcePlace(expr.value()));
@@ -9564,8 +9581,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       declaration.isRangeOwner() && initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Place &&
       initializerType != SemanticType::Unknown;
-  const bool ownerDependentStringView =
-      initializerType.kind == SemanticType::StringView &&
+  const bool ownerDependentText =
+      (initializerType.kind == SemanticType::StringView ||
+       initializerType.kind == SemanticType::CString) &&
       initializerInfo != nullptr &&
       initializerInfo->traits.containsBorrowedState;
   if (rangeOwnerReference) {
@@ -9626,8 +9644,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         "with std::move(owner).");
   }
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
-      (typeTraits(inferredType).containsBorrowedState ||
-       ownerDependentStringView)) {
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText)) {
     validateStoredBorrowInitialization(inferredType, declaration.initializer());
   }
 
@@ -9650,7 +9667,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                             diagnostics.size() == declarationDiagnosticStart &&
                                 initializerAssignable);
   BindingInfo info = bindingInfo(inferredType, access);
-  if (ownerDependentStringView) {
+  if (ownerDependentText) {
     info.traits = initializerInfo->traits;
   }
   info.symbol = symbol;
@@ -9664,8 +9681,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
          .symbol = symbol,
          .name = type.name.last().lexeme,
          .type = inferredType,
-         .traits = ownerDependentStringView ? initializerInfo->traits
-                                            : typeTraits(inferredType),
+         .traits = ownerDependentText ? initializerInfo->traits
+                                      : typeTraits(inferredType),
          .access = access,
          .mutableBinding = declaration.isMutable()});
   }
@@ -9685,8 +9702,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                                  !isDirectOwnerType(initializerType);
   const bool retainedStoredValue =
       !type.reference && !rangeOwnerReference &&
-      (typeTraits(inferredType).containsBorrowedState ||
-       ownerDependentStringView);
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText);
   const auto *rangeIteratorCall =
       declaration.isRangeIterator() && declaration.initializer()
           ? exprAs<Call>(declaration.initializer().get())

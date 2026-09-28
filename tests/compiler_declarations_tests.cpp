@@ -248,6 +248,97 @@ int main() {
   if (!hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045"))
     for (const auto &diagnostic : nestedTextView.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+
+  const lang::FrontendResult validCString = lang::Frontend().analyze(
+      "string-c-string.gti",
+      "#include <std/string>\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  c_string unchecked = text.c_string();\n"
+      "  c_string checked = text.try_c_string();\n"
+      "  return unchecked == nullptr || checked == nullptr ? 1 : 0;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(validCString.canGenerateCode() && validCString.mirValid &&
+             validCString.mir.valid(),
+         "string C-string observers should lower as verified read-only "
+         "owner-dependent values");
+
+  const lang::FrontendResult invalidatedCString = lang::Frontend().analyze(
+      "invalidated-c-string.gti",
+      "#include <std/string>\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  c_string pointer = text.c_string();\n"
+      "  text.push_back('d');\n"
+      "  return pointer == nullptr ? 1 : 0;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidatedCString.canGenerateCode() &&
+             hasDiagnosticCode(invalidatedCString.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(invalidatedCString.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "mutating a string while one of its C-string pointers remains live "
+         "should be rejected");
+
+  const lang::FrontendResult relayedCString = lang::Frontend().analyze(
+      "relayed-c-string.gti",
+      "#include <std/string>\n"
+      "c_string relay(c_string value) { return value; }\n"
+      "int main() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  c_string pointer = relay(text.c_string());\n"
+      "  text.push_back('d');\n"
+      "  return pointer == nullptr ? 1 : 0;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!relayedCString.canGenerateCode() &&
+             hasDiagnosticCode(relayedCString.diagnostics, "GTI-S2017"),
+         "relaying an owner-dependent C string through an exact c_string "
+         "parameter and return should preserve its source loan");
+
+  const std::string escapedCStringSource =
+      "#include <std/string>\n"
+      "c_string escape() {\n"
+      "  mut std::string text = std::string(\"abc\");\n"
+      "  return text.c_string();\n"
+      "}\n";
+  const lang::FrontendResult escapedCString = lang::Frontend().analyze(
+      "escaped-c-string.gti", escapedCStringSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const std::size_t escapedCStringSpan =
+      escapedCStringSource.find("text.c_string()") +
+      std::string_view("text.c_string()").size() - 1;
+  expect(!escapedCString.canGenerateCode() &&
+             hasDiagnosticCode(escapedCString.diagnostics, "GTI-S2045") &&
+             hasDiagnosticAt(escapedCString.diagnostics, "GTI-S2045",
+                             "escaped-c-string.gti", escapedCStringSpan,
+                             "owner-dependent c_string cannot escape without "
+                             "one exact owner dependency") &&
+             hasDiagnosticHint(escapedCString.diagnostics,
+                               "Return an ownerless native C string"),
+         "a C-string pointer must not escape the local string that owns its "
+         "bytes");
+
+  const lang::FrontendResult nativeCString =
+      lang::Frontend().analyze("native-c-string-relay.gti", R"(
+extern "C" {
+  c_string native_name();
+}
+
+c_string identity(c_string value) { return value; }
+
+int main() {
+  c_string value = identity(native_name());
+  return value == nullptr ? 1 : 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(nativeCString.canGenerateCode() && nativeCString.mirValid &&
+             nativeCString.mir.valid(),
+         "native C-string results without a GTI owner should remain usable "
+         "through an exact C-string relay");
 }
 
 void testMovedLoopLocalRedeclarations() {

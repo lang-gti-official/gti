@@ -274,6 +274,8 @@ enum class IntrinsicKind {
   PrefixStorageInsert,
   PrefixStorageErase,
   PrefixStorageTextView,
+  PrefixStorageCString,
+  PrefixStorageTryCString,
   OptionalStorageHasValue,
   OptionalStorageConstruct,
   OptionalStorageRead,

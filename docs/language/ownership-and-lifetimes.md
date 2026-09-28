@@ -1481,3 +1481,12 @@ storage, or be nested in a field, global, static, array, or dynamic container.
 Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
+
+`std::string::c_string()` and `std::string::try_c_string()` use the same
+single-owner dependency model for the compiler-owned `c_string` boundary type.
+The unchecked spelling always returns the string's non-null terminated storage
+and permits embedded NUL bytes; the checked spelling returns `nullptr` if an
+embedded NUL is present. A retained result prevents mutation, movement, or
+destruction of the source string and cannot escape a local owner. A `c_string`
+received from native code has no inferred GTI owner, and hidden retention by a
+native callee remains part of that API's external contract.

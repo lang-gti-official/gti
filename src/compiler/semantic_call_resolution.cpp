@@ -2323,12 +2323,12 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     FunctionInfo concrete = *declarationInfo;
     concrete.returnType = resolved.returnType;
     concrete.parameterTypes = resolved.parameterTypes;
-    if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
-            dynamicStringViewReturnBorrowSummary(concrete)) {
-      resolved.returnBorrowOrigin = dynamicView->origin;
-      resolved.returnBorrowParameter = dynamicView->parameter;
-      resolved.returnBorrowAccess = dynamicView->access;
-      resolved.returnBorrowPlace = dynamicView->place;
+    if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+            dynamicTextReturnBorrowSummary(concrete)) {
+      resolved.returnBorrowOrigin = dynamicText->origin;
+      resolved.returnBorrowParameter = dynamicText->parameter;
+      resolved.returnBorrowAccess = dynamicText->access;
+      resolved.returnBorrowPlace = dynamicText->place;
     }
   }
   return true;

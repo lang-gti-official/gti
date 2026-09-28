@@ -178,6 +178,19 @@ namespace std {
       return gti_internal::prefix_storage_text_view(this.data);
     }
 
+    /// Returns a NUL-terminated C string tied to this string's storage.
+    /// Embedded NUL characters are preserved and therefore terminate ordinary
+    /// C string operations at the first such character.
+    c_string c_string() {
+      return gti_internal::prefix_storage_c_string(this.data);
+    }
+
+    /// Returns a NUL-terminated C string tied to this string's storage, or
+    /// nullptr when the logical string contains an embedded NUL character.
+    c_string try_c_string() {
+      return gti_internal::prefix_storage_try_c_string(this.data);
+    }
+
     /// Returns a checked read-only character view tied to this string.
     span<char> as_span() {
       return span<char>(this.data, size_t(0), this.count);

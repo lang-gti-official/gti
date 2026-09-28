@@ -2382,6 +2382,149 @@ int main() {
          "without a dead failure-status carrier");
 }
 
+void testPrefixStorageCStringAdmissionFailsClosed() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-prefix-storage-c-string.gti", R"(
+#include <std/string>
+
+int main() {
+  mut std::string text = std::string("abc");
+  c_string unchecked = text.c_string();
+  c_string checked = text.try_c_string();
+  return unchecked == nullptr || checked == nullptr ? 1 : 0;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid(),
+         "the C-string observer fixture should produce verified MIR");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid()) {
+    return;
+  }
+
+  struct Observer {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId instruction = 0;
+    lang::IntrinsicKind intrinsic = lang::IntrinsicKind::None;
+  };
+  const auto findMutableObserver = [](lang::MirBody &body,
+                                      lang::MirInstructionId id) {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  std::vector<Observer> observers;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic ==
+                lang::IntrinsicKind::PrefixStorageCString ||
+            instruction.intrinsic ==
+                lang::IntrinsicKind::PrefixStorageTryCString) {
+          observers.push_back(
+              {function.id, instruction.id, instruction.intrinsic});
+        }
+      }
+    }
+  }
+  expect(observers.size() == 2,
+         "the string methods should lower to exactly the checked and "
+         "unchecked C-string observer intrinsics");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  for (const Observer &observer : observers) {
+    const lang::MirFunctionInstance *function =
+        frontend.mir.findFunctionInstance(observer.function);
+    expect(function != nullptr,
+           "each C-string observer should retain its source function body");
+    if (function == nullptr) {
+      continue;
+    }
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = observer.function};
+    const lang::CppMirBodyEmitter exactEmitter(frontend.mir, map);
+    const bool ready = function->mayRaiseDefinedFailure
+                           ? exactEmitter.supportsFailureBodyText(address)
+                           : exactEmitter.supportsBodyText(address);
+    expect(ready,
+           "a verified C-string storage observer should be admitted by the "
+           "complete C++ text vocabulary");
+    if (ready) {
+      const lang::CppMirBodyEmissionText emitted =
+          function->mayRaiseDefinedFailure
+              ? exactEmitter.emitFailureBodyText(
+                    address, "prefix-storage-c-string-regression-v0", 1)
+              : exactEmitter.emitBodyText(
+                    address, "prefix-storage-c-string-regression-v0", 1);
+      const std::string_view helper =
+          observer.intrinsic == lang::IntrinsicKind::PrefixStorageCString
+              ? "prefix_storage_c_string("
+              : "prefix_storage_try_c_string(";
+      expect(emitted.emitted() &&
+                 emitted.text.find(helper) != std::string::npos,
+             "C-string observer text should name its exact shipped helper");
+    }
+
+    lang::MirProgram wrongResult = frontend.mir;
+    auto &wrongFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongResult.functionInstances());
+    lang::MirInstruction *wrongResultInstruction = nullptr;
+    for (lang::MirFunctionInstance &candidate : wrongFunctions) {
+      if (candidate.id == observer.function) {
+        wrongResultInstruction =
+            findMutableObserver(candidate.body, observer.instruction);
+        break;
+      }
+    }
+    if (wrongResultInstruction != nullptr) {
+      wrongResultInstruction->info.type = lang::SemanticType::Bool;
+    }
+    expect(wrongResultInstruction != nullptr &&
+               !lang::verifyMirProgram(wrongResult).valid() &&
+               !(function->mayRaiseDefinedFailure
+                     ? lang::CppMirBodyEmitter(wrongResult, map)
+                           .supportsFailureBodyText(address)
+                     : lang::CppMirBodyEmitter(wrongResult, map)
+                           .supportsBodyText(address)),
+           "a C-string observer with a forged result type should fail both "
+           "MIR verification and backend admission");
+
+    lang::MirProgram missingStorage = frontend.mir;
+    auto &missingFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            missingStorage.functionInstances());
+    lang::MirInstruction *missingStorageInstruction = nullptr;
+    for (lang::MirFunctionInstance &candidate : missingFunctions) {
+      if (candidate.id == observer.function) {
+        missingStorageInstruction =
+            findMutableObserver(candidate.body, observer.instruction);
+        break;
+      }
+    }
+    if (missingStorageInstruction != nullptr) {
+      missingStorageInstruction->operands.clear();
+    }
+    expect(missingStorageInstruction != nullptr &&
+               !lang::verifyMirProgram(missingStorage).valid() &&
+               !(function->mayRaiseDefinedFailure
+                     ? lang::CppMirBodyEmitter(missingStorage, map)
+                           .supportsFailureBodyText(address)
+                     : lang::CppMirBodyEmitter(missingStorage, map)
+                           .supportsBodyText(address)),
+           "a C-string observer without its exact storage operand should "
+           "fail both MIR verification and backend admission");
+  }
+}
+
 // The inline closure chain: lambda-typed places and values never declare
 // (C++ closure types are unnameable), so the Closure compute fuses into
 // its consuming invocations, which spell the full literal with capture
@@ -3569,6 +3712,8 @@ constexpr NamedTest kTests[] = {
      testGlobalClassStorageMemberProjection},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testDischargedStorageReadAnalysis", testDischargedStorageReadAnalysis},
+    {"testPrefixStorageCStringAdmissionFailsClosed",
+     testPrefixStorageCStringAdmissionFailsClosed},
     {"testExpectedExtractionStateAdmissionFailsClosed",
      testExpectedExtractionStateAdmissionFailsClosed},
     {"testDeclarationOnlyCallBoundary", testDeclarationOnlyCallBoundary},

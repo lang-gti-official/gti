@@ -603,6 +603,7 @@ upstream code.
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `string_index_range_runtime` | independent half-open string copies, empty and endpoint ranges, embedded zero/UTF-8 code units, source lifetime independence, invalid and huge endpoints with exact public bounds category and cleanup; O0/O1/O3 under C++20/C++23 plus generated-program ASan/UBSan |
+| `string_c_string_runtime` | non-null empty and populated `std::string::c_string()` views, hidden trailing NUL maintenance across reserve/append/pop/resize/shrink/clear, unchecked embedded-NUL prefix behavior, checked `try_c_string()` null rejection, verified-MIR helper identity, and execution at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; declaration tests own live-loan invalidation, local-owner escape, and ownerless native relay, while emitter preflight mutations reject forged result and storage identities |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
 | `optimizer_analyses` | Independent FIFO dataflow equivalence, canonical executable-edge identity, switch-default propagation, malformed/retracting-transfer rejection, and widening determinism; natural-loop forest, invariant, affine induction, relational-bound, and repeated-edge ambiguity facts; symmetric must/no/may-alias projection rules, conservative union/loan/value/raw relationships, alias-aware safety invalidation, and exact/unknown-call escape; SCCP merge propagation, deterministic replay, and forged-evidence rejection |
 | `optimizer_safety` / `optimizer_safety_native_evidence` | Exact remainder and bit-mask transfer; finite single-write recurrence thresholds; branch-bounded loop-index envelopes; bounded scalar/object closed-call context widening with rejection beyond the update budget; scalar fixed-array-root envelopes; exact prefix-storage length/check/index relations; dynamic-bound, repeated-write, prefix mutation/relocation, call, lifecycle, and alias-write invalidation; read/write bounds and arithmetic-domain proof replay; signed-minimum remainder `-1`; exact O0/O2/O3 success, cleanup, failure category, source-origin, and public-vector-versus-private-storage detail parity; and native checked/unchecked helper retention evidence |
@@ -1396,6 +1397,14 @@ Declaration-only changes include generated designated constructors and the
 vector collection protocol; callable/structural adapters follow the added
 source classes. All 82 examples pass both native endpoints against the candidate
 inventory before that inventory is promoted to the checked-in baselines.
+
+The C-string observer refresh adds the two source-defined `std::string`
+observer bodies to each example's standard-library closure. Examples with the
+additional string closure gain four declarations and bodies rather than two;
+all generated-item families remain unchanged. The MIR and LoweredProgram
+baselines record exactly that reviewed inventory movement. The two trusted
+observer intrinsics also raise the first-family native-boundary witness from
+four schedules to six.
 
 Generated C++ is not a stable public text contract. Marker identities are a
 test-only ownership witness; behavior comparison remains on process status and

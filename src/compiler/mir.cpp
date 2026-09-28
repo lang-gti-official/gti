@@ -8057,10 +8057,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             const bool storedCarrier =
                 retained != nullptr && retained->kind == MirLoanKind::Stored &&
                 retained->entry && retained->designatedField != 0;
-            const bool stringViewCarrier =
+            const bool dynamicTextCarrier =
                 retained != nullptr && retained->kind == MirLoanKind::Stored &&
                 retained->entry && retained->designatedField == 0 &&
-                operand.type.kind == SemanticType::StringView &&
+                (operand.type.kind == SemanticType::StringView ||
+                 operand.type.kind == SemanticType::CString) &&
                 published != nullptr &&
                 published->access == AccessMode::ReadOnly;
             const bool callResult = retained != nullptr &&
@@ -8070,7 +8071,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             return instruction.kind != MirInstructionKind::Borrow ||
                    instruction.operands.size() != 1 || published == nullptr ||
                    published->kind != MirLoanKind::Return ||
-                   (!storedCarrier && !stringViewCarrier &&
+                   (!storedCarrier && !dynamicTextCarrier &&
                     (!callResult || operand.place != 0 || operand.value != 0));
           });
       if (instruction.id == 0 ||
@@ -8359,16 +8360,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
           const bool exactStoredCarrierEntry =
               retained->entry && retained->designatedField != 0;
-          const bool exactStringViewEntry =
+          const bool exactDynamicTextEntry =
               retained->entry && retained->designatedField == 0 &&
-              source.type.kind == SemanticType::StringView &&
-              instruction.info.type.kind == SemanticType::StringView;
+              (source.type.kind == SemanticType::StringView ||
+               source.type.kind == SemanticType::CString) &&
+              instruction.info.type == source.type;
           const MirPlace *runtime = body.findPlace(source.place);
           const bool valueTransfer =
               source.place == 0 &&
-              (((exactStoredCarrierEntry || exactStringViewEntry) &&
+              (((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 source.value != 0) ||
-               (!exactStoredCarrierEntry && !exactStringViewEntry &&
+               (!exactStoredCarrierEntry && !exactDynamicTextEntry &&
                 source.value == 0)) &&
               instruction.info.traits.containsBorrowedState;
           const bool referenceTransfer =

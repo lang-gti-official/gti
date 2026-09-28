@@ -284,11 +284,29 @@ literal selects a `std::string_view` overload over a `c_string` overload.
 This conversion is not a general class conversion and does not permit a
 `c_string` local to be initialized from a string view.
 
-Dynamic `std::string::c_string()` is intentionally not implemented yet. It
-requires the owner to maintain a terminator and the returned value to retain a
-loan invalidated by mutation or destruction. Until that lifetime contract is
-implemented, GTI rejects retained string-view-to-`c_string` conversions rather
-than reproducing C++'s dangling `c_str()` behavior.
+`std::string::c_string()` returns a non-null NUL-terminated view of the
+string's characters. Allocated character storage maintains a
+representation-private NUL byte at its logical `size()`; a zero-capacity empty
+string uses an immutable process-lifetime NUL sentinel. The terminator is
+maintained after reserve, append, resize, pop, clear, relocation, and capacity
+changes. Embedded NUL bytes remain part of the logical string; ordinary C
+string functions therefore observe only the prefix before the first embedded
+NUL, matching the familiar C++ behavior.
+
+`std::string::try_c_string()` provides the checked alternative. It returns
+`nullptr` when any logical character is NUL and otherwise returns the same
+terminated storage view. Both methods produce a compiler-tracked read-only
+dependency on the source string. Mutation, movement, destruction, and escape
+from a local owner are rejected while a derived pointer remains live; the loan
+ends after the pointer's last source-level use. The checked form is
+conservatively owner-dependent even on a path where its value is null.
+
+Obtaining either pointer is not an `unsafe` operation: the pointer cannot be
+indexed or dereferenced in safe GTI. The compiler also cannot infer whether an
+arbitrary native function secretly retains a pointer after a call. A normal C
+parameter is therefore treated as borrowed for the call; a binding for a
+retaining API must express and uphold that library-specific lifetime contract.
+No backend cast silently extends the source string's lifetime.
 
 ## Native Pointer-Plus-Count Arrays
 

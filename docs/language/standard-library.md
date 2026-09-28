@@ -83,7 +83,8 @@ The current implemented foundation includes:
 - `std::string` as a move-only owner over private character storage, including
   construction from an exact input iterator/sentinel pair whose dereference
   referent is `char`, indexed half-open range copying, front/back and mutable
-  checked access, resize,
+  checked access, resize, owner-tied `c_string()` and checked
+  `try_c_string()` NUL-terminated views,
   shrink-to-fit, pop-back, and
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
@@ -492,6 +493,16 @@ local owner or be assigned/reseated, placed in a field, global, fixed array, or
 dynamic storage, or used to construct a nested dependency graph. Mutable,
 multi-owner, nested, and generally reseatable views remain deliberately
 unsupported.
+
+`std::string::c_string()` exposes the same live bytes as a non-null
+NUL-terminated `c_string`. Embedded NUL bytes are allowed and cause ordinary C
+operations to observe the prefix ending at the first one.
+`std::string::try_c_string()` returns `nullptr` instead when the logical string
+contains an embedded NUL. Both results retain a read-only dependency on the
+source owner, so invalidating operations reject until the result's last use.
+They expose no safe dereference or indexing operation, and native APIs that
+retain a pointer beyond a call still require an explicit binding-level lifetime
+contract.
 
 `std::forward_list<T>` uses an exclusive `std::unique_ptr` node chain. Node
 algorithms detach and reattach owners without retaining traversal borrows.

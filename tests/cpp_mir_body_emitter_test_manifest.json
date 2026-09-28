@@ -82,6 +82,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testPrefixStorageCStringAdmissionFailsClosed",
+      "suite": "preflight"
+    },
+    {
       "name": "testExpectedExtractionStateAdmissionFailsClosed",
       "suite": "preflight"
     },

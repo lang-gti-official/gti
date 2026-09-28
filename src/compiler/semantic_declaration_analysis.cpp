@@ -4812,14 +4812,15 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
   }
 }
 
-auto SemanticVisitor::Impl::predeclaredStringViewBorrowSource(
+auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     const ExprPtr &expression, const FunctionInfo &function) const
-    -> PredeclaredStringViewBorrowSource {
+    -> PredeclaredTextBorrowSource {
   if (!expression) {
     return {};
   }
   if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
-    return {.known = literal->token().kind == TokenKind::STRING_LITERAL};
+    return {.known = literal->token().kind == TokenKind::STRING_LITERAL ||
+                     literal->token().kind == TokenKind::NULLPTR};
   }
   if (exprAs<This>(expression.get()) != nullptr) {
     return {.known = true,
@@ -4843,14 +4844,14 @@ auto SemanticVisitor::Impl::predeclaredStringViewBorrowSource(
     return {};
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
-    return predeclaredStringViewBorrowSource(grouping->expression(), function);
+    return predeclaredTextBorrowSource(grouping->expression(), function);
   }
   if (const auto *binary = exprAs<Binary>(expression.get());
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-    return predeclaredStringViewBorrowSource(binary->right(), function);
+    return predeclaredTextBorrowSource(binary->right(), function);
   }
   if (const auto *member = exprAs<Get>(expression.get())) {
-    return predeclaredStringViewBorrowSource(member->object(), function);
+    return predeclaredTextBorrowSource(member->object(), function);
   }
   const auto *call = exprAs<Call>(expression.get());
   if (call == nullptr) {
@@ -4860,16 +4861,20 @@ auto SemanticVisitor::Impl::predeclaredStringViewBorrowSource(
       intrinsicCandidate(call->callee());
   if (!intrinsic || call->arguments().size() != 1 ||
       (intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageTextView &&
+       intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageCString &&
+       intrinsic->record().intrinsic !=
+           IntrinsicKind::PrefixStorageTryCString &&
        intrinsic->record().intrinsic != IntrinsicKind::Move)) {
     return {};
   }
-  return predeclaredStringViewBorrowSource(call->arguments().front(), function);
+  return predeclaredTextBorrowSource(call->arguments().front(), function);
 }
 
-auto SemanticVisitor::Impl::dynamicStringViewReturnBorrowSummary(
+auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     const FunctionInfo &function)
     -> std::optional<FunctionReturnBorrowSummary> {
-  if (function.returnType.kind != SemanticType::StringView ||
+  if ((function.returnType.kind != SemanticType::StringView &&
+       function.returnType.kind != SemanticType::CString) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.declaration->body() == nullptr) {
@@ -4894,10 +4899,9 @@ auto SemanticVisitor::Impl::dynamicStringViewReturnBorrowSummary(
   std::optional<FunctionReturnBorrowSummary> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
-    const PredeclaredStringViewBorrowSource source =
-        returned == nullptr
-            ? PredeclaredStringViewBorrowSource{}
-            : predeclaredStringViewBorrowSource(*returned, function);
+    const PredeclaredTextBorrowSource source =
+        returned == nullptr ? PredeclaredTextBorrowSource{}
+                            : predeclaredTextBorrowSource(*returned, function);
     if (!source.known) {
       valid = false;
       break;
@@ -5069,9 +5073,9 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
-    if (const std::optional<FunctionReturnBorrowSummary> dynamicView =
-            dynamicStringViewReturnBorrowSummary(updated)) {
-      summary = *dynamicView;
+    if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+            dynamicTextReturnBorrowSummary(updated)) {
+      summary = *dynamicText;
     }
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {

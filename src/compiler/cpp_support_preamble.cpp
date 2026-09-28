@@ -1390,7 +1390,9 @@ inline void optional_storage_reset(optional_storage<T> &value) {
 // the prefix [0, length_). Construction appends exactly at the live length,
 // destruction removes exactly the last live element, relocation transfers
 // the complete prefix, and reads check the logical prefix, so no per-slot
-// initialization bitmap exists.
+// initialization bitmap exists. Character storage additionally reserves one
+// representation-private slot at the logical end and keeps it NUL-filled;
+// the slot is not part of the live prefix or its public capacity.
 template <typename T>
 class prefix_storage {
 public:
@@ -1418,10 +1420,12 @@ public:
       T *element = std::launder(slot(length_));
       const bool success = cleanup(*element, sequence.record(), sequence.unwinding());
       if (!success && sequence.unwinding()) {
+        write_character_terminator();
         (void)sequence.step(false);
         return false;
       }
       std::destroy_at(element);
+      write_character_terminator();
       if (!sequence.step(success)) return false;
     }
     release();
@@ -1436,12 +1440,17 @@ public:
     if (length_ >= capacity_) {
       storage_error("prefix storage append exceeds its capacity");
     }
-    try {
-      std::construct_at(slot(length_), std::forward<Args>(args)...);
-    } catch (const std::bad_alloc &) {
-      allocation_error();
+    if constexpr (std::is_same_v<T, char8_t>) {
+      *slot(length_) = T(std::forward<Args>(args)...);
+    } else {
+      try {
+        std::construct_at(slot(length_), std::forward<Args>(args)...);
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
     }
     ++length_;
+    write_character_terminator();
   }
 
   void pop() {
@@ -1449,7 +1458,11 @@ public:
       storage_error("prefix storage pop on an empty prefix");
     }
     --length_;
-    std::destroy_at(std::launder(slot(length_)));
+    if constexpr (std::is_same_v<T, char8_t>) {
+      write_character_terminator();
+    } else {
+      std::destroy_at(std::launder(slot(length_)));
+    }
   }
 
   template <typename Cleanup>
@@ -1462,6 +1475,7 @@ public:
     T *element = std::launder(slot(length_));
     const bool success = cleanup(*element, record, false);
     std::destroy_at(element);
+    write_character_terminator();
     return success;
   }
 
@@ -1489,41 +1503,59 @@ public:
     if (length_ >= capacity_) {
       storage_error("prefix storage insert exceeds its capacity");
     }
-    for (std::size_t position = length_;
-         position > static_cast<std::size_t>(index); --position) {
+    if constexpr (std::is_same_v<T, char8_t>) {
+      for (std::size_t position = length_;
+           position > static_cast<std::size_t>(index); --position) {
+        *slot(position) = *slot(position - 1);
+      }
+      *slot(static_cast<std::size_t>(index)) =
+          T(std::forward<Args>(args)...);
+    } else {
+      for (std::size_t position = length_;
+           position > static_cast<std::size_t>(index); --position) {
+        try {
+          std::construct_at(slot(position),
+                            std::move(*std::launder(slot(position - 1))));
+        } catch (const std::bad_alloc &) {
+          allocation_error();
+        }
+        std::destroy_at(std::launder(slot(position - 1)));
+      }
       try {
-        std::construct_at(slot(position),
-                          std::move(*std::launder(slot(position - 1))));
+        std::construct_at(slot(static_cast<std::size_t>(index)),
+                          std::forward<Args>(args)...);
       } catch (const std::bad_alloc &) {
         allocation_error();
       }
-      std::destroy_at(std::launder(slot(position - 1)));
-    }
-    try {
-      std::construct_at(slot(static_cast<std::size_t>(index)),
-                        std::forward<Args>(args)...);
-    } catch (const std::bad_alloc &) {
-      allocation_error();
     }
     ++length_;
+    write_character_terminator();
   }
 
   void erase_at(std::uint64_t index) {
     if (index >= length_) {
       storage_error("prefix storage erase outside the live prefix");
     }
-    std::destroy_at(std::launder(slot(static_cast<std::size_t>(index))));
-    for (std::size_t position = static_cast<std::size_t>(index) + 1;
-         position < length_; ++position) {
-      try {
-        std::construct_at(slot(position - 1),
-                          std::move(*std::launder(slot(position))));
-      } catch (const std::bad_alloc &) {
-        allocation_error();
+    if constexpr (std::is_same_v<T, char8_t>) {
+      for (std::size_t position = static_cast<std::size_t>(index) + 1;
+           position < length_; ++position) {
+        *slot(position - 1) = *slot(position);
       }
-      std::destroy_at(std::launder(slot(position)));
+    } else {
+      std::destroy_at(std::launder(slot(static_cast<std::size_t>(index))));
+      for (std::size_t position = static_cast<std::size_t>(index) + 1;
+           position < length_; ++position) {
+        try {
+          std::construct_at(slot(position - 1),
+                            std::move(*std::launder(slot(position))));
+        } catch (const std::bad_alloc &) {
+          allocation_error();
+        }
+        std::destroy_at(std::launder(slot(position)));
+      }
     }
     --length_;
+    write_character_terminator();
   }
 
   template <typename Cleanup>
@@ -1552,11 +1584,13 @@ public:
         // A second failure terminates before native teardown can run any
         // remaining subobject destructor and obscure either failure record.
         if (!cleaned) {
+          write_character_terminator();
           (void)sequence.step(false);
           return false;
         }
         std::destroy_at(remaining);
       }
+      write_character_terminator();
       return false;
     }
     // Verified MIR proves these generated moves cannot fail. Moved-from
@@ -1566,6 +1600,7 @@ public:
       std::destroy_at(std::launder(slot(position)));
     }
     length_ = previous_length - 1;
+    write_character_terminator();
     return true;
   }
 
@@ -1577,17 +1612,26 @@ public:
       storage_error("prefix storage relocation exceeds the destination "
                     "capacity");
     }
-    for (std::size_t index = 0; index < length_; ++index) {
-      try {
-        std::construct_at(destination.slot(index),
-                          std::move(*std::launder(slot(index))));
-      } catch (const std::bad_alloc &) {
-        allocation_error();
+    if constexpr (std::is_same_v<T, char8_t>) {
+      for (std::size_t index = 0; index < length_; ++index) {
+        *destination.slot(index) = *slot(index);
+        ++destination.length_;
       }
-      ++destination.length_;
-      std::destroy_at(std::launder(slot(index)));
+    } else {
+      for (std::size_t index = 0; index < length_; ++index) {
+        try {
+          std::construct_at(destination.slot(index),
+                            std::move(*std::launder(slot(index))));
+        } catch (const std::bad_alloc &) {
+          allocation_error();
+        }
+        ++destination.length_;
+        std::destroy_at(std::launder(slot(index)));
+      }
     }
     length_ = 0;
+    write_character_terminator();
+    destination.write_character_terminator();
   }
 
   [[nodiscard]] static bool try_allocate(std::uint64_t requested,
@@ -1611,21 +1655,34 @@ private:
   }
 
   [[nodiscard]] bool allocate_nothrow(std::uint64_t requested) noexcept {
-    if (requested > (std::numeric_limits<std::size_t>::max)() ||
-        (requested != 0 &&
-         requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
+    if (requested > (std::numeric_limits<std::size_t>::max)()) {
       return false;
     }
     capacity_ = static_cast<std::size_t>(requested);
     if (capacity_ == 0) {
       return true;
     }
-    data_ = ::operator new(sizeof(T) * capacity_, std::align_val_t{alignof(T)},
+    std::size_t allocationCount = capacity_;
+    if constexpr (std::is_same_v<T, char8_t>) {
+      if (allocationCount == (std::numeric_limits<std::size_t>::max)()) {
+        capacity_ = 0;
+        return false;
+      }
+      ++allocationCount;
+    }
+    if (allocationCount >
+        (std::numeric_limits<std::size_t>::max)() / sizeof(T)) {
+      capacity_ = 0;
+      return false;
+    }
+    data_ = ::operator new(sizeof(T) * allocationCount,
+                           std::align_val_t{alignof(T)},
                            std::nothrow);
     if (data_ == nullptr) {
       capacity_ = 0;
       return false;
     }
+    write_character_terminator();
     return true;
   }
 
@@ -1639,6 +1696,14 @@ private:
   [[nodiscard]] T *slot(std::size_t index) const {
     return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
                                  sizeof(T) * index);
+  }
+
+  void write_character_terminator() noexcept {
+    if constexpr (std::is_same_v<T, char8_t>) {
+      if (data_ != nullptr) {
+        *slot(length_) = u8'\0';
+      }
+    }
   }
 
   void release() noexcept {
@@ -1719,6 +1784,26 @@ prefix_storage_text_view(const prefix_storage<char8_t> &value) noexcept {
   return {reinterpret_cast<const char *>(
               std::addressof(value.read_unchecked(0))),
           static_cast<std::size_t>(value.length())};
+}
+
+inline const char *
+prefix_storage_c_string(const prefix_storage<char8_t> &value) noexcept {
+  static constexpr char empty = '\0';
+  if (value.capacity() == 0) {
+    return std::addressof(empty);
+  }
+  return reinterpret_cast<const char *>(
+      std::addressof(value.read_unchecked(0)));
+}
+
+inline const char *
+prefix_storage_try_c_string(const prefix_storage<char8_t> &value) noexcept {
+  for (std::uint64_t index = 0; index < value.length(); ++index) {
+    if (value.read_unchecked(index) == u8'\0') {
+      return nullptr;
+    }
+  }
+  return prefix_storage_c_string(value);
 }
 
 template <typename T>

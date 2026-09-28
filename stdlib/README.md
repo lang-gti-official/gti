@@ -244,6 +244,13 @@ remain non-assignable. This avoids hidden allocation on an ordinary string
 copy and prevents mutation or movement while an iterator remains live. Dynamic
 `view()` conversion to `std::string_view` retains an owner-tied lifetime;
 the source cannot be invalidated while that view remains live.
+`c_string()` returns a non-null NUL-terminated view tied to the same owner;
+zero-capacity empty strings use a process-lifetime empty sentinel. Embedded NUL
+bytes are preserved and C observes the prefix before the first one.
+`try_c_string()` returns `nullptr` when the logical string contains an embedded
+NUL. Both pointers retain a checked read-only dependency on the string until
+their last use, but native code that retains one beyond a call still requires a
+binding-specific lifetime contract.
 `<std/format>` implements sequential `{}` replacement for heterogeneous
 booleans, characters, fixed-width integers, binary32 floats, string views, and
 explicitly transferred owning strings, plus escaped `{{`/`}}` and exact field

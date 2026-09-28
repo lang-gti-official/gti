@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "ca7e8829b48da291e23b56f8c23baabbf3483ebb5f45f82b19cd95d6411a0eff",
+    "stdlib/prelude.gti": "f543af7b3c37128bcb42800df30f6d27782f20e96b099e2dd4ee37f181ebf86b",
     "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -25,7 +25,7 @@
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "7345ea74b019d75c8d1ceae2ed2d1e7ae655754504126daf0de725165a4b9380",
+    "stdlib/std/string.gti": "2f0987b77614adc3e8a9a60827e41da28eb2db4a939714a414fbc89fbb603aae",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
@@ -459,6 +459,14 @@
       "id": "string",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_string.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "string-c-string",
+      "mode": "run",
+      "source": "tests/fixtures/string_c_string.gti",
+      "native_sources": ["tests/fixtures/string_c_string.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1260,6 +1268,7 @@
         "std::string::at",
         "std::string::back",
         "std::string::begin",
+        "std::string::c_string",
         "std::string::capacity",
         "std::string::clear",
         "std::string::clone",
@@ -1275,16 +1284,17 @@
         "std::string::shrink_to_fit",
         "std::string::size",
         "std::string::string(size_t,size_t,string&)",
+        "std::string::try_c_string",
         "std::string::view",
         "std::to_string",
         "std::to_string(float)"
       ],
-      "case_ids": ["span", "string", "string-index-range"],
+      "case_ids": ["span", "string", "string-c-string", "string-index-range"],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
       ],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "stdlib/std/string.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "stdlib/std/string.gti"]
     },
     {
       "id": "string.swap",

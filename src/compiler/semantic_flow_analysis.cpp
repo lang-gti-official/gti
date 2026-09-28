@@ -1204,12 +1204,16 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                SemanticType type) const
     -> ExpressionInfo {
   const ExprKind kind = expr.exprKind();
+  const auto borrowedTextType = [](const SemanticType &candidate) {
+    return candidate.kind == SemanticType::StringView ||
+           candidate.kind == SemanticType::CString;
+  };
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
-    if (type.kind == SemanticType::StringView && sourceInfo != nullptr &&
+    if (borrowedTextType(type) && sourceInfo != nullptr &&
         sourceInfo->traits.containsBorrowedState) {
-      return ownerDependentStringViewInfo(sourceInfo->category,
-                                          sourceInfo->access);
+      return ownerDependentTextInfo(type, sourceInfo->category,
+                                    sourceInfo->access);
     }
     return sourceInfo == nullptr
                ? expressionInfo(std::move(type))
@@ -1243,11 +1247,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
              : symbol->assignable &&
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
-    if (type.kind == SemanticType::StringView && symbol != nullptr &&
+    if (borrowedTextType(type) && symbol != nullptr &&
         symbol->retainedLoan != 0) {
-      return ownerDependentStringViewInfo(ValueCategory::Place,
-                                          mutableAccess ? AccessMode::Mutable
-                                                        : AccessMode::ReadOnly);
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
     }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
@@ -1421,19 +1425,24 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
-    if (type.kind == SemanticType::StringView && resolved != nullptr &&
+    if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
           resolved->borrowArgument < call.arguments().size()) {
         const ExpressionInfo *sourceInfo = semanticModel.findExpression(
             *call.arguments()[resolved->borrowArgument]);
+        const bool ownerlessCStringSource =
+            type.kind == SemanticType::CString && sourceInfo != nullptr &&
+            (sourceInfo->type.kind == SemanticType::CString ||
+             sourceInfo->type.kind == SemanticType::StringView ||
+             sourceInfo->type.kind == SemanticType::NullPtr);
         if (sourceInfo != nullptr &&
-            sourceInfo->type.kind == SemanticType::StringView &&
+            (sourceInfo->type.kind == type.kind || ownerlessCStringSource) &&
             !sourceInfo->traits.containsBorrowedState) {
           return expressionInfo(std::move(type));
         }
       }
-      return ownerDependentStringViewInfo();
+      return ownerDependentTextInfo(std::move(type));
     }
   }
   return expressionInfo(std::move(type));
@@ -1788,6 +1797,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:
         case IntrinsicKind::PrefixStorageTextView:
+        case IntrinsicKind::PrefixStorageCString:
+        case IntrinsicKind::PrefixStorageTryCString:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::StringViewSize:
