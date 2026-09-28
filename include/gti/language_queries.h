@@ -189,6 +189,8 @@ struct CompletionInput {
   std::filesystem::path entryPath;
   std::string source;
   std::size_t byteOffset = 0;
+  TargetInfo target = TargetInfo::host();
+  ConfigurationFlags configurationFlags;
   std::vector<std::filesystem::path> preludePaths;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::vector<std::filesystem::path> standardLibraryRoots;
