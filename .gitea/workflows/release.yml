@@ -61,7 +61,7 @@ jobs:
   package:
     name: Build and test release
     needs: metadata
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out exact release commit
@@ -181,7 +181,7 @@ jobs:
     needs:
       - metadata
       - package
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       code: write
       releases: write

@@ -125,7 +125,7 @@ The plugin uses a full HTTPS Git URL, not GitHub-style owner/repository shorthan
 Archive shapes
 exist for Linux x64, Linux arm64, and macOS arm64, but an archive is published
 only by a configured native runner job. The current workflow packages the
-native platform of the runner claiming `ubuntu-24.04`; adding another
+native platform of the runner claiming `ubuntu-latest`; adding another
 advertised binary platform requires a statically labelled native package job.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are

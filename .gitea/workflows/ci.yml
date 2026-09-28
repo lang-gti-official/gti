@@ -35,7 +35,7 @@ jobs:
 
   release-version:
     name: Release version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI
@@ -56,7 +56,7 @@ jobs:
 
   tree-sitter:
     name: Tree-sitter grammar
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI
@@ -78,7 +78,7 @@ jobs:
 
   reference:
     name: Reference site
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI
@@ -142,7 +142,7 @@ jobs:
 
   build-and-test:
     name: Native toolchain
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI
@@ -215,7 +215,7 @@ jobs:
 
   compiler-sanitizers:
     name: Compiler sanitizers
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI

@@ -913,7 +913,7 @@ but non-Ninja generators are outside the first-party verification path.
 ## Platform Signal
 
 Local verification runs on the macOS/AppleClang host. Gitea CI
-(`ubuntu-24.04`) is the accepted first Linux/GCC/libstdc++ signal; there is
+(`ubuntu-latest`) is the accepted first Linux/GCC/libstdc++ signal; there is
 no local Linux gate in the pre-push loop. Two mitigations keep that gap
 narrow. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
