@@ -104,6 +104,7 @@ struct ProjectOptions {
   lang::ConfigurationFlags configurationFlags;
   bool verbose = false;
   bool useCache = true;
+  bool noBuild = false;
   bool offline = false;
   bool locked = false;
 };
@@ -230,6 +231,8 @@ void printUsage(std::ostream &stream) {
          "build.\n"
          "      --no-cache       Build without reading or updating the "
          "project cache.\n"
+         "      --no-build       Run an existing managed executable without "
+         "checking or rebuilding it (gti run only).\n"
          "      --offline        Never run git; only already fetched "
          "dependencies resolve.\n"
          "      --locked         Require gti.lock coverage without acquiring "
@@ -269,8 +272,9 @@ void printUsage(std::ostream &stream) {
          "package.\n"
          "  check                Analyze a target without C++ emission or "
          "native compilation.\n"
-         "  run                  Build and run a target; arguments after -- "
-         "belong to the program.\n"
+         "  run                  Build and run a target, or use --no-build to "
+         "launch its existing artifact; arguments after -- belong to the "
+         "program.\n"
          "  test                 Build and run all test targets, or one named "
          "test target.\n"
          "  verify               Rebuild a recorded --build-report and report "
@@ -857,6 +861,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.useCache = false;
       continue;
     }
+    if (argument == "--no-build") {
+      if (options.command != ProjectCommand::Run) {
+        std::cerr << "gti: --no-build is supported only by gti run\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.noBuild) {
+        std::cerr << "gti: --no-build may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.noBuild = true;
+      continue;
+    }
     if (argument == "--offline") {
       options.offline = true;
       continue;
@@ -910,6 +926,14 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.buildReport && options.buildAll) {
     std::cerr << "gti: --build-report describes one target and cannot be "
                  "combined with --all\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.noBuild &&
+      (options.cxx || options.cc || options.standard || options.optimization ||
+       options.executionProfile || options.keepCpp || options.jobs ||
+       !options.configurationFlags.empty() || !options.useCache)) {
+    std::cerr << "gti: --no-build cannot be combined with compiler, build, "
+                 "cache, or configuration overrides\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.command == ProjectCommand::Verify) {
@@ -1614,6 +1638,27 @@ void reportProjectSuccess(std::ostream &stream, std::string_view action,
          << plan.output().string() << '\n';
 }
 
+int invokeProjectProgram(const lang::driver::ProjectBuildPlan &plan,
+                         const ProjectOptions &options, bool skippedBuild) {
+  std::vector<std::string> command{plan.output().string()};
+  command.insert(command.end(), options.programArguments.begin(),
+                 options.programArguments.end());
+  std::cerr << (skippedBuild ? "Running existing " : "Running ")
+            << plan.output().string();
+  if (skippedBuild) {
+    std::cerr << " (--no-build)";
+  }
+  std::cerr << '\n';
+  const lang::driver::ProcessResult process = lang::driver::invokeProcess(
+      command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+                .captureSuccessfulOutput = false,
+                .description = "program"});
+  if (process.driverDiagnostic) {
+    std::cerr << *process.driverDiagnostic << '\n';
+  }
+  return process.exitCode;
+}
+
 // Resolves the project command's selected target. Omitting `--target`
 // keeps the build host, so an existing manifest needs no change. An
 // explicit triple is parsed with the compiler's own vocabulary; a malformed
@@ -2006,7 +2051,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
           *currentDirectory, options.target, options.profile, *selection.target,
           std::move(overrides), options.package,
           {.requireLock = true,
-           .allowAcquisition = !(options.offline || options.locked)},
+           .allowAcquisition =
+               !(options.offline || options.locked || options.noBuild)},
           lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
           {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
@@ -2024,6 +2070,19 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
   if (options.verbose) {
     reportProjectPlan(plan, options.command);
+  }
+  if (options.noBuild) {
+    const lang::driver::ManagedOutputPolicy managed{
+        .trustedRoot = plan.workspaceRoot(),
+        .outputRoot = plan.workspaceRoot() / "build" / "gti"};
+    if (const std::optional<std::string> diagnostic =
+            lang::driver::managedExecutableDiagnostic(managed, plan.output())) {
+      std::cerr << *diagnostic << '\n'
+                << "gti: build target '" << plan.targetName()
+                << "' before using --no-build\n";
+      return exitCode(ExitStatus::Io);
+    }
+    return invokeProjectProgram(plan, options, true);
   }
   {
     std::ostream &bindgenStream =
@@ -2114,18 +2173,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   if (options.command == ProjectCommand::Run) {
-    std::vector<std::string> command{plan.output().string()};
-    command.insert(command.end(), options.programArguments.begin(),
-                   options.programArguments.end());
-    statusStream << "Running " << plan.output().string() << '\n';
-    const lang::driver::ProcessResult process = lang::driver::invokeProcess(
-        command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
-                  .captureSuccessfulOutput = false,
-                  .description = "program"});
-    if (process.driverDiagnostic) {
-      std::cerr << *process.driverDiagnostic << '\n';
-    }
-    return process.exitCode;
+    return invokeProjectProgram(plan, options, false);
   }
   return exitCode(ExitStatus::Success);
 }

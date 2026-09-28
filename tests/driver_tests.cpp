@@ -900,6 +900,65 @@ void testManagedOutputSafety() {
   const std::filesystem::path externalOutput =
       temporary.root() / "external/program";
   std::filesystem::create_directory(project);
+  const lang::driver::ManagedOutputPolicy managed{.trustedRoot = project,
+                                                  .outputRoot = managedRoot};
+  const std::filesystem::path existingExecutable =
+      managedRoot / "dev/host/existing";
+  const std::optional<std::string> missingExecutable =
+      lang::driver::managedExecutableDiagnostic(managed, existingExecutable);
+  expect(missingExecutable &&
+             missingExecutable->find("does not exist") != std::string::npos,
+         "a build-skipping run should reject a missing managed executable");
+  std::filesystem::create_directories(existingExecutable.parent_path());
+  expect(writeFile(existingExecutable, "existing executable\n"),
+         "the existing managed executable fixture should be writable");
+#if !defined(_WIN32)
+  const std::optional<std::string> nonExecutableDiagnostic =
+      lang::driver::managedExecutableDiagnostic(managed, existingExecutable);
+  expect(nonExecutableDiagnostic && nonExecutableDiagnostic->find(
+                                        "not executable") != std::string::npos,
+         "a build-skipping run should reject a regular file without execute "
+         "permissions");
+  std::error_code permissionError;
+  std::filesystem::permissions(
+      existingExecutable, std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::add, permissionError);
+  expect(!permissionError,
+         "the existing managed executable fixture should be executable");
+#endif
+  expect(
+      !lang::driver::managedExecutableDiagnostic(managed, existingExecutable),
+      "a regular executable inside the symlink-free managed subtree should "
+      "be runnable without rebuilding");
+
+  const std::filesystem::path directoryArtifact =
+      managedRoot / "dev/host/not-an-executable";
+  std::filesystem::create_directory(directoryArtifact);
+  const std::optional<std::string> directoryDiagnostic =
+      lang::driver::managedExecutableDiagnostic(managed, directoryArtifact);
+  expect(directoryDiagnostic && directoryDiagnostic->find(
+                                    "not a regular file") != std::string::npos,
+         "a build-skipping run should reject a directory in place of its "
+         "managed executable");
+
+  const std::filesystem::path externalExecutable =
+      temporary.root() / "external-existing";
+  expect(writeFile(externalExecutable, "external executable\n"),
+         "the external executable fixture should be writable");
+  const std::filesystem::path symlinkedExecutable =
+      managedRoot / "dev/host/symlinked";
+  std::error_code executableSymlinkError;
+  std::filesystem::create_symlink(externalExecutable, symlinkedExecutable,
+                                  executableSymlinkError);
+  if (!executableSymlinkError) {
+    const std::optional<std::string> symlinkedDiagnostic =
+        lang::driver::managedExecutableDiagnostic(managed, symlinkedExecutable);
+    expect(symlinkedDiagnostic &&
+               symlinkedDiagnostic->find("symbolic-link managed output ") !=
+                   std::string::npos,
+           "a build-skipping run should reject a symbolic-link managed "
+           "executable rather than following it outside the project");
+  }
 
   const lang::driver::ExecutableBuildResult outside =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
@@ -998,6 +1057,9 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   ScopedEnvironment clearDeveloperDirectory("DEVELOPER_DIR");
   ScopedEnvironment clearLdLibraryPath("LD_LIBRARY_PATH");
   ScopedEnvironment clearDyldLibraryPath("DYLD_LIBRARY_PATH");
+  ScopedEnvironment clearDyldFrameworkPath("DYLD_FRAMEWORK_PATH");
+  ScopedEnvironment clearDyldFallbackFrameworkPath(
+      "DYLD_FALLBACK_FRAMEWORK_PATH");
   ScopedEnvironment clearMsvcIncludePath("INCLUDE");
   ScopedEnvironment clearMsvcLibraryPath("LIB");
   expect(std::getenv("COMPILER_PATH") == nullptr &&
@@ -1454,18 +1516,149 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "the link-input reason");
   std::filesystem::remove(resolvedArchive);
 
-  lang::driver::NativeInputs frameworkInput;
-  frameworkInput.frameworks.emplace_back("CoreFoundation");
+  const auto buildWithFramework = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.frameworks.emplace_back("CoreFoundation");
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+#if defined(__APPLE__)
   const lang::driver::ExecutableBuildResult frameworkBuild =
-      build(lang::OptimizationLevel::O0, std::move(frameworkInput));
-  expect(frameworkBuild.cache.status ==
+      buildWithFramework();
+  expect(
+      frameworkBuild.succeeded() &&
+          frameworkBuild.cache.status == lang::driver::BuildCacheStatus::Miss &&
+          frameworkBuild.cache.key != firstKey && frameworkBuild.nativeProcess,
+      "a framework selected by the Apple linker should join cache identity "
+      "through its exact traced link input");
+  const lang::driver::ExecutableBuildResult frameworkHit = buildWithFramework();
+  expect(frameworkHit.succeeded() &&
+             frameworkHit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+             frameworkHit.cache.key == frameworkBuild.cache.key &&
+             !frameworkHit.nativeProcess,
+         "an unchanged traced Apple framework should restore the cached "
+         "executable without relinking");
+
+  lang::driver::NativeInputs missingFrameworkInputs;
+  missingFrameworkInputs.frameworks.emplace_back(
+      "GTIFrameworkThatMustNotExistForCacheTesting");
+  const lang::driver::ExecutableBuildResult missingFrameworkBuild =
+      build(lang::OptimizationLevel::O0, std::move(missingFrameworkInputs));
+  expect(missingFrameworkBuild.cache.status ==
                  lang::driver::BuildCacheStatus::Bypassed &&
-             frameworkBuild.cache.detail &&
-             frameworkBuild.cache.detail->find(
-                 "name-resolved frameworks require framework search "
-                 "resolution") != std::string::npos,
-         "frameworks resolve through undeclared search roots to a bundle and "
-         "must keep bypassing");
+             missingFrameworkBuild.cache.detail &&
+             missingFrameworkBuild.cache.detail->find(
+                 "framework resolution probe failed") != std::string::npos,
+         "a framework whose exact linker input cannot be resolved should "
+         "bypass rather than trusting its name");
+
+  // A compiler wrapper supplies a private framework search root that the
+  // driver cannot infer. The real linker map remains authoritative: changing
+  // the selected text stub must change the cache key even though the framework
+  // name, wrapper executable, and GTI sources are unchanged.
+  const lang::driver::ProcessResult sdkProbe = lang::driver::invokeProcess(
+      {"/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "test macOS SDK discovery"});
+  std::string sdkPath = sdkProbe.output;
+  while (!sdkPath.empty() &&
+         std::isspace(static_cast<unsigned char>(sdkPath.back())) != 0) {
+    sdkPath.pop_back();
+  }
+  const std::filesystem::path systemFrameworkStub =
+      std::filesystem::path(sdkPath) /
+      "System/Library/Frameworks/CoreFoundation.framework/CoreFoundation.tbd";
+  const std::filesystem::path privateFrameworkStub =
+      temporary.root() /
+      "Frameworks/CoreFoundation.framework/CoreFoundation.tbd";
+  std::filesystem::create_directories(privateFrameworkStub.parent_path());
+  copyError.clear();
+  if (sdkProbe.succeeded() && !sdkPath.empty()) {
+    std::filesystem::copy_file(systemFrameworkStub, privateFrameworkStub,
+                               copyError);
+  }
+  const bool frameworkFixtureReady =
+      sdkProbe.succeeded() && !sdkPath.empty() && !copyError &&
+      std::filesystem::is_regular_file(privateFrameworkStub);
+  expect(frameworkFixtureReady,
+         "the framework cache test should copy the selected SDK text stub");
+  const std::filesystem::path frameworkWrapper =
+      temporary.root() / "native-framework-cxx-wrapper";
+  std::error_code wrapperError;
+  std::filesystem::create_symlink(testExecutable, frameworkWrapper,
+                                  wrapperError);
+  if (wrapperError) {
+    wrapperError.clear();
+    std::filesystem::copy_file(testExecutable, frameworkWrapper, wrapperError);
+  }
+  expect(!wrapperError,
+         "the framework-selecting native compiler wrapper should be creatable");
+  const std::string previousNativeCompiler = nativeCompiler;
+  if (frameworkFixtureReady && !wrapperError) {
+    nativeCompiler = frameworkWrapper.string();
+    const lang::driver::ExecutableBuildResult privateFrameworkBuild =
+        buildWithFramework();
+    const lang::driver::ExecutableBuildResult privateFrameworkHit =
+        buildWithFramework();
+    expect(privateFrameworkBuild.succeeded() &&
+               privateFrameworkBuild.cache.status ==
+                   lang::driver::BuildCacheStatus::Miss &&
+               privateFrameworkHit.succeeded() &&
+               privateFrameworkHit.cache.status ==
+                   lang::driver::BuildCacheStatus::Hit &&
+               privateFrameworkHit.cache.key == privateFrameworkBuild.cache.key,
+           "the linker-traced private framework should be reusable while its "
+           "selected text stub is unchanged");
+    const std::string originalStub = readFile(privateFrameworkStub);
+    std::string changedStub = originalStub;
+    const std::size_t firstLineEnd = changedStub.find('\n');
+    if (firstLineEnd != std::string::npos) {
+      changedStub.insert(firstLineEnd + 1, "# GTI cache identity change\n");
+    }
+    expect(firstLineEnd != std::string::npos &&
+               writeFile(privateFrameworkStub, changedStub),
+           "the private framework text stub should remain mutable");
+    const lang::driver::ExecutableBuildResult privateFrameworkChange =
+        buildWithFramework();
+    if (!(privateFrameworkChange.succeeded() &&
+          privateFrameworkChange.cache.status ==
+              lang::driver::BuildCacheStatus::Miss &&
+          privateFrameworkChange.cache.key !=
+              privateFrameworkBuild.cache.key)) {
+      std::cerr << "framework mutation status="
+                << static_cast<int>(privateFrameworkChange.status) << " cache="
+                << static_cast<int>(privateFrameworkChange.cache.status)
+                << " old-key=" << privateFrameworkBuild.cache.key
+                << " new-key=" << privateFrameworkChange.cache.key << " detail="
+                << privateFrameworkChange.cache.detail.value_or("none")
+                << " diagnostic="
+                << privateFrameworkChange.driverDiagnostic.value_or("none")
+                << " native="
+                << (privateFrameworkChange.nativeProcess
+                        ? privateFrameworkChange.nativeProcess->output
+                        : "none")
+                << '\n';
+    }
+    expect(privateFrameworkChange.succeeded() &&
+               privateFrameworkChange.cache.status ==
+                   lang::driver::BuildCacheStatus::Miss &&
+               privateFrameworkChange.cache.key !=
+                   privateFrameworkBuild.cache.key,
+           "changing the exact framework link input selected by the linker "
+           "should invalidate the whole-program cache");
+  }
+  nativeCompiler = previousNativeCompiler;
+#else
+  const lang::driver::ExecutableBuildResult frameworkBuild =
+      buildWithFramework();
+  expect(
+      frameworkBuild.cache.status == lang::driver::BuildCacheStatus::Bypassed &&
+          frameworkBuild.cache.detail &&
+          frameworkBuild.cache.detail->find("Apple linker resolution trace") !=
+              std::string::npos,
+      "framework cache identity should remain unavailable without an Apple "
+      "linker trace");
+#endif
 
   {
     ScopedEnvironment injectedIncludePath("CPATH",
@@ -2506,13 +2699,18 @@ void testResourcesAndArtifactOwnership() {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti_driver_tests");
-  if (argc > 0 &&
-      std::filesystem::path(argv[0]).stem() == "native-cxx-wrapper") {
+  const std::filesystem::path invocation = argc > 0 ? argv[0] : "";
+  if (argc > 0 && (invocation.stem() == "native-cxx-wrapper" ||
+                   invocation.stem() == "native-framework-cxx-wrapper")) {
     std::vector<std::string> command{"c++"};
     const std::vector<std::string> sanitizerArguments =
         activeSanitizerArguments();
     command.insert(command.end(), sanitizerArguments.begin(),
                    sanitizerArguments.end());
+    if (invocation.stem() == "native-framework-cxx-wrapper") {
+      command.emplace_back("-F" +
+                           (invocation.parent_path() / "Frameworks").string());
+    }
     for (int index = 1; index < argc; ++index) {
       command.emplace_back(argv[index]);
     }

@@ -860,12 +860,15 @@ them as content-complete regular archives or relocatable objects. Declared
 library search directories join as the same full sorted content trees, and a
 `-l` name joins when searching those directories in link order finds exactly
 one modeled candidate whose classification is content-complete. Thin archives,
-linker scripts, shared libraries, unrecognized link-input formats, frameworks,
-`-l` names resolving outside the declared directories or ambiguously within
-one, and opaque argument vectors still bypass, because a name or script
-resolves to files the driver has not identified exactly. Narrowing a bypass must always
-come from establishing exact identity, never from widening what the key
-trusts.
+linker scripts, shared libraries, unrecognized link-input formats, `-l` names
+resolving outside the declared directories or ambiguously within one, and
+opaque argument vectors still bypass, because a name or script resolves to
+files the driver has not identified exactly. Apple framework names now join
+only after a bounded link probe using the selected compiler/target/SDK policy
+produces a linker map with one exact text stub or binary; that path and content
+join the key, while an unavailable or ambiguous trace still bypasses. Narrowing
+a bypass must always come from establishing exact identity, never from widening
+what the key trusts.
 
 The remaining cacheable generated C++ build can still consume implicit system
 headers and libraries. The current bounded contract assumes those resources are
@@ -1185,6 +1188,9 @@ Acceptance criteria:
 - Implement content-addressed whole-program backend/native artifact keys.
 - Add verified cache hit/miss/corruption explanations under `--verbose`.
 - Add `--no-cache` for verification and debugging.
+- Add `gti run --no-build` as an explicit stale-artifact escape hatch with
+  managed-path and executable validation and no acquisition or build side
+  effects.
 
 Acceptance criteria:
 
@@ -1222,6 +1228,9 @@ Status: complete
 - Make link output deterministic: the staged link output keeps its final
   basename inside a unique staging directory, and Apple links append
   `-Wl,-reproducible` so identical inputs produce identical bytes.
+- Resolve Apple framework names with an actual selected-linker map and hash the
+  exact selected text stub or binary, retaining a stated bypass whenever that
+  trace cannot establish one identity.
 
 Acceptance criteria:
 
@@ -1232,6 +1241,9 @@ Acceptance criteria:
   by CLI tests, including opaque argument vectors, name resolution, library
   search directories, non-content-complete link inputs, injected environment
   search paths, and time-sensitive macros;
+- **Passed:** an unchanged Apple framework build hits the cache, changing the
+  exact linker-selected framework stub misses, and untraceable framework
+  selection bypasses;
 - **Passed:** serial and parallel `--all` builds produce byte-identical
   artifacts and byte-identical ordered output, including under a failing
   target;
