@@ -81,7 +81,8 @@
     "80-function-items.gti": 57,
     "83-complete-ranges.gti": 78,
     "84-optional-values.gti": 44,
-    "85-payload-enum-fields.gti": 28
+    "85-payload-enum-fields.gti": 28,
+    "86-owning-callbacks.gti": 198
   },
-  "total": 4035
+  "total": 4233
 }
