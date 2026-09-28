@@ -939,11 +939,15 @@ sources, declared native include directories, declared native library search
 directories, content-complete exact link files (regular non-thin archives and
 relocatable objects), and `-l` names that resolve to exactly one
 content-complete file inside a declared search directory participate in cache
-identity exactly and no longer force a bypass. A dependency package's composed
-native group participates on the same terms as the selected package's own
-native inputs. The remaining conservative bypasses are opaque native argument
-vectors, name-resolved frameworks, `-l` names that do not resolve inside the
-declared search directories or resolve ambiguously within one, link inputs
+identity exactly and no longer force a bypass. On Apple hosts, named frameworks
+also participate when a bounded probe through the selected compiler, target,
+and SDK policy produces a linker map naming one exact framework text stub or
+binary; that selected file joins by canonical path and content. A dependency
+package's composed native group participates on the same terms as the selected
+package's own native inputs. The remaining conservative bypasses are opaque
+native argument vectors, frameworks for which an exact Apple linker trace is
+unavailable, `-l` names that do not resolve inside the declared search
+directories or resolve ambiguously within one, link inputs
 that are not content-complete (thin archives, linker scripts, shared
 libraries, and unrecognized formats), dependency-injecting native environment
 search paths, and any input whose exact identity cannot be established. Direct
@@ -1078,10 +1082,15 @@ The remaining bypasses are exact-identity boundaries, not native-source
 boundaries. Opaque `c-compile-args`, `compile-args`, `link-args`, and
 `raw-args` bypass because options such as `-include` and linker scripts can
 introduce undeclared inputs outside the probed translation units and the final
-generated-C++ link. Named frameworks bypass because a framework resolves
-through undeclared `-F` and system framework roots to a bundle whose binary,
-headers, and re-exported dependencies no declared path determines. A link file
-that is not a content-complete regular archive or relocatable object (thin
+generated-C++ link. A named framework is cacheable on Apple only after GTI
+links a temporary empty program with the selected compiler and target policy,
+requests an Apple linker map, locates the unique requested
+`Name.framework/Name.tbd` or binary row, and hashes that exact file and path.
+The ordinary native-source dependency probes independently identify any
+framework headers actually included by declared C/C++ sources. Probe failure,
+an absent or ambiguous map row, or a non-Apple host bypasses rather than
+guessing framework search behavior. A link file that is not a content-complete
+regular archive or relocatable object (thin
 archives, linker scripts, shared libraries, unrecognized formats) bypasses
 because its bytes do not determine its full contribution to the link.
 Non-empty compiler/SDK/include/library search environment variables likewise
@@ -1126,6 +1135,16 @@ owned values when the target uses
 direct compilation mode still belong to the native C++ compiler; run the
 produced executable separately to supply its program arguments. This routing
 rule is driver policy, while the typed `main` contract is compiler semantics.
+
+`gti run --no-build` resolves the selected package, executable target, profile,
+and host output path but deliberately skips dependency acquisition, bindgen,
+build scripts, source loading, compilation, cache lookup, and publication. It
+executes only an already present regular executable inside the symlink-free
+managed `build/gti` subtree and fails with an I/O status when that artifact is
+missing or unsafe. Compiler, optimization, execution-profile, configuration,
+cache, keep-C++, and job overrides are rejected because they cannot describe or
+validate an existing artifact. The command makes no freshness claim; it is an
+explicit development escape hatch for running possibly stale output.
 
 ## Current Limits
 

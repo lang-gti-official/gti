@@ -23,6 +23,8 @@ DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
     "DEVELOPER_DIR",
     "LD_LIBRARY_PATH",
     "DYLD_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "DYLD_FALLBACK_FRAMEWORK_PATH",
     "INCLUDE",
     "LIB",
 )
@@ -378,6 +380,40 @@ def main():
         executable = executable_named(dev_directory, "sample")
         run([str(executable)])
         assert not (project / "build/gti/release").exists()
+
+        # --no-build resolves the selected managed output but deliberately does
+        # not parse changed source, regenerate bindings, build dependencies, or
+        # consult the cache before launching it.
+        source.write_text("this is deliberately invalid GTI\n", encoding="utf-8")
+        no_build_run = run(
+            [gti, "run", "--no-build", "--", "preserved argument"], cwd=nested
+        )
+        assert no_build_run.stdout == ""
+        assert "Running existing " in no_build_run.stderr
+        assert "(--no-build)" in no_build_run.stderr
+        assert "Built sample" not in no_build_run.stderr
+        source.write_text("int main() { return 0; }\n", encoding="utf-8")
+
+        saved_executable = executable.with_name(executable.name + ".saved")
+        executable.rename(saved_executable)
+        missing_no_build = run(
+            [gti, "run", "--no-build"], expected=74, cwd=nested
+        )
+        assert "managed executable does not exist" in missing_no_build.stderr
+        assert "build target 'sample' before using --no-build" in (
+            missing_no_build.stderr
+        )
+        saved_executable.rename(executable)
+        invalid_no_build_command = run(
+            [gti, "build", "--no-build"], expected=64, cwd=nested
+        )
+        assert "supported only by gti run" in invalid_no_build_command.stderr
+        conflicting_no_build = run(
+            [gti, "run", "--no-build", "--no-cache"],
+            expected=64,
+            cwd=nested,
+        )
+        assert "--no-build cannot be combined" in conflicting_no_build.stderr
 
         emitted = run([gti, "build", "--emit-mir"], cwd=nested)
         assert "Emitted MIR sample [dev," in emitted.stdout
@@ -1870,11 +1906,14 @@ def main():
                     'frameworks = ["CoreFoundation"]',
                 ]
             )
-            framework_bypass = cache_native_build()
-            assert "gti: cache bypassed" in framework_bypass.stderr
-            assert (
-                "name-resolved frameworks require framework search resolution"
-                in framework_bypass.stderr
+            framework_miss = cache_native_build()
+            assert "gti: cache miss " in framework_miss.stderr
+            assert "gti: cache bypassed" not in framework_miss.stderr
+            framework_hit = cache_native_build()
+            assert "gti: cache hit " in framework_hit.stderr
+            assert not any(
+                line.startswith("+ ")
+                for line in framework_hit.stderr.splitlines()
             )
 
         resolved_archive.unlink()
