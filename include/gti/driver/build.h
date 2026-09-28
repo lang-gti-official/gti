@@ -18,6 +18,14 @@ struct ManagedOutputPolicy {
   std::filesystem::path outputRoot;
 };
 
+// Validates an already-published managed executable before a build-skipping
+// run. The complete parent chain and artifact must remain inside the trusted
+// managed subtree without symbolic-link traversal, and the leaf must be a
+// regular executable file. Returns a user-facing driver diagnostic on failure.
+[[nodiscard]] std::optional<std::string>
+managedExecutableDiagnostic(const ManagedOutputPolicy &policy,
+                            const std::filesystem::path &executable);
+
 struct BuildCachePolicy {
   // A project-owned cache root, normally <package>/build/gti/cache. The build
   // driver owns its versioned layout beneath this directory.

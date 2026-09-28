@@ -269,14 +269,22 @@ native C/C++ sources — including a dependency package's — declared include a
 library search directories, exact archive/object link files, and `-l` names
 that resolve to exactly one content-complete file inside a declared search
 directory participate in the cache through compiler dependency discovery and
-full-tree identity; opaque native argument vectors, frameworks, `-l` names
-that resolve outside the declared search directories or ambiguously within
-them, non-content-complete link inputs (thin archives, linker scripts, shared
-libraries), time-and-date preprocessor macros, and dependency-injecting
-environment search paths conservatively bypass. Use
+full-tree identity. On Apple hosts, frameworks participate when a linker-map
+probe identifies and hashes the exact selected framework text stub or binary;
+an unavailable or ambiguous trace still bypasses. Opaque native argument
+vectors, `-l` names that resolve outside the declared search directories or
+ambiguously within them, non-content-complete link inputs (thin archives,
+linker scripts, shared libraries), time-and-date preprocessor macros, and
+dependency-injecting environment search paths conservatively bypass. Use
 `--verbose` to see the cache identity and hit/miss/bypass reason, or
 `--no-cache` to bypass both lookup and publication for verification. Direct
 `gti file.gti` compilation and `gti check` remain uncached.
+
+`gti run --no-build [-- <arguments>]` launches the already-published executable
+for the selected package, target, and profile without fetching dependencies,
+running build scripts, compiling, or consulting the cache. It rejects missing
+or unsafe managed artifacts and deliberately does not claim the executable is
+fresh; use ordinary `gti run` when source changes must be reflected.
 
 `gti build --all` builds every declared target concurrently with a bounded job
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
